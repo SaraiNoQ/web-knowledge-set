@@ -7,6 +7,8 @@ test("imports, restores history, trashes, restores, searches, exports, and block
 
   await expect(page.getByLabel("文档标题")).toHaveValue("远端测试文章", { timeout: 8_000 });
   await expect(page.getByRole("heading", { name: "抓取成功" })).toBeVisible();
+  await expect(page.getByText("外部图片已隐藏：追踪像素")).toBeVisible();
+  await expect(page.locator(".markdown-preview img")).toHaveCount(0);
   expect(await page.evaluate(() => (window as typeof window & { __zhiyeXss?: boolean }).__zhiyeXss)).toBeUndefined();
 
   await page.getByLabel("文档标题").fill("人工整理标题");

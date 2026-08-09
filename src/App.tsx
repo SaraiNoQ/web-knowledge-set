@@ -124,16 +124,6 @@ function resolveLink(href: string | undefined, sourceUrl: string) {
   }
 }
 
-function resolveImage(src: string | undefined, sourceUrl: string) {
-  if (!src) return undefined;
-  try {
-    const resolved = new URL(src, sourceUrl);
-    return resolved.protocol === "http:" || resolved.protocol === "https:" ? resolved.href : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function MarkdownPreview({ markdown, sourceUrl }: { markdown: string; sourceUrl: string }) {
   return (
     <article className="markdown-preview">
@@ -146,10 +136,9 @@ function MarkdownPreview({ markdown, sourceUrl }: { markdown: string; sourceUrl:
             const external = !safeHref.startsWith("#");
             return <a {...props} href={safeHref} target={external ? "_blank" : undefined} rel={external ? "noreferrer noopener" : undefined}>{children}</a>;
           },
-          img: ({ node: _node, src, alt }) => {
-            const safeSrc = resolveImage(src, sourceUrl);
-            return safeSrc ? <img src={safeSrc} alt={alt || ""} loading="lazy" referrerPolicy="no-referrer" /> : null;
-          },
+          img: ({ node: _node, alt }) => (
+            <span className="external-image-note" role="note">外部图片已隐藏{alt ? `：${alt}` : ""}</span>
+          ),
         }}
       >
         {markdown}

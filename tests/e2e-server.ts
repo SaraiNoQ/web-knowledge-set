@@ -12,7 +12,7 @@ const capture: CaptureFunction = async (url) => ({
   publishedAt: "2026-08-09",
   finalUrl: url.replace("/requested", "/final"),
   canonicalUrl: url.replace("/requested", "/canonical"),
-  markdown: "# 抓取成功\n\n这是可搜索的本地知识正文。\n\n<script>window.__zhiyeXss = true</script>",
+  markdown: "# 抓取成功\n\n这是可搜索的本地知识正文。\n\n![追踪像素](http://127.0.0.1:9/private.png)\n\n<script>window.__zhiyeXss = true</script>",
   mode: "http",
   warning: null,
   rawHtml: "<article><h1>抓取成功</h1><p>这是可搜索的本地知识正文。</p></article>",

@@ -35,7 +35,7 @@ const contentTypes: Record<string, string> = {
 const contentSecurityPolicy = [
   "default-src 'self'",
   "connect-src 'self'",
-  "img-src 'self' data: http: https:",
+  "img-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self' data:",
   "script-src 'self'",
