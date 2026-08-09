@@ -1,6 +1,7 @@
 import type {
   ApiError,
   CaptureStatus,
+  DocumentDraft,
   DocumentListResponse,
   DocumentRevision,
   KnowledgeDocument,
@@ -12,6 +13,7 @@ export class ApiRequestError extends Error {
     readonly status: number,
     readonly code = "REQUEST_FAILED",
     readonly document?: KnowledgeDocument,
+    readonly draft?: DocumentDraft | null,
   ) {
     super(message);
     this.name = "ApiRequestError";
@@ -41,6 +43,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       response.status,
       payload?.error.code,
       payload?.error.document,
+      payload?.error.draft,
     );
   }
 
@@ -89,6 +92,36 @@ export const api = {
     return request<KnowledgeDocument>(`/api/documents/${encodeURIComponent(id)}`, { signal });
   },
 
+  getDocumentDraft(id: string, signal?: AbortSignal) {
+    return request<DocumentDraft | null>(`/api/documents/${encodeURIComponent(id)}/draft`, { signal });
+  },
+
+  saveDocumentDraft(
+    id: string,
+    draft: Omit<DocumentDraft, "documentId" | "draftRevision" | "updatedAt"> & {
+      expectedDraftRevision: number | null;
+    },
+  ) {
+    return request<DocumentDraft>(`/api/documents/${encodeURIComponent(id)}/draft`, {
+      method: "PUT",
+      body: JSON.stringify(draft),
+    });
+  },
+
+  deleteDocumentDraft(id: string, draftRevision: number) {
+    return request<void>(`/api/documents/${encodeURIComponent(id)}/draft`, {
+      method: "DELETE",
+      body: JSON.stringify({ draftRevision }),
+    });
+  },
+
+  desktopCloseReady(attemptId: string) {
+    return request<{ ok: true }>("/api/desktop/close-ready", {
+      method: "POST",
+      body: JSON.stringify({ attemptId }),
+    });
+  },
+
   updateDocument(id: string, patch: DocumentPatch) {
     return request<KnowledgeDocument>(`/api/documents/${encodeURIComponent(id)}`, {
       method: "PATCH",
@@ -117,10 +150,10 @@ export const api = {
     });
   },
 
-  permanentlyDeleteDocument(id: string, revision: number) {
+  permanentlyDeleteDocument(id: string, revision: number, draftRevision: number | null) {
     return request<void>(`/api/documents/${encodeURIComponent(id)}/permanent`, {
       method: "DELETE",
-      body: JSON.stringify({ revision }),
+      body: JSON.stringify({ revision, draftRevision }),
     });
   },
 

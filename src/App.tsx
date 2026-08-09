@@ -10,6 +10,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type {
   CaptureStatus,
+  DocumentDraft,
   DocumentRevision,
   DocumentSummary,
   KnowledgeDocument,
@@ -27,6 +28,10 @@ interface Draft {
   tags: string[];
 }
 
+interface RemoteDraftConflict {
+  remote: DocumentDraft | null;
+}
+
 const ACTIVE_STATUSES = new Set<CaptureStatus>(["queued", "fetching", "extracting"]);
 const STATUS_LABEL: Record<CaptureStatus, string> = {
   queued: "等待抓取",
@@ -41,7 +46,7 @@ function draftOf(document: KnowledgeDocument): Draft {
 }
 
 function draftsEqual(a: Draft, b: Draft) {
-  return a.title === b.title && a.markdown === b.markdown && a.tags.join("\0") === b.tags.join("\0");
+  return a.title.trim() === b.title.trim() && a.markdown === b.markdown && a.tags.join("\0") === b.tags.join("\0");
 }
 
 function formatDate(value: string) {
@@ -174,7 +179,10 @@ export default function App() {
   const [importNotice, setImportNotice] = useState("");
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [saveError, setSaveError] = useState("");
+  const [draftNotice, setDraftNotice] = useState("");
+  const [draftError, setDraftError] = useState("");
   const [conflict, setConflict] = useState<KnowledgeDocument | null>(null);
+  const [remoteDraftConflict, setRemoteDraftConflict] = useState<RemoteDraftConflict | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [lifecycleAction, setLifecycleAction] = useState<"delete" | "restore" | "permanent" | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -182,18 +190,25 @@ export default function App() {
   const [historyError, setHistoryError] = useState("");
   const [revisions, setRevisions] = useState<DocumentRevision[]>([]);
   const [restoringRevision, setRestoringRevision] = useState<number | null>(null);
+  const [closing, setClosing] = useState(false);
 
   const selectedIdRef = useRef(selectedId);
   const draftRef = useRef(draft);
+  const currentDocRef = useRef(currentDoc);
+  const persistedDraftRef = useRef<DocumentDraft | null>(null);
+  const draftSaveChain = useRef<Promise<void>>(Promise.resolve());
+  const draftSyncPendingRef = useRef(0);
+  const closeAttemptRef = useRef<string | null>(null);
   const saveInFlight = useRef(false);
   const readerPanelRef = useRef<HTMLElement>(null);
   selectedIdRef.current = selectedId;
   draftRef.current = draft;
+  currentDocRef.current = currentDoc;
 
   const persistedDraft = currentDoc ? draftOf(currentDoc) : null;
   const dirty = Boolean(draft && persistedDraft && !draftsEqual(draft, persistedDraft));
   const activeCapture = currentDoc ? ACTIVE_STATUSES.has(currentDoc.status) : false;
-  const editorLocked = Boolean(lifecycleAction) || restoringRevision !== null || Boolean(conflict && saveState === "saving");
+  const editorLocked = closing || Boolean(lifecycleAction) || restoringRevision !== null || Boolean(conflict && saveState === "saving");
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
   const refreshKnownTags = useCallback((signal?: AbortSignal) => {
@@ -220,6 +235,111 @@ export default function App() {
   const focusReader = useCallback(() => {
     window.requestAnimationFrame(() => readerPanelRef.current?.focus());
   }, []);
+
+  const enqueueDraftSync = useCallback((work: () => Promise<void>) => {
+    draftSyncPendingRef.current += 1;
+    const task = draftSaveChain.current.then(async () => {
+      try {
+        await work();
+      } finally {
+        draftSyncPendingRef.current -= 1;
+      }
+    });
+    draftSaveChain.current = task.catch(() => undefined);
+    return task;
+  }, []);
+
+  const reportDraftConflict = useCallback((documentId: string, error: unknown) => {
+    if (!(error instanceof ApiRequestError) || error.code !== "DRAFT_CONFLICT") return false;
+    if (selectedIdRef.current === documentId) {
+      setRemoteDraftConflict({ remote: error.draft ?? null });
+      setDraftError("草稿已在另一窗口发生变化，你的当前编辑仍保留在本窗口。");
+      setSaveState("conflict");
+    }
+    return true;
+  }, []);
+
+  const persistDraft = useCallback((
+    document: KnowledgeDocument,
+    value: Draft,
+    expectedDraftRevision?: number | null,
+  ) => {
+    const snapshot = { title: value.title, markdown: value.markdown, tags: [...value.tags] };
+    return enqueueDraftSync(async () => {
+      const known = persistedDraftRef.current;
+      const expected = expectedDraftRevision === undefined
+        ? known?.documentId === document.id ? known.draftRevision : null
+        : expectedDraftRevision;
+      let stored: DocumentDraft;
+      try {
+        stored = await api.saveDocumentDraft(document.id, {
+          expectedDraftRevision: expected,
+          baseRevision: document.revision,
+          ...snapshot,
+        });
+      } catch (error) {
+        reportDraftConflict(document.id, error);
+        throw error;
+      }
+      if (selectedIdRef.current === document.id) {
+        persistedDraftRef.current = stored;
+        const latestDocument = currentDocRef.current;
+        const latestValue = draftRef.current;
+        if (
+          latestDocument?.id === document.id && latestValue &&
+          draftsEqual(latestValue, draftOf(latestDocument))
+        ) {
+          try {
+            await api.deleteDocumentDraft(document.id, stored.draftRevision);
+          } catch (error) {
+            reportDraftConflict(document.id, error);
+            throw error;
+          }
+          if (persistedDraftRef.current?.draftRevision === stored.draftRevision) {
+            persistedDraftRef.current = null;
+          }
+        }
+        setDraftError("");
+      }
+    });
+  }, [enqueueDraftSync, reportDraftConflict]);
+
+  const tombstoneDraft = useCallback((documentId: string, expectedDraftRevision?: number) => {
+    return enqueueDraftSync(async () => {
+      const known = persistedDraftRef.current;
+      const expected = expectedDraftRevision ?? (
+        known?.documentId === documentId ? known.draftRevision : undefined
+      );
+      if (expected === undefined) return;
+      try {
+        await api.deleteDocumentDraft(documentId, expected);
+      } catch (error) {
+        reportDraftConflict(documentId, error);
+        throw error;
+      }
+      if (
+        selectedIdRef.current === documentId &&
+        persistedDraftRef.current?.documentId === documentId &&
+        persistedDraftRef.current.draftRevision === expected
+      ) {
+        persistedDraftRef.current = null;
+        setDraftError("");
+      }
+    });
+  }, [enqueueDraftSync, reportDraftConflict]);
+
+  const reloadDraftConflict = useCallback(async (documentId: string) => {
+    const [document, stored] = await Promise.all([
+      api.getDocument(documentId),
+      api.getDocumentDraft(documentId),
+    ]);
+    if (selectedIdRef.current !== documentId) return;
+    setCurrentDoc(document);
+    updateListItem(document);
+    setRemoteDraftConflict({ remote: stored });
+    setSaveState("conflict");
+    setDraftNotice("检测到另一个窗口写入的草稿，你的当前编辑未被覆盖。");
+  }, [updateListItem]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -282,17 +402,40 @@ export default function App() {
     setDetailError("");
     setSaveState("idle");
     setSaveError("");
+    setDraftNotice("");
+    setDraftError("");
+    persistedDraftRef.current = null;
     setConflict(null);
+    setRemoteDraftConflict(null);
     setHistoryOpen(false);
     setHistoryLoading(false);
     setHistoryError("");
     setRevisions([]);
     setRestoringRevision(null);
-    api.getDocument(selectedId, controller.signal)
-      .then((document) => {
+    Promise.all([
+      api.getDocument(selectedId, controller.signal),
+      api.getDocumentDraft(selectedId, controller.signal),
+    ])
+      .then(([document, stored]) => {
         setCurrentDoc(document);
-        setDraft(draftOf(document));
-        setTagText(document.tags.join(", "));
+        const serverDraft = draftOf(document);
+        const recovered = stored
+          ? { title: stored.title, markdown: stored.markdown, tags: [...stored.tags] }
+          : null;
+        if (stored && recovered && !draftsEqual(recovered, serverDraft)) {
+          persistedDraftRef.current = stored;
+          setDraft(recovered);
+          setTagText(recovered.tags.join(", "));
+          setDraftNotice("已恢复上次未正式保存的本地草稿。");
+          if (stored.baseRevision !== document.revision || document.deletedAt) {
+            setConflict(document);
+            setSaveState("conflict");
+          }
+        } else {
+          persistedDraftRef.current = stored;
+          setDraft(serverDraft);
+          setTagText(document.tags.join(", "));
+        }
       })
       .catch((error) => {
         if ((error as Error).name !== "AbortError") setDetailError((error as Error).message);
@@ -319,13 +462,50 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [currentDoc, selectedId, updateListItem]);
 
+  useEffect(() => {
+    const stored = persistedDraftRef.current;
+    if (
+      closing || remoteDraftConflict || saveState === "saving" || !dirty || !currentDoc || !draft ||
+      currentDoc.status !== "ready" ||
+      currentDoc.deletedAt ||
+      (stored?.documentId === currentDoc.id && draftsEqual(draft, stored))
+    ) return;
+    const document = currentDoc;
+    const snapshot = { title: draft.title, markdown: draft.markdown, tags: [...draft.tags] };
+    const timer = window.setTimeout(() => {
+      void persistDraft(document, snapshot).catch((error) => {
+        if (!(error instanceof ApiRequestError) || error.code !== "DRAFT_CONFLICT") {
+          setDraftError((error as Error).message);
+        }
+      });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [closing, currentDoc, dirty, draft, persistDraft, remoteDraftConflict, saveState]);
+
+  useEffect(() => {
+    const stored = persistedDraftRef.current;
+    if (
+      closing || remoteDraftConflict || dirty || !currentDoc || !draft ||
+      stored?.documentId !== currentDoc.id || !draftsEqual(draft, draftOf(currentDoc))
+    ) return;
+    void tombstoneDraft(currentDoc.id).catch((error) => {
+      if (!(error instanceof ApiRequestError) || error.code !== "DRAFT_CONFLICT") {
+        setDraftError((error as Error).message);
+      }
+    });
+  }, [closing, currentDoc, dirty, draft, remoteDraftConflict, tombstoneDraft]);
+
   const saveNow = useCallback(async () => {
-    if (!currentDoc || !draft || currentDoc.status !== "ready" || !dirty || saveInFlight.current || conflict) return;
+    if (
+      closeAttemptRef.current || !currentDoc || !draft || currentDoc.status !== "ready" || !dirty ||
+      saveInFlight.current || conflict || remoteDraftConflict
+    ) return;
     const sent = { ...draft, tags: [...draft.tags] };
     saveInFlight.current = true;
     setSaveState("saving");
     setSaveError("");
     try {
+      await persistDraft(currentDoc, sent);
       const updated = await api.updateDocument(currentDoc.id, { ...sent, revision: currentDoc.revision });
       if (selectedIdRef.current !== currentDoc.id) return;
       setCurrentDoc(updated);
@@ -333,13 +513,18 @@ export default function App() {
       refreshKnownTags();
       const unchangedSinceRequest = Boolean(draftRef.current && draftsEqual(draftRef.current, sent));
       if (unchangedSinceRequest) {
+        persistedDraftRef.current = null;
         setDraft(draftOf(updated));
         setTagText(updated.tags.join(", "));
+        setDraftNotice("");
       }
       setSaveState(unchangedSinceRequest ? "saved" : "idle");
     } catch (error) {
       if (selectedIdRef.current !== currentDoc.id) return;
-      if (error instanceof ApiRequestError && error.status === 409 && error.document) {
+      if (error instanceof ApiRequestError && error.code === "DRAFT_CONFLICT") {
+        setSaveError(error.message);
+        setSaveState("conflict");
+      } else if (error instanceof ApiRequestError && error.status === 409 && error.document) {
         setConflict(error.document);
         setSaveState("conflict");
       } else {
@@ -349,13 +534,13 @@ export default function App() {
     } finally {
       saveInFlight.current = false;
     }
-  }, [conflict, currentDoc, dirty, draft, refreshKnownTags, updateListItem]);
+  }, [conflict, currentDoc, dirty, draft, persistDraft, refreshKnownTags, remoteDraftConflict, updateListItem]);
 
   useEffect(() => {
-    if (!dirty || saveState === "conflict" || saveState === "error" || currentDoc?.status !== "ready") return;
+    if (closing || !dirty || saveState === "conflict" || saveState === "error" || currentDoc?.status !== "ready") return;
     const timer = window.setTimeout(saveNow, 800);
     return () => window.clearTimeout(timer);
-  }, [currentDoc?.status, dirty, saveNow, saveState]);
+  }, [closing, currentDoc?.status, dirty, saveNow, saveState]);
 
   useEffect(() => {
     if (saveState !== "saved") return;
@@ -375,18 +560,75 @@ export default function App() {
   }, [saveNow]);
 
   useEffect(() => {
-    // ponytail: warning only; persistent draft recovery and the Tauri close handshake belong to the next M1 slice.
     const warnUnsaved = (event: BeforeUnloadEvent) => {
-      if (!dirty) return;
+      const document = currentDocRef.current;
+      const value = draftRef.current;
+      const stored = persistedDraftRef.current;
+      const storedForDocument = Boolean(document && stored?.documentId === document.id);
+      const contentIsDirty = Boolean(document && value && !draftsEqual(value, draftOf(document)));
+      const safelyPersisted = contentIsDirty
+        ? Boolean(value && storedForDocument && stored && draftsEqual(value, stored))
+        : !storedForDocument || Boolean(document && stored && draftsEqual(stored, draftOf(document)));
+      if (
+        draftSyncPendingRef.current === 0 &&
+        !remoteDraftConflict &&
+        safelyPersisted
+      ) return;
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", warnUnsaved);
     return () => window.removeEventListener("beforeunload", warnUnsaved);
-  }, [dirty]);
+  }, [remoteDraftConflict]);
+
+  useEffect(() => {
+    const prepareClose = (event: Event) => {
+      const attemptId = (event as CustomEvent<{ attemptId?: unknown }>).detail?.attemptId;
+      if (typeof attemptId !== "string" || !/^[1-9]\d{0,19}$/u.test(attemptId)) {
+        setDraftError("关闭请求缺少有效标识，请再次关闭窗口重试。");
+        return;
+      }
+      if (closeAttemptRef.current) return;
+      closeAttemptRef.current = attemptId;
+      setClosing(true);
+      void (async () => {
+        try {
+          await draftSaveChain.current;
+          if (closeAttemptRef.current !== attemptId) return;
+          const document = currentDocRef.current;
+          const value = draftRef.current;
+          if (document && value) {
+            if (draftsEqual(value, draftOf(document))) await tombstoneDraft(document.id);
+            else await persistDraft(document, value);
+          }
+          if (closeAttemptRef.current !== attemptId) return;
+          await api.desktopCloseReady(attemptId);
+        } catch (error) {
+          if (closeAttemptRef.current !== attemptId) return;
+          closeAttemptRef.current = null;
+          setClosing(false);
+          setDraftError(`关闭前无法保存草稿：${(error as Error).message}`);
+        }
+      })();
+    };
+    const closeTimedOut = (event: Event) => {
+      const attemptId = (event as CustomEvent<{ attemptId?: unknown }>).detail?.attemptId;
+      if (attemptId !== closeAttemptRef.current) return;
+      closeAttemptRef.current = null;
+      setClosing(false);
+      setDraftError("关闭确认超时，请再次关闭窗口重试。");
+    };
+    window.addEventListener("zhiye:close-requested", prepareClose);
+    window.addEventListener("zhiye:close-timeout", closeTimedOut);
+    return () => {
+      window.removeEventListener("zhiye:close-requested", prepareClose);
+      window.removeEventListener("zhiye:close-timeout", closeTimedOut);
+    };
+  }, [persistDraft, tombstoneDraft]);
 
   const handleImport = async (event: FormEvent) => {
     event.preventDefault();
+    if (closeAttemptRef.current) return;
     setImportError("");
     setImportNotice("");
     if (dirty && !window.confirm("当前修改尚未保存，继续收取新网页吗？")) return;
@@ -423,19 +665,19 @@ export default function App() {
   };
 
   const selectDocument = (id: string) => {
-    if (id === selectedId || lifecycleAction || restoringRevision !== null) return;
+    if (closeAttemptRef.current || id === selectedId || lifecycleAction || restoringRevision !== null) return;
     if (dirty && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
     setSelectedId(id);
   };
 
   const closeDocument = () => {
-    if (lifecycleAction || restoringRevision !== null) return;
+    if (closeAttemptRef.current || lifecycleAction || restoringRevision !== null) return;
     if (dirty && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
     setSelectedId(null);
   };
 
   const switchLibrary = (trashView: boolean) => {
-    if (trashView === inTrash || lifecycleAction || restoringRevision !== null) return;
+    if (closeAttemptRef.current || trashView === inTrash || lifecycleAction || restoringRevision !== null) return;
     if (dirty && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
     setInTrash(trashView);
     setPage(1);
@@ -472,7 +714,7 @@ export default function App() {
   };
 
   const moveToTrash = async () => {
-    if (!currentDoc || dirty || !window.confirm(`把“${currentDoc.title || "未命名网页"}”移入回收站？之后可以恢复。`)) return;
+    if (closeAttemptRef.current || remoteDraftConflict || !currentDoc || dirty || !window.confirm(`把“${currentDoc.title || "未命名网页"}”移入回收站？之后可以恢复。`)) return;
     setLifecycleAction("delete");
     setDetailError("");
     try {
@@ -493,14 +735,22 @@ export default function App() {
   };
 
   const restoreFromTrash = async () => {
-    if (!currentDoc) return;
+    if (closeAttemptRef.current || !currentDoc) return;
+    const recovered = dirty && draft ? { ...draft, tags: [...draft.tags] } : null;
     setLifecycleAction("restore");
     setDetailError("");
     try {
       const restored = await api.restoreDocument(currentDoc.id);
       setCurrentDoc(restored);
-      setDraft(draftOf(restored));
-      setTagText(restored.tags.join(", "));
+      if (recovered) {
+        setDraft(recovered);
+        setTagText(recovered.tags.join(", "));
+        setConflict(restored);
+        setSaveState("conflict");
+      } else {
+        setDraft(draftOf(restored));
+        setTagText(restored.tags.join(", "));
+      }
       setInTrash(false);
       setPage(1);
       setItems([]);
@@ -513,21 +763,38 @@ export default function App() {
   };
 
   const permanentlyDelete = async () => {
-    if (!currentDoc || !window.confirm(`永久删除“${currentDoc.title || "未命名网页"}”？抓取快照和历史版本也会被删除，此操作无法撤销。`)) return;
+    if (closeAttemptRef.current || !currentDoc || dirty || conflict || remoteDraftConflict || !window.confirm(`永久删除“${currentDoc.title || "未命名网页"}”？抓取快照和历史版本也会被删除，此操作无法撤销。`)) return;
     setLifecycleAction("permanent");
     setDetailError("");
     try {
-      await api.permanentlyDeleteDocument(currentDoc.id, currentDoc.revision);
+      const stored = persistedDraftRef.current;
+      await api.permanentlyDeleteDocument(
+        currentDoc.id,
+        currentDoc.revision,
+        stored?.documentId === currentDoc.id ? stored.draftRevision : null,
+      );
       setItems((previous) => previous.filter((item) => item.id !== currentDoc.id));
       setTotal((value) => Math.max(0, value - 1));
       setPage(1);
       setSelectedId(null);
       focusReader();
     } catch (error) {
+      if (error instanceof ApiRequestError && error.code === "DRAFT_EXISTS") {
+        try {
+          await reloadDraftConflict(currentDoc.id);
+        } catch (reloadError) {
+          setDetailError((reloadError as Error).message);
+          return;
+        }
+        setDetailError((error as Error).message);
+        return;
+      }
       if (error instanceof ApiRequestError && error.status === 409 && error.document) {
         setCurrentDoc(error.document);
-        setDraft(draftOf(error.document));
-        setTagText(error.document.tags.join(", "));
+        if (error.code !== "DRAFT_EXISTS") {
+          setDraft(draftOf(error.document));
+          setTagText(error.document.tags.join(", "));
+        }
       }
       setDetailError((error as Error).message);
     } finally {
@@ -536,6 +803,7 @@ export default function App() {
   };
 
   const toggleHistory = async () => {
+    if (closeAttemptRef.current) return;
     if (!currentDoc || historyOpen) {
       setHistoryOpen(false);
       return;
@@ -555,7 +823,7 @@ export default function App() {
   };
 
   const restoreRevision = async (revision: DocumentRevision) => {
-    if (!currentDoc || dirty) return;
+    if (closeAttemptRef.current || !currentDoc || dirty) return;
     setRestoringRevision(revision.revision);
     setHistoryError("");
     try {
@@ -584,36 +852,110 @@ export default function App() {
     }
   };
 
-  const acceptServerVersion = () => {
-    if (!conflict) return;
-    setCurrentDoc(conflict);
-    setDraft(draftOf(conflict));
-    setTagText(conflict.tags.join(", "));
-    updateListItem(conflict);
-    if (conflict.deletedAt) {
-      setInTrash(true);
-      setTag("");
-      setPage(1);
-      setItems([]);
+  const useRemoteDraft = () => {
+    if (closeAttemptRef.current || !currentDoc || !remoteDraftConflict) return;
+    const remote = remoteDraftConflict.remote;
+    let hasDocumentConflict = Boolean(conflict);
+    if (remote) {
+      const value = { title: remote.title, markdown: remote.markdown, tags: [...remote.tags] };
+      persistedDraftRef.current = remote;
+      setDraft(value);
+      setTagText(value.tags.join(", "));
+      setDraftNotice("已切换到另一窗口的草稿。");
+      if (remote.baseRevision !== currentDoc.revision || currentDoc.deletedAt) {
+        setConflict(currentDoc);
+        hasDocumentConflict = true;
+      }
+    } else {
+      persistedDraftRef.current = null;
+      setDraft(draftOf(currentDoc));
+      setTagText(currentDoc.tags.join(", "));
+      setDraftNotice("另一窗口已放弃草稿，已恢复正式版本。");
     }
-    setConflict(null);
-    setSaveState("idle");
-    focusReader();
+    setRemoteDraftConflict(null);
+    setDraftError("");
+    setSaveState(hasDocumentConflict ? "conflict" : "idle");
+  };
+
+  const keepLocalDraft = async () => {
+    if (closeAttemptRef.current || !currentDoc || !draft || !remoteDraftConflict) return;
+    const local = { ...draft, tags: [...draft.tags] };
+    const expected = remoteDraftConflict.remote?.draftRevision ?? null;
+    setSaveState("saving");
+    setSaveError("");
+    try {
+      await persistDraft(currentDoc, local, expected);
+      setRemoteDraftConflict(null);
+      setDraftNotice("已保留本窗口的草稿。");
+      setSaveState(conflict ? "conflict" : "idle");
+    } catch (error) {
+      if (!(error instanceof ApiRequestError) || error.code !== "DRAFT_CONFLICT") {
+        setDraftError((error as Error).message);
+        setSaveState("error");
+      }
+    }
+  };
+
+  const acceptServerVersion = async () => {
+    if (closeAttemptRef.current || remoteDraftConflict || !conflict) return;
+    const server = conflict;
+    setSaveState("saving");
+    setSaveError("");
+    try {
+      await tombstoneDraft(server.id);
+      const latest = await api.getDocument(server.id);
+      persistedDraftRef.current = null;
+      setCurrentDoc(latest);
+      setDraft(draftOf(latest));
+      setTagText(latest.tags.join(", "));
+      updateListItem(latest);
+      if (latest.deletedAt) {
+        setInTrash(true);
+        setTag("");
+        setPage(1);
+        setItems([]);
+      }
+      setConflict(null);
+      setRemoteDraftConflict(null);
+      setDraftNotice("");
+      setSaveState("idle");
+      focusReader();
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.code === "DRAFT_CONFLICT") {
+        try {
+          await reloadDraftConflict(server.id);
+        } catch (reloadError) {
+          setSaveError((reloadError as Error).message);
+          setDraftError((reloadError as Error).message);
+          setSaveState("conflict");
+          return;
+        }
+        setSaveError((error as Error).message);
+        setDraftError((error as Error).message);
+        return;
+      }
+      setSaveError((error as Error).message);
+      setDraftError((error as Error).message);
+      setSaveState("conflict");
+    }
   };
 
   const keepLocalVersion = async () => {
-    if (!conflict || !draft) return;
+    if (closeAttemptRef.current || remoteDraftConflict || !conflict || !draft) return;
     const local = { ...draft, tags: [...draft.tags] };
     const wasDeleted = Boolean(conflict.deletedAt);
     setSaveState("saving");
     setSaveError("");
     try {
       const base = wasDeleted ? await api.restoreDocument(conflict.id) : conflict;
+      await persistDraft(base, local);
       const updated = await api.updateDocument(base.id, { ...local, revision: base.revision });
+      persistedDraftRef.current = null;
       setCurrentDoc(updated);
       setDraft(draftOf(updated));
       setTagText(updated.tags.join(", "));
       setConflict(null);
+      setDraftNotice("");
       setSaveState("saved");
       setPage(1);
       if (wasDeleted) {
@@ -627,7 +969,9 @@ export default function App() {
       void api.listTags().then(setKnownTags).catch(() => undefined);
       focusReader();
     } catch (error) {
-      if (error instanceof ApiRequestError && error.status === 409 && error.document) {
+      if (error instanceof ApiRequestError && error.code === "DRAFT_CONFLICT") {
+        // persistDraft keeps the local value and exposes the remote draft resolution banner.
+      } else if (error instanceof ApiRequestError && error.status === 409 && error.document) {
         setConflict(error.document);
       } else {
         setDetailError((error as Error).message);
@@ -661,8 +1005,8 @@ export default function App() {
         <form className="capture-form" onSubmit={handleImport}>
           <label className="sr-only" htmlFor="capture-url">网页地址</label>
           <span className="url-prefix" aria-hidden="true">URL</span>
-          <input id="capture-url" value={importUrl} onChange={(event) => setImportUrl(event.target.value)} placeholder="https://example.com/an-article" inputMode="url" autoComplete="url" disabled={importing} />
-          <button className="primary-button" type="submit" disabled={importing || !importUrl.trim()}>
+          <input id="capture-url" value={importUrl} onChange={(event) => setImportUrl(event.target.value)} placeholder="https://example.com/an-article" inputMode="url" autoComplete="url" disabled={importing || closing} />
+          <button className="primary-button" type="submit" disabled={closing || importing || !importUrl.trim()}>
             {importing ? <><Spinner />收取中</> : <><span>收取网页</span><Icon><path d="M5 12h14M13 6l6 6-6 6" /></Icon></>}
           </button>
         </form>
@@ -736,14 +1080,14 @@ export default function App() {
                   <a href={currentDoc.finalUrl || currentDoc.sourceUrl} target="_blank" rel="noreferrer noopener">{sourceName(currentDoc.finalUrl || currentDoc.sourceUrl)}<Icon size={13}><path d="M14 5h5v5M10 14 19 5M19 14v5H5V5h5" /></Icon></a>
                   <span>{formatDate(currentDoc.updatedAt)}</span>
                 </div>
-                <label className="title-field"><span className="sr-only">文档标题</span><textarea rows={2} value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} disabled={Boolean(currentDoc.deletedAt) || currentDoc.status !== "ready" || editorLocked} /></label>
+                <label className="title-field"><span className="sr-only">文档标题</span><textarea rows={2} value={draft.title} onChange={(event) => { if (!closeAttemptRef.current) setDraft({ ...draft, title: event.target.value }); }} disabled={Boolean(currentDoc.deletedAt) || currentDoc.status !== "ready" || editorLocked} /></label>
                 <div className="document-meta">
-                  <label className="tag-field"><span>标签</span><input value={tagText} onChange={(event) => { setTagText(event.target.value); setDraft({ ...draft, tags: parseTags(event.target.value) }); }} placeholder="用逗号分隔" disabled={Boolean(currentDoc.deletedAt) || currentDoc.status !== "ready" || editorLocked} /></label>
+                  <label className="tag-field"><span>标签</span><input value={tagText} onChange={(event) => { if (!closeAttemptRef.current) { setTagText(event.target.value); setDraft({ ...draft, tags: parseTags(event.target.value) }); } }} placeholder="用逗号分隔" disabled={Boolean(currentDoc.deletedAt) || currentDoc.status !== "ready" || editorLocked} /></label>
                   <dl><div><dt>作者</dt><dd>{currentDoc.author || "未识别"}</dd></div><div><dt>收取</dt><dd>{currentDoc.captureMode === "browser" ? "浏览器" : currentDoc.captureMode === "http" ? "直接读取" : "—"}</dd></div></dl>
                 </div>
                 {!currentDoc.deletedAt && (
                   <div className="document-actions">
-                    <button type="button" className="text-button danger" onClick={() => void moveToTrash()} disabled={Boolean(lifecycleAction) || dirty || saveState === "saving"} title={dirty ? "请先保存当前修改" : undefined}>
+                    <button type="button" className="text-button danger" onClick={() => void moveToTrash()} disabled={closing || Boolean(remoteDraftConflict) || Boolean(lifecycleAction) || dirty || saveState === "saving"} title={dirty || remoteDraftConflict ? "请先处理当前草稿" : undefined}>
                       {lifecycleAction === "delete" ? "正在移除…" : "移入回收站"}
                     </button>
                   </div>
@@ -751,15 +1095,19 @@ export default function App() {
               </header>
 
               {currentDoc.warning && <div className="notice warning" role="status"><strong>注意</strong><span>{currentDoc.warning}</span></div>}
+              {draftNotice && <div className="notice warning" role="status"><strong>草稿恢复</strong><span>{draftNotice}</span></div>}
+              {draftError && <div className="notice error" role="alert"><strong>草稿未保存</strong><span>{draftError}</span></div>}
               {detailError && <div className="notice error" role="alert"><strong>请求失败</strong><span>{detailError}</span></div>}
+              {remoteDraftConflict && <div className="conflict-banner" role="alert"><div><strong>草稿在另一窗口发生了变化</strong><span>{remoteDraftConflict.remote ? "你的当前编辑仍在内存中，可以显式保留，或切换到另一窗口的草稿。" : "另一窗口已放弃草稿；你可保留当前编辑，或恢复正式版本。"}</span></div><div><button type="button" onClick={useRemoteDraft} disabled={closing || saveState === "saving"}>{remoteDraftConflict.remote ? "使用另一窗口草稿" : "恢复正式版本"}</button><button type="button" className="primary-button" onClick={() => void keepLocalDraft()} disabled={closing || saveState === "saving"}>{saveState === "saving" ? "处理中…" : "保留我的草稿"}</button></div></div>}
+              {conflict && <div className="conflict-banner" role="alert"><div><strong>{conflict.deletedAt ? "这篇知识已被移入回收站" : "这篇知识在别处被修改过"}</strong><span>{conflict.deletedAt ? "可接受回收站状态，或恢复文档后保存你的本地修改。" : "选择保留服务器新版，或基于新版继续保存你的文字。"}</span></div><div><button type="button" onClick={() => void acceptServerVersion()} disabled={closing || Boolean(remoteDraftConflict) || saveState === "saving"}>{conflict.deletedAt ? "查看回收站版本" : "使用新版"}</button><button type="button" className="primary-button" onClick={() => void keepLocalVersion()} disabled={closing || Boolean(remoteDraftConflict) || saveState === "saving"}>{saveState === "saving" ? "处理中…" : "保留我的修改"}</button></div></div>}
 
               {currentDoc.deletedAt ? (
                 <div className="trash-workbench">
                   <div className="trash-callout">
                     <div><span className="eyebrow">READ ONLY · {formatDateTime(currentDoc.deletedAt)}</span><h3>这张织片在回收站中</h3><p>正文与历史版本仍完整保留。恢复后才能继续编辑。</p></div>
                     <div className="trash-actions">
-                      <button type="button" className="primary-button" onClick={() => void restoreFromTrash()} disabled={Boolean(lifecycleAction)}>{lifecycleAction === "restore" ? <><Spinner />恢复中</> : "恢复到资料库"}</button>
-                      <button type="button" className="text-button danger" onClick={() => void permanentlyDelete()} disabled={Boolean(lifecycleAction)}>{lifecycleAction === "permanent" ? "删除中…" : "永久删除"}</button>
+                      <button type="button" className="primary-button" onClick={() => void restoreFromTrash()} disabled={closing || Boolean(lifecycleAction)}>{lifecycleAction === "restore" ? <><Spinner />恢复中</> : "恢复到资料库"}</button>
+                      <button type="button" className="text-button danger" onClick={() => void permanentlyDelete()} disabled={closing || Boolean(lifecycleAction) || dirty || Boolean(conflict) || Boolean(remoteDraftConflict)} title={dirty || conflict || remoteDraftConflict ? "请先处理恢复的本地草稿" : undefined}>{lifecycleAction === "permanent" ? "删除中…" : "永久删除"}</button>
                     </div>
                   </div>
                   <section className="trash-preview" aria-label="回收站文档预览">
@@ -792,15 +1140,13 @@ export default function App() {
                     <div className={`save-indicator save-${saveState}`} aria-live="polite">
                       {saveState === "saving" ? <><Spinner />正在保存</> : saveState === "saved" ? "已保存" : saveState === "error" ? "保存失败" : saveState === "conflict" ? "版本冲突" : dirty ? "未保存" : "已同步"}
                     </div>
-                    {saveState === "error" && <button type="button" className="text-button danger" onClick={() => void saveNow()}>重试</button>}
-                    <button type="button" className="text-button save-button" onClick={() => void saveNow()} disabled={!dirty || saveState === "saving" || saveState === "conflict"} title="保存（⌘S）">保存</button>
-                    <button type="button" className="history-button" onClick={() => void toggleHistory()} disabled={dirty || saveState === "saving"} aria-expanded={historyOpen} aria-controls="revision-history">修订历史</button>
+                    {saveState === "error" && <button type="button" className="text-button danger" onClick={() => void saveNow()} disabled={closing}>重试</button>}
+                    <button type="button" className="text-button save-button" onClick={() => void saveNow()} disabled={closing || !dirty || saveState === "saving" || saveState === "conflict"} title="保存（⌘S）">保存</button>
+                    <button type="button" className="history-button" onClick={() => void toggleHistory()} disabled={closing || dirty || saveState === "saving"} aria-expanded={historyOpen} aria-controls="revision-history">修订历史</button>
                     <a className="export-button" href={api.exportUrl(currentDoc.id)} download><Icon size={15}><path d="M12 3v12M7 10l5 5 5-5M5 20h14" /></Icon>导出 .md</a>
                   </div>
 
                   {saveState === "error" && <div className="inline-error" role="alert">{saveError}</div>}
-                  {conflict && <div className="conflict-banner" role="alert"><div><strong>{conflict.deletedAt ? "这篇知识已被移入回收站" : "这篇知识在别处被修改过"}</strong><span>{conflict.deletedAt ? "可接受回收站状态，或恢复文档后保存你的本地修改。" : "选择保留服务器新版，或基于新版继续保存你的文字。"}</span></div><div><button type="button" onClick={acceptServerVersion} disabled={saveState === "saving"}>{conflict.deletedAt ? "查看回收站版本" : "使用新版"}</button><button type="button" className="primary-button" onClick={() => void keepLocalVersion()} disabled={saveState === "saving"}>{saveState === "saving" ? "处理中…" : "保留我的修改"}</button></div></div>}
-
                   {historyOpen && (
                     <aside id="revision-history" className="revision-panel" aria-label="修订历史">
                       <header><div><span className="eyebrow">VERSION THREAD</span><h3>修订历史</h3></div><button type="button" onClick={() => setHistoryOpen(false)} aria-label="关闭修订历史">×</button></header>
@@ -816,7 +1162,7 @@ export default function App() {
                   )}
 
                   <div className={`editor-grid mode-${mode}`}>
-                    {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><div className="pane-label">MARKDOWN</div><MarkdownEditor value={draft.markdown} onChange={(markdown) => setDraft((value) => value ? { ...value, markdown } : value)} readOnly={editorLocked} /></section>}
+                    {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><div className="pane-label">MARKDOWN</div><MarkdownEditor value={draft.markdown} onChange={(markdown) => { if (!closeAttemptRef.current) setDraft((value) => value ? { ...value, markdown } : value); }} readOnly={editorLocked} /></section>}
                     {mode !== "edit" && <section className="preview-pane" aria-label="Markdown 预览"><div className="pane-label">PREVIEW</div>{draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} /> : <StatePanel kind="empty" title="这里还没有文字">在编辑区写下 Markdown，预览会同步出现。</StatePanel>}</section>}
                   </div>
                 </div>

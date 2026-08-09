@@ -18,7 +18,13 @@ const capture: CaptureFunction = async (url) => ({
   rawHtml: "<article><h1>抓取成功</h1><p>这是可搜索的本地知识正文。</p></article>",
   httpStatus: 200,
 });
-const app = createApp({ dataDir, staticDir: resolve("dist"), capture, dev: true });
+const app = createApp({
+  dataDir,
+  staticDir: resolve("dist"),
+  capture,
+  dev: true,
+  onDesktopCloseReady: () => undefined,
+});
 const server = createServer((request, response) => void app.handler(request, response));
 
 async function close() {

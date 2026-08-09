@@ -124,6 +124,125 @@ test("failed capture stays durable until an explicit retry", () => {
   }
 });
 
+test("drafts survive restart and only matching document saves clear them", () => {
+  const directory = mkdtempSync(join(tmpdir(), "zhiye-drafts-"));
+  let db = openDatabase(directory);
+  try {
+    const created = db.createOrGetDocument("https://example.com/draft").document;
+    const job = db.claimNextCapture();
+    assert.ok(job);
+    const ready = db.completeCapture(job, {
+      title: "Published title",
+      author: null,
+      publishedAt: null,
+      finalUrl: created.sourceUrl,
+      canonicalUrl: null,
+      markdown: "Published body",
+      mode: "http",
+      warning: null,
+      httpStatus: 200,
+    }, null);
+    const firstDraft = db.saveDocumentDraft(ready.id, null, ready.revision, "", "Recovered body", ["Local"]);
+    assert.equal(firstDraft.kind, "saved");
+    if (firstDraft.kind !== "saved") return;
+    assert.equal(firstDraft.draft.draftRevision, 1);
+    db.close();
+
+    db = openDatabase(directory);
+    const recovered = db.getDocumentDraft(ready.id);
+    assert.ok(recovered);
+    assert.match(recovered.updatedAt, /^\d{4}-\d{2}-\d{2}T/u);
+    assert.deepEqual({ ...recovered, updatedAt: undefined }, {
+      documentId: ready.id,
+      draftRevision: 1,
+      baseRevision: ready.revision,
+      title: "",
+      markdown: "Recovered body",
+      tags: ["Local"],
+      updatedAt: undefined,
+    });
+    const newerDraft = db.saveDocumentDraft(
+      ready.id,
+      firstDraft.draft.draftRevision,
+      ready.revision,
+      "Newer draft",
+      "Keep me",
+      ["Local"],
+    );
+    assert.equal(newerDraft.kind, "saved");
+    if (newerDraft.kind !== "saved") return;
+    assert.equal(newerDraft.draft.draftRevision, 2);
+    const stalePut = db.saveDocumentDraft(
+      ready.id,
+      firstDraft.draft.draftRevision,
+      ready.revision,
+      "Stale draft",
+      "Must not win",
+      [],
+    );
+    assert.equal(stalePut.kind, "conflict");
+    if (stalePut.kind !== "conflict") return;
+    assert.equal(stalePut.draft?.markdown, "Keep me");
+    assert.equal(db.deleteDocumentDraft(ready.id, firstDraft.draft.draftRevision).kind, "conflict");
+    assert.equal(db.getDocumentDraft(ready.id)?.draftRevision, 2);
+    const official = db.updateDocument(ready.id, ready.revision, {
+      title: "Different official edit",
+      markdown: "Official body",
+      tags: [],
+    });
+    assert.equal(official.kind, "updated");
+    assert.equal(db.getDocumentDraft(ready.id)?.markdown, "Keep me");
+    if (official.kind !== "updated") return;
+    const finalDraft = db.saveDocumentDraft(
+      ready.id,
+      newerDraft.draft.draftRevision,
+      official.document.revision,
+      "Final",
+      "Persisted",
+      ["Done"],
+    );
+    assert.equal(finalDraft.kind, "saved");
+    if (finalDraft.kind !== "saved") return;
+    assert.equal(
+      db.updateDocument(ready.id, official.document.revision, {
+        title: "Final",
+        markdown: "Persisted",
+        tags: ["Done"],
+      }).kind,
+      "updated",
+    );
+    assert.equal(db.getDocumentDraft(ready.id), null);
+    const staleRevive = db.saveDocumentDraft(
+      ready.id,
+      finalDraft.draft.draftRevision,
+      official.document.revision + 1,
+      "Stale revive",
+      "Must stay deleted",
+      [],
+    );
+    assert.equal(staleRevive.kind, "conflict");
+    if (staleRevive.kind !== "conflict") return;
+    assert.equal(staleRevive.draft, null);
+    const recreated = db.saveDocumentDraft(
+      ready.id,
+      null,
+      official.document.revision + 1,
+      "Recreated",
+      "New draft",
+      [],
+    );
+    assert.equal(recreated.kind, "saved");
+    if (recreated.kind !== "saved") return;
+    assert.ok(recreated.draft.draftRevision > finalDraft.draft.draftRevision);
+    assert.equal(db.deleteDocumentDraft(ready.id, finalDraft.draft.draftRevision).kind, "conflict");
+    assert.equal(db.deleteDocumentDraft(ready.id, recreated.draft.draftRevision).kind, "deleted");
+    assert.equal(db.getDocumentDraft(ready.id), null);
+  } finally {
+    db.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("manual revisions can be restored and trash deletion removes tracked snapshots", () => {
   const fixture = database();
   try {
@@ -201,6 +320,17 @@ test("manual revisions can be restored and trash deletion removes tracked snapsh
 
     const trashed = fixture.db.softDeleteDocument(ready.id);
     assert.equal(trashed.kind, "deleted");
+    const localDraft = fixture.db.saveDocumentDraft(
+      ready.id,
+      null,
+      revisionRestore.document.revision,
+      "Local draft",
+      "Keep",
+      [],
+    );
+    assert.equal(localDraft.kind, "saved");
+    if (localDraft.kind !== "saved") return;
+    assert.equal(fixture.db.getDocumentDraft(ready.id)?.markdown, "Keep");
     assert.deepEqual(fixture.db.listTags(), []);
     assert.equal(fixture.db.listDocuments().total, 0);
     assert.equal(fixture.db.listDocuments({ q: "First", trash: "only" }).total, 1);
@@ -217,14 +347,29 @@ test("manual revisions can be restored and trash deletion removes tracked snapsh
     const deletedAgain = fixture.db.softDeleteDocument(ready.id);
     assert.equal(deletedAgain.kind, "deleted");
     if (deletedAgain.kind !== "deleted") return;
-    assert.equal(fixture.db.permanentlyDeleteDocument(ready.id, deletedAgain.document.revision - 1).kind, "conflict");
-    assert.equal(fixture.db.permanentlyDeleteDocument(ready.id, deletedAgain.document.revision).kind, "deleted");
+    assert.equal(
+      fixture.db.permanentlyDeleteDocument(ready.id, deletedAgain.document.revision - 1, null).kind,
+      "conflict",
+    );
+    assert.equal(
+      fixture.db.permanentlyDeleteDocument(ready.id, deletedAgain.document.revision, null).kind,
+      "draft_exists",
+    );
+    assert.equal(
+      fixture.db.permanentlyDeleteDocument(
+        ready.id,
+        deletedAgain.document.revision,
+        localDraft.draft.draftRevision,
+      ).kind,
+      "deleted",
+    );
     assert.equal(existsSync(snapshot), false);
     assert.equal(
       (fixture.db.sql.prepare("SELECT count(*) AS total FROM file_deletions").get() as { total: number }).total,
       0,
     );
     assert.equal(fixture.db.getDocument(ready.id), null);
+    assert.equal(fixture.db.getDocumentDraft(ready.id), null);
     assert.equal(fixture.db.listDocumentRevisions(ready.id), null);
   } finally {
     fixture.close();
@@ -252,7 +397,10 @@ test("snapshot deletion failure keeps the trashed document tracked", () => {
     const deleted = fixture.db.softDeleteDocument(created.id);
     assert.equal(deleted.kind, "deleted");
     if (deleted.kind !== "deleted") return;
-    assert.equal(fixture.db.permanentlyDeleteDocument(created.id, deleted.document.revision).kind, "snapshot_failed");
+    assert.equal(
+      fixture.db.permanentlyDeleteDocument(created.id, deleted.document.revision, null).kind,
+      "snapshot_failed",
+    );
     assert.ok(fixture.db.getDocument(created.id)?.deletedAt);
   } finally {
     fixture.close();
@@ -291,7 +439,10 @@ test("snapshot cleanup rejects traversal and symbolic links", () => {
       const deleted = fixture.db.softDeleteDocument(created.id);
       assert.equal(deleted.kind, "deleted");
       if (deleted.kind !== "deleted") continue;
-      assert.equal(fixture.db.permanentlyDeleteDocument(created.id, deleted.document.revision).kind, "snapshot_failed");
+      assert.equal(
+        fixture.db.permanentlyDeleteDocument(created.id, deleted.document.revision, null).kind,
+        "snapshot_failed",
+      );
       assert.ok(fixture.db.getDocument(created.id)?.deletedAt);
     }
     assert.equal(existsSync(victim), true);
@@ -329,7 +480,7 @@ test("a database failure cannot delete a document snapshot first", () => {
     `);
 
     assert.throws(
-      () => fixture.db.permanentlyDeleteDocument(created.id, deleted.document.revision),
+      () => fixture.db.permanentlyDeleteDocument(created.id, deleted.document.revision, null),
       /simulated database failure/u,
     );
     assert.equal(existsSync(snapshot), true);
@@ -397,13 +548,19 @@ test("a shared snapshot is deleted only after its last document", () => {
     const first = fixture.db.softDeleteDocument(documents[0].id);
     assert.equal(first.kind, "deleted");
     if (first.kind !== "deleted") return;
-    assert.equal(fixture.db.permanentlyDeleteDocument(documents[0].id, first.document.revision).kind, "deleted");
+    assert.equal(
+      fixture.db.permanentlyDeleteDocument(documents[0].id, first.document.revision, null).kind,
+      "deleted",
+    );
     assert.equal(existsSync(absolutePath), true);
 
     const second = fixture.db.softDeleteDocument(documents[1].id);
     assert.equal(second.kind, "deleted");
     if (second.kind !== "deleted") return;
-    assert.equal(fixture.db.permanentlyDeleteDocument(documents[1].id, second.document.revision).kind, "deleted");
+    assert.equal(
+      fixture.db.permanentlyDeleteDocument(documents[1].id, second.document.revision, null).kind,
+      "deleted",
+    );
     assert.equal(existsSync(absolutePath), false);
   } finally {
     fixture.close();
@@ -435,7 +592,7 @@ test("a planned snapshot remains tracked after an interrupted capture", () => {
     const deleted = db.softDeleteDocument(created.id);
     assert.equal(deleted.kind, "deleted");
     if (deleted.kind !== "deleted") return;
-    assert.equal(db.permanentlyDeleteDocument(created.id, deleted.document.revision).kind, "deleted");
+    assert.equal(db.permanentlyDeleteDocument(created.id, deleted.document.revision, null).kind, "deleted");
     assert.equal(existsSync(absolutePath), false);
   } finally {
     db.close();
@@ -504,7 +661,7 @@ test("global tags are not limited to the first document page", () => {
   }
 });
 
-test("v5 lifecycle migrations upgrade an existing v3 database", () => {
+test("v6 draft migration upgrades an existing v3 database", () => {
   const directory = mkdtempSync(join(tmpdir(), "zhiye-v3-upgrade-"));
   const path = join(directory, "zhiye.sqlite3");
   const documentId = "legacy-document";
@@ -533,7 +690,7 @@ test("v5 lifecycle migrations upgrade an existing v3 database", () => {
       assert.equal(
         (upgraded.sql.prepare("SELECT max(version) AS version FROM schema_migrations").get() as { version: number })
           .version,
-        5,
+        6,
       );
     } finally {
       upgraded.close();
@@ -542,7 +699,7 @@ test("v5 lifecycle migrations upgrade an existing v3 database", () => {
     try {
       assert.equal(
         (repeated.sql.prepare("SELECT count(*) AS total FROM schema_migrations").get() as { total: number }).total,
-        5,
+        6,
       );
       assert.equal(repeated.listDocumentRevisions(documentId)?.length, 2);
     } finally {

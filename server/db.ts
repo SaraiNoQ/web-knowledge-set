@@ -8,6 +8,7 @@ import type {
   CaptureMode,
   CaptureStatus,
   DocumentListResponse,
+  DocumentDraft,
   DocumentRevision,
   DocumentSummary,
   KnowledgeDocument,
@@ -191,6 +192,18 @@ const migrations = [
     updated_at TEXT NOT NULL
   );
   `,
+  `
+  CREATE TABLE document_drafts (
+    document_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+    draft_revision INTEGER NOT NULL CHECK (draft_revision >= 1),
+    base_revision INTEGER NOT NULL CHECK (base_revision >= 1),
+    title TEXT NOT NULL,
+    markdown TEXT NOT NULL,
+    tags_json TEXT NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
+    updated_at TEXT NOT NULL
+  );
+  `,
 ];
 
 interface DocumentRow {
@@ -210,6 +223,17 @@ interface DocumentRow {
   revision: number;
   deleted_at: string | null;
   created_at: string;
+  updated_at: string;
+}
+
+interface DocumentDraftRow {
+  document_id: string;
+  draft_revision: number;
+  base_revision: number;
+  title: string;
+  markdown: string;
+  tags_json: string;
+  deleted: number;
   updated_at: string;
 }
 
@@ -406,6 +430,91 @@ export class KnowledgeDatabase {
     return row ? this.toDocument(row) : null;
   }
 
+  private getDocumentDraftRow(id: string) {
+    return this.sql
+      .prepare("SELECT * FROM document_drafts WHERE document_id = ?")
+      .get(id) as DocumentDraftRow | undefined;
+  }
+
+  private toDocumentDraft(row: DocumentDraftRow): DocumentDraft {
+    return {
+      documentId: row.document_id,
+      draftRevision: row.draft_revision,
+      baseRevision: row.base_revision,
+      title: row.title,
+      markdown: row.markdown,
+      tags: JSON.parse(row.tags_json) as string[],
+      updatedAt: row.updated_at,
+    };
+  }
+
+  getDocumentDraft(id: string): DocumentDraft | null {
+    const row = this.getDocumentDraftRow(id);
+    return row && !row.deleted ? this.toDocumentDraft(row) : null;
+  }
+
+  saveDocumentDraft(
+    id: string,
+    expectedDraftRevision: number | null,
+    baseRevision: number,
+    title: string,
+    markdown: string,
+    tags: string[],
+  ) {
+    // ponytail: one draft per document; add session keys only when multi-window editing is supported.
+    return transaction(this.sql, () => {
+      if (!this.getDocument(id)) return { kind: "missing" as const };
+      const current = this.getDocumentDraftRow(id);
+      const active = current && !current.deleted ? this.toDocumentDraft(current) : null;
+      if (
+        (!current || current.deleted)
+          ? expectedDraftRevision !== null
+          : expectedDraftRevision !== current.draft_revision
+      ) {
+        return { kind: "conflict" as const, draft: active };
+      }
+
+      const updatedAt = now();
+      if (current) {
+        this.sql
+          .prepare(
+            `UPDATE document_drafts
+             SET draft_revision = draft_revision + 1, base_revision = ?, title = ?, markdown = ?,
+                 tags_json = ?, deleted = 0, updated_at = ?
+             WHERE document_id = ?`,
+          )
+          .run(baseRevision, title, markdown, JSON.stringify(tags), updatedAt, id);
+      } else {
+        this.sql
+          .prepare(
+            `INSERT INTO document_drafts(
+               document_id, draft_revision, base_revision, title, markdown, tags_json, updated_at
+             ) VALUES (?, 1, ?, ?, ?, ?, ?)`,
+          )
+          .run(id, baseRevision, title, markdown, JSON.stringify(tags), updatedAt);
+      }
+      return { kind: "saved" as const, draft: this.getDocumentDraft(id)! };
+    });
+  }
+
+  deleteDocumentDraft(id: string, draftRevision: number) {
+    return transaction(this.sql, () => {
+      const current = this.getDocumentDraft(id);
+      if (!current) return { kind: "missing" as const };
+      if (current.draftRevision !== draftRevision) {
+        return { kind: "conflict" as const, draft: current };
+      }
+      this.sql
+        .prepare(
+          `UPDATE document_drafts
+           SET draft_revision = draft_revision + 1, deleted = 1, updated_at = ?
+           WHERE document_id = ? AND draft_revision = ? AND deleted = 0`,
+        )
+        .run(now(), id, draftRevision);
+      return { kind: "deleted" as const };
+    });
+  }
+
   createOrGetDocument(sourceUrl: string): { document: KnowledgeDocument; created: boolean } {
     return transaction(this.sql, () => {
       const existing = this.sql.prepare("SELECT * FROM documents WHERE source_url = ?").get(sourceUrl) as
@@ -529,6 +638,15 @@ export class KnowledgeDatabase {
         .run(...values, id);
 
       if (patch.tags !== undefined) this.replaceTags(id, patch.tags);
+      if (patch.title !== undefined && patch.markdown !== undefined && patch.tags !== undefined) {
+        this.sql
+          .prepare(
+            `UPDATE document_drafts
+             SET draft_revision = draft_revision + 1, deleted = 1, updated_at = ?
+             WHERE document_id = ? AND title = ? AND markdown = ? AND tags_json = ? AND deleted = 0`,
+          )
+          .run(now(), id, patch.title, patch.markdown, JSON.stringify(patch.tags));
+      }
       const document = this.getDocument(id)!;
       this.recordRevision(document);
       return { kind: "updated" as const, document };
@@ -641,12 +759,16 @@ export class KnowledgeDatabase {
     });
   }
 
-  permanentlyDeleteDocument(id: string, revision: number) {
+  permanentlyDeleteDocument(id: string, revision: number, draftRevision: number | null) {
     const result = transaction(this.sql, () => {
       const current = this.getDocument(id);
       if (!current) return { kind: "missing" as const };
       if (!current.deletedAt) return { kind: "not_deleted" as const, document: current };
       if (current.revision !== revision) return { kind: "conflict" as const, document: current };
+      const draft = this.getDocumentDraft(id);
+      if (draft && draft.draftRevision !== draftRevision) {
+        return { kind: "draft_exists" as const, document: current };
+      }
       const active = this.sql
         .prepare("SELECT 1 AS found FROM capture_jobs WHERE document_id = ? AND status = 'running' LIMIT 1")
         .get(id) as { found: number } | undefined;

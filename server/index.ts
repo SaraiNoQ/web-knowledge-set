@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
+import { createInterface } from "node:readline";
 
 import { createApp } from "./app.js";
 import { acquireDataLock } from "./lock.js";
@@ -19,7 +20,13 @@ if (!Number.isInteger(requestedPort) || requestedPort < 0 || requestedPort > 65_
 
 const releaseLock = acquireDataLock(dataDir);
 const dev = process.env.KB_DEV === "1";
-const app = createApp({ dataDir, staticDir, dev });
+const desktop = process.env.KB_DESKTOP === "1";
+const app = createApp({
+  dataDir,
+  staticDir,
+  dev,
+  onDesktopCloseReady: desktop ? (attemptId) => console.log(`ZHIYE_CLOSE_READY ${attemptId}`) : undefined,
+});
 const vite = dev
   ? await (await import("vite")).createServer({ server: { middlewareMode: true }, appType: "spa" })
   : null;
@@ -33,15 +40,22 @@ const server = createServer((request, response) => {
 });
 
 let closing = false;
+const desktopInput = desktop ? createInterface({ input: process.stdin }) : null;
 async function close(exitCode = 0) {
   if (closing) return;
   closing = true;
   await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
   await vite?.close();
   await app.close();
+  desktopInput?.close();
   releaseLock();
   process.exitCode = exitCode;
 }
+
+desktopInput?.on("line", (line) => {
+  if (line === "ZHIYE_SHUTDOWN") void close();
+});
+desktopInput?.once("close", () => void close());
 
 process.once("SIGINT", () => void close());
 process.once("SIGTERM", () => void close());

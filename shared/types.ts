@@ -52,10 +52,21 @@ export interface DocumentRevision {
   createdAt: string;
 }
 
+export interface DocumentDraft {
+  documentId: string;
+  draftRevision: number;
+  baseRevision: number;
+  title: string;
+  markdown: string;
+  tags: string[];
+  updatedAt: string;
+}
+
 export interface ApiError {
   error: {
     code: string;
     message: string;
     document?: KnowledgeDocument;
+    draft?: DocumentDraft | null;
   };
 }

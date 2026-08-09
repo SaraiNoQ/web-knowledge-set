@@ -77,6 +77,7 @@ export interface AppOptions {
   dev?: boolean;
   capture?: CaptureFunction;
   startWorker?: boolean;
+  onDesktopCloseReady?: (attemptId: string) => void;
 }
 
 class HttpError extends Error {
@@ -99,8 +100,22 @@ function sendJson(response: ServerResponse, status: number, value: unknown) {
   response.end(JSON.stringify(value));
 }
 
-function sendError(response: ServerResponse, status: number, code: string, message: string, document?: unknown) {
-  sendJson(response, status, { error: { code, message, ...(document ? { document } : {}) } });
+function sendError(
+  response: ServerResponse,
+  status: number,
+  code: string,
+  message: string,
+  document?: unknown,
+  draft?: unknown,
+) {
+  sendJson(response, status, {
+    error: {
+      code,
+      message,
+      ...(document !== undefined ? { document } : {}),
+      ...(draft !== undefined ? { draft } : {}),
+    },
+  });
 }
 
 function localHost(header: string | undefined) {
@@ -199,18 +214,7 @@ function documentPatch(body: Record<string, unknown>) {
     patch.markdown = body.markdown;
   }
   if (body.tags !== undefined) {
-    if (!Array.isArray(body.tags) || body.tags.length > 50) {
-      throw new HttpError(400, "INVALID_TAGS", "tags must be an array with at most 50 items");
-    }
-    const unique = new Map<string, string>();
-    for (const value of body.tags) {
-      if (typeof value !== "string" || !value.trim() || value.trim().length > 100) {
-        throw new HttpError(400, "INVALID_TAGS", "each tag must contain 1 to 100 characters");
-      }
-      const name = value.trim();
-      unique.set(name.toLocaleLowerCase(), name);
-    }
-    patch.tags = [...unique.values()];
+    patch.tags = tagsValue(body.tags);
   }
   if (!Object.keys(patch).length) {
     throw new HttpError(400, "EMPTY_PATCH", "At least one editable field is required");
@@ -218,11 +222,59 @@ function documentPatch(body: Record<string, unknown>) {
   return { revision, patch };
 }
 
+function tagsValue(value: unknown) {
+  if (!Array.isArray(value) || value.length > 50) {
+    throw new HttpError(400, "INVALID_TAGS", "tags must be an array with at most 50 items");
+  }
+  const unique = new Map<string, string>();
+  for (const item of value) {
+    if (typeof item !== "string" || !item.trim() || item.trim().length > 100) {
+      throw new HttpError(400, "INVALID_TAGS", "each tag must contain 1 to 100 characters");
+    }
+    const name = item.trim();
+    unique.set(name.toLocaleLowerCase(), name);
+  }
+  return [...unique.values()];
+}
+
+function documentDraft(body: Record<string, unknown>) {
+  const expectedDraftRevision = draftRevision(body.expectedDraftRevision, true);
+  const baseRevision = bodyRevision({ revision: body.baseRevision });
+  if (typeof body.title !== "string" || body.title.length > 1000) {
+    throw new HttpError(400, "INVALID_TITLE", "title must be a string under 1000 characters");
+  }
+  if (typeof body.markdown !== "string") {
+    throw new HttpError(400, "INVALID_MARKDOWN", "markdown must be a string");
+  }
+  return {
+    expectedDraftRevision,
+    baseRevision,
+    title: body.title.trim(),
+    markdown: body.markdown,
+    tags: tagsValue(body.tags),
+  };
+}
+
 function bodyRevision(body: Record<string, unknown>) {
   if (typeof body.revision !== "number" || !Number.isInteger(body.revision) || body.revision < 1) {
     throw new HttpError(400, "INVALID_REVISION", "revision must be a positive integer");
   }
   return body.revision;
+}
+
+function draftRevision(value: unknown, nullable = false) {
+  if (nullable && value === null) return null;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    throw new HttpError(400, "INVALID_DRAFT_REVISION", "draftRevision must be a positive integer");
+  }
+  return value;
+}
+
+function closeAttemptId(value: unknown) {
+  if (typeof value !== "string" || !/^[1-9]\d{0,19}$/u.test(value)) {
+    throw new HttpError(400, "INVALID_CLOSE_ATTEMPT", "attemptId must be a positive integer string");
+  }
+  return value;
 }
 
 function pathRevision(value: string) {
@@ -379,6 +431,15 @@ export function createApp(options: AppOptions) {
         return;
       }
 
+      if (pathname === "/api/desktop/close-ready" && request.method === "POST") {
+        if (!options.onDesktopCloseReady) throw new HttpError(404, "NOT_FOUND", "API endpoint not found");
+        guardMutation(request);
+        const attemptId = closeAttemptId((await readJson(request)).attemptId);
+        sendJson(response, 200, { ok: true });
+        setImmediate(() => options.onDesktopCloseReady?.(attemptId));
+        return;
+      }
+
       if (pathname === "/api/documents" && request.method === "POST") {
         guardMutation(request);
         const body = await readJson(request);
@@ -412,6 +473,48 @@ export function createApp(options: AppOptions) {
 
       if (pathname === "/api/tags" && request.method === "GET") {
         sendJson(response, 200, db.listTags(trashFilter(requestUrl)));
+        return;
+      }
+
+      const draftMatch = pathname.match(/^\/api\/documents\/([^/]+)\/draft$/u);
+      if (draftMatch && request.method === "GET") {
+        const id = decodeId(draftMatch[1]);
+        if (!db.getDocument(id)) throw new HttpError(404, "NOT_FOUND", "Document not found");
+        sendJson(response, 200, db.getDocumentDraft(id));
+        return;
+      }
+      if (draftMatch && request.method === "PUT") {
+        guardMutation(request);
+        const id = decodeId(draftMatch[1]);
+        const draft = documentDraft(await readJson(request));
+        const result = db.saveDocumentDraft(
+          id,
+          draft.expectedDraftRevision,
+          draft.baseRevision,
+          draft.title,
+          draft.markdown,
+          draft.tags,
+        );
+        if (result.kind === "missing") throw new HttpError(404, "NOT_FOUND", "Document not found");
+        if (result.kind === "conflict") {
+          sendError(response, 409, "DRAFT_CONFLICT", "Draft changed since it was loaded", undefined, result.draft);
+          return;
+        }
+        sendJson(response, 200, result.draft);
+        return;
+      }
+      if (draftMatch && request.method === "DELETE") {
+        guardMutation(request);
+        const expectedRevision = draftRevision((await readJson(request)).draftRevision);
+        const id = decodeId(draftMatch[1]);
+        if (!db.getDocument(id)) throw new HttpError(404, "NOT_FOUND", "Document not found");
+        const result = db.deleteDocumentDraft(id, expectedRevision!);
+        if (result.kind === "conflict") {
+          sendError(response, 409, "DRAFT_CONFLICT", "Draft changed since it was loaded", undefined, result.draft);
+          return;
+        }
+        response.writeHead(204, { "Cache-Control": "no-store", ...securityHeaders() });
+        response.end();
         return;
       }
 
@@ -468,8 +571,14 @@ export function createApp(options: AppOptions) {
       const permanentMatch = pathname.match(/^\/api\/documents\/([^/]+)\/permanent$/u);
       if (request.method === "DELETE" && permanentMatch) {
         guardMutation(request);
-        const revision = bodyRevision(await readJson(request));
-        const result = db.permanentlyDeleteDocument(decodeId(permanentMatch[1]), revision);
+        const body = await readJson(request);
+        const revision = bodyRevision(body);
+        const confirmedDraftRevision = draftRevision(body.draftRevision, true);
+        const result = db.permanentlyDeleteDocument(
+          decodeId(permanentMatch[1]),
+          revision,
+          confirmedDraftRevision,
+        );
         if (result.kind === "missing") throw new HttpError(404, "NOT_FOUND", "Document not found");
         if (result.kind === "not_deleted") {
           sendError(response, 409, "NOT_IN_TRASH", "Document must be in the trash before permanent deletion", result.document);
@@ -477,6 +586,10 @@ export function createApp(options: AppOptions) {
         }
         if (result.kind === "capture_running") {
           sendError(response, 409, "CAPTURE_IN_PROGRESS", "Wait for the active capture to finish", result.document);
+          return;
+        }
+        if (result.kind === "draft_exists") {
+          sendError(response, 409, "DRAFT_EXISTS", "A newer draft must be reviewed before deletion", result.document);
           return;
         }
         if (result.kind === "conflict") {

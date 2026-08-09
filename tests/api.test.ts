@@ -6,7 +6,12 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createApp, type CaptureFunction } from "../server/app.js";
-import type { DocumentListResponse, DocumentRevision, KnowledgeDocument } from "../shared/types.js";
+import type {
+  DocumentDraft,
+  DocumentListResponse,
+  DocumentRevision,
+  KnowledgeDocument,
+} from "../shared/types.js";
 
 async function waitFor(base: string, cookie: string, id: string, status: KnowledgeDocument["status"]) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -40,11 +45,15 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
       httpStatus: 200,
     };
   };
+  const desktopCloseAttempts: string[] = [];
   const app = createApp({
     dataDir: directory,
     bootstrapToken: "bootstrap-test-token",
     sessionToken: "session-test-token",
     capture,
+    onDesktopCloseReady: (attemptId) => {
+      desktopCloseAttempts.push(attemptId);
+    },
   });
   const server = createServer((request, response) => void app.handler(request, response));
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -100,14 +109,107 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     assert.equal(duplicate.status, 200);
     assert.equal(((await duplicate.json()) as KnowledgeDocument).id, ready.id);
 
+    const draftResponse = await fetch(`${base}/api/documents/${ready.id}/draft`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        expectedDraftRevision: null,
+        baseRevision: ready.revision,
+        title: `  ${ready.title}  `,
+        markdown: "# Human edit",
+        tags: ["Inbox"],
+      }),
+    });
+    assert.equal(draftResponse.status, 200);
+    const firstDraft = (await draftResponse.json()) as DocumentDraft;
+    assert.equal(firstDraft.draftRevision, 1);
+    assert.equal(firstDraft.title, ready.title);
+    const newerDraftResponse = await fetch(`${base}/api/documents/${ready.id}/draft`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        expectedDraftRevision: firstDraft.draftRevision,
+        baseRevision: ready.revision,
+        title: ready.title,
+        markdown: "# Human edit",
+        tags: ["Inbox"],
+      }),
+    });
+    const newerDraft = (await newerDraftResponse.json()) as DocumentDraft;
+    assert.equal(newerDraft.draftRevision, 2);
+    const staleDraftPut = await fetch(`${base}/api/documents/${ready.id}/draft`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        expectedDraftRevision: firstDraft.draftRevision,
+        baseRevision: ready.revision,
+        title: ready.title,
+        markdown: "# Stale draft",
+        tags: [],
+      }),
+    });
+    assert.equal(staleDraftPut.status, 409);
+    const staleDraftPayload = (await staleDraftPut.json()) as {
+      error: { code: string; draft: DocumentDraft };
+    };
+    assert.equal(staleDraftPayload.error.code, "DRAFT_CONFLICT");
+    assert.equal(staleDraftPayload.error.draft.draftRevision, newerDraft.draftRevision);
+    assert.equal(staleDraftPayload.error.draft.markdown, "# Human edit");
+    const staleDraftDelete = await fetch(`${base}/api/documents/${ready.id}/draft`, {
+      method: "DELETE",
+      headers: jsonHeaders,
+      body: JSON.stringify({ draftRevision: firstDraft.draftRevision }),
+    });
+    assert.equal(staleDraftDelete.status, 409);
+    assert.equal(
+      ((await staleDraftDelete.json()) as { error: { code: string } }).error.code,
+      "DRAFT_CONFLICT",
+    );
+    assert.equal(
+      ((await (await fetch(`${base}/api/documents/${ready.id}/draft`, { headers: { Cookie: cookie } })).json()) as DocumentDraft).draftRevision,
+      2,
+    );
+    assert.equal(
+      newerDraft.markdown,
+      "# Human edit",
+    );
+    const currentDraftDelete = await fetch(`${base}/api/documents/${ready.id}/draft`, {
+      method: "DELETE",
+      headers: jsonHeaders,
+      body: JSON.stringify({ draftRevision: newerDraft.draftRevision }),
+    });
+    assert.equal(currentDraftDelete.status, 204);
+    const recreatedDraftResponse = await fetch(`${base}/api/documents/${ready.id}/draft`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        expectedDraftRevision: null,
+        baseRevision: ready.revision,
+        title: ready.title,
+        markdown: "# Human edit",
+        tags: ["Inbox"],
+      }),
+    });
+    const recreatedDraft = (await recreatedDraftResponse.json()) as DocumentDraft;
+    assert.ok(recreatedDraft.draftRevision > newerDraft.draftRevision);
+
     const editedResponse = await fetch(`${base}/api/documents/${ready.id}`, {
       method: "PATCH",
       headers: jsonHeaders,
-      body: JSON.stringify({ revision: ready.revision, markdown: "# Human edit", tags: ["Inbox"] }),
+      body: JSON.stringify({
+        revision: ready.revision,
+        title: ready.title,
+        markdown: "# Human edit",
+        tags: ["Inbox"],
+      }),
     });
     assert.equal(editedResponse.status, 200);
     const edited = (await editedResponse.json()) as KnowledgeDocument;
     assert.deepEqual(edited.tags, ["Inbox"]);
+    assert.equal(
+      await (await fetch(`${base}/api/documents/${ready.id}/draft`, { headers: { Cookie: cookie } })).json(),
+      null,
+    );
     assert.deepEqual(await (await fetch(`${base}/api/tags`, { headers: { Cookie: cookie } })).json(), ["Inbox"]);
 
     const revisions = (await (
@@ -237,18 +339,52 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     const stalePermanent = await fetch(`${base}/api/documents/${ready.id}/permanent`, {
       method: "DELETE",
       headers: jsonHeaders,
-      body: JSON.stringify({ revision: trashedAgain.revision - 1 }),
+      body: JSON.stringify({ revision: trashedAgain.revision - 1, draftRevision: null }),
     });
     assert.equal(stalePermanent.status, 409);
     assert.equal(existsSync(join(directory, snapshotPath)), true);
+    const permanentDraftResponse = await fetch(`${base}/api/documents/${ready.id}/draft`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        expectedDraftRevision: null,
+        baseRevision: trashedAgain.revision,
+        title: trashedAgain.title,
+        markdown: "# Draft in another window",
+        tags: trashedAgain.tags,
+      }),
+    });
+    const permanentDraft = (await permanentDraftResponse.json()) as DocumentDraft;
+    const blockedPermanent = await fetch(`${base}/api/documents/${ready.id}/permanent`, {
+      method: "DELETE",
+      headers: jsonHeaders,
+      body: JSON.stringify({ revision: trashedAgain.revision, draftRevision: null }),
+    });
+    assert.equal(blockedPermanent.status, 409);
+    assert.equal(
+      ((await blockedPermanent.json()) as { error: { code: string } }).error.code,
+      "DRAFT_EXISTS",
+    );
     const permanent = await fetch(`${base}/api/documents/${ready.id}/permanent`, {
       method: "DELETE",
       headers: jsonHeaders,
-      body: JSON.stringify({ revision: trashedAgain.revision }),
+      body: JSON.stringify({
+        revision: trashedAgain.revision,
+        draftRevision: permanentDraft.draftRevision,
+      }),
     });
     assert.equal(permanent.status, 204);
     assert.equal(existsSync(join(directory, snapshotPath)), false);
     assert.equal((await fetch(`${base}/api/documents/${ready.id}`, { headers: { Cookie: cookie } })).status, 404);
+
+    const closeReady = await fetch(`${base}/api/desktop/close-ready`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ attemptId: "314" }),
+    });
+    assert.equal(closeReady.status, 200);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(desktopCloseAttempts, ["314"]);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await app.close();

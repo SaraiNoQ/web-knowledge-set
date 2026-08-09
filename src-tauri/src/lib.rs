@@ -1,8 +1,8 @@
 use std::fs;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{Manager, RunEvent};
+use tauri::{Manager, RunEvent, WindowEvent};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -10,6 +10,7 @@ const STARTING: u8 = 0;
 const READY: u8 = 1;
 const FAILED: u8 = 2;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 const STDERR_LIMIT: usize = 8 * 1024;
 
 struct LocalService {
@@ -17,6 +18,8 @@ struct LocalService {
     phase: AtomicU8,
     stderr: Mutex<String>,
     stopping: AtomicBool,
+    close_attempt: Mutex<Option<u64>>,
+    next_close_attempt: AtomicU64,
 }
 
 fn stop_service(app: &tauri::AppHandle) {
@@ -27,6 +30,118 @@ fn stop_service(app: &tauri::AppHandle) {
             let _ = child.kill();
         }
     };
+}
+
+fn request_close(app: &tauri::AppHandle) -> bool {
+    let service = app.state::<LocalService>();
+    if service.phase.load(Ordering::SeqCst) != READY || service.stopping.load(Ordering::SeqCst) {
+        return false;
+    }
+    let Some(window) = app.get_webview_window("main") else {
+        return false;
+    };
+    let attempt_id = {
+        let mut current = service
+            .close_attempt
+            .lock()
+            .expect("local service state poisoned");
+        if current.is_some() {
+            return true;
+        }
+        let attempt_id = service.next_close_attempt.fetch_add(1, Ordering::SeqCst);
+        current.replace(attempt_id);
+        attempt_id
+    };
+    let request_script = format!(
+        "window.dispatchEvent(new CustomEvent('zhiye:close-requested', {{ detail: {{ attemptId: '{attempt_id}' }} }}))"
+    );
+    if window.eval(&request_script).is_err() {
+        let mut current = service
+            .close_attempt
+            .lock()
+            .expect("local service state poisoned");
+        if *current == Some(attempt_id) {
+            current.take();
+        }
+        return false;
+    }
+
+    let timeout_handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(CLOSE_TIMEOUT);
+        let service = timeout_handle.state::<LocalService>();
+        let timed_out = {
+            let mut current = service
+                .close_attempt
+                .lock()
+                .expect("local service state poisoned");
+            if !service.stopping.load(Ordering::SeqCst) && *current == Some(attempt_id) {
+                current.take();
+                true
+            } else {
+                false
+            }
+        };
+        if timed_out {
+            if let Some(window) = timeout_handle.get_webview_window("main") {
+                let timeout_script = format!(
+                    "window.dispatchEvent(new CustomEvent('zhiye:close-timeout', {{ detail: {{ attemptId: '{attempt_id}' }} }}))"
+                );
+                let _ = window.eval(&timeout_script);
+            }
+        }
+    });
+    true
+}
+
+fn shutdown_sidecar(app: &tauri::AppHandle, attempt_id: u64) {
+    let service = app.state::<LocalService>();
+    {
+        let mut current = service
+            .close_attempt
+            .lock()
+            .expect("local service state poisoned");
+        if *current != Some(attempt_id)
+            || service
+                .stopping
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+        {
+            return;
+        }
+        current.take();
+    }
+    let write_result = service
+        .child
+        .lock()
+        .expect("local service state poisoned")
+        .as_mut()
+        .ok_or_else(|| "local service process is unavailable".to_owned())
+        .and_then(|child| {
+            child
+                .write(b"ZHIYE_SHUTDOWN\n")
+                .map_err(|error| error.to_string())
+        });
+    if write_result.is_err() {
+        stop_service(app);
+        app.exit(0);
+        return;
+    }
+
+    let timeout_handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(CLOSE_TIMEOUT);
+        if timeout_handle
+            .state::<LocalService>()
+            .child
+            .lock()
+            .map(|child| child.is_some())
+            .unwrap_or(false)
+        {
+            stop_service(&timeout_handle);
+            timeout_handle.exit(0);
+        }
+    });
 }
 
 fn escape_html(value: &str) -> String {
@@ -170,6 +285,8 @@ pub fn run() {
             phase: AtomicU8::new(STARTING),
             stderr: Mutex::new(String::new()),
             stopping: AtomicBool::new(false),
+            close_attempt: Mutex::new(None),
+            next_close_attempt: AtomicU64::new(1),
         })
         .setup(|app| {
             let resource_dir = match app.path().resource_dir() {
@@ -216,6 +333,7 @@ pub fn run() {
                     .arg(server_entry)
                     .env("KB_DATA_DIR", data_dir)
                     .env("KB_STATIC_DIR", static_dir)
+                    .env("KB_DESKTOP", "1")
                     .env("PLAYWRIGHT_BROWSERS_PATH", browsers_dir),
                 Err(error) => {
                     show_startup_error(
@@ -287,6 +405,12 @@ pub fn run() {
                                         ),
                                         (_, None) => fail_service(&handle, "未找到应用主窗口。"),
                                     }
+                                } else if let Some(raw_attempt) =
+                                    line.strip_prefix("ZHIYE_CLOSE_READY ")
+                                {
+                                    if let Ok(attempt_id) = raw_attempt.trim().parse::<u64>() {
+                                        shutdown_sidecar(&handle, attempt_id);
+                                    }
                                 }
                             }
                         }
@@ -301,7 +425,17 @@ pub fn run() {
                             break;
                         }
                         CommandEvent::Terminated(payload) => {
-                            fail_service(&handle, &format!("本地服务进程已退出：{payload:?}"));
+                            let service = handle.state::<LocalService>();
+                            if service.stopping.load(Ordering::SeqCst) {
+                                service
+                                    .child
+                                    .lock()
+                                    .expect("local service state poisoned")
+                                    .take();
+                                handle.exit(0);
+                            } else {
+                                fail_service(&handle, &format!("本地服务进程已退出：{payload:?}"));
+                            }
                             break;
                         }
                         _ => {}
@@ -341,9 +475,22 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build the Zhiye desktop app");
 
-    app.run(|handle, event| {
-        if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
-            stop_service(handle);
+    app.run(|handle, event| match event {
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { api, .. },
+            ..
+        } if label == "main" => {
+            if request_close(handle) {
+                api.prevent_close();
+            }
         }
+        RunEvent::ExitRequested { api, .. } => {
+            if request_close(handle) {
+                api.prevent_exit();
+            }
+        }
+        RunEvent::Exit => stop_service(handle),
+        _ => {}
     });
 }
