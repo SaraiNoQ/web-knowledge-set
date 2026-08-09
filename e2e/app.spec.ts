@@ -2,6 +2,12 @@ import { expect, test } from "@playwright/test";
 
 test("imports, restores history, trashes, restores, searches, exports, and blocks raw scripts", async ({ page }) => {
   await page.goto("/");
+  await page.getByRole("button", { name: "数据安全" }).click();
+  await expect(page.getByRole("heading", { name: "数据安全" })).toBeVisible();
+  await page.getByRole("button", { name: "创建留档" }).click();
+  await expect(page.getByText("完整留档已创建并校验。")).toBeVisible();
+  await expect(page.getByText("校验通过").first()).toBeVisible();
+  await page.getByRole("button", { name: "返回资料库" }).click();
   await page.getByLabel("网页地址").fill("https://example.com/requested");
   await page.getByRole("button", { name: "收取网页" }).click();
 
@@ -223,12 +229,12 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await editor.fill("# 第一版\n\n第一版正文\n\n删除冲突后仍保留。");
   await page.evaluate(async () => {
     const list = await fetch("/api/documents?page=1").then((response) => response.json()) as {
-      items: Array<{ id: string }>;
+      items: Array<{ id: string; revision: number }>;
     };
     await fetch(`/api/documents/${list.items[0].id}`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: "{}",
+      body: JSON.stringify({ revision: list.items[0].revision }),
     });
   });
   await expect(page.getByText("这篇知识已被移入回收站")).toBeVisible({ timeout: 5_000 });

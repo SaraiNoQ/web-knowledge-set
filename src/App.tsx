@@ -16,6 +16,7 @@ import type {
   KnowledgeDocument,
 } from "../shared/types";
 import { api, ApiRequestError } from "./api";
+import { DataSafety } from "./components/DataSafety";
 import { MarkdownEditor } from "./components/MarkdownEditor";
 
 type EditorMode = "edit" | "split" | "preview";
@@ -191,6 +192,8 @@ export default function App() {
   const [revisions, setRevisions] = useState<DocumentRevision[]>([]);
   const [restoringRevision, setRestoringRevision] = useState<number | null>(null);
   const [closing, setClosing] = useState(false);
+  const [safetyOpen, setSafetyOpen] = useState(false);
+  const [safetyRecovery, setSafetyRecovery] = useState(false);
 
   const selectedIdRef = useRef(selectedId);
   const draftRef = useRef(draft);
@@ -204,6 +207,15 @@ export default function App() {
   selectedIdRef.current = selectedId;
   draftRef.current = draft;
   currentDocRef.current = currentDoc;
+
+  useEffect(() => {
+    void api.getDataSafety().then((value) => {
+      if (value.mode === "recovery") {
+        setSafetyRecovery(true);
+        setSafetyOpen(true);
+      }
+    }).catch(() => undefined);
+  }, []);
 
   const persistedDraft = currentDoc ? draftOf(currentDoc) : null;
   const dirty = Boolean(draft && persistedDraft && !draftsEqual(draft, persistedDraft));
@@ -327,6 +339,18 @@ export default function App() {
       }
     });
   }, [enqueueDraftSync, reportDraftConflict]);
+
+  const prepareDataSafetyOperation = useCallback(async () => {
+    if (closeAttemptRef.current) throw new Error("应用正在关闭，请重新打开后再操作。");
+    if (remoteDraftConflict) throw new Error("请先处理当前草稿冲突。");
+    await draftSaveChain.current;
+    const document = currentDocRef.current;
+    const value = draftRef.current;
+    if (!document || !value || document.status !== "ready") return;
+    if (draftsEqual(value, draftOf(document))) await tombstoneDraft(document.id);
+    else await persistDraft(document, value);
+    await draftSaveChain.current;
+  }, [persistDraft, remoteDraftConflict, tombstoneDraft]);
 
   const reloadDraftConflict = useCallback(async (documentId: string) => {
     const [document, stored] = await Promise.all([
@@ -597,9 +621,14 @@ export default function App() {
           if (closeAttemptRef.current !== attemptId) return;
           const document = currentDocRef.current;
           const value = draftRef.current;
-          if (document && value) {
-            if (draftsEqual(value, draftOf(document))) await tombstoneDraft(document.id);
-            else await persistDraft(document, value);
+          if (!safetyRecovery && document && value) {
+            const stored = persistedDraftRef.current;
+            const alreadyDurable = stored?.documentId === document.id && draftsEqual(value, stored);
+            if (draftsEqual(value, draftOf(document))) {
+              if (!safetyOpen) await tombstoneDraft(document.id);
+            } else if (!alreadyDurable) {
+              await persistDraft(document, value);
+            }
           }
           if (closeAttemptRef.current !== attemptId) return;
           await api.desktopCloseReady(attemptId);
@@ -624,7 +653,7 @@ export default function App() {
       window.removeEventListener("zhiye:close-requested", prepareClose);
       window.removeEventListener("zhiye:close-timeout", closeTimedOut);
     };
-  }, [persistDraft, tombstoneDraft]);
+  }, [persistDraft, safetyOpen, safetyRecovery, tombstoneDraft]);
 
   const handleImport = async (event: FormEvent) => {
     event.preventDefault();
@@ -687,6 +716,18 @@ export default function App() {
     setImportNotice("");
   };
 
+  const alignLibraryWithDocument = (document: KnowledgeDocument) => {
+    const targetIsTrash = Boolean(document.deletedAt);
+    if (targetIsTrash === inTrash) {
+      updateListItem(document);
+      return;
+    }
+    setInTrash(targetIsTrash);
+    setPage(1);
+    setItems([]);
+    setTag("");
+  };
+
   const handleListKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>(".document-row")];
@@ -718,7 +759,7 @@ export default function App() {
     setLifecycleAction("delete");
     setDetailError("");
     try {
-      const deleted = await api.deleteDocument(currentDoc.id);
+      const deleted = await api.deleteDocument(currentDoc.id, currentDoc.revision);
       setCurrentDoc(deleted);
       setDraft(draftOf(deleted));
       setTagText(deleted.tags.join(", "));
@@ -728,6 +769,12 @@ export default function App() {
       setHistoryOpen(false);
       focusReader();
     } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 409 && error.document) {
+        setCurrentDoc(error.document);
+        setDraft(draftOf(error.document));
+        setTagText(error.document.tags.join(", "));
+        alignLibraryWithDocument(error.document);
+      }
       setDetailError((error as Error).message);
     } finally {
       setLifecycleAction(null);
@@ -740,7 +787,7 @@ export default function App() {
     setLifecycleAction("restore");
     setDetailError("");
     try {
-      const restored = await api.restoreDocument(currentDoc.id);
+      const restored = await api.restoreDocument(currentDoc.id, currentDoc.revision);
       setCurrentDoc(restored);
       if (recovered) {
         setDraft(recovered);
@@ -756,6 +803,19 @@ export default function App() {
       setItems([]);
       focusReader();
     } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 409 && error.document) {
+        setCurrentDoc(error.document);
+        alignLibraryWithDocument(error.document);
+        if (recovered) {
+          setDraft(recovered);
+          setTagText(recovered.tags.join(", "));
+          setConflict(error.document);
+          setSaveState("conflict");
+        } else {
+          setDraft(draftOf(error.document));
+          setTagText(error.document.tags.join(", "));
+        }
+      }
       setDetailError((error as Error).message);
     } finally {
       setLifecycleAction(null);
@@ -791,6 +851,7 @@ export default function App() {
       }
       if (error instanceof ApiRequestError && error.status === 409 && error.document) {
         setCurrentDoc(error.document);
+        alignLibraryWithDocument(error.document);
         if (error.code !== "DRAFT_EXISTS") {
           setDraft(draftOf(error.document));
           setTagText(error.document.tags.join(", "));
@@ -947,7 +1008,7 @@ export default function App() {
     setSaveState("saving");
     setSaveError("");
     try {
-      const base = wasDeleted ? await api.restoreDocument(conflict.id) : conflict;
+      const base = wasDeleted ? await api.restoreDocument(conflict.id, conflict.revision) : conflict;
       await persistDraft(base, local);
       const updated = await api.updateDocument(base.id, { ...local, revision: base.revision });
       persistedDraftRef.current = null;
@@ -993,9 +1054,18 @@ export default function App() {
           <span><strong>织页</strong><small>ZHIYE · LOCAL KNOWLEDGE</small></span>
         </div>
         <p className="masthead-note">把散落的网页，<br />织成可编辑的知识。</p>
-        <span className="local-mark"><i />本地工作台</span>
+        <button type="button" className="local-mark" aria-pressed={safetyOpen} onClick={() => setSafetyOpen(true)} disabled={closing}>
+          <i />{safetyRecovery ? "恢复模式" : "数据安全"}
+        </button>
       </header>
 
+      {safetyOpen ? (
+        <DataSafety
+          beforeOperation={prepareDataSafetyOperation}
+          onClose={() => setSafetyOpen(false)}
+          onModeChange={setSafetyRecovery}
+        />
+      ) : <>
       <section className="capture-band" aria-labelledby="capture-title">
         <div className="capture-index" aria-hidden="true">01</div>
         <div className="capture-copy">
@@ -1171,6 +1241,7 @@ export default function App() {
           ) : null}
         </section>
       </main>
+      </>}
     </div>
   );
 }

@@ -62,6 +62,70 @@ export interface DocumentDraft {
   updatedAt: string;
 }
 
+export type BackupReason = "manual" | "automatic" | "pre-migration" | "pre-restore";
+
+export type BackupStatus = "creating" | "verified" | "failed" | "invalid" | "missing";
+
+export interface BackupRecord {
+  id: string;
+  directoryName: string | null;
+  reason: BackupReason;
+  status: BackupStatus;
+  createdAt: string;
+  finishedAt: string | null;
+  verifiedAt: string | null;
+  totalBytes: number | null;
+  schemaVersion: number | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+}
+
+export interface BackupSettings {
+  automaticRetentionCount: number;
+}
+
+export interface DatabaseHealth {
+  integrityCheck: string[];
+  foreignKeyViolations: Array<{
+    table: string;
+    rowId: number | null;
+    parent: string;
+    foreignKeyId: number;
+  }>;
+  referencedSnapshotPaths: string[];
+  pendingFileDeletions: Array<{
+    path: string;
+    attempts: number;
+    lastError: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  recentErrors: Array<{
+    source: "capture" | "backup" | "file-deletion";
+    code: string | null;
+    message: string;
+    occurredAt: string;
+  }>;
+}
+
+export interface DataSafetyHealth {
+  database: DatabaseHealth;
+  missingSnapshots: string[];
+  orphanSnapshots: string[];
+  unsafeSnapshotEntries: string[];
+  storageBytes: number;
+  recentBackup: BackupRecord | null;
+}
+
+export interface DataSafetyStatus {
+  mode: "ready" | "recovery";
+  maintenance: boolean;
+  recoveryError: { code: string; message: string } | null;
+  health: DataSafetyHealth | null;
+  backups: BackupRecord[];
+  settings: BackupSettings | null;
+}
+
 export interface ApiError {
   error: {
     code: string;

@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { createApp, type CaptureFunction } from "../server/app.js";
+import { openDatabase } from "../server/db.js";
 
-const dataDir = mkdtempSync(join(tmpdir(), "zhiye-e2e-"));
+const root = mkdtempSync(join(tmpdir(), "zhiye-e2e-"));
+const dataDir = join(root, "data");
 const capture: CaptureFunction = async (url) => ({
   title: "远端测试文章",
   author: "测试作者",
@@ -20,6 +22,7 @@ const capture: CaptureFunction = async (url) => ({
 });
 const app = createApp({
   dataDir,
+  database: openDatabase(dataDir),
   staticDir: resolve("dist"),
   capture,
   dev: true,
@@ -30,7 +33,7 @@ const server = createServer((request, response) => void app.handler(request, res
 async function close() {
   await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
   await app.close();
-  rmSync(dataDir, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true });
 }
 
 process.once("SIGINT", () => void close());

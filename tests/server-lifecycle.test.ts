@@ -8,7 +8,8 @@ import test from "node:test";
 import { openDatabase } from "../server/db.js";
 
 test("desktop stdin shutdown closes SQLite and releases the data lock", async () => {
-  const dataDir = mkdtempSync(join(tmpdir(), "zhiye-desktop-close-"));
+  const parent = mkdtempSync(join(tmpdir(), "zhiye-desktop-close-"));
+  const dataDir = join(parent, "data");
   const child = spawn(process.execPath, ["--import", "tsx", "server/index.ts"], {
     cwd: resolve("."),
     env: {
@@ -44,12 +45,12 @@ test("desktop stdin shutdown closes SQLite and releases the data lock", async ()
     child.stdin.write("ZHIYE_SHUTDOWN\n");
     const code = await exited;
     assert.equal(code, 0, stderr);
-    assert.equal(existsSync(join(dataDir, ".zhiye.lock")), false);
+    assert.equal(existsSync(join(parent, ".data.zhiye.lock")), false);
     const reopened = openDatabase(dataDir);
     reopened.close();
   } finally {
     clearTimeout(timeout);
     if (child.exitCode === null) child.kill();
-    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(parent, { recursive: true, force: true });
   }
 });

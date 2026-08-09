@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { chmodSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, unlinkSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type {
+  BackupRecord,
+  BackupSettings,
   CaptureErrorCode,
   CaptureMode,
   CaptureStatus,
+  DatabaseHealth,
   DocumentListResponse,
   DocumentDraft,
   DocumentRevision,
@@ -204,7 +207,55 @@ const migrations = [
     updated_at TEXT NOT NULL
   );
   `,
+  `
+  CREATE TABLE backup_records (
+    id TEXT PRIMARY KEY,
+    directory_name TEXT UNIQUE,
+    reason TEXT NOT NULL CHECK (reason IN ('manual', 'automatic', 'pre-migration', 'pre-restore')),
+    status TEXT NOT NULL CHECK (status IN ('creating', 'verified', 'failed', 'invalid', 'missing')),
+    created_at TEXT NOT NULL,
+    finished_at TEXT,
+    verified_at TEXT,
+    total_bytes INTEGER CHECK (total_bytes IS NULL OR total_bytes >= 0),
+    schema_version INTEGER CHECK (schema_version IS NULL OR schema_version >= 1),
+    error_code TEXT,
+    error_message TEXT
+  );
+  CREATE INDEX backup_records_created ON backup_records(created_at DESC, id DESC);
+
+  CREATE TABLE backup_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    automatic_retention_count INTEGER NOT NULL DEFAULT 7
+      CHECK (automatic_retention_count BETWEEN 1 AND 100)
+  );
+  INSERT INTO backup_settings(id, automatic_retention_count) VALUES (1, 7);
+  `,
 ];
+
+export const CURRENT_SCHEMA_VERSION = migrations.length;
+
+export type DatabaseSchemaStatus = "empty" | "pending" | "current" | "future" | "non-contiguous";
+
+export interface DatabaseSchemaInspection {
+  status: DatabaseSchemaStatus;
+  currentVersion: number;
+  supportedVersion: number;
+  appliedVersions: number[];
+  pendingVersions: number[];
+}
+
+export class DatabaseSchemaError extends Error {
+  readonly code: "FUTURE_SCHEMA" | "NON_CONTIGUOUS_MIGRATIONS";
+  readonly inspection: DatabaseSchemaInspection;
+
+  constructor(inspection: DatabaseSchemaInspection) {
+    const future = inspection.status === "future";
+    super(future ? "Database schema is newer than this application" : "Database migrations are non-contiguous");
+    this.name = "DatabaseSchemaError";
+    this.code = future ? "FUTURE_SCHEMA" : "NON_CONTIGUOUS_MIGRATIONS";
+    this.inspection = inspection;
+  }
+}
 
 interface DocumentRow {
   id: string;
@@ -235,6 +286,20 @@ interface DocumentDraftRow {
   tags_json: string;
   deleted: number;
   updated_at: string;
+}
+
+interface BackupRecordRow {
+  id: string;
+  directory_name: string | null;
+  reason: BackupRecord["reason"];
+  status: BackupRecord["status"];
+  created_at: string;
+  finished_at: string | null;
+  verified_at: string | null;
+  total_bytes: number | null;
+  schema_version: number | null;
+  error_code: string | null;
+  error_message: string | null;
 }
 
 export interface CaptureJob {
@@ -286,6 +351,193 @@ function transaction<T>(sql: DatabaseSync, work: () => T): T {
   }
 }
 
+function emptySchemaInspection(status: "empty" | "non-contiguous" = "empty"): DatabaseSchemaInspection {
+  return {
+    status,
+    currentVersion: 0,
+    supportedVersion: CURRENT_SCHEMA_VERSION,
+    appliedVersions: [],
+    pendingVersions: status === "empty" ? Array.from({ length: CURRENT_SCHEMA_VERSION }, (_, index) => index + 1) : [],
+  };
+}
+
+function inspectSchema(sql: DatabaseSync): DatabaseSchemaInspection {
+  const migrationTable = sql
+    .prepare("SELECT 1 AS found FROM sqlite_schema WHERE type = 'table' AND name = 'schema_migrations'")
+    .get() as { found: number } | undefined;
+  if (!migrationTable) {
+    const row = sql
+      .prepare("SELECT count(*) AS total FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'")
+      .get() as { total: number };
+    return emptySchemaInspection(Number(row.total) === 0 ? "empty" : "non-contiguous");
+  }
+
+  const rawVersions = (
+    sql.prepare("SELECT version FROM schema_migrations ORDER BY version").all() as Array<{ version: unknown }>
+  ).map(({ version }) => version);
+  const appliedVersions = rawVersions.filter(
+    (version): version is number => typeof version === "number" && Number.isSafeInteger(version),
+  );
+  const otherTables = sql
+    .prepare(
+      `SELECT count(*) AS total FROM sqlite_schema
+       WHERE name NOT LIKE 'sqlite_%' AND name <> 'schema_migrations'`,
+    )
+    .get() as { total: number };
+  if (!rawVersions.length) {
+    return Number(otherTables.total) === 0 ? emptySchemaInspection() : emptySchemaInspection("non-contiguous");
+  }
+
+  const currentVersion = appliedVersions.at(-1) ?? 0;
+  const contiguous =
+    appliedVersions.length === rawVersions.length &&
+    appliedVersions.every((version, index) => version === index + 1);
+  const status: DatabaseSchemaStatus = !contiguous
+    ? "non-contiguous"
+    : currentVersion > CURRENT_SCHEMA_VERSION
+      ? "future"
+      : currentVersion === CURRENT_SCHEMA_VERSION
+        ? "current"
+        : "pending";
+  return {
+    status,
+    currentVersion,
+    supportedVersion: CURRENT_SCHEMA_VERSION,
+    appliedVersions,
+    pendingVersions:
+      status === "pending"
+        ? Array.from({ length: CURRENT_SCHEMA_VERSION - currentVersion }, (_, index) => currentVersion + index + 1)
+        : [],
+  };
+}
+
+function applyMigrations(sql: DatabaseSync) {
+  const inspection = inspectSchema(sql);
+  assertMigratable(inspection);
+  if (inspection.status === "current") return inspection;
+
+  transaction(sql, () => {
+    sql.exec(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at TEXT NOT NULL
+      );
+    `);
+    for (const version of inspection.pendingVersions) {
+      sql.exec(migrations[version - 1]!);
+      sql.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(version, now());
+    }
+  });
+  return inspectSchema(sql);
+}
+
+function assertMigratable(inspection: DatabaseSchemaInspection) {
+  if (inspection.status === "future" || inspection.status === "non-contiguous") {
+    throw new DatabaseSchemaError(inspection);
+  }
+}
+
+function databaseFile(dataDir: string) {
+  return join(dataDir, "zhiye.sqlite3");
+}
+
+function regularFileExists(path: string) {
+  try {
+    if (!lstatSync(path).isFile()) throw new Error("Database path must be a regular file");
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function assertDatabaseFile(path: string) {
+  const exists = regularFileExists(path);
+  for (const suffix of ["-wal", "-shm"]) regularFileExists(`${path}${suffix}`);
+  return exists;
+}
+
+function syncDirectory(path: string) {
+  const descriptor = openSync(path, "r");
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+function secureSnapshotsDirectory(path: string) {
+  let created = false;
+  try {
+    if (!lstatSync(path).isDirectory()) throw new Error("Snapshots path must be a real directory");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    mkdirSync(path, { recursive: true, mode: 0o700 });
+    created = true;
+    if (!lstatSync(path).isDirectory()) throw new Error("Snapshots path must be a real directory");
+  }
+  chmodSync(path, 0o700);
+  syncDirectory(path);
+  if (created) syncDirectory(dirname(path));
+}
+
+function configureDatabase(sql: DatabaseSync) {
+  sql.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
+}
+
+function secureDatabaseFiles(path: string) {
+  if (!assertDatabaseFile(path)) throw new Error("Database file is missing");
+  chmodSync(path, 0o600);
+  for (const suffix of ["-wal", "-shm"]) {
+    const sidecar = `${path}${suffix}`;
+    if (regularFileExists(sidecar)) chmodSync(sidecar, 0o600);
+  }
+}
+
+function assertBackupDirectoryName(name: string) {
+  if (
+    name !== basename(name) ||
+    !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}$/u.test(name)
+  ) {
+    throw new RangeError("Backup directory name must be a safe basename");
+  }
+}
+
+function assertRetentionCount(count: number) {
+  if (!Number.isInteger(count) || count < 1 || count > 100) {
+    throw new RangeError("Automatic backup retention must be an integer from 1 to 100");
+  }
+}
+
+export function inspectDatabaseSchema(dataDir: string): DatabaseSchemaInspection {
+  const path = databaseFile(dataDir);
+  if (!assertDatabaseFile(path)) return emptySchemaInspection();
+  const sql = new DatabaseSync(path, { readOnly: true });
+  try {
+    sql.exec("PRAGMA query_only = ON");
+    return inspectSchema(sql);
+  } finally {
+    sql.close();
+  }
+}
+
+export function migrateDatabase(dataDir: string) {
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  assertMigratable(inspectDatabaseSchema(dataDir));
+  const path = databaseFile(dataDir);
+  assertDatabaseFile(path);
+  const sql = new DatabaseSync(path);
+  try {
+    secureDatabaseFiles(path);
+    configureDatabase(sql);
+    const inspection = applyMigrations(sql);
+    secureDatabaseFiles(path);
+    return inspection;
+  } finally {
+    sql.close();
+  }
+}
+
 function ftsQuery(query: string) {
   return query
     .trim()
@@ -311,43 +563,22 @@ export class KnowledgeDatabase {
   constructor(dataDir: string) {
     this.dataDir = dataDir;
     this.snapshotsDir = join(dataDir, "snapshots");
-    mkdirSync(this.snapshotsDir, { recursive: true, mode: 0o700 });
-    chmodSync(this.snapshotsDir, 0o700);
-    const databasePath = join(dataDir, "zhiye.sqlite3");
+    secureSnapshotsDirectory(this.snapshotsDir);
+    const databasePath = databaseFile(dataDir);
+    assertMigratable(inspectDatabaseSchema(dataDir));
+    assertDatabaseFile(databasePath);
     this.sql = new DatabaseSync(databasePath);
-    this.sql.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
-    chmodSync(databasePath, 0o600);
-    for (const suffix of ["-wal", "-shm"]) {
-      const path = `${databasePath}${suffix}`;
-      if (existsSync(path)) chmodSync(path, 0o600);
+    try {
+      secureDatabaseFiles(databasePath);
+      configureDatabase(this.sql);
+      applyMigrations(this.sql);
+      secureDatabaseFiles(databasePath);
+      this.processPendingFileDeletions();
+      this.recoverInterruptedJobs();
+    } catch (error) {
+      this.sql.close();
+      throw error;
     }
-    this.migrate();
-    this.processPendingFileDeletions();
-    this.recoverInterruptedJobs();
-  }
-
-  private migrate() {
-    this.sql.exec(`
-      CREATE TABLE IF NOT EXISTS schema_migrations (
-        version INTEGER PRIMARY KEY,
-        applied_at TEXT NOT NULL
-      );
-    `);
-    const applied = new Set(
-      (this.sql.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: number }>).map(
-        ({ version }) => version,
-      ),
-    );
-    migrations.forEach((migration, index) => {
-      const version = index + 1;
-      if (applied.has(version)) return;
-      transaction(this.sql, () => {
-        this.sql.exec(migration);
-        this.sql
-          .prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
-          .run(version, now());
-      });
-    });
   }
 
   private recoverInterruptedJobs() {
@@ -380,6 +611,203 @@ export class KnowledgeDatabase {
 
   close() {
     this.sql.close();
+  }
+
+  private toBackupRecord(row: BackupRecordRow): BackupRecord {
+    return {
+      id: row.id,
+      directoryName: row.directory_name,
+      reason: row.reason,
+      status: row.status,
+      createdAt: row.created_at,
+      finishedAt: row.finished_at,
+      verifiedAt: row.verified_at,
+      totalBytes: row.total_bytes,
+      schemaVersion: row.schema_version,
+      errorCode: row.error_code,
+      errorMessage: row.error_message,
+    };
+  }
+
+  upsertBackupRecord(record: BackupRecord) {
+    if (record.directoryName !== null) assertBackupDirectoryName(record.directoryName);
+    this.sql
+      .prepare(
+        `INSERT INTO backup_records(
+           id, directory_name, reason, status, created_at, finished_at, verified_at,
+           total_bytes, schema_version, error_code, error_message
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           directory_name = excluded.directory_name,
+           reason = excluded.reason,
+           status = excluded.status,
+           created_at = excluded.created_at,
+           finished_at = excluded.finished_at,
+           verified_at = excluded.verified_at,
+           total_bytes = excluded.total_bytes,
+           schema_version = excluded.schema_version,
+           error_code = excluded.error_code,
+           error_message = excluded.error_message`,
+      )
+      .run(
+        record.id,
+        record.directoryName,
+        record.reason,
+        record.status,
+        record.createdAt,
+        record.finishedAt,
+        record.verifiedAt,
+        record.totalBytes,
+        record.schemaVersion,
+        record.errorCode,
+        record.errorMessage,
+      );
+    return this.getBackupRecord(record.id)!;
+  }
+
+  getBackupRecord(id: string) {
+    const row = this.sql.prepare("SELECT * FROM backup_records WHERE id = ?").get(id) as
+      | BackupRecordRow
+      | undefined;
+    return row ? this.toBackupRecord(row) : null;
+  }
+
+  getBackupRecordByDirectoryName(directoryName: string) {
+    assertBackupDirectoryName(directoryName);
+    const row = this.sql
+      .prepare("SELECT * FROM backup_records WHERE directory_name = ?")
+      .get(directoryName) as BackupRecordRow | undefined;
+    return row ? this.toBackupRecord(row) : null;
+  }
+
+  listBackupRecords() {
+    return (
+      this.sql.prepare("SELECT * FROM backup_records ORDER BY created_at DESC, id DESC").all() as unknown as BackupRecordRow[]
+    ).map((row) => this.toBackupRecord(row));
+  }
+
+  hasAutomaticBackupForDay(dayStart: string, nextDayStart: string) {
+    if (!dayStart || dayStart >= nextDayStart) throw new RangeError("Backup day range is invalid");
+    return Boolean(
+      this.sql
+        .prepare(
+          `SELECT 1 AS found FROM backup_records
+           WHERE reason = 'automatic' AND status = 'verified'
+             AND created_at >= ? AND created_at < ? LIMIT 1`,
+        )
+        .get(dayStart, nextDayStart),
+    );
+  }
+
+  listExpiredAutomaticBackups(retentionCount = this.getBackupSettings().automaticRetentionCount) {
+    assertRetentionCount(retentionCount);
+    const rows = this.sql
+      .prepare(
+        `SELECT * FROM backup_records
+         WHERE reason = 'automatic' AND status = 'verified' AND directory_name IS NOT NULL
+         ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET ?`,
+      )
+      .all(retentionCount) as unknown as BackupRecordRow[];
+    return rows.reverse().map((row) => this.toBackupRecord(row));
+  }
+
+  deleteAutomaticBackupRecord(id: string, retentionCount = this.getBackupSettings().automaticRetentionCount) {
+    if (!this.listExpiredAutomaticBackups(retentionCount).some((record) => record.id === id)) return false;
+    return (
+      this.sql
+        .prepare("DELETE FROM backup_records WHERE id = ? AND reason = 'automatic' AND status = 'verified'")
+        .run(id).changes === 1
+    );
+  }
+
+  getBackupSettings(): BackupSettings {
+    const row = this.sql.prepare("SELECT automatic_retention_count FROM backup_settings WHERE id = 1").get() as
+      | { automatic_retention_count: number }
+      | undefined;
+    if (!row) throw new Error("Backup settings are missing");
+    return { automaticRetentionCount: row.automatic_retention_count };
+  }
+
+  setAutomaticRetentionCount(count: number) {
+    assertRetentionCount(count);
+    this.sql.prepare("UPDATE backup_settings SET automatic_retention_count = ? WHERE id = 1").run(count);
+    return this.getBackupSettings();
+  }
+
+  getDatabaseHealth(): DatabaseHealth {
+    const integrityCheck = (
+      this.sql.prepare("PRAGMA integrity_check").all() as Array<{ integrity_check: string }>
+    ).map(({ integrity_check }) => integrity_check);
+    const foreignKeyViolations = (
+      this.sql.prepare("PRAGMA foreign_key_check").all() as Array<{
+        table: string;
+        rowid: number | null;
+        parent: string;
+        fkid: number;
+      }>
+    ).map((row) => ({
+      table: row.table,
+      rowId: row.rowid,
+      parent: row.parent,
+      foreignKeyId: row.fkid,
+    }));
+    const referencedSnapshotPaths = (
+      this.sql
+        .prepare(
+          `SELECT DISTINCT snapshot_path AS path FROM captures
+           WHERE snapshot_path IS NOT NULL ORDER BY snapshot_path`,
+        )
+        .all() as Array<{ path: string }>
+    ).map(({ path }) => path);
+    const pendingFileDeletions = (
+      this.sql.prepare("SELECT * FROM file_deletions ORDER BY created_at, path").all() as Array<{
+        path: string;
+        attempts: number;
+        last_error: string | null;
+        created_at: string;
+        updated_at: string;
+      }>
+    ).map((row) => ({
+      path: row.path,
+      attempts: row.attempts,
+      lastError: row.last_error,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+    const recentErrors = (
+      this.sql
+        .prepare(
+          `SELECT source, code, message, occurred_at FROM (
+             SELECT 'capture' AS source, error_code AS code, error_message AS message,
+                    COALESCE(finished_at, started_at) AS occurred_at
+             FROM captures WHERE error_message IS NOT NULL
+             UNION ALL
+             SELECT 'backup', error_code, error_message, COALESCE(finished_at, created_at)
+             FROM backup_records WHERE error_message IS NOT NULL
+             UNION ALL
+             SELECT 'file-deletion', 'FILE_DELETE_FAILED', last_error, updated_at
+             FROM file_deletions WHERE last_error IS NOT NULL
+           ) ORDER BY occurred_at DESC LIMIT 20`,
+        )
+        .all() as Array<{
+        source: DatabaseHealth["recentErrors"][number]["source"];
+        code: string | null;
+        message: string;
+        occurred_at: string;
+      }>
+    ).map((row) => ({
+      source: row.source,
+      code: row.code,
+      message: row.message,
+      occurredAt: row.occurred_at,
+    }));
+    return {
+      integrityCheck,
+      foreignKeyViolations,
+      referencedSnapshotPaths,
+      pendingFileDeletions,
+      recentErrors,
+    };
   }
 
   private tagsFor(documentId: string) {
@@ -733,10 +1161,11 @@ export class KnowledgeDatabase {
     });
   }
 
-  softDeleteDocument(id: string) {
+  softDeleteDocument(id: string, revision: number) {
     return transaction(this.sql, () => {
       const current = this.getDocument(id);
       if (!current) return { kind: "missing" as const };
+      if (current.revision !== revision) return { kind: "conflict" as const, document: current };
       if (current.deletedAt) return { kind: "already_deleted" as const, document: current };
       const timestamp = now();
       this.sql
@@ -746,10 +1175,11 @@ export class KnowledgeDatabase {
     });
   }
 
-  restoreDocument(id: string) {
+  restoreDocument(id: string, revision: number) {
     return transaction(this.sql, () => {
       const current = this.getDocument(id);
       if (!current) return { kind: "missing" as const };
+      if (current.revision !== revision) return { kind: "conflict" as const, document: current };
       if (!current.deletedAt) return { kind: "not_deleted" as const, document: current };
       const timestamp = now();
       this.sql
@@ -821,6 +1251,32 @@ export class KnowledgeDatabase {
     const match = /^snapshots\/([a-zA-Z0-9-]+\.html\.gz)$/u.exec(relativePath);
     if (!match || !lstatSync(root).isDirectory()) throw new Error("Snapshot path is outside storage");
     return join(root, match[1]);
+  }
+
+  queueSnapshotDeletions(paths: string[]) {
+    return transaction(this.sql, () => {
+      const timestamp = now();
+      const queued: string[] = [];
+      const referenced: string[] = [];
+      for (const path of new Set(paths)) {
+        this.snapshotPath(path);
+        const inUse = this.sql
+          .prepare("SELECT 1 AS found FROM captures WHERE snapshot_path = ? LIMIT 1")
+          .get(path);
+        if (inUse) {
+          referenced.push(path);
+          continue;
+        }
+        const result = this.sql
+          .prepare(
+            `INSERT INTO file_deletions(path, created_at, updated_at) VALUES (?, ?, ?)
+             ON CONFLICT(path) DO NOTHING`,
+          )
+          .run(path, timestamp, timestamp);
+        if (result.changes === 1) queued.push(path);
+      }
+      return { queued, referenced };
+    });
   }
 
   processPendingFileDeletions() {

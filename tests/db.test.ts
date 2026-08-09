@@ -15,7 +15,14 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
-import { openDatabase } from "../server/db.js";
+import {
+  CURRENT_SCHEMA_VERSION,
+  DatabaseSchemaError,
+  inspectDatabaseSchema,
+  migrateDatabase,
+  openDatabase,
+} from "../server/db.js";
+import type { BackupRecord } from "../shared/types.js";
 import { acquireDataLock } from "../server/lock.js";
 
 function database() {
@@ -318,8 +325,15 @@ test("manual revisions can be restored and trash deletion removes tracked snapsh
       "First body",
     );
 
-    const trashed = fixture.db.softDeleteDocument(ready.id);
+    const staleDelete = fixture.db.softDeleteDocument(ready.id, second.document.revision);
+    assert.equal(staleDelete.kind, "conflict");
+    if (staleDelete.kind === "conflict") {
+      assert.equal(staleDelete.document.revision, revisionRestore.document.revision);
+      assert.equal(staleDelete.document.deletedAt, null);
+    }
+    const trashed = fixture.db.softDeleteDocument(ready.id, revisionRestore.document.revision);
     assert.equal(trashed.kind, "deleted");
+    if (trashed.kind !== "deleted") return;
     const localDraft = fixture.db.saveDocumentDraft(
       ready.id,
       null,
@@ -340,11 +354,15 @@ test("manual revisions can be restored and trash deletion removes tracked snapsh
       "deleted",
     );
 
-    const restored = fixture.db.restoreDocument(ready.id);
+    const staleRestore = fixture.db.restoreDocument(ready.id, revisionRestore.document.revision);
+    assert.equal(staleRestore.kind, "conflict");
+    if (staleRestore.kind === "conflict") assert.ok(staleRestore.document.deletedAt);
+    const restored = fixture.db.restoreDocument(ready.id, trashed.document.revision);
     assert.equal(restored.kind, "restored");
+    if (restored.kind !== "restored") return;
     assert.deepEqual(fixture.db.listTags(), ["One"]);
     assert.equal(fixture.db.listDocuments().total, 1);
-    const deletedAgain = fixture.db.softDeleteDocument(ready.id);
+    const deletedAgain = fixture.db.softDeleteDocument(ready.id, restored.document.revision);
     assert.equal(deletedAgain.kind, "deleted");
     if (deletedAgain.kind !== "deleted") return;
     assert.equal(
@@ -394,7 +412,7 @@ test("snapshot deletion failure keeps the trashed document tracked", () => {
       httpStatus: 200,
     }, "snapshots/not-a-file.html.gz");
     mkdirSync(join(fixture.directory, "snapshots/not-a-file.html.gz"));
-    const deleted = fixture.db.softDeleteDocument(created.id);
+    const deleted = fixture.db.softDeleteDocument(created.id, fixture.db.getDocument(created.id)!.revision);
     assert.equal(deleted.kind, "deleted");
     if (deleted.kind !== "deleted") return;
     assert.equal(
@@ -436,7 +454,7 @@ test("snapshot cleanup rejects traversal and symbolic links", () => {
         warning: null,
         httpStatus: 200,
       }, snapshotPath);
-      const deleted = fixture.db.softDeleteDocument(created.id);
+      const deleted = fixture.db.softDeleteDocument(created.id, fixture.db.getDocument(created.id)!.revision);
       assert.equal(deleted.kind, "deleted");
       if (deleted.kind !== "deleted") continue;
       assert.equal(
@@ -470,7 +488,7 @@ test("a database failure cannot delete a document snapshot first", () => {
     }, "snapshots/atomic.html.gz");
     const snapshot = join(fixture.directory, "snapshots/atomic.html.gz");
     writeFileSync(snapshot, "snapshot");
-    const deleted = fixture.db.softDeleteDocument(created.id);
+    const deleted = fixture.db.softDeleteDocument(created.id, fixture.db.getDocument(created.id)!.revision);
     assert.equal(deleted.kind, "deleted");
     if (deleted.kind !== "deleted") return;
     fixture.db.sql.exec(`
@@ -545,7 +563,7 @@ test("a shared snapshot is deleted only after its last document", () => {
       }, snapshotPath);
     });
 
-    const first = fixture.db.softDeleteDocument(documents[0].id);
+    const first = fixture.db.softDeleteDocument(documents[0].id, documents[0].revision);
     assert.equal(first.kind, "deleted");
     if (first.kind !== "deleted") return;
     assert.equal(
@@ -554,7 +572,7 @@ test("a shared snapshot is deleted only after its last document", () => {
     );
     assert.equal(existsSync(absolutePath), true);
 
-    const second = fixture.db.softDeleteDocument(documents[1].id);
+    const second = fixture.db.softDeleteDocument(documents[1].id, documents[1].revision);
     assert.equal(second.kind, "deleted");
     if (second.kind !== "deleted") return;
     assert.equal(
@@ -589,7 +607,7 @@ test("a planned snapshot remains tracked after an interrupted capture", () => {
     );
     const recovered = db.getDocument(created.id)!;
     assert.equal(recovered.status, "queued");
-    const deleted = db.softDeleteDocument(created.id);
+    const deleted = db.softDeleteDocument(created.id, recovered.revision);
     assert.equal(deleted.kind, "deleted");
     if (deleted.kind !== "deleted") return;
     assert.equal(db.permanentlyDeleteDocument(created.id, deleted.document.revision, null).kind, "deleted");
@@ -653,7 +671,10 @@ test("global tags are not limited to the first document page", () => {
     assert.equal(fixture.db.listDocuments().items.length, 30);
     assert.equal(fixture.db.listDocuments().total, 31);
     assert.deepEqual(fixture.db.listTags(), ["First", "Overflow"]);
-    assert.equal(fixture.db.softDeleteDocument(lastId).kind, "deleted");
+    assert.equal(
+      fixture.db.softDeleteDocument(lastId, fixture.db.getDocument(lastId)!.revision).kind,
+      "deleted",
+    );
     assert.deepEqual(fixture.db.listTags(), ["First"]);
     assert.deepEqual(fixture.db.listTags("only"), ["Overflow"]);
   } finally {
@@ -661,7 +682,7 @@ test("global tags are not limited to the first document page", () => {
   }
 });
 
-test("v6 draft migration upgrades an existing v3 database", () => {
+test("current migrations upgrade v3 and leave the v7 release schema unchanged", () => {
   const directory = mkdtempSync(join(tmpdir(), "zhiye-v3-upgrade-"));
   const path = join(directory, "zhiye.sqlite3");
   const documentId = "legacy-document";
@@ -690,7 +711,7 @@ test("v6 draft migration upgrades an existing v3 database", () => {
       assert.equal(
         (upgraded.sql.prepare("SELECT max(version) AS version FROM schema_migrations").get() as { version: number })
           .version,
-        6,
+        CURRENT_SCHEMA_VERSION,
       );
     } finally {
       upgraded.close();
@@ -699,13 +720,267 @@ test("v6 draft migration upgrades an existing v3 database", () => {
     try {
       assert.equal(
         (repeated.sql.prepare("SELECT count(*) AS total FROM schema_migrations").get() as { total: number }).total,
-        6,
+        CURRENT_SCHEMA_VERSION,
       );
       assert.equal(repeated.listDocumentRevisions(documentId)?.length, 2);
     } finally {
       repeated.close();
     }
+
+    const currentDirectory = join(directory, "current-v7");
+    mkdirSync(currentDirectory);
+    const currentPath = join(currentDirectory, "zhiye.sqlite3");
+    const fixture = new DatabaseSync(currentPath);
+    fixture.exec(readFileSync(new URL("./fixtures/schema-v7.sql", import.meta.url), "utf8"));
+    const schemaBefore = fixture
+      .prepare(
+        `SELECT type, name, sql FROM sqlite_schema
+         WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name`,
+      )
+      .all();
+    const migrationsBefore = fixture
+      .prepare("SELECT version, applied_at FROM schema_migrations ORDER BY version")
+      .all();
+    fixture.close();
+
+    assert.equal(inspectDatabaseSchema(currentDirectory).status, "current");
+    const current = openDatabase(currentDirectory);
+    try {
+      assert.equal(current.getDocument("release-document")?.markdown, "Frozen release schema body.");
+      assert.deepEqual(current.getDocument("release-document")?.tags, ["Fixture"]);
+      assert.equal(current.listDocuments({ q: "Frozen" }).total, 1);
+      assert.deepEqual(
+        current.sql
+          .prepare(
+            `SELECT type, name, sql FROM sqlite_schema
+             WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name`,
+          )
+          .all(),
+        schemaBefore,
+      );
+      assert.deepEqual(
+        current.sql.prepare("SELECT version, applied_at FROM schema_migrations ORDER BY version").all(),
+        migrationsBefore,
+      );
+    } finally {
+      current.close();
+    }
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("schema inspection is read-only and rejects future or incomplete histories", () => {
+  const root = mkdtempSync(join(tmpdir(), "zhiye-schema-inspection-"));
+  const emptyDir = join(root, "empty");
+  const dataDir = join(root, "data");
+  try {
+    assert.deepEqual(inspectDatabaseSchema(emptyDir), {
+      status: "empty",
+      currentVersion: 0,
+      supportedVersion: CURRENT_SCHEMA_VERSION,
+      appliedVersions: [],
+      pendingVersions: Array.from({ length: CURRENT_SCHEMA_VERSION }, (_, index) => index + 1),
+    });
+    assert.equal(existsSync(emptyDir), false);
+
+    const linkedDir = join(root, "linked");
+    const missingTarget = join(root, "missing-target.sqlite3");
+    mkdirSync(linkedDir);
+    symlinkSync(missingTarget, join(linkedDir, "zhiye.sqlite3"));
+    assert.throws(() => inspectDatabaseSchema(linkedDir), /regular file/u);
+    assert.throws(() => migrateDatabase(linkedDir), /regular file/u);
+    assert.throws(() => openDatabase(linkedDir), /regular file/u);
+    assert.equal(existsSync(missingTarget), false);
+
+    const sidecarDir = join(root, "linked-sidecar");
+    mkdirSync(sidecarDir);
+    const sidecarDatabase = join(sidecarDir, "zhiye.sqlite3");
+    const empty = new DatabaseSync(sidecarDatabase);
+    empty.close();
+    symlinkSync(join(root, "missing-wal"), `${sidecarDatabase}-wal`);
+    assert.throws(() => inspectDatabaseSchema(sidecarDir), /regular file/u);
+
+    const snapshotsData = join(root, "linked-snapshots");
+    const outsideSnapshots = join(root, "outside-snapshots");
+    mkdirSync(snapshotsData);
+    mkdirSync(outsideSnapshots);
+    chmodSync(outsideSnapshots, 0o755);
+    symlinkSync(outsideSnapshots, join(snapshotsData, "snapshots"), "dir");
+    assert.throws(() => openDatabase(snapshotsData), /real directory/u);
+    assert.equal(statSync(outsideSnapshots).mode & 0o777, 0o755);
+    assert.equal(existsSync(join(snapshotsData, "zhiye.sqlite3")), false);
+
+    assert.equal(migrateDatabase(dataDir).status, "current");
+
+    const raw = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));
+    raw.exec(`
+      DROP TABLE backup_settings;
+      DROP TABLE backup_records;
+      DELETE FROM schema_migrations WHERE version = ${CURRENT_SCHEMA_VERSION};
+    `);
+    raw.close();
+    assert.deepEqual(inspectDatabaseSchema(dataDir).pendingVersions, [CURRENT_SCHEMA_VERSION]);
+    assert.equal(migrateDatabase(dataDir).status, "current");
+
+    const future = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));
+    future
+      .prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+      .run(CURRENT_SCHEMA_VERSION + 1, new Date().toISOString());
+    future.close();
+    assert.equal(inspectDatabaseSchema(dataDir).status, "future");
+    assert.throws(
+      () => migrateDatabase(dataDir),
+      (error: unknown) => error instanceof DatabaseSchemaError && error.code === "FUTURE_SCHEMA",
+    );
+
+    const broken = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));
+    broken.prepare("DELETE FROM schema_migrations WHERE version IN (?, ?)").run(4, CURRENT_SCHEMA_VERSION + 1);
+    broken.close();
+    assert.equal(inspectDatabaseSchema(dataDir).status, "non-contiguous");
+    assert.throws(
+      () => openDatabase(dataDir),
+      (error: unknown) =>
+        error instanceof DatabaseSchemaError && error.code === "NON_CONTIGUOUS_MIGRATIONS",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("all pending migrations roll back together on failure", () => {
+  const directory = mkdtempSync(join(tmpdir(), "zhiye-migration-rollback-"));
+  const path = join(directory, "zhiye.sqlite3");
+  try {
+    const raw = new DatabaseSync(path);
+    raw.exec(readFileSync(new URL("./fixtures/schema-v3.sql", import.meta.url), "utf8"));
+    raw.exec("CREATE TABLE file_deletions(path TEXT PRIMARY KEY)");
+    raw.close();
+
+    assert.throws(() => openDatabase(directory), /file_deletions/u);
+    assert.deepEqual(inspectDatabaseSchema(directory), {
+      status: "pending",
+      currentVersion: 3,
+      supportedVersion: CURRENT_SCHEMA_VERSION,
+      appliedVersions: [1, 2, 3],
+      pendingVersions: [4, 5, 6, 7],
+    });
+    const unchanged = new DatabaseSync(path, { readOnly: true });
+    try {
+      const documentColumns = unchanged.prepare("PRAGMA table_info(documents)").all() as Array<{ name: string }>;
+      assert.equal(documentColumns.some(({ name }) => name === "deleted_at"), false);
+      assert.equal(
+        unchanged
+          .prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'document_revisions'")
+          .get(),
+        undefined,
+      );
+    } finally {
+      unchanged.close();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("backup metadata, health, and orphan cleanup stay database guarded", () => {
+  const fixture = database();
+  const record = (
+    id: string,
+    reason: BackupRecord["reason"],
+    createdAt: string,
+    directoryName: string | null,
+    status: BackupRecord["status"] = "verified",
+  ): BackupRecord => ({
+    id,
+    directoryName,
+    reason,
+    status,
+    createdAt,
+    finishedAt: createdAt,
+    verifiedAt: status === "verified" ? createdAt : null,
+    totalBytes: status === "verified" ? 42 : null,
+    schemaVersion: status === "verified" ? CURRENT_SCHEMA_VERSION : null,
+    errorCode: status === "verified" ? null : "BACKUP_FAILED",
+    errorMessage: status === "verified" ? null : "Backup failed",
+  });
+  try {
+    assert.deepEqual(fixture.db.getBackupSettings(), { automaticRetentionCount: 7 });
+    assert.throws(() => fixture.db.setAutomaticRetentionCount(0), RangeError);
+    assert.deepEqual(fixture.db.setAutomaticRetentionCount(2), { automaticRetentionCount: 2 });
+    assert.throws(
+      () => fixture.db.sql.prepare("UPDATE backup_settings SET automatic_retention_count = 101").run(),
+      /constraint/u,
+    );
+
+    const automatic = [1, 2, 3].map((day) =>
+      record(
+        `automatic-${day}`,
+        "automatic",
+        `2026-08-0${day}T01:00:00.000Z`,
+        `backup-automatic-${day}`,
+      ),
+    );
+    for (const item of automatic) fixture.db.upsertBackupRecord(item);
+    const manual = record("manual", "manual", "2026-08-04T01:00:00.000Z", "backup-manual");
+    fixture.db.upsertBackupRecord(manual);
+    fixture.db.upsertBackupRecord(
+      record("failed", "automatic", "2026-08-05T01:00:00.000Z", null, "failed"),
+    );
+    assert.equal(fixture.db.getBackupRecordByDirectoryName("backup-manual")?.id, manual.id);
+    assert.throws(() => fixture.db.upsertBackupRecord({ ...manual, id: "unsafe", directoryName: "/tmp/x" }), RangeError);
+    assert.equal(
+      fixture.db.hasAutomaticBackupForDay("2026-08-05T00:00:00.000Z", "2026-08-06T00:00:00.000Z"),
+      false,
+    );
+    assert.equal(
+      fixture.db.hasAutomaticBackupForDay("2026-08-03T00:00:00.000Z", "2026-08-04T00:00:00.000Z"),
+      true,
+    );
+    assert.deepEqual(fixture.db.listExpiredAutomaticBackups().map(({ id }) => id), ["automatic-1"]);
+    assert.equal(fixture.db.deleteAutomaticBackupRecord("manual"), false);
+    assert.equal(fixture.db.deleteAutomaticBackupRecord("automatic-1"), true);
+
+    const created = fixture.db.createOrGetDocument("https://example.com/health").document;
+    const job = fixture.db.claimNextCapture();
+    assert.ok(job);
+    const referenced = "snapshots/referenced.html.gz";
+    fixture.db.completeCapture(job, {
+      title: "Health",
+      author: null,
+      publishedAt: null,
+      finalUrl: created.sourceUrl,
+      canonicalUrl: null,
+      markdown: "Healthy",
+      mode: "http",
+      warning: null,
+      httpStatus: 200,
+    }, referenced);
+    const orphan = "snapshots/orphan.html.gz";
+    mkdirSync(join(fixture.directory, orphan));
+    assert.deepEqual(fixture.db.queueSnapshotDeletions([referenced, orphan]), {
+      queued: [orphan],
+      referenced: [referenced],
+    });
+    assert.throws(
+      () => fixture.db.queueSnapshotDeletions(["snapshots/rolled-back.html.gz", "snapshots/../unsafe.html.gz"]),
+      /outside storage/u,
+    );
+    assert.equal(
+      fixture.db.sql.prepare("SELECT path FROM file_deletions WHERE path = ?").get("snapshots/rolled-back.html.gz"),
+      undefined,
+    );
+    fixture.db.processPendingFileDeletions();
+
+    const health = fixture.db.getDatabaseHealth();
+    assert.deepEqual(health.integrityCheck, ["ok"]);
+    assert.deepEqual(health.foreignKeyViolations, []);
+    assert.deepEqual(health.referencedSnapshotPaths, [referenced]);
+    assert.equal(health.pendingFileDeletions[0]?.path, orphan);
+    assert.equal(health.pendingFileDeletions[0]?.attempts, 1);
+    assert.ok(health.recentErrors.some(({ source }) => source === "backup"));
+    assert.ok(health.recentErrors.some(({ source }) => source === "file-deletion"));
+  } finally {
+    fixture.close();
   }
 });

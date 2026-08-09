@@ -1,13 +1,40 @@
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { closeSync, createReadStream, existsSync, fsyncSync, openSync, statSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { extname, join, resolve, sep } from "node:path";
+import { basename, extname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { gzip } from "node:zlib";
 
-import type { CaptureErrorCode, CaptureMode, CaptureStatus, KnowledgeDocument } from "../shared/types.js";
+import type {
+  CaptureErrorCode,
+  CaptureMode,
+  CaptureStatus,
+  DataSafetyStatus,
+  KnowledgeDocument,
+} from "../shared/types.js";
 import { createAuth } from "./auth.js";
-import { KnowledgeDatabase, openDatabase, type CaptureResult, type DocumentPatch } from "./db.js";
+import { BackupError, recoverInterruptedRestore, restoreBackup } from "./backup.js";
+import {
+  cleanupOrphanSnapshots,
+  createRecordedBackup,
+  DataSafetyError,
+  dataSafetyHealth,
+  defaultBackupRoot,
+  errorDetails,
+  listRecoveryBackups,
+  pruneAutomaticBackups,
+  reconcileBackupRecords,
+  resolveBackupRecord,
+  verifyBackupRecord,
+} from "./data-safety.js";
+import {
+  CURRENT_SCHEMA_VERSION,
+  KnowledgeDatabase,
+  migrateDatabase,
+  openDatabase,
+  type CaptureResult,
+  type DocumentPatch,
+} from "./db.js";
 
 const gzipAsync = promisify(gzip);
 const captureErrorCodes = new Set<CaptureErrorCode>([
@@ -71,6 +98,9 @@ export type CaptureFunction = (url: string) => Promise<CapturedPage>;
 
 export interface AppOptions {
   dataDir: string;
+  database: KnowledgeDatabase | null;
+  recoveryError?: unknown;
+  backupRoot?: string;
   staticDir?: string;
   bootstrapToken?: string;
   sessionToken?: string;
@@ -319,12 +349,15 @@ function exportedMarkdown(document: KnowledgeDocument) {
   return `${frontMatter.join("\n")}\n${document.markdown.trimEnd()}\n`;
 }
 
-function createWorker(db: KnowledgeDatabase, capture: CaptureFunction, enabled: boolean) {
-  let stopped = !enabled;
+function createWorker(getDb: () => KnowledgeDatabase | null, capture: CaptureFunction, enabled: boolean) {
+  let paused = !enabled;
+  let stopped = false;
   let current: Promise<void> | null = null;
 
   const run = async () => {
-    while (!stopped) {
+    while (!paused && !stopped) {
+      const db = getDb();
+      if (!db) return;
       const job = db.claimNextCapture();
       if (!job) return;
       try {
@@ -334,8 +367,18 @@ function createWorker(db: KnowledgeDatabase, capture: CaptureFunction, enabled: 
         if (page.rawHtml) {
           const filename = `${job.captureId}.html.gz`;
           snapshotPath = join("snapshots", filename);
+          await writeFile(join(db.snapshotsDir, filename), await gzipAsync(page.rawHtml), {
+            mode: 0o600,
+            flag: "wx",
+            flush: true,
+          });
+          const snapshotsDescriptor = openSync(db.snapshotsDir, "r");
+          try {
+            fsyncSync(snapshotsDescriptor);
+          } finally {
+            closeSync(snapshotsDescriptor);
+          }
           db.planCaptureSnapshot(job, snapshotPath);
-          await writeFile(join(db.snapshotsDir, filename), await gzipAsync(page.rawHtml), { mode: 0o600 });
         }
         const previous = db.getDocument(job.documentId)!;
         const result: CaptureResult = {
@@ -358,17 +401,27 @@ function createWorker(db: KnowledgeDatabase, capture: CaptureFunction, enabled: 
   };
 
   const wake = () => {
-    if (stopped || current) return;
+    if (paused || stopped || current) return;
     current = run().finally(() => {
       current = null;
-      if (!stopped && db.hasPendingCaptures()) queueMicrotask(wake);
+      if (!paused && !stopped && getDb()?.hasPendingCaptures()) queueMicrotask(wake);
     });
   };
 
   if (enabled) queueMicrotask(wake);
   return {
     wake,
+    async pause() {
+      paused = true;
+      await current;
+    },
+    resume() {
+      if (stopped || !enabled) return;
+      paused = false;
+      wake();
+    },
     async stop() {
+      paused = true;
       stopped = true;
       await current;
     },
@@ -399,7 +452,9 @@ function serveStatic(request: IncomingMessage, response: ServerResponse, pathnam
 }
 
 export function createApp(options: AppOptions) {
-  const db = openDatabase(options.dataDir);
+  let db = options.database;
+  let recoveryError: unknown = options.recoveryError ?? null;
+  const backupRoot = options.backupRoot ?? defaultBackupRoot(options.dataDir);
   const auth = createAuth({
     bootstrapToken: options.bootstrapToken ?? process.env.KB_BOOTSTRAP_TOKEN,
     sessionToken: options.sessionToken,
@@ -407,7 +462,72 @@ export function createApp(options: AppOptions) {
   });
   const capture: CaptureFunction =
     options.capture ?? (async (url) => (await import("./capture.js")).captureUrl(url));
-  const worker = createWorker(db, capture, options.startWorker !== false);
+  let worker = createWorker(() => db, capture, options.startWorker !== false && db !== null);
+  let maintenanceKind: string | null = null;
+  let maintenanceDone: Promise<void> | null = null;
+  let finishMaintenance: (() => void) | null = null;
+
+  const requireDatabase = () => {
+    if (maintenanceKind) {
+      throw new HttpError(503, "MAINTENANCE", `Data maintenance is in progress: ${maintenanceKind}`);
+    }
+    if (!db) throw new HttpError(503, "DATA_UNAVAILABLE", "Knowledge-base data needs recovery");
+    return db;
+  };
+
+  const mutationBody = async (request: IncomingMessage) => {
+    guardMutation(request);
+    const body = await readJson(request);
+    requireDatabase();
+    return body;
+  };
+
+  const runMaintenance = async <T,>(kind: string, operation: () => Promise<T>) => {
+    if (maintenanceKind) throw new HttpError(503, "MAINTENANCE", "Another data operation is in progress");
+    maintenanceKind = kind;
+    maintenanceDone = new Promise<void>((resolveDone) => {
+      finishMaintenance = resolveDone;
+    });
+    try {
+      return await operation();
+    } finally {
+      maintenanceKind = null;
+      finishMaintenance?.();
+      finishMaintenance = null;
+      maintenanceDone = null;
+    }
+  };
+
+  const status = async (): Promise<DataSafetyStatus> => {
+    if (maintenanceKind) {
+      return {
+        mode: db ? "ready" : "recovery",
+        maintenance: true,
+        recoveryError: recoveryError ? errorDetails(recoveryError) : null,
+        health: null,
+        backups: [],
+        settings: null,
+      };
+    }
+    if (!db) {
+      return {
+        mode: "recovery",
+        maintenance: false,
+        recoveryError: recoveryError ? errorDetails(recoveryError) : null,
+        health: null,
+        backups: await listRecoveryBackups(backupRoot),
+        settings: null,
+      };
+    }
+    return {
+      mode: "ready",
+      maintenance: false,
+      recoveryError: null,
+      health: dataSafetyHealth(db),
+      backups: db.listBackupRecords(),
+      settings: db.getBackupSettings(),
+    };
+  };
 
   const handler = async (request: IncomingMessage, response: ServerResponse) => {
     try {
@@ -431,19 +551,193 @@ export function createApp(options: AppOptions) {
         return;
       }
 
+      if (pathname === "/api/data-safety" && request.method === "GET") {
+        sendJson(response, 200, await status());
+        return;
+      }
+
       if (pathname === "/api/desktop/close-ready" && request.method === "POST") {
         if (!options.onDesktopCloseReady) throw new HttpError(404, "NOT_FOUND", "API endpoint not found");
         guardMutation(request);
-        const attemptId = closeAttemptId((await readJson(request)).attemptId);
+        const closeBody = await readJson(request);
+        const attemptId = closeAttemptId(closeBody.attemptId);
+        await maintenanceDone;
         sendJson(response, 200, { ok: true });
         setImmediate(() => options.onDesktopCloseReady?.(attemptId));
         return;
       }
 
-      if (pathname === "/api/documents" && request.method === "POST") {
+      if (maintenanceKind && pathname.startsWith("/api/")) {
+        throw new HttpError(503, "MAINTENANCE", `Data maintenance is in progress: ${maintenanceKind}`);
+      }
+
+      if (pathname === "/api/data-safety/backups" && request.method === "POST") {
+        await mutationBody(request);
+        const database = requireDatabase();
+        const record = await runMaintenance("backup", async () => {
+          await worker.pause();
+          try {
+            return await createRecordedBackup(database, options.dataDir, backupRoot, "manual");
+          } finally {
+            worker.resume();
+          }
+        });
+        sendJson(response, 201, record);
+        return;
+      }
+
+      const verifyBackupMatch = pathname.match(/^\/api\/data-safety\/backups\/([^/]+)\/verify$/u);
+      if (verifyBackupMatch && request.method === "POST") {
+        await mutationBody(request);
+        const database = requireDatabase();
+        const record = await runMaintenance("backup verification", async () => {
+          await worker.pause();
+          try {
+            return await verifyBackupRecord(database, backupRoot, decodeId(verifyBackupMatch[1]));
+          } finally {
+            worker.resume();
+          }
+        });
+        sendJson(response, 200, record);
+        return;
+      }
+
+      if (pathname === "/api/data-safety/settings" && request.method === "PATCH") {
+        const body = await mutationBody(request);
+        if (
+          typeof body.automaticRetentionCount !== "number" ||
+          !Number.isInteger(body.automaticRetentionCount) ||
+          body.automaticRetentionCount < 1 ||
+          body.automaticRetentionCount > 100
+        ) {
+          throw new HttpError(400, "INVALID_RETENTION", "automaticRetentionCount must be an integer from 1 to 100");
+        }
+        const database = requireDatabase();
+        const settings = await runMaintenance("backup retention", async () => {
+          await worker.pause();
+          try {
+            const updated = database.setAutomaticRetentionCount(body.automaticRetentionCount as number);
+            await pruneAutomaticBackups(database, backupRoot);
+            return updated;
+          } finally {
+            worker.resume();
+          }
+        });
+        sendJson(response, 200, settings);
+        return;
+      }
+
+      if (pathname === "/api/data-safety/cleanup" && request.method === "POST") {
+        await mutationBody(request);
+        const database = requireDatabase();
+        const result = await runMaintenance("snapshot cleanup", async () => {
+          await worker.pause();
+          try {
+            return cleanupOrphanSnapshots(database);
+          } finally {
+            worker.resume();
+          }
+        });
+        sendJson(response, 200, result);
+        return;
+      }
+
+      const restoreBackupMatch = pathname.match(/^\/api\/data-safety\/backups\/([^/]+)\/restore$/u);
+      if (restoreBackupMatch && request.method === "POST") {
         guardMutation(request);
         const body = await readJson(request);
-        const result = db.createOrGetDocument(normalizeUrl(body.url));
+        if (maintenanceKind) throw new HttpError(503, "MAINTENANCE", "Another data operation is in progress");
+        if (Object.keys(body).some((key) => key !== "allowQuarantine")) {
+          throw new HttpError(400, "INVALID_RESTORE_REQUEST", "Only allowQuarantine may be provided");
+        }
+        if (body.allowQuarantine !== undefined && typeof body.allowQuarantine !== "boolean") {
+          throw new HttpError(400, "INVALID_RESTORE_REQUEST", "allowQuarantine must be a boolean");
+        }
+        const result = await runMaintenance("restore", async () => {
+          await worker.stop();
+          const reopenExpected = db !== null;
+          try {
+            const selected = await resolveBackupRecord(
+              db,
+              backupRoot,
+              decodeId(restoreBackupMatch[1]),
+            );
+            db?.close();
+            db = null;
+            const restored = await restoreBackup({
+              dataDir: options.dataDir,
+              backupRoot,
+              backupPath: selected.backupValue.path,
+              supportedSchemaVersion: CURRENT_SCHEMA_VERSION,
+              allowQuarantine: body.allowQuarantine as boolean | undefined,
+              prepareStaging(stagingDataDir) {
+                migrateDatabase(stagingDataDir);
+                const candidate = openDatabase(stagingDataDir);
+                try {
+                  const health = candidate.getDatabaseHealth();
+                  if (
+                    health.integrityCheck.length !== 1 ||
+                    health.integrityCheck[0] !== "ok" ||
+                    health.foreignKeyViolations.length
+                  ) {
+                    throw new Error("Restored database health check failed");
+                  }
+                } finally {
+                  candidate.close();
+                }
+              },
+            });
+            db = openDatabase(options.dataDir);
+            recoveryError = null;
+            try {
+              await reconcileBackupRecords(db, backupRoot);
+            } catch (error) {
+              console.error("Backup reconciliation after restore failed", error);
+            }
+            return {
+              backupId: selected.record.id,
+              preRestoreBackupId: restored.preRestoreBackup
+                ? db.getBackupRecordByDirectoryName(basename(restored.preRestoreBackup.path))?.id ?? null
+                : null,
+              quarantinedDataPath: restored.quarantinedDataPath,
+              cleanupPending: restored.cleanupPending,
+            };
+          } catch (error) {
+            if (!db) {
+              recoveryError = error;
+              if (reopenExpected) {
+                try {
+                  recoverInterruptedRestore(options.dataDir);
+                  db = openDatabase(options.dataDir);
+                  recoveryError = null;
+                  try {
+                    await reconcileBackupRecords(db, backupRoot);
+                  } catch (reconcileError) {
+                    console.error("Backup reconciliation after failed restore failed", reconcileError);
+                  }
+                } catch (reopenError) {
+                  recoveryError = new AggregateError([error, reopenError], "Restore failed and data could not reopen");
+                }
+              }
+            } else {
+              recoveryError = null;
+            }
+            throw error;
+          } finally {
+            worker = createWorker(() => db, capture, options.startWorker !== false && db !== null);
+          }
+        });
+        sendJson(response, 200, result);
+        return;
+      }
+
+      if (!db && pathname.startsWith("/api/")) {
+        throw new HttpError(503, "DATA_UNAVAILABLE", "Knowledge-base data needs recovery");
+      }
+
+      if (pathname === "/api/documents" && request.method === "POST") {
+        const body = await mutationBody(request);
+        const result = requireDatabase().createOrGetDocument(normalizeUrl(body.url));
         if (result.created) worker.wake();
         sendJson(response, result.created ? 202 : 200, result.document);
         return;
@@ -460,7 +754,7 @@ export function createApp(options: AppOptions) {
         sendJson(
           response,
           200,
-          db.listDocuments({
+          requireDatabase().listDocuments({
             q,
             tag: requestUrl.searchParams.get("tag") ?? undefined,
             status: statusValue as CaptureStatus | undefined,
@@ -472,22 +766,22 @@ export function createApp(options: AppOptions) {
       }
 
       if (pathname === "/api/tags" && request.method === "GET") {
-        sendJson(response, 200, db.listTags(trashFilter(requestUrl)));
+        sendJson(response, 200, requireDatabase().listTags(trashFilter(requestUrl)));
         return;
       }
 
       const draftMatch = pathname.match(/^\/api\/documents\/([^/]+)\/draft$/u);
       if (draftMatch && request.method === "GET") {
         const id = decodeId(draftMatch[1]);
-        if (!db.getDocument(id)) throw new HttpError(404, "NOT_FOUND", "Document not found");
-        sendJson(response, 200, db.getDocumentDraft(id));
+        const database = requireDatabase();
+        if (!database.getDocument(id)) throw new HttpError(404, "NOT_FOUND", "Document not found");
+        sendJson(response, 200, database.getDocumentDraft(id));
         return;
       }
       if (draftMatch && request.method === "PUT") {
-        guardMutation(request);
         const id = decodeId(draftMatch[1]);
-        const draft = documentDraft(await readJson(request));
-        const result = db.saveDocumentDraft(
+        const draft = documentDraft(await mutationBody(request));
+        const result = requireDatabase().saveDocumentDraft(
           id,
           draft.expectedDraftRevision,
           draft.baseRevision,
@@ -504,11 +798,11 @@ export function createApp(options: AppOptions) {
         return;
       }
       if (draftMatch && request.method === "DELETE") {
-        guardMutation(request);
-        const expectedRevision = draftRevision((await readJson(request)).draftRevision);
+        const expectedRevision = draftRevision((await mutationBody(request)).draftRevision);
         const id = decodeId(draftMatch[1]);
-        if (!db.getDocument(id)) throw new HttpError(404, "NOT_FOUND", "Document not found");
-        const result = db.deleteDocumentDraft(id, expectedRevision!);
+        const database = requireDatabase();
+        if (!database.getDocument(id)) throw new HttpError(404, "NOT_FOUND", "Document not found");
+        const result = database.deleteDocumentDraft(id, expectedRevision!);
         if (result.kind === "conflict") {
           sendError(response, 409, "DRAFT_CONFLICT", "Draft changed since it was loaded", undefined, result.draft);
           return;
@@ -522,9 +816,8 @@ export function createApp(options: AppOptions) {
         /^\/api\/documents\/([^/]+)\/revisions\/([^/]+)\/restore$/u,
       );
       if (request.method === "POST" && revisionRestoreMatch) {
-        guardMutation(request);
-        const currentRevision = bodyRevision(await readJson(request));
-        const result = db.restoreDocumentRevision(
+        const currentRevision = bodyRevision(await mutationBody(request));
+        const result = requireDatabase().restoreDocumentRevision(
           decodeId(revisionRestoreMatch[1]),
           pathRevision(revisionRestoreMatch[2]),
           currentRevision,
@@ -547,7 +840,7 @@ export function createApp(options: AppOptions) {
 
       const revisionsMatch = pathname.match(/^\/api\/documents\/([^/]+)\/revisions$/u);
       if (request.method === "GET" && revisionsMatch) {
-        const revisions = db.listDocumentRevisions(decodeId(revisionsMatch[1]));
+        const revisions = requireDatabase().listDocumentRevisions(decodeId(revisionsMatch[1]));
         if (!revisions) throw new HttpError(404, "NOT_FOUND", "Document not found");
         sendJson(response, 200, revisions);
         return;
@@ -555,10 +848,13 @@ export function createApp(options: AppOptions) {
 
       const restoreMatch = pathname.match(/^\/api\/documents\/([^/]+)\/restore$/u);
       if (request.method === "POST" && restoreMatch) {
-        guardMutation(request);
-        await readJson(request);
-        const result = db.restoreDocument(decodeId(restoreMatch[1]));
+        const revision = bodyRevision(await mutationBody(request));
+        const result = requireDatabase().restoreDocument(decodeId(restoreMatch[1]), revision);
         if (result.kind === "missing") throw new HttpError(404, "NOT_FOUND", "Document not found");
+        if (result.kind === "conflict") {
+          sendError(response, 409, "REVISION_CONFLICT", "Document changed since it was loaded", result.document);
+          return;
+        }
         if (result.kind === "not_deleted") {
           sendError(response, 409, "NOT_IN_TRASH", "Document is not in the trash", result.document);
           return;
@@ -570,11 +866,10 @@ export function createApp(options: AppOptions) {
 
       const permanentMatch = pathname.match(/^\/api\/documents\/([^/]+)\/permanent$/u);
       if (request.method === "DELETE" && permanentMatch) {
-        guardMutation(request);
-        const body = await readJson(request);
+        const body = await mutationBody(request);
         const revision = bodyRevision(body);
         const confirmedDraftRevision = draftRevision(body.draftRevision, true);
-        const result = db.permanentlyDeleteDocument(
+        const result = requireDatabase().permanentlyDeleteDocument(
           decodeId(permanentMatch[1]),
           revision,
           confirmedDraftRevision,
@@ -606,7 +901,7 @@ export function createApp(options: AppOptions) {
 
       const exportMatch = pathname.match(/^\/api\/documents\/([^/]+)\/export\.md$/u);
       if (request.method === "GET" && exportMatch) {
-        const document = db.getDocument(decodeId(exportMatch[1]));
+        const document = requireDatabase().getDocument(decodeId(exportMatch[1]));
         if (!document) throw new HttpError(404, "NOT_FOUND", "Document not found");
         const filename = encodeURIComponent(Buffer.from((document.title || document.id).slice(0, 150)).toString("utf8"));
         response.writeHead(200, {
@@ -621,9 +916,8 @@ export function createApp(options: AppOptions) {
 
       const retryMatch = pathname.match(/^\/api\/documents\/([^/]+)\/retry$/u);
       if (request.method === "POST" && retryMatch) {
-        guardMutation(request);
-        await readJson(request);
-        const result = db.retryDocument(decodeId(retryMatch[1]));
+        await mutationBody(request);
+        const result = requireDatabase().retryDocument(decodeId(retryMatch[1]));
         if (result.kind === "missing") throw new HttpError(404, "NOT_FOUND", "Document not found");
         if (result.kind === "deleted") {
           sendError(response, 409, "DOCUMENT_DELETED", "Restore the document before retrying", result.document);
@@ -640,15 +934,14 @@ export function createApp(options: AppOptions) {
 
       const documentMatch = pathname.match(/^\/api\/documents\/([^/]+)$/u);
       if (documentMatch && request.method === "GET") {
-        const document = db.getDocument(decodeId(documentMatch[1]));
+        const document = requireDatabase().getDocument(decodeId(documentMatch[1]));
         if (!document) throw new HttpError(404, "NOT_FOUND", "Document not found");
         sendJson(response, 200, document);
         return;
       }
       if (documentMatch && request.method === "PATCH") {
-        guardMutation(request);
-        const { revision, patch } = documentPatch(await readJson(request));
-        const result = db.updateDocument(decodeId(documentMatch[1]), revision, patch);
+        const { revision, patch } = documentPatch(await mutationBody(request));
+        const result = requireDatabase().updateDocument(decodeId(documentMatch[1]), revision, patch);
         if (result.kind === "missing") throw new HttpError(404, "NOT_FOUND", "Document not found");
         if (result.kind === "deleted") {
           sendError(response, 409, "DOCUMENT_DELETED", "Restore the document before changing it", result.document);
@@ -662,10 +955,13 @@ export function createApp(options: AppOptions) {
         return;
       }
       if (documentMatch && request.method === "DELETE") {
-        guardMutation(request);
-        await readJson(request);
-        const result = db.softDeleteDocument(decodeId(documentMatch[1]));
+        const revision = bodyRevision(await mutationBody(request));
+        const result = requireDatabase().softDeleteDocument(decodeId(documentMatch[1]), revision);
         if (result.kind === "missing") throw new HttpError(404, "NOT_FOUND", "Document not found");
+        if (result.kind === "conflict") {
+          sendError(response, 409, "REVISION_CONFLICT", "Document changed since it was loaded", result.document);
+          return;
+        }
         if (result.kind === "already_deleted") {
           sendError(response, 409, "ALREADY_IN_TRASH", "Document is already in the trash", result.document);
           return;
@@ -685,6 +981,15 @@ export function createApp(options: AppOptions) {
         return;
       }
       if (error instanceof HttpError) sendError(response, error.status, error.code, error.message);
+      else if (error instanceof DataSafetyError) sendError(response, error.status, error.code, error.message);
+      else if (error instanceof BackupError) {
+        sendError(
+          response,
+          error.code === "QUARANTINE_REQUIRED" ? 409 : 400,
+          error.code,
+          error.message,
+        );
+      }
       else {
         console.error(error);
         sendError(response, 500, "INTERNAL_ERROR", "Internal server error");
@@ -695,13 +1000,18 @@ export function createApp(options: AppOptions) {
   let closed = false;
   return {
     handler,
-    db,
+    get db() {
+      if (!db) throw new Error("Knowledge-base data is unavailable");
+      return db;
+    },
     bootstrapToken: auth.bootstrapToken,
     async close() {
       if (closed) return;
       closed = true;
+      await maintenanceDone;
       await worker.stop();
-      db.close();
+      db?.close();
+      db = null;
     },
   };
 }

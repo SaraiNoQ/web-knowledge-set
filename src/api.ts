@@ -1,11 +1,16 @@
 import type {
   ApiError,
+  BackupRecord,
+  BackupSettings,
   CaptureStatus,
+  DataSafetyStatus,
   DocumentDraft,
   DocumentListResponse,
   DocumentRevision,
   KnowledgeDocument,
 } from "../shared/types";
+
+export type { DataSafetyStatus } from "../shared/types";
 
 export class ApiRequestError extends Error {
   constructor(
@@ -66,7 +71,60 @@ export interface DocumentPatch {
   revision: number;
 }
 
+export interface RestoreBackupResult {
+  backupId: string;
+  preRestoreBackupId: string | null;
+  quarantinedDataPath: string | null;
+  cleanupPending: boolean;
+}
+
+export interface CleanupDataResult {
+  queued: string[];
+  referenced: string[];
+  deleted: string[];
+  unsafeSnapshotEntries: string[];
+}
+
 export const api = {
+  getDataSafety(signal?: AbortSignal) {
+    return request<DataSafetyStatus>("/api/data-safety", { signal });
+  },
+
+  createBackup() {
+    return request<BackupRecord>("/api/data-safety/backups", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
+  verifyBackup(id: string) {
+    return request<BackupRecord>(`/api/data-safety/backups/${encodeURIComponent(id)}/verify`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
+  restoreBackup(id: string, allowQuarantine = false) {
+    return request<RestoreBackupResult>(`/api/data-safety/backups/${encodeURIComponent(id)}/restore`, {
+      method: "POST",
+      body: JSON.stringify({ allowQuarantine }),
+    });
+  },
+
+  updateBackupSettings(automaticRetentionCount: number) {
+    return request<BackupSettings>("/api/data-safety/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ automaticRetentionCount }),
+    });
+  },
+
+  cleanupData() {
+    return request<CleanupDataResult>("/api/data-safety/cleanup", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
   listTags(trash?: "only", signal?: AbortSignal) {
     return request<string[]>(`/api/tags${trash ? "?trash=only" : ""}`, { signal });
   },
@@ -136,17 +194,17 @@ export const api = {
     });
   },
 
-  deleteDocument(id: string) {
+  deleteDocument(id: string, revision: number) {
     return request<KnowledgeDocument>(`/api/documents/${encodeURIComponent(id)}`, {
       method: "DELETE",
-      body: JSON.stringify({}),
+      body: JSON.stringify({ revision }),
     });
   },
 
-  restoreDocument(id: string) {
+  restoreDocument(id: string, revision: number) {
     return request<KnowledgeDocument>(`/api/documents/${encodeURIComponent(id)}/restore`, {
       method: "POST",
-      body: JSON.stringify({}),
+      body: JSON.stringify({ revision }),
     });
   },
 

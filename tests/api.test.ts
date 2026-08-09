@@ -1,17 +1,26 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, fsyncSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 import { createApp, type CaptureFunction } from "../server/app.js";
+import { openDatabase } from "../server/db.js";
 import type {
+  BackupRecord,
+  DataSafetyStatus,
   DocumentDraft,
   DocumentListResponse,
   DocumentRevision,
   KnowledgeDocument,
 } from "../shared/types.js";
+
+const mutableFs = createRequire(import.meta.url)("node:fs") as {
+  fsyncSync: typeof fsyncSync;
+  renameSync: typeof renameSync;
+};
 
 async function waitFor(base: string, cookie: string, id: string, status: KnowledgeDocument["status"]) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -24,13 +33,21 @@ async function waitFor(base: string, cookie: string, id: string, status: Knowled
 }
 
 test("local API authenticates, captures, edits, exports, deduplicates, and retries", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "zhiye-api-"));
+  const root = mkdtempSync(join(tmpdir(), "zhiye-api-"));
+  const directory = join(root, "data");
   const attempts = new Map<string, number>();
+  let markSlowCaptureStarted!: () => void;
+  let releaseSlowCapture!: () => void;
+  const slowCaptureStarted = new Promise<void>((resolve) => { markSlowCaptureStarted = resolve; });
   const capture: CaptureFunction = async (url) => {
     const attempt = (attempts.get(url) ?? 0) + 1;
     attempts.set(url, attempt);
     if (url.includes("retry") && attempt === 1) {
       throw Object.assign(new Error("temporary failure"), { code: "HTTP_ERROR" });
+    }
+    if (url.includes("slow-close")) {
+      markSlowCaptureStarted();
+      await new Promise<void>((resolve) => { releaseSlowCapture = resolve; });
     }
     return {
       title: "Captured article",
@@ -48,6 +65,7 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
   const desktopCloseAttempts: string[] = [];
   const app = createApp({
     dataDir: directory,
+    database: openDatabase(directory),
     bootstrapToken: "bootstrap-test-token",
     sessionToken: "session-test-token",
     capture,
@@ -73,6 +91,39 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     );
     const cookie = (launch.headers.get("set-cookie") ?? "").split(";", 1)[0];
     const jsonHeaders = { Cookie: cookie, Origin: base, "Content-Type": "application/json" };
+
+    const dataSafety = (await (
+      await fetch(`${base}/api/data-safety`, { headers: { Cookie: cookie } })
+    ).json()) as DataSafetyStatus;
+    assert.equal(dataSafety.mode, "ready");
+    assert.equal(dataSafety.health?.database.integrityCheck[0], "ok");
+    const manualBackup = await fetch(`${base}/api/data-safety/backups`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: "{}",
+    });
+    assert.equal(manualBackup.status, 201);
+    const backupRecord = (await manualBackup.json()) as BackupRecord;
+    assert.equal(backupRecord.status, "verified");
+    assert.equal(
+      (
+        await fetch(`${base}/api/data-safety/backups/${encodeURIComponent(backupRecord.id)}/verify`, {
+          method: "POST",
+          headers: jsonHeaders,
+          body: "{}",
+        })
+      ).status,
+      200,
+    );
+    for (const automaticRetentionCount of [0, 101]) {
+      const response = await fetch(`${base}/api/data-safety/settings`, {
+        method: "PATCH",
+        headers: jsonHeaders,
+        body: JSON.stringify({ automaticRetentionCount }),
+      });
+      assert.equal(response.status, 400);
+      assert.equal(((await response.json()) as { error: { code: string } }).error.code, "INVALID_RETENTION");
+    }
 
     const crossOrigin = await fetch(`${base}/api/documents`, {
       method: "POST",
@@ -293,7 +344,7 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     const softDelete = await fetch(`${base}/api/documents/${ready.id}`, {
       method: "DELETE",
       headers: jsonHeaders,
-      body: "{}",
+      body: JSON.stringify({ revision: restoredRevision.revision }),
     });
     assert.equal(softDelete.status, 200);
     assert.ok(((await softDelete.json()) as KnowledgeDocument).deletedAt);
@@ -324,7 +375,7 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     const restore = await fetch(`${base}/api/documents/${ready.id}/restore`, {
       method: "POST",
       headers: jsonHeaders,
-      body: "{}",
+      body: JSON.stringify({ revision: restoredRevision.revision + 1 }),
     });
     assert.equal(restore.status, 200);
     const restored = (await restore.json()) as KnowledgeDocument;
@@ -332,7 +383,7 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     const deleteAgain = await fetch(`${base}/api/documents/${ready.id}`, {
       method: "DELETE",
       headers: jsonHeaders,
-      body: "{}",
+      body: JSON.stringify({ revision: restored.revision }),
     });
     assert.equal(deleteAgain.status, 200);
     const trashedAgain = (await deleteAgain.json()) as KnowledgeDocument;
@@ -377,17 +428,119 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     assert.equal(existsSync(join(directory, snapshotPath)), false);
     assert.equal((await fetch(`${base}/api/documents/${ready.id}`, { headers: { Cookie: cookie } })).status, 404);
 
-    const closeReady = await fetch(`${base}/api/desktop/close-ready`, {
+    const originalFsyncSync = mutableFs.fsyncSync;
+    let failNextDirectorySync = true;
+    mutableFs.fsyncSync = ((...args: Parameters<typeof fsyncSync>) => {
+      if (failNextDirectorySync) {
+        failNextDirectorySync = false;
+        throw new Error("simulated snapshot directory sync failure");
+      }
+      return originalFsyncSync(...args);
+    }) as typeof fsyncSync;
+    syncBuiltinESMExports();
+    let failedSnapshot!: KnowledgeDocument;
+    try {
+      const response = await fetch(`${base}/api/documents`, {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ url: "https://example.com/snapshot-sync-failure" }),
+      });
+      failedSnapshot = (await response.json()) as KnowledgeDocument;
+      await waitFor(base, cookie, failedSnapshot.id, "failed");
+    } finally {
+      mutableFs.fsyncSync = originalFsyncSync;
+      syncBuiltinESMExports();
+    }
+    assert.equal(
+      (
+        app.db.sql.prepare("SELECT snapshot_path FROM captures WHERE document_id = ?").get(failedSnapshot.id) as {
+          snapshot_path: string | null;
+        }
+      ).snapshot_path,
+      null,
+    );
+
+    const slowCapture = await fetch(`${base}/api/documents`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ url: "https://example.com/slow-close" }),
+    });
+    assert.equal(slowCapture.status, 202);
+    await slowCaptureStarted;
+    const backupDuringCapture = fetch(`${base}/api/data-safety/backups`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: "{}",
+    });
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const value = (await (
+        await fetch(`${base}/api/data-safety`, { headers: { Cookie: cookie } })
+      ).json()) as DataSafetyStatus;
+      if (value.maintenance) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      if (attempt === 99) assert.fail("backup did not enter maintenance mode");
+    }
+    let closeResolved = false;
+    const closeReady = fetch(`${base}/api/desktop/close-ready`, {
       method: "POST",
       headers: jsonHeaders,
       body: JSON.stringify({ attemptId: "314" }),
+    }).then((response) => {
+      closeResolved = true;
+      return response;
     });
-    assert.equal(closeReady.status, 200);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(closeResolved, false);
+    releaseSlowCapture();
+    assert.equal((await backupDuringCapture).status, 201);
+    assert.equal((await closeReady).status, 200);
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.deepEqual(desktopCloseAttempts, ["314"]);
+
+    const originalRenameSync = mutableFs.renameSync;
+    mutableFs.renameSync = ((...args: Parameters<typeof renameSync>) => {
+      originalRenameSync(...args);
+      if (
+        String(args[0]) === directory &&
+        basename(String(args[1])).startsWith(`.${basename(directory)}.previous-`)
+      ) {
+        mkdirSync(directory);
+        writeFileSync(join(directory, "unexpected"), "do not replace");
+      }
+    }) as typeof renameSync;
+    syncBuiltinESMExports();
+    const failedRestore = await (async () => {
+      try {
+        return await fetch(
+          `${base}/api/data-safety/backups/${encodeURIComponent(backupRecord.id)}/restore`,
+          { method: "POST", headers: jsonHeaders, body: "{}" },
+        );
+      } finally {
+        mutableFs.renameSync = originalRenameSync;
+        syncBuiltinESMExports();
+      }
+    })();
+    assert.equal(failedRestore.status, 400);
+    assert.equal(
+      ((await failedRestore.json()) as { error: { code: string } }).error.code,
+      "RESTORE_CLEANUP_FAILED",
+    );
+    const recoveryStatus = (await (
+      await fetch(`${base}/api/data-safety`, { headers: { Cookie: cookie } })
+    ).json()) as DataSafetyStatus;
+    assert.equal(recoveryStatus.mode, "recovery");
+    assert.equal((await fetch(`${base}/api/documents`, { headers: { Cookie: cookie } })).status, 503);
+    const recoveryClose = await fetch(`${base}/api/desktop/close-ready`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ attemptId: "315" }),
+    });
+    assert.equal(recoveryClose.status, 200);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(desktopCloseAttempts, ["314", "315"]);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await app.close();
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });

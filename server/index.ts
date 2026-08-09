@@ -2,9 +2,30 @@ import { homedir } from "node:os";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { DatabaseSync } from "node:sqlite";
 
 import { createApp } from "./app.js";
-import { acquireDataLock } from "./lock.js";
+import {
+  cleanupIncompleteBackups,
+  createBackup,
+  recoverInterruptedRestore,
+  verifyBackup,
+  type VerifiedBackup,
+} from "./backup.js";
+import {
+  defaultBackupRoot,
+  ensureDailyAutomaticBackup,
+  reconcileBackupRecords,
+} from "./data-safety.js";
+import {
+  CURRENT_SCHEMA_VERSION,
+  DatabaseSchemaError,
+  inspectDatabaseSchema,
+  migrateDatabase,
+  openDatabase,
+  type KnowledgeDatabase,
+} from "./db.js";
+import { runStartup } from "./startup.js";
 
 const dataDir = resolve(
   process.env.KB_DATA_DIR ??
@@ -13,16 +34,80 @@ const dataDir = resolve(
       : join(homedir(), ".local", "share", "dev.local.zhiye")),
 );
 const staticDir = resolve(process.env.KB_STATIC_DIR ?? join(process.cwd(), "dist"));
+const backupRoot = defaultBackupRoot(dataDir);
 const requestedPort = Number(process.env.KB_PORT ?? 0);
 if (!Number.isInteger(requestedPort) || requestedPort < 0 || requestedPort > 65_535) {
   throw new Error("KB_PORT must be an integer from 0 to 65535");
 }
 
-const releaseLock = acquireDataLock(dataDir);
+interface StartupValue {
+  database: KnowledgeDatabase | null;
+  recoveryError: unknown | null;
+}
+
+const startup = await runStartup<StartupValue, VerifiedBackup>({
+  dataDir,
+  supportedSchemaVersion: CURRENT_SCHEMA_VERSION,
+  recoverInterruptedRestore,
+  cleanupIncompleteBackups() {
+    try {
+      return cleanupIncompleteBackups(backupRoot, dataDir);
+    } catch (error) {
+      console.error("Incomplete backup cleanup failed", error);
+      return 0;
+    }
+  },
+  inspectSchema(path) {
+    const inspection = inspectDatabaseSchema(path);
+    if (inspection.status === "future" || inspection.status === "non-contiguous") {
+      throw new DatabaseSchemaError(inspection);
+    }
+    return {
+      currentVersion: inspection.status === "empty" ? null : inspection.currentVersion,
+      pending: inspection.status === "empty" || inspection.status === "pending",
+    };
+  },
+  async createPreMigrationBackup(path) {
+    const database = new DatabaseSync(join(path, "zhiye.sqlite3"), { readOnly: true });
+    try {
+      database.exec("PRAGMA query_only = ON");
+      return await createBackup({
+        dataDir: path,
+        backupRoot,
+        database,
+        reason: "pre-migration",
+      });
+    } finally {
+      database.close();
+    }
+  },
+  verifyPreMigrationBackup: (backup) => verifyBackup(backup.path),
+  applyMigrations: (path) => migrateDatabase(path),
+  open: (path) => ({ database: openDatabase(path), recoveryError: null }),
+  async afterOpen(value) {
+    if (!value.database) return;
+    try {
+      await reconcileBackupRecords(value.database, backupRoot);
+    } catch (error) {
+      console.error("Backup reconciliation failed", error);
+    }
+    try {
+      await ensureDailyAutomaticBackup(value.database, dataDir, backupRoot);
+    } catch (error) {
+      console.error("Automatic backup failed", error);
+    }
+  },
+  closeOnError: (value) => value.database?.close(),
+  recoverOnError: (error) => ({ database: null, recoveryError: error }),
+});
+const releaseLock = startup.releaseLock;
 const dev = process.env.KB_DEV === "1";
 const desktop = process.env.KB_DESKTOP === "1";
 const app = createApp({
   dataDir,
+  database: startup.value.database,
+  recoveryError: startup.value.recoveryError,
+  backupRoot,
   staticDir,
   dev,
   onDesktopCloseReady: desktop ? (attemptId) => console.log(`ZHIYE_CLOSE_READY ${attemptId}`) : undefined,
