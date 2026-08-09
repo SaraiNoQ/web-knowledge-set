@@ -1,0 +1,12 @@
+node_modules/
+.pnpm-store/
+dist/
+dist-server/
+playwright-report/
+test-results/
+.data/
+src-tauri/target/
+src-tauri/binaries/node-*
+desktop-resources/
+.DS_Store
+*.log
