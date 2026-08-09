@@ -184,9 +184,7 @@ function decodeId(value: string) {
 }
 
 function documentPatch(body: Record<string, unknown>) {
-  if (typeof body.revision !== "number" || !Number.isInteger(body.revision) || body.revision < 1) {
-    throw new HttpError(400, "INVALID_REVISION", "revision must be a positive integer");
-  }
+  const revision = bodyRevision(body);
   const patch: DocumentPatch = {};
   if (body.title !== undefined) {
     if (typeof body.title !== "string" || !body.title.trim() || body.title.length > 1000) {
@@ -217,7 +215,28 @@ function documentPatch(body: Record<string, unknown>) {
   if (!Object.keys(patch).length) {
     throw new HttpError(400, "EMPTY_PATCH", "At least one editable field is required");
   }
-  return { revision: body.revision, patch };
+  return { revision, patch };
+}
+
+function bodyRevision(body: Record<string, unknown>) {
+  if (typeof body.revision !== "number" || !Number.isInteger(body.revision) || body.revision < 1) {
+    throw new HttpError(400, "INVALID_REVISION", "revision must be a positive integer");
+  }
+  return body.revision;
+}
+
+function pathRevision(value: string) {
+  const revision = Number(decodeId(value));
+  if (!Number.isInteger(revision) || revision < 1) {
+    throw new HttpError(400, "INVALID_REVISION", "revision must be a positive integer");
+  }
+  return revision;
+}
+
+function trashFilter(requestUrl: URL) {
+  const trash = requestUrl.searchParams.get("trash") ?? undefined;
+  if (trash && trash !== "only") throw new HttpError(400, "INVALID_TRASH_FILTER", "trash must be 'only'");
+  return trash === "only" ? trash : undefined;
 }
 
 function captureFailure(error: unknown): { code: CaptureErrorCode; message: string } {
@@ -263,7 +282,8 @@ function createWorker(db: KnowledgeDatabase, capture: CaptureFunction, enabled: 
         if (page.rawHtml) {
           const filename = `${job.captureId}.html.gz`;
           snapshotPath = join("snapshots", filename);
-          await writeFile(join(db.snapshotsDir, filename), await gzipAsync(page.rawHtml));
+          db.planCaptureSnapshot(job, snapshotPath);
+          await writeFile(join(db.snapshotsDir, filename), await gzipAsync(page.rawHtml), { mode: 0o600 });
         }
         const previous = db.getDocument(job.documentId)!;
         const result: CaptureResult = {
@@ -384,8 +404,90 @@ export function createApp(options: AppOptions) {
             tag: requestUrl.searchParams.get("tag") ?? undefined,
             status: statusValue as CaptureStatus | undefined,
             page: Number.isFinite(requestedPage) ? requestedPage : 1,
+            trash: trashFilter(requestUrl),
           }),
         );
+        return;
+      }
+
+      if (pathname === "/api/tags" && request.method === "GET") {
+        sendJson(response, 200, db.listTags(trashFilter(requestUrl)));
+        return;
+      }
+
+      const revisionRestoreMatch = pathname.match(
+        /^\/api\/documents\/([^/]+)\/revisions\/([^/]+)\/restore$/u,
+      );
+      if (request.method === "POST" && revisionRestoreMatch) {
+        guardMutation(request);
+        const currentRevision = bodyRevision(await readJson(request));
+        const result = db.restoreDocumentRevision(
+          decodeId(revisionRestoreMatch[1]),
+          pathRevision(revisionRestoreMatch[2]),
+          currentRevision,
+        );
+        if (result.kind === "missing") throw new HttpError(404, "NOT_FOUND", "Document not found");
+        if (result.kind === "revision_missing") {
+          throw new HttpError(404, "REVISION_NOT_FOUND", "Document revision not found");
+        }
+        if (result.kind === "deleted") {
+          sendError(response, 409, "DOCUMENT_DELETED", "Restore the document before changing it", result.document);
+          return;
+        }
+        if (result.kind === "conflict") {
+          sendError(response, 409, "REVISION_CONFLICT", "Document changed since it was loaded", result.document);
+          return;
+        }
+        sendJson(response, 200, result.document);
+        return;
+      }
+
+      const revisionsMatch = pathname.match(/^\/api\/documents\/([^/]+)\/revisions$/u);
+      if (request.method === "GET" && revisionsMatch) {
+        const revisions = db.listDocumentRevisions(decodeId(revisionsMatch[1]));
+        if (!revisions) throw new HttpError(404, "NOT_FOUND", "Document not found");
+        sendJson(response, 200, revisions);
+        return;
+      }
+
+      const restoreMatch = pathname.match(/^\/api\/documents\/([^/]+)\/restore$/u);
+      if (request.method === "POST" && restoreMatch) {
+        guardMutation(request);
+        await readJson(request);
+        const result = db.restoreDocument(decodeId(restoreMatch[1]));
+        if (result.kind === "missing") throw new HttpError(404, "NOT_FOUND", "Document not found");
+        if (result.kind === "not_deleted") {
+          sendError(response, 409, "NOT_IN_TRASH", "Document is not in the trash", result.document);
+          return;
+        }
+        worker.wake();
+        sendJson(response, 200, result.document);
+        return;
+      }
+
+      const permanentMatch = pathname.match(/^\/api\/documents\/([^/]+)\/permanent$/u);
+      if (request.method === "DELETE" && permanentMatch) {
+        guardMutation(request);
+        const revision = bodyRevision(await readJson(request));
+        const result = db.permanentlyDeleteDocument(decodeId(permanentMatch[1]), revision);
+        if (result.kind === "missing") throw new HttpError(404, "NOT_FOUND", "Document not found");
+        if (result.kind === "not_deleted") {
+          sendError(response, 409, "NOT_IN_TRASH", "Document must be in the trash before permanent deletion", result.document);
+          return;
+        }
+        if (result.kind === "capture_running") {
+          sendError(response, 409, "CAPTURE_IN_PROGRESS", "Wait for the active capture to finish", result.document);
+          return;
+        }
+        if (result.kind === "conflict") {
+          sendError(response, 409, "REVISION_CONFLICT", "Document changed since it was loaded", result.document);
+          return;
+        }
+        if (result.kind === "snapshot_failed") {
+          throw new HttpError(500, "SNAPSHOT_DELETE_FAILED", "Snapshot files could not be deleted");
+        }
+        response.writeHead(204, { "Cache-Control": "no-store", ...securityHeaders() });
+        response.end();
         return;
       }
 
@@ -410,6 +512,10 @@ export function createApp(options: AppOptions) {
         await readJson(request);
         const result = db.retryDocument(decodeId(retryMatch[1]));
         if (result.kind === "missing") throw new HttpError(404, "NOT_FOUND", "Document not found");
+        if (result.kind === "deleted") {
+          sendError(response, 409, "DOCUMENT_DELETED", "Restore the document before retrying", result.document);
+          return;
+        }
         if (result.kind === "not_failed") {
           sendError(response, 409, "NOT_FAILED", "Only failed captures can be retried", result.document);
           return;
@@ -431,8 +537,24 @@ export function createApp(options: AppOptions) {
         const { revision, patch } = documentPatch(await readJson(request));
         const result = db.updateDocument(decodeId(documentMatch[1]), revision, patch);
         if (result.kind === "missing") throw new HttpError(404, "NOT_FOUND", "Document not found");
+        if (result.kind === "deleted") {
+          sendError(response, 409, "DOCUMENT_DELETED", "Restore the document before changing it", result.document);
+          return;
+        }
         if (result.kind === "conflict") {
           sendError(response, 409, "REVISION_CONFLICT", "Document changed since it was loaded", result.document);
+          return;
+        }
+        sendJson(response, 200, result.document);
+        return;
+      }
+      if (documentMatch && request.method === "DELETE") {
+        guardMutation(request);
+        await readJson(request);
+        const result = db.softDeleteDocument(decodeId(documentMatch[1]));
+        if (result.kind === "missing") throw new HttpError(404, "NOT_FOUND", "Document not found");
+        if (result.kind === "already_deleted") {
+          sendError(response, 409, "ALREADY_IN_TRASH", "Document is already in the trash", result.document);
           return;
         }
         sendJson(response, 200, result.document);

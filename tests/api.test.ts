@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import { createApp, type CaptureFunction } from "../server/app.js";
-import type { KnowledgeDocument } from "../shared/types.js";
+import type { DocumentListResponse, DocumentRevision, KnowledgeDocument } from "../shared/types.js";
 
 async function waitFor(base: string, cookie: string, id: string, status: KnowledgeDocument["status"]) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -108,6 +108,45 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     assert.equal(editedResponse.status, 200);
     const edited = (await editedResponse.json()) as KnowledgeDocument;
     assert.deepEqual(edited.tags, ["Inbox"]);
+    assert.deepEqual(await (await fetch(`${base}/api/tags`, { headers: { Cookie: cookie } })).json(), ["Inbox"]);
+
+    const revisions = (await (
+      await fetch(`${base}/api/documents/${ready.id}/revisions`, { headers: { Cookie: cookie } })
+    ).json()) as DocumentRevision[];
+    assert.equal(revisions.length, 2);
+    assert.equal(revisions[0].revision, edited.revision);
+    assert.equal(revisions[0].markdown, "# Human edit");
+    assert.equal(revisions[1].markdown, "# Captured\n\nKnowledge body");
+
+    const secondEditResponse = await fetch(`${base}/api/documents/${ready.id}`, {
+      method: "PATCH",
+      headers: jsonHeaders,
+      body: JSON.stringify({ revision: edited.revision, markdown: "# Second edit", tags: ["Changed"] }),
+    });
+    assert.equal(secondEditResponse.status, 200);
+    const secondEdit = (await secondEditResponse.json()) as KnowledgeDocument;
+
+    const staleRestore = await fetch(
+      `${base}/api/documents/${ready.id}/revisions/${edited.revision}/restore`,
+      {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ revision: edited.revision }),
+      },
+    );
+    assert.equal(staleRestore.status, 409);
+    const restoredRevisionResponse = await fetch(
+      `${base}/api/documents/${ready.id}/revisions/${edited.revision}/restore`,
+      {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ revision: secondEdit.revision }),
+      },
+    );
+    assert.equal(restoredRevisionResponse.status, 200);
+    const restoredRevision = (await restoredRevisionResponse.json()) as KnowledgeDocument;
+    assert.equal(restoredRevision.markdown, "# Human edit");
+    assert.deepEqual(restoredRevision.tags, ["Inbox"]);
 
     const conflict = await fetch(`${base}/api/documents/${ready.id}`, {
       method: "PATCH",
@@ -115,7 +154,10 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
       body: JSON.stringify({ revision: ready.revision, title: "Stale" }),
     });
     assert.equal(conflict.status, 409);
-    assert.equal(((await conflict.json()) as { error: { document: KnowledgeDocument } }).error.document.revision, edited.revision);
+    assert.equal(
+      ((await conflict.json()) as { error: { document: KnowledgeDocument } }).error.document.revision,
+      restoredRevision.revision,
+    );
 
     const exported = await fetch(`${base}/api/documents/${ready.id}/export.md`, {
       headers: { Cookie: cookie },
@@ -138,6 +180,75 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     });
     assert.equal(retry.status, 202);
     await waitFor(base, cookie, failedId, "ready");
+
+    assert.equal((await fetch(`${base}/api/documents?trash=all`, { headers: { Cookie: cookie } })).status, 400);
+    const snapshotPath = (
+      app.db.sql
+        .prepare("SELECT snapshot_path FROM captures WHERE document_id = ? AND snapshot_path IS NOT NULL")
+        .get(ready.id) as { snapshot_path: string }
+    ).snapshot_path;
+    assert.equal(existsSync(join(directory, snapshotPath)), true);
+    const softDelete = await fetch(`${base}/api/documents/${ready.id}`, {
+      method: "DELETE",
+      headers: jsonHeaders,
+      body: "{}",
+    });
+    assert.equal(softDelete.status, 200);
+    assert.ok(((await softDelete.json()) as KnowledgeDocument).deletedAt);
+    assert.deepEqual(await (await fetch(`${base}/api/tags`, { headers: { Cookie: cookie } })).json(), []);
+    assert.deepEqual(
+      await (await fetch(`${base}/api/tags?trash=only`, { headers: { Cookie: cookie } })).json(),
+      ["Inbox"],
+    );
+    assert.equal((await fetch(`${base}/api/tags?trash=all`, { headers: { Cookie: cookie } })).status, 400);
+    const defaultList = (await (
+      await fetch(`${base}/api/documents?q=Human`, { headers: { Cookie: cookie } })
+    ).json()) as DocumentListResponse;
+    assert.equal(defaultList.total, 0);
+    const trashList = (await (
+      await fetch(`${base}/api/documents?trash=only`, { headers: { Cookie: cookie } })
+    ).json()) as DocumentListResponse;
+    assert.equal(trashList.items.some(({ id }) => id === ready.id), true);
+    assert.equal(
+      (
+        await fetch(`${base}/api/documents/${ready.id}`, {
+          method: "PATCH",
+          headers: jsonHeaders,
+          body: JSON.stringify({ revision: restoredRevision.revision + 1, title: "Trash edit" }),
+        })
+      ).status,
+      409,
+    );
+    const restore = await fetch(`${base}/api/documents/${ready.id}/restore`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: "{}",
+    });
+    assert.equal(restore.status, 200);
+    const restored = (await restore.json()) as KnowledgeDocument;
+    assert.equal(restored.deletedAt, null);
+    const deleteAgain = await fetch(`${base}/api/documents/${ready.id}`, {
+      method: "DELETE",
+      headers: jsonHeaders,
+      body: "{}",
+    });
+    assert.equal(deleteAgain.status, 200);
+    const trashedAgain = (await deleteAgain.json()) as KnowledgeDocument;
+    const stalePermanent = await fetch(`${base}/api/documents/${ready.id}/permanent`, {
+      method: "DELETE",
+      headers: jsonHeaders,
+      body: JSON.stringify({ revision: trashedAgain.revision - 1 }),
+    });
+    assert.equal(stalePermanent.status, 409);
+    assert.equal(existsSync(join(directory, snapshotPath)), true);
+    const permanent = await fetch(`${base}/api/documents/${ready.id}/permanent`, {
+      method: "DELETE",
+      headers: jsonHeaders,
+      body: JSON.stringify({ revision: trashedAgain.revision }),
+    });
+    assert.equal(permanent.status, 204);
+    assert.equal(existsSync(join(directory, snapshotPath)), false);
+    assert.equal((await fetch(`${base}/api/documents/${ready.id}`, { headers: { Cookie: cookie } })).status, 404);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await app.close();

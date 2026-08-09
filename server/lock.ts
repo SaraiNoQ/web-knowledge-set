@@ -1,5 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 interface LockContents {
@@ -28,7 +38,19 @@ function processExists(pid: number) {
 }
 
 export function acquireDataLock(dataDir: string) {
-  mkdirSync(dataDir, { recursive: true });
+  const existed = existsSync(dataDir);
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  const entries = readdirSync(dataDir);
+  const appEntries = new Set([
+    ".zhiye.lock",
+    "snapshots",
+    "zhiye.sqlite3",
+    "zhiye.sqlite3-shm",
+    "zhiye.sqlite3-wal",
+  ]);
+  if (!existed || entries.every((entry) => appEntries.has(entry))) {
+    chmodSync(dataDir, 0o700);
+  }
   const path = join(dataDir, ".zhiye.lock");
   const contents: LockContents = { pid: process.pid, token: randomUUID() };
 

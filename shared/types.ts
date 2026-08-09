@@ -26,6 +26,7 @@ export interface DocumentSummary {
   errorMessage: string | null;
   tags: string[];
   revision: number;
+  deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -41,6 +42,14 @@ export interface DocumentListResponse {
   page: number;
   pageSize: number;
   total: number;
+}
+
+export interface DocumentRevision {
+  revision: number;
+  title: string;
+  markdown: string;
+  tags: string[];
+  createdAt: string;
 }
 
 export interface ApiError {

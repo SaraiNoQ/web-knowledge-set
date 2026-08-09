@@ -10,6 +10,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type {
   CaptureStatus,
+  DocumentRevision,
   DocumentSummary,
   KnowledgeDocument,
 } from "../shared/types";
@@ -53,6 +54,19 @@ function formatDate(value: string) {
   }
 }
 
+function formatDateTime(value: string) {
+  try {
+    return new Intl.DateTimeFormat("zh-CN", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
+}
+
 function sourceName(url: string) {
   try {
     return new URL(url).hostname.replace(/^www\./, "");
@@ -63,6 +77,10 @@ function sourceName(url: string) {
 
 function parseTags(value: string) {
   return [...new Set(value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean))];
+}
+
+function revisionPreview(markdown: string) {
+  return markdown.replace(/[#*_`>\[\]()~-]+/gu, " ").replace(/\s+/gu, " ").trim().slice(0, 150) || "空白正文";
 }
 
 function Icon({ children, size = 18 }: { children: ReactNode; size?: number }) {
@@ -89,6 +107,10 @@ function StatePanel({ kind, title, children }: { kind: "loading" | "empty" | "er
 
 function DocumentStatus({ status }: { status: CaptureStatus }) {
   return <span className={`status status-${status}`}><i />{STATUS_LABEL[status]}</span>;
+}
+
+function needsCapturePolling(document: Pick<DocumentSummary, "status" | "deletedAt">) {
+  return ACTIVE_STATUSES.has(document.status) && !(document.deletedAt && document.status === "queued");
 }
 
 function resolveLink(href: string | undefined, sourceUrl: string) {
@@ -144,6 +166,7 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [tag, setTag] = useState("");
   const [status, setStatus] = useState<StatusFilter>("");
+  const [inTrash, setInTrash] = useState(false);
   const [knownTags, setKnownTags] = useState<string[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState("");
@@ -159,25 +182,36 @@ export default function App() {
   const [importUrl, setImportUrl] = useState("");
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
+  const [importNotice, setImportNotice] = useState("");
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [saveError, setSaveError] = useState("");
   const [conflict, setConflict] = useState<KnowledgeDocument | null>(null);
   const [retrying, setRetrying] = useState(false);
+  const [lifecycleAction, setLifecycleAction] = useState<"delete" | "restore" | "permanent" | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const [revisions, setRevisions] = useState<DocumentRevision[]>([]);
+  const [restoringRevision, setRestoringRevision] = useState<number | null>(null);
 
   const selectedIdRef = useRef(selectedId);
   const draftRef = useRef(draft);
   const saveInFlight = useRef(false);
+  const readerPanelRef = useRef<HTMLElement>(null);
   selectedIdRef.current = selectedId;
   draftRef.current = draft;
 
   const persistedDraft = currentDoc ? draftOf(currentDoc) : null;
   const dirty = Boolean(draft && persistedDraft && !draftsEqual(draft, persistedDraft));
   const activeCapture = currentDoc ? ACTIVE_STATUSES.has(currentDoc.status) : false;
+  const editorLocked = Boolean(lifecycleAction) || restoringRevision !== null || Boolean(conflict && saveState === "saving");
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
-  const mergeKnownTags = useCallback((documents: DocumentSummary[]) => {
-    setKnownTags((previous) => [...new Set([...previous, ...documents.flatMap((item) => item.tags)])].sort());
-  }, []);
+  const refreshKnownTags = useCallback((signal?: AbortSignal) => {
+    void api.listTags(inTrash ? "only" : undefined, signal).then(setKnownTags).catch(() => {
+      // Keep the last complete tag list when this secondary refresh fails.
+    });
+  }, [inTrash]);
 
   const updateListItem = useCallback((document: KnowledgeDocument) => {
     setItems((previous) => previous.map((item) => item.id === document.id ? {
@@ -189,8 +223,13 @@ export default function App() {
       errorCode: document.errorCode,
       errorMessage: document.errorMessage,
       revision: document.revision,
+      deletedAt: document.deletedAt,
       updatedAt: document.updatedAt,
     } : item));
+  }, []);
+
+  const focusReader = useCallback(() => {
+    window.requestAnimationFrame(() => readerPanelRef.current?.focus());
   }, []);
 
   useEffect(() => {
@@ -199,11 +238,14 @@ export default function App() {
       setListLoading(true);
       setListError("");
       try {
-        const result = await api.listDocuments({ q: query, tag, status, page }, controller.signal);
+        const result = await api.listDocuments(
+          { q: query, tag, status, page, trash: inTrash ? "only" : undefined },
+          controller.signal,
+        );
         setItems(result.items);
         setTotal(result.total);
         setPageSize(result.pageSize || 30);
-        mergeKnownTags(result.items);
+        refreshKnownTags(controller.signal);
       } catch (error) {
         if ((error as Error).name !== "AbortError") setListError((error as Error).message);
       } finally {
@@ -214,22 +256,28 @@ export default function App() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [mergeKnownTags, page, query, status, tag]);
+  }, [inTrash, page, query, refreshKnownTags, status, tag]);
 
   useEffect(() => {
-    if (!items.some((item) => ACTIVE_STATUSES.has(item.status))) return;
+    if (!items.some(needsCapturePolling)) return;
     const timer = window.setInterval(async () => {
       try {
-        const result = await api.listDocuments({ q: query, tag, status, page });
+        const result = await api.listDocuments({
+          q: query,
+          tag,
+          status,
+          page,
+          trash: inTrash ? "only" : undefined,
+        });
         setItems(result.items);
         setTotal(result.total);
-        mergeKnownTags(result.items);
+        refreshKnownTags();
       } catch {
         // Background refresh failures should not replace the current workspace.
       }
     }, 2500);
     return () => window.clearInterval(timer);
-  }, [items, mergeKnownTags, page, query, status, tag]);
+  }, [inTrash, items, page, query, refreshKnownTags, status, tag]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -246,6 +294,11 @@ export default function App() {
     setSaveState("idle");
     setSaveError("");
     setConflict(null);
+    setHistoryOpen(false);
+    setHistoryLoading(false);
+    setHistoryError("");
+    setRevisions([]);
+    setRestoringRevision(null);
     api.getDocument(selectedId, controller.signal)
       .then((document) => {
         setCurrentDoc(document);
@@ -262,7 +315,7 @@ export default function App() {
   }, [selectedId]);
 
   useEffect(() => {
-    if (!selectedId || !currentDoc || !ACTIVE_STATUSES.has(currentDoc.status)) return;
+    if (!selectedId || !currentDoc || !needsCapturePolling(currentDoc)) return;
     const timer = window.setInterval(async () => {
       try {
         const document = await api.getDocument(selectedId);
@@ -288,6 +341,7 @@ export default function App() {
       if (selectedIdRef.current !== currentDoc.id) return;
       setCurrentDoc(updated);
       updateListItem(updated);
+      refreshKnownTags();
       const unchangedSinceRequest = Boolean(draftRef.current && draftsEqual(draftRef.current, sent));
       if (unchangedSinceRequest) {
         setDraft(draftOf(updated));
@@ -306,7 +360,7 @@ export default function App() {
     } finally {
       saveInFlight.current = false;
     }
-  }, [conflict, currentDoc, dirty, draft, updateListItem]);
+  }, [conflict, currentDoc, dirty, draft, refreshKnownTags, updateListItem]);
 
   useEffect(() => {
     if (!dirty || saveState === "conflict" || saveState === "error" || currentDoc?.status !== "ready") return;
@@ -332,6 +386,7 @@ export default function App() {
   }, [saveNow]);
 
   useEffect(() => {
+    // ponytail: warning only; persistent draft recovery and the Tauri close handshake belong to the next M1 slice.
     const warnUnsaved = (event: BeforeUnloadEvent) => {
       if (!dirty) return;
       event.preventDefault();
@@ -344,6 +399,7 @@ export default function App() {
   const handleImport = async (event: FormEvent) => {
     event.preventDefault();
     setImportError("");
+    setImportNotice("");
     if (dirty && !window.confirm("当前修改尚未保存，继续收取新网页吗？")) return;
     let normalized: string;
     try {
@@ -362,12 +418,14 @@ export default function App() {
       setTag("");
       setStatus("");
       setPage(1);
-      const refreshed = await api.listDocuments({ page: 1 });
+      const duplicateInTrash = Boolean(created.deletedAt);
+      setInTrash(duplicateInTrash);
+      const refreshed = await api.listDocuments({ page: 1, trash: duplicateInTrash ? "only" : undefined });
       setItems(refreshed.items);
       setTotal(refreshed.total);
       setPageSize(refreshed.pageSize || 30);
-      mergeKnownTags(refreshed.items);
       setSelectedId(created.id);
+      if (duplicateInTrash) setImportNotice("这张网页已在回收站中，已为你打开，可在右侧恢复。");
     } catch (error) {
       setImportError((error as Error).message);
     } finally {
@@ -376,14 +434,26 @@ export default function App() {
   };
 
   const selectDocument = (id: string) => {
-    if (id === selectedId) return;
+    if (id === selectedId || lifecycleAction || restoringRevision !== null) return;
     if (dirty && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
     setSelectedId(id);
   };
 
   const closeDocument = () => {
+    if (lifecycleAction || restoringRevision !== null) return;
     if (dirty && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
     setSelectedId(null);
+  };
+
+  const switchLibrary = (trashView: boolean) => {
+    if (trashView === inTrash || lifecycleAction || restoringRevision !== null) return;
+    if (dirty && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
+    setInTrash(trashView);
+    setPage(1);
+    setItems([]);
+    setSelectedId(null);
+    setTag("");
+    setImportNotice("");
   };
 
   const handleListKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -412,28 +482,175 @@ export default function App() {
     }
   };
 
+  const moveToTrash = async () => {
+    if (!currentDoc || dirty || !window.confirm(`把“${currentDoc.title || "未命名网页"}”移入回收站？之后可以恢复。`)) return;
+    setLifecycleAction("delete");
+    setDetailError("");
+    try {
+      const deleted = await api.deleteDocument(currentDoc.id);
+      setCurrentDoc(deleted);
+      setDraft(draftOf(deleted));
+      setTagText(deleted.tags.join(", "));
+      setInTrash(true);
+      setPage(1);
+      setItems([]);
+      setHistoryOpen(false);
+      focusReader();
+    } catch (error) {
+      setDetailError((error as Error).message);
+    } finally {
+      setLifecycleAction(null);
+    }
+  };
+
+  const restoreFromTrash = async () => {
+    if (!currentDoc) return;
+    setLifecycleAction("restore");
+    setDetailError("");
+    try {
+      const restored = await api.restoreDocument(currentDoc.id);
+      setCurrentDoc(restored);
+      setDraft(draftOf(restored));
+      setTagText(restored.tags.join(", "));
+      setInTrash(false);
+      setPage(1);
+      setItems([]);
+      focusReader();
+    } catch (error) {
+      setDetailError((error as Error).message);
+    } finally {
+      setLifecycleAction(null);
+    }
+  };
+
+  const permanentlyDelete = async () => {
+    if (!currentDoc || !window.confirm(`永久删除“${currentDoc.title || "未命名网页"}”？抓取快照和历史版本也会被删除，此操作无法撤销。`)) return;
+    setLifecycleAction("permanent");
+    setDetailError("");
+    try {
+      await api.permanentlyDeleteDocument(currentDoc.id, currentDoc.revision);
+      setItems((previous) => previous.filter((item) => item.id !== currentDoc.id));
+      setTotal((value) => Math.max(0, value - 1));
+      setPage(1);
+      setSelectedId(null);
+      focusReader();
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 409 && error.document) {
+        setCurrentDoc(error.document);
+        setDraft(draftOf(error.document));
+        setTagText(error.document.tags.join(", "));
+      }
+      setDetailError((error as Error).message);
+    } finally {
+      setLifecycleAction(null);
+    }
+  };
+
+  const toggleHistory = async () => {
+    if (!currentDoc || historyOpen) {
+      setHistoryOpen(false);
+      return;
+    }
+    const documentId = currentDoc.id;
+    setHistoryOpen(true);
+    setHistoryLoading(true);
+    setHistoryError("");
+    try {
+      const result = await api.listDocumentRevisions(documentId);
+      if (selectedIdRef.current === documentId) setRevisions(result);
+    } catch (error) {
+      if (selectedIdRef.current === documentId) setHistoryError((error as Error).message);
+    } finally {
+      if (selectedIdRef.current === documentId) setHistoryLoading(false);
+    }
+  };
+
+  const restoreRevision = async (revision: DocumentRevision) => {
+    if (!currentDoc || dirty) return;
+    setRestoringRevision(revision.revision);
+    setHistoryError("");
+    try {
+      const restored = await api.restoreDocumentRevision(currentDoc.id, revision.revision, currentDoc.revision);
+      setCurrentDoc(restored);
+      setDraft(draftOf(restored));
+      setTagText(restored.tags.join(", "));
+      updateListItem(restored);
+      refreshKnownTags();
+      setHistoryOpen(false);
+      setSaveState("saved");
+      focusReader();
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 409 && error.document) {
+        setDraft({ title: revision.title, markdown: revision.markdown, tags: [...revision.tags] });
+        setTagText(revision.tags.join(", "));
+        setConflict(error.document);
+        setSaveState("conflict");
+        setHistoryOpen(false);
+        focusReader();
+      } else {
+        setHistoryError((error as Error).message);
+      }
+    } finally {
+      setRestoringRevision(null);
+    }
+  };
+
   const acceptServerVersion = () => {
     if (!conflict) return;
     setCurrentDoc(conflict);
     setDraft(draftOf(conflict));
     setTagText(conflict.tags.join(", "));
     updateListItem(conflict);
+    if (conflict.deletedAt) {
+      setInTrash(true);
+      setTag("");
+      setPage(1);
+      setItems([]);
+    }
     setConflict(null);
     setSaveState("idle");
+    focusReader();
   };
 
-  const keepLocalVersion = () => {
-    if (!conflict) return;
-    setCurrentDoc(conflict);
-    updateListItem(conflict);
-    setConflict(null);
-    setSaveState("idle");
+  const keepLocalVersion = async () => {
+    if (!conflict || !draft) return;
+    const local = { ...draft, tags: [...draft.tags] };
+    const wasDeleted = Boolean(conflict.deletedAt);
+    setSaveState("saving");
+    setSaveError("");
+    try {
+      const base = wasDeleted ? await api.restoreDocument(conflict.id) : conflict;
+      const updated = await api.updateDocument(base.id, { ...local, revision: base.revision });
+      setCurrentDoc(updated);
+      setDraft(draftOf(updated));
+      setTagText(updated.tags.join(", "));
+      setConflict(null);
+      setSaveState("saved");
+      setPage(1);
+      if (wasDeleted) {
+        setInTrash(false);
+        setTag("");
+      }
+      const refreshed = await api.listDocuments({ q: query, tag: wasDeleted ? "" : tag, status, page: 1 });
+      setItems(refreshed.items);
+      setTotal(refreshed.total);
+      setPageSize(refreshed.pageSize || 30);
+      void api.listTags().then(setKnownTags).catch(() => undefined);
+      focusReader();
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 409 && error.document) {
+        setConflict(error.document);
+      } else {
+        setDetailError((error as Error).message);
+      }
+      setSaveState("conflict");
+    }
   };
 
   const filteredDescription = useMemo(() => {
     const parts = [query && `“${query}”`, tag && `#${tag}`, status && STATUS_LABEL[status]].filter(Boolean);
-    return parts.length ? parts.join(" · ") : "全部网页";
-  }, [query, status, tag]);
+    return parts.length ? parts.join(" · ") : inTrash ? "已移除的网页" : "全部网页";
+  }, [inTrash, query, status, tag]);
 
   return (
     <div className="app-shell">
@@ -460,15 +677,22 @@ export default function App() {
             {importing ? <><Spinner />收取中</> : <><span>收取网页</span><Icon><path d="M5 12h14M13 6l6 6-6 6" /></Icon></>}
           </button>
         </form>
-        <div className="form-message" aria-live="polite">{importError && <span className="error-text">{importError}</span>}</div>
+        <div className="form-message" aria-live="polite">
+          {importError ? <span className="error-text">{importError}</span> : importNotice && <span className="notice-text">{importNotice}</span>}
+        </div>
       </section>
 
       <main className={`workspace ${selectedId ? "has-selection" : ""}`}>
         <aside className="library-panel" aria-label="知识列表">
           <div className="panel-heading">
-            <div><span className="eyebrow">02 · LIBRARY</span><h2>知识织片</h2></div>
+            <div><span className="eyebrow">02 · {inTrash ? "TRASH" : "LIBRARY"}</span><h2>{inTrash ? "回收站" : "知识织片"}</h2></div>
             <span className="total-count">{total}<small>篇</small></span>
           </div>
+
+          <nav className="library-tabs" aria-label="资料库视图">
+            <button type="button" aria-pressed={!inTrash} onClick={() => switchLibrary(false)}>资料库</button>
+            <button type="button" aria-pressed={inTrash} onClick={() => switchLibrary(true)}>回收站</button>
+          </nav>
 
           <div className="filters">
             <label className="search-field">
@@ -483,10 +707,10 @@ export default function App() {
             </div>
           </div>
 
-          <div className="result-caption"><span>{filteredDescription}</span>{items.some((item) => ACTIVE_STATUSES.has(item.status)) && <span className="polling-mark"><i />更新中</span>}</div>
+          <div className="result-caption"><span>{filteredDescription}</span>{items.some(needsCapturePolling) && <span className="polling-mark"><i />更新中</span>}</div>
 
           <div className="document-list" onKeyDown={handleListKeyDown}>
-            {listLoading && !items.length ? <StatePanel kind="loading" title="正在翻阅知识库" /> : listError ? <StatePanel kind="error" title="无法读取列表">{listError}</StatePanel> : !items.length ? <StatePanel kind="empty" title="还没有找到织片">{query || tag || status ? "试试放宽筛选条件。" : "从上方收藏第一张网页。"}</StatePanel> : items.map((item, index) => (
+            {listLoading && !items.length ? <StatePanel kind="loading" title="正在翻阅知识库" /> : listError ? <StatePanel kind="error" title="无法读取列表">{listError}</StatePanel> : !items.length ? <StatePanel kind="empty" title={inTrash ? "回收站是空的" : "还没有找到织片"}>{query || tag || status ? "试试放宽筛选条件。" : inTrash ? "移除的网页会暂存在这里。" : "从上方收藏第一张网页。"}</StatePanel> : items.map((item, index) => (
               <button type="button" key={item.id} className={`document-row ${selectedId === item.id ? "is-selected" : ""}`} onClick={() => selectDocument(item.id)} aria-current={selectedId === item.id ? "true" : undefined}>
                 <span className="row-number">{String((page - 1) * pageSize + index + 1).padStart(2, "0")}</span>
                 <span className="row-body">
@@ -502,7 +726,7 @@ export default function App() {
           {pageCount > 1 && <nav className="pagination" aria-label="知识列表分页"><button type="button" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>上一页</button><span>{page} / {pageCount}</span><button type="button" disabled={page >= pageCount} onClick={() => setPage((value) => value + 1)}>下一页</button></nav>}
         </aside>
 
-        <section className="reader-panel" aria-label="文档工作台">
+        <section ref={readerPanelRef} className="reader-panel" aria-label="文档工作台" tabIndex={-1}>
           {!selectedId ? (
             <div className="welcome-state">
               <div className="weave-mark" aria-hidden="true"><i /><i /><i /><i /></div>
@@ -523,17 +747,38 @@ export default function App() {
                   <a href={currentDoc.finalUrl || currentDoc.sourceUrl} target="_blank" rel="noreferrer noopener">{sourceName(currentDoc.finalUrl || currentDoc.sourceUrl)}<Icon size={13}><path d="M14 5h5v5M10 14 19 5M19 14v5H5V5h5" /></Icon></a>
                   <span>{formatDate(currentDoc.updatedAt)}</span>
                 </div>
-                <label className="title-field"><span className="sr-only">文档标题</span><textarea rows={2} value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} disabled={currentDoc.status !== "ready"} /></label>
+                <label className="title-field"><span className="sr-only">文档标题</span><textarea rows={2} value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} disabled={Boolean(currentDoc.deletedAt) || currentDoc.status !== "ready" || editorLocked} /></label>
                 <div className="document-meta">
-                  <label className="tag-field"><span>标签</span><input value={tagText} onChange={(event) => { setTagText(event.target.value); setDraft({ ...draft, tags: parseTags(event.target.value) }); }} placeholder="用逗号分隔" disabled={currentDoc.status !== "ready"} /></label>
+                  <label className="tag-field"><span>标签</span><input value={tagText} onChange={(event) => { setTagText(event.target.value); setDraft({ ...draft, tags: parseTags(event.target.value) }); }} placeholder="用逗号分隔" disabled={Boolean(currentDoc.deletedAt) || currentDoc.status !== "ready" || editorLocked} /></label>
                   <dl><div><dt>作者</dt><dd>{currentDoc.author || "未识别"}</dd></div><div><dt>收取</dt><dd>{currentDoc.captureMode === "browser" ? "浏览器" : currentDoc.captureMode === "http" ? "直接读取" : "—"}</dd></div></dl>
                 </div>
+                {!currentDoc.deletedAt && (
+                  <div className="document-actions">
+                    <button type="button" className="text-button danger" onClick={() => void moveToTrash()} disabled={Boolean(lifecycleAction) || dirty || saveState === "saving"} title={dirty ? "请先保存当前修改" : undefined}>
+                      {lifecycleAction === "delete" ? "正在移除…" : "移入回收站"}
+                    </button>
+                  </div>
+                )}
               </header>
 
               {currentDoc.warning && <div className="notice warning" role="status"><strong>注意</strong><span>{currentDoc.warning}</span></div>}
               {detailError && <div className="notice error" role="alert"><strong>请求失败</strong><span>{detailError}</span></div>}
 
-              {activeCapture ? (
+              {currentDoc.deletedAt ? (
+                <div className="trash-workbench">
+                  <div className="trash-callout">
+                    <div><span className="eyebrow">READ ONLY · {formatDateTime(currentDoc.deletedAt)}</span><h3>这张织片在回收站中</h3><p>正文与历史版本仍完整保留。恢复后才能继续编辑。</p></div>
+                    <div className="trash-actions">
+                      <button type="button" className="primary-button" onClick={() => void restoreFromTrash()} disabled={Boolean(lifecycleAction)}>{lifecycleAction === "restore" ? <><Spinner />恢复中</> : "恢复到资料库"}</button>
+                      <button type="button" className="text-button danger" onClick={() => void permanentlyDelete()} disabled={Boolean(lifecycleAction)}>{lifecycleAction === "permanent" ? "删除中…" : "永久删除"}</button>
+                    </div>
+                  </div>
+                  <section className="trash-preview" aria-label="回收站文档预览">
+                    <div className="pane-label">READ ONLY</div>
+                    {draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} /> : <StatePanel kind="empty" title="这张织片没有正文" />}
+                  </section>
+                </div>
+              ) : activeCapture ? (
                 <div className="capture-progress" aria-live="polite">
                   <div className="progress-orbit"><i /><i /><span>织</span></div>
                   <span className="eyebrow">{currentDoc.status.toUpperCase()}</span>
@@ -560,14 +805,29 @@ export default function App() {
                     </div>
                     {saveState === "error" && <button type="button" className="text-button danger" onClick={() => void saveNow()}>重试</button>}
                     <button type="button" className="text-button save-button" onClick={() => void saveNow()} disabled={!dirty || saveState === "saving" || saveState === "conflict"} title="保存（⌘S）">保存</button>
+                    <button type="button" className="history-button" onClick={() => void toggleHistory()} disabled={dirty || saveState === "saving"} aria-expanded={historyOpen} aria-controls="revision-history">修订历史</button>
                     <a className="export-button" href={api.exportUrl(currentDoc.id)} download><Icon size={15}><path d="M12 3v12M7 10l5 5 5-5M5 20h14" /></Icon>导出 .md</a>
                   </div>
 
                   {saveState === "error" && <div className="inline-error" role="alert">{saveError}</div>}
-                  {conflict && <div className="conflict-banner" role="alert"><div><strong>这篇知识在别处被修改过</strong><span>选择保留服务器新版，或基于新版继续保存你的文字。</span></div><div><button type="button" onClick={acceptServerVersion}>使用新版</button><button type="button" className="primary-button" onClick={keepLocalVersion}>保留我的修改</button></div></div>}
+                  {conflict && <div className="conflict-banner" role="alert"><div><strong>{conflict.deletedAt ? "这篇知识已被移入回收站" : "这篇知识在别处被修改过"}</strong><span>{conflict.deletedAt ? "可接受回收站状态，或恢复文档后保存你的本地修改。" : "选择保留服务器新版，或基于新版继续保存你的文字。"}</span></div><div><button type="button" onClick={acceptServerVersion} disabled={saveState === "saving"}>{conflict.deletedAt ? "查看回收站版本" : "使用新版"}</button><button type="button" className="primary-button" onClick={() => void keepLocalVersion()} disabled={saveState === "saving"}>{saveState === "saving" ? "处理中…" : "保留我的修改"}</button></div></div>}
+
+                  {historyOpen && (
+                    <aside id="revision-history" className="revision-panel" aria-label="修订历史">
+                      <header><div><span className="eyebrow">VERSION THREAD</span><h3>修订历史</h3></div><button type="button" onClick={() => setHistoryOpen(false)} aria-label="关闭修订历史">×</button></header>
+                      {historyLoading ? <StatePanel kind="loading" title="正在查找历史版本" /> : historyError ? <StatePanel kind="error" title="无法读取修订历史">{historyError}</StatePanel> : !revisions.length ? <StatePanel kind="empty" title="还没有修订记录">人工编辑并保存后，版本会出现在这里。</StatePanel> : (
+                        <ol>
+                          {revisions.map((revision) => {
+                            const isCurrent = revision.revision === currentDoc.revision;
+                            return <li key={revision.revision} className={isCurrent ? "is-current" : undefined}><div className="revision-meta"><strong>版本 {revision.revision}</strong><time dateTime={revision.createdAt}>{formatDateTime(revision.createdAt)}</time></div><h4>{revision.title || "未命名网页"}</h4><p>{revisionPreview(revision.markdown)}</p><div className="revision-foot"><span>{revision.tags.length ? revision.tags.map((value) => `#${value}`).join(" ") : "无标签"}</span><button type="button" onClick={() => void restoreRevision(revision)} disabled={isCurrent || dirty || restoringRevision !== null}>{isCurrent ? "当前版本" : restoringRevision === revision.revision ? "恢复中…" : "恢复此版本"}</button></div></li>;
+                          })}
+                        </ol>
+                      )}
+                    </aside>
+                  )}
 
                   <div className={`editor-grid mode-${mode}`}>
-                    {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><div className="pane-label">MARKDOWN</div><MarkdownEditor value={draft.markdown} onChange={(markdown) => setDraft((value) => value ? { ...value, markdown } : value)} /></section>}
+                    {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><div className="pane-label">MARKDOWN</div><MarkdownEditor value={draft.markdown} onChange={(markdown) => setDraft((value) => value ? { ...value, markdown } : value)} readOnly={editorLocked} /></section>}
                     {mode !== "edit" && <section className="preview-pane" aria-label="Markdown 预览"><div className="pane-label">PREVIEW</div>{draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} /> : <StatePanel kind="empty" title="这里还没有文字">在编辑区写下 Markdown，预览会同步出现。</StatePanel>}</section>}
                   </div>
                 </div>

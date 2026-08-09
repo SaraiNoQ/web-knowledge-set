@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type {
@@ -8,6 +8,7 @@ import type {
   CaptureMode,
   CaptureStatus,
   DocumentListResponse,
+  DocumentRevision,
   DocumentSummary,
   KnowledgeDocument,
 } from "../shared/types.js";
@@ -152,6 +153,44 @@ const migrations = [
     SELECT source_url FROM documents WHERE documents.id = captures.document_id
   ) WHERE request_url IS NULL;
   `,
+  `
+  ALTER TABLE documents ADD COLUMN deleted_at TEXT;
+  CREATE INDEX documents_deleted_updated ON documents(deleted_at, updated_at DESC);
+
+  CREATE TABLE document_revisions (
+    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    markdown TEXT NOT NULL,
+    tags_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (document_id, revision)
+  );
+  CREATE INDEX document_revisions_document
+    ON document_revisions(document_id, revision DESC);
+
+  INSERT INTO document_revisions(document_id, revision, title, markdown, tags_json, created_at)
+  SELECT d.id, d.revision, d.title, d.markdown,
+         COALESCE((
+           SELECT json_group_array(name) FROM (
+             SELECT t.name AS name FROM tags t
+             JOIN document_tags dt ON dt.tag_id = t.id
+             WHERE dt.document_id = d.id
+             ORDER BY lower(t.name), t.name
+           )
+         ), '[]'),
+         d.updated_at
+  FROM documents d;
+  `,
+  `
+  CREATE TABLE file_deletions (
+    path TEXT PRIMARY KEY,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  `,
 ];
 
 interface DocumentRow {
@@ -169,6 +208,7 @@ interface DocumentRow {
   error_message: string | null;
   capture_mode: CaptureMode | null;
   revision: number;
+  deleted_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -203,6 +243,7 @@ export interface ListFilters {
   tag?: string;
   status?: CaptureStatus;
   page?: number;
+  trash?: "only";
 }
 
 function now() {
@@ -246,10 +287,18 @@ export class KnowledgeDatabase {
   constructor(dataDir: string) {
     this.dataDir = dataDir;
     this.snapshotsDir = join(dataDir, "snapshots");
-    mkdirSync(this.snapshotsDir, { recursive: true });
-    this.sql = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));
+    mkdirSync(this.snapshotsDir, { recursive: true, mode: 0o700 });
+    chmodSync(this.snapshotsDir, 0o700);
+    const databasePath = join(dataDir, "zhiye.sqlite3");
+    this.sql = new DatabaseSync(databasePath);
     this.sql.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
+    chmodSync(databasePath, 0o600);
+    for (const suffix of ["-wal", "-shm"]) {
+      const path = `${databasePath}${suffix}`;
+      if (existsSync(path)) chmodSync(path, 0o600);
+    }
     this.migrate();
+    this.processPendingFileDeletions();
     this.recoverInterruptedJobs();
   }
 
@@ -338,6 +387,7 @@ export class KnowledgeDatabase {
       captureMode: row.capture_mode,
       tags: this.tagsFor(row.id),
       revision: row.revision,
+      deletedAt: row.deleted_at,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -389,6 +439,8 @@ export class KnowledgeDatabase {
     const params: Array<string | number> = [];
     let from = "FROM documents d";
 
+    where.push(filters.trash === "only" ? "d.deleted_at IS NOT NULL" : "d.deleted_at IS NULL");
+
     if (filters.q?.trim()) {
       const terms = searchTerms(filters.q);
       if (terms.every((term) => [...term].length >= 3)) {
@@ -428,7 +480,7 @@ export class KnowledgeDatabase {
         `SELECT d.id, d.source_url, d.final_url, d.canonical_url, d.title, d.author,
                 NULL AS published_at, '' AS markdown, d.status, d.warning,
                 d.error_code, d.error_message, NULL AS capture_mode,
-                d.revision, d.created_at, d.updated_at
+                d.revision, d.deleted_at, d.created_at, d.updated_at
          ${from}${condition} ORDER BY d.updated_at DESC LIMIT ? OFFSET ?`,
       )
       .all(...params, PAGE_SIZE, (page - 1) * PAGE_SIZE) as unknown as DocumentRow[];
@@ -441,10 +493,25 @@ export class KnowledgeDatabase {
     };
   }
 
+  listTags(trash?: "only") {
+    return (
+      this.sql
+        .prepare(
+          `SELECT t.name FROM tags t
+           JOIN document_tags dt ON dt.tag_id = t.id
+           JOIN documents d ON d.id = dt.document_id
+           WHERE ${trash === "only" ? "d.deleted_at IS NOT NULL" : "d.deleted_at IS NULL"}
+           GROUP BY t.id ORDER BY lower(t.name), t.name`,
+        )
+        .all() as Array<{ name: string }>
+    ).map(({ name }) => name);
+  }
+
   updateDocument(id: string, revision: number, patch: DocumentPatch) {
     return transaction(this.sql, () => {
       const current = this.getDocument(id);
       if (!current) return { kind: "missing" as const };
+      if (current.deletedAt) return { kind: "deleted" as const, document: current };
       if (current.revision !== revision) return { kind: "conflict" as const, document: current };
 
       const assignments = ["revision = revision + 1", "updated_at = ?"];
@@ -461,27 +528,209 @@ export class KnowledgeDatabase {
         .prepare(`UPDATE documents SET ${assignments.join(", ")} WHERE id = ?`)
         .run(...values, id);
 
-      if (patch.tags !== undefined) {
-        this.sql.prepare("DELETE FROM document_tags WHERE document_id = ?").run(id);
-        for (const name of patch.tags) {
-          this.sql.prepare("INSERT INTO tags(name) VALUES (?) ON CONFLICT(name) DO NOTHING").run(name);
-          const tag = this.sql.prepare("SELECT id FROM tags WHERE name = ? COLLATE NOCASE").get(name) as {
-            id: number;
-          };
-          this.sql
-            .prepare("INSERT INTO document_tags(document_id, tag_id) VALUES (?, ?)")
-            .run(id, tag.id);
-        }
-        this.sql.prepare("DELETE FROM tags WHERE NOT EXISTS (SELECT 1 FROM document_tags WHERE tag_id = tags.id)").run();
-      }
-      return { kind: "updated" as const, document: this.getDocument(id)! };
+      if (patch.tags !== undefined) this.replaceTags(id, patch.tags);
+      const document = this.getDocument(id)!;
+      this.recordRevision(document);
+      return { kind: "updated" as const, document };
     });
+  }
+
+  private replaceTags(documentId: string, tags: string[]) {
+    this.sql.prepare("DELETE FROM document_tags WHERE document_id = ?").run(documentId);
+    for (const name of tags) {
+      this.sql.prepare("INSERT INTO tags(name) VALUES (?) ON CONFLICT(name) DO NOTHING").run(name);
+      const tag = this.sql.prepare("SELECT id FROM tags WHERE name = ? COLLATE NOCASE").get(name) as {
+        id: number;
+      };
+      this.sql.prepare("INSERT INTO document_tags(document_id, tag_id) VALUES (?, ?)").run(documentId, tag.id);
+    }
+    this.sql.prepare("DELETE FROM tags WHERE NOT EXISTS (SELECT 1 FROM document_tags WHERE tag_id = tags.id)").run();
+  }
+
+  private recordRevision(document: KnowledgeDocument) {
+    this.sql
+      .prepare(
+        `INSERT INTO document_revisions(document_id, revision, title, markdown, tags_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        document.id,
+        document.revision,
+        document.title,
+        document.markdown,
+        JSON.stringify(document.tags),
+        document.updatedAt,
+      );
+  }
+
+  listDocumentRevisions(id: string): DocumentRevision[] | null {
+    if (!this.getDocument(id)) return null;
+    return (
+      this.sql
+        .prepare(
+          `SELECT revision, title, markdown, tags_json, created_at
+           FROM document_revisions WHERE document_id = ? ORDER BY revision DESC`,
+        )
+        .all(id) as Array<{
+        revision: number;
+        title: string;
+        markdown: string;
+        tags_json: string;
+        created_at: string;
+      }>
+    ).map((row) => ({
+      revision: row.revision,
+      title: row.title,
+      markdown: row.markdown,
+      tags: JSON.parse(row.tags_json) as string[],
+      createdAt: row.created_at,
+    }));
+  }
+
+  restoreDocumentRevision(id: string, targetRevision: number, currentRevision: number) {
+    return transaction(this.sql, () => {
+      const current = this.getDocument(id);
+      if (!current) return { kind: "missing" as const };
+      if (current.deletedAt) return { kind: "deleted" as const, document: current };
+      if (current.revision !== currentRevision) return { kind: "conflict" as const, document: current };
+      const target = this.sql
+        .prepare(
+          `SELECT title, markdown, tags_json FROM document_revisions
+           WHERE document_id = ? AND revision = ?`,
+        )
+        .get(id, targetRevision) as { title: string; markdown: string; tags_json: string } | undefined;
+      if (!target) return { kind: "revision_missing" as const };
+
+      const timestamp = now();
+      this.sql
+        .prepare(
+          `UPDATE documents SET title = ?, markdown = ?, title_edited = 1, markdown_edited = 1,
+             revision = revision + 1, updated_at = ? WHERE id = ?`,
+        )
+        .run(target.title, target.markdown, timestamp, id);
+      this.replaceTags(id, JSON.parse(target.tags_json) as string[]);
+      const document = this.getDocument(id)!;
+      this.recordRevision(document);
+      return { kind: "restored" as const, document };
+    });
+  }
+
+  softDeleteDocument(id: string) {
+    return transaction(this.sql, () => {
+      const current = this.getDocument(id);
+      if (!current) return { kind: "missing" as const };
+      if (current.deletedAt) return { kind: "already_deleted" as const, document: current };
+      const timestamp = now();
+      this.sql
+        .prepare("UPDATE documents SET deleted_at = ?, revision = revision + 1, updated_at = ? WHERE id = ?")
+        .run(timestamp, timestamp, id);
+      return { kind: "deleted" as const, document: this.getDocument(id)! };
+    });
+  }
+
+  restoreDocument(id: string) {
+    return transaction(this.sql, () => {
+      const current = this.getDocument(id);
+      if (!current) return { kind: "missing" as const };
+      if (!current.deletedAt) return { kind: "not_deleted" as const, document: current };
+      const timestamp = now();
+      this.sql
+        .prepare("UPDATE documents SET deleted_at = NULL, revision = revision + 1, updated_at = ? WHERE id = ?")
+        .run(timestamp, id);
+      return { kind: "restored" as const, document: this.getDocument(id)! };
+    });
+  }
+
+  permanentlyDeleteDocument(id: string, revision: number) {
+    const result = transaction(this.sql, () => {
+      const current = this.getDocument(id);
+      if (!current) return { kind: "missing" as const };
+      if (!current.deletedAt) return { kind: "not_deleted" as const, document: current };
+      if (current.revision !== revision) return { kind: "conflict" as const, document: current };
+      const active = this.sql
+        .prepare("SELECT 1 AS found FROM capture_jobs WHERE document_id = ? AND status = 'running' LIMIT 1")
+        .get(id) as { found: number } | undefined;
+      if (active) return { kind: "capture_running" as const, document: current };
+
+      const relativePaths = (
+        this.sql
+          .prepare(
+            `SELECT DISTINCT c.snapshot_path FROM captures c
+             WHERE c.document_id = ? AND c.snapshot_path IS NOT NULL
+               AND NOT EXISTS (
+                 SELECT 1 FROM captures other
+                 WHERE other.snapshot_path = c.snapshot_path AND other.document_id <> c.document_id
+               )`,
+          )
+          .all(id) as Array<{ snapshot_path: string }>
+      ).map(({ snapshot_path }) => snapshot_path);
+      try {
+        for (const relativePath of relativePaths) {
+          const path = this.snapshotPath(relativePath);
+          try {
+            if (!lstatSync(path).isFile()) throw new Error("Snapshot path is not a file");
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          }
+        }
+      } catch {
+        return { kind: "snapshot_failed" as const };
+      }
+
+      const timestamp = now();
+      for (const path of relativePaths) {
+        this.sql
+          .prepare(
+            `INSERT INTO file_deletions(path, created_at, updated_at) VALUES (?, ?, ?)
+             ON CONFLICT(path) DO NOTHING`,
+          )
+          .run(path, timestamp, timestamp);
+      }
+      this.sql.prepare("DELETE FROM documents WHERE id = ?").run(id);
+      this.sql.prepare("DELETE FROM tags WHERE NOT EXISTS (SELECT 1 FROM document_tags WHERE tag_id = tags.id)").run();
+      return { kind: "deleted" as const };
+    });
+    if (result.kind === "deleted") this.processPendingFileDeletions();
+    return result;
+  }
+
+  private snapshotPath(relativePath: string) {
+    const root = resolve(this.snapshotsDir);
+    const match = /^snapshots\/([a-zA-Z0-9-]+\.html\.gz)$/u.exec(relativePath);
+    if (!match || !lstatSync(root).isDirectory()) throw new Error("Snapshot path is outside storage");
+    return join(root, match[1]);
+  }
+
+  processPendingFileDeletions() {
+    const rows = this.sql.prepare("SELECT path FROM file_deletions ORDER BY created_at").all() as Array<{
+      path: string;
+    }>;
+    for (const row of rows) {
+      try {
+        const path = this.snapshotPath(row.path);
+        try {
+          if (!lstatSync(path).isFile()) throw new Error("Snapshot path is not a file");
+          unlinkSync(path);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+        this.sql.prepare("DELETE FROM file_deletions WHERE path = ?").run(row.path);
+      } catch (error) {
+        this.sql
+          .prepare(
+            `UPDATE file_deletions SET attempts = attempts + 1, last_error = ?, updated_at = ?
+             WHERE path = ?`,
+          )
+          .run(error instanceof Error ? error.message.slice(0, 1000) : "File deletion failed", now(), row.path);
+      }
+    }
   }
 
   retryDocument(id: string) {
     return transaction(this.sql, () => {
       const current = this.getDocument(id);
       if (!current) return { kind: "missing" as const };
+      if (current.deletedAt) return { kind: "deleted" as const, document: current };
       if (current.status !== "failed") return { kind: "not_failed" as const, document: current };
       const timestamp = now();
       this.sql
@@ -508,7 +757,7 @@ export class KnowledgeDatabase {
         .prepare(
           `SELECT j.id, j.document_id, d.source_url
            FROM capture_jobs j JOIN documents d ON d.id = j.document_id
-           WHERE j.status = 'queued' AND j.available_at <= ?
+           WHERE j.status = 'queued' AND j.available_at <= ? AND d.deleted_at IS NULL
            ORDER BY j.id LIMIT 1`,
         )
         .get(timestamp) as { id: number; document_id: string; source_url: string } | undefined;
@@ -549,6 +798,14 @@ export class KnowledgeDatabase {
         .prepare("UPDATE captures SET status = 'extracting', mode = ?, http_status = ? WHERE id = ?")
         .run(mode, httpStatus, job.captureId);
     });
+  }
+
+  planCaptureSnapshot(job: CaptureJob, snapshotPath: string) {
+    this.snapshotPath(snapshotPath);
+    const result = this.sql
+      .prepare("UPDATE captures SET snapshot_path = ? WHERE id = ? AND document_id = ? AND job_id = ?")
+      .run(snapshotPath, job.captureId, job.documentId, job.id);
+    if (result.changes !== 1) throw new Error("Capture is no longer active");
   }
 
   completeCapture(job: CaptureJob, result: CaptureResult, snapshotPath: string | null) {
@@ -602,6 +859,7 @@ export class KnowledgeDatabase {
       this.sql
         .prepare("UPDATE capture_jobs SET status = 'done', updated_at = ? WHERE id = ?")
         .run(timestamp, job.id);
+      this.recordRevision(this.getDocument(job.documentId)!);
     });
     return this.getDocument(job.documentId)!;
   }
@@ -630,7 +888,10 @@ export class KnowledgeDatabase {
 
   hasPendingCaptures() {
     const row = this.sql
-      .prepare("SELECT 1 AS found FROM capture_jobs WHERE status IN ('queued', 'running') LIMIT 1")
+      .prepare(
+        `SELECT 1 AS found FROM capture_jobs j JOIN documents d ON d.id = j.document_id
+         WHERE j.status IN ('queued', 'running') AND d.deleted_at IS NULL LIMIT 1`,
+      )
       .get() as { found: number } | undefined;
     return Boolean(row);
   }

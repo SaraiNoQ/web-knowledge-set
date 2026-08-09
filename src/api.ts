@@ -2,6 +2,7 @@ import type {
   ApiError,
   CaptureStatus,
   DocumentListResponse,
+  DocumentRevision,
   KnowledgeDocument,
 } from "../shared/types";
 
@@ -51,6 +52,7 @@ export interface DocumentFilters {
   q?: string;
   tag?: string;
   status?: CaptureStatus | "";
+  trash?: "only";
   page?: number;
 }
 
@@ -62,11 +64,16 @@ export interface DocumentPatch {
 }
 
 export const api = {
+  listTags(trash?: "only", signal?: AbortSignal) {
+    return request<string[]>(`/api/tags${trash ? "?trash=only" : ""}`, { signal });
+  },
+
   listDocuments(filters: DocumentFilters, signal?: AbortSignal) {
     const query = new URLSearchParams();
     if (filters.q?.trim()) query.set("q", filters.q.trim());
     if (filters.tag) query.set("tag", filters.tag);
     if (filters.status) query.set("status", filters.status);
+    if (filters.trash) query.set("trash", filters.trash);
     query.set("page", String(filters.page || 1));
     return request<DocumentListResponse>(`/api/documents?${query}`, { signal });
   },
@@ -94,6 +101,38 @@ export const api = {
       method: "POST",
       body: JSON.stringify({}),
     });
+  },
+
+  deleteDocument(id: string) {
+    return request<KnowledgeDocument>(`/api/documents/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      body: JSON.stringify({}),
+    });
+  },
+
+  restoreDocument(id: string) {
+    return request<KnowledgeDocument>(`/api/documents/${encodeURIComponent(id)}/restore`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
+  permanentlyDeleteDocument(id: string, revision: number) {
+    return request<void>(`/api/documents/${encodeURIComponent(id)}/permanent`, {
+      method: "DELETE",
+      body: JSON.stringify({ revision }),
+    });
+  },
+
+  listDocumentRevisions(id: string) {
+    return request<DocumentRevision[]>(`/api/documents/${encodeURIComponent(id)}/revisions`);
+  },
+
+  restoreDocumentRevision(id: string, revision: number, currentRevision: number) {
+    return request<KnowledgeDocument>(
+      `/api/documents/${encodeURIComponent(id)}/revisions/${revision}/restore`,
+      { method: "POST", body: JSON.stringify({ revision: currentRevision }) },
+    );
   },
 
   exportUrl(id: string) {
