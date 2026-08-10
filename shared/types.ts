@@ -62,6 +62,33 @@ export interface DocumentDraft {
   updatedAt: string;
 }
 
+export interface CaptureHistoryItem {
+  id: string;
+  documentId: string;
+  status: Exclude<CaptureStatus, "queued">;
+  mode: CaptureMode | null;
+  requestUrl: string | null;
+  finalUrl: string | null;
+  httpStatus: number | null;
+  snapshotStored: "available" | "missing" | "none";
+  extractorVersion: string | null;
+  warning: string | null;
+  errorCode: CaptureErrorCode | null;
+  errorMessage: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+}
+
+export interface ReextractionPreview {
+  captureId: string;
+  baseRevision: number;
+  extractorVersion: string;
+  before: { title: string; markdown: string };
+  after: { title: string; markdown: string };
+  createdAt: string;
+}
+
 export type BackupReason = "manual" | "automatic" | "pre-migration" | "pre-restore";
 
 export type BackupStatus = "creating" | "verified" | "failed" | "invalid" | "missing";

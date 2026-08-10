@@ -2,12 +2,14 @@ import type {
   ApiError,
   BackupRecord,
   BackupSettings,
+  CaptureHistoryItem,
   CaptureStatus,
   DataSafetyStatus,
   DocumentDraft,
   DocumentListResponse,
   DocumentRevision,
   KnowledgeDocument,
+  ReextractionPreview,
 } from "../shared/types";
 
 export type { DataSafetyStatus } from "../shared/types";
@@ -148,6 +150,17 @@ export const api = {
 
   getDocument(id: string, signal?: AbortSignal) {
     return request<KnowledgeDocument>(`/api/documents/${encodeURIComponent(id)}`, { signal });
+  },
+
+  listCaptureHistory(id: string, signal?: AbortSignal) {
+    return request<CaptureHistoryItem[]>(`/api/documents/${encodeURIComponent(id)}/captures`, { signal });
+  },
+
+  reextractCapture(documentId: string, captureId: string) {
+    return request<ReextractionPreview>(
+      `/api/documents/${encodeURIComponent(documentId)}/captures/${encodeURIComponent(captureId)}/reextract`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
   },
 
   getDocumentDraft(id: string, signal?: AbortSignal) {

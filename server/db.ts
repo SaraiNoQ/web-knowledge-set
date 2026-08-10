@@ -7,6 +7,7 @@ import type {
   BackupRecord,
   BackupSettings,
   CaptureErrorCode,
+  CaptureHistoryItem,
   CaptureMode,
   CaptureStatus,
   DatabaseHealth,
@@ -230,6 +231,9 @@ const migrations = [
   );
   INSERT INTO backup_settings(id, automatic_retention_count) VALUES (1, 7);
   `,
+  `
+  ALTER TABLE captures ADD COLUMN extractor_version TEXT;
+  `,
 ];
 
 export const CURRENT_SCHEMA_VERSION = migrations.length;
@@ -302,6 +306,23 @@ interface BackupRecordRow {
   error_message: string | null;
 }
 
+interface CaptureRow {
+  id: string;
+  document_id: string;
+  status: Exclude<CaptureStatus, "queued">;
+  mode: CaptureMode | null;
+  http_status: number | null;
+  snapshot_path: string | null;
+  warning: string | null;
+  error_code: CaptureErrorCode | null;
+  error_message: string | null;
+  started_at: string;
+  finished_at: string | null;
+  request_url: string | null;
+  final_url: string | null;
+  extractor_version: string | null;
+}
+
 export interface CaptureJob {
   id: number;
   captureId: string;
@@ -310,6 +331,7 @@ export interface CaptureJob {
 }
 
 export interface CaptureResult {
+  extractorVersion?: string;
   title: string;
   author: string | null;
   publishedAt: string | null;
@@ -337,6 +359,12 @@ export interface ListFilters {
 
 function now() {
   return new Date().toISOString();
+}
+
+function durationMs(startedAt: string, finishedAt: string | null) {
+  if (!finishedAt) return null;
+  const duration = Date.parse(finishedAt) - Date.parse(startedAt);
+  return Number.isFinite(duration) ? Math.max(0, duration) : null;
 }
 
 function transaction<T>(sql: DatabaseSync, work: () => T): T {
@@ -851,11 +879,69 @@ export class KnowledgeDatabase {
     return summary;
   }
 
+  private toCaptureHistory(row: CaptureRow): CaptureHistoryItem {
+    let snapshotStored: CaptureHistoryItem["snapshotStored"] = "none";
+    if (row.snapshot_path) {
+      try {
+        snapshotStored = lstatSync(this.snapshotPath(row.snapshot_path)).isFile() ? "available" : "missing";
+      } catch {
+        snapshotStored = "missing";
+      }
+    }
+    return {
+      id: row.id,
+      documentId: row.document_id,
+      status: row.status,
+      mode: row.mode,
+      requestUrl: row.request_url,
+      finalUrl: row.final_url,
+      httpStatus: row.http_status,
+      snapshotStored,
+      extractorVersion: row.extractor_version,
+      warning: row.warning,
+      errorCode: row.error_code,
+      errorMessage: row.error_message,
+      startedAt: row.started_at,
+      finishedAt: row.finished_at,
+      durationMs: durationMs(row.started_at, row.finished_at),
+    };
+  }
+
   getDocument(id: string) {
     const row = this.sql.prepare("SELECT * FROM documents WHERE id = ?").get(id) as
       | DocumentRow
       | undefined;
     return row ? this.toDocument(row) : null;
+  }
+
+  listCaptureHistory(documentId: string): CaptureHistoryItem[] | null {
+    if (!this.sql.prepare("SELECT 1 FROM documents WHERE id = ?").get(documentId)) return null;
+    return (
+      this.sql
+        .prepare("SELECT * FROM captures WHERE document_id = ? ORDER BY started_at DESC, id DESC")
+        .all(documentId) as unknown as CaptureRow[]
+    ).map((row) => this.toCaptureHistory(row));
+  }
+
+  getCaptureSnapshotSource(documentId: string, captureId: string) {
+    const row = this.sql
+      .prepare(
+        `SELECT c.snapshot_path, COALESCE(c.final_url, c.request_url, d.source_url) AS source_url
+         FROM captures c JOIN documents d ON d.id = c.document_id
+         WHERE c.id = ? AND c.document_id = ?`,
+      )
+      .get(captureId, documentId) as { snapshot_path: string | null; source_url: string } | undefined;
+    if (!row) return { kind: "missing" as const };
+    if (!row.snapshot_path) return { kind: "snapshot_missing" as const };
+    try {
+      return {
+        kind: "ready" as const,
+        path: this.snapshotPath(row.snapshot_path),
+        sourceUrl: row.source_url,
+      };
+    } catch {
+      return { kind: "snapshot_invalid" as const };
+    }
   }
 
   private getDocumentDraftRow(id: string) {
@@ -1418,7 +1504,7 @@ export class KnowledgeDatabase {
           `UPDATE captures SET status = 'ready', mode = ?, http_status = ?, snapshot_path = ?,
              final_url = ?, extracted_title = ?, extracted_author = ?,
              extracted_published_at = ?, extracted_canonical_url = ?, extracted_markdown = ?,
-             warning = ?, finished_at = ? WHERE id = ?`,
+             extractor_version = ?, warning = ?, finished_at = ? WHERE id = ?`,
         )
         .run(
           result.mode,
@@ -1430,6 +1516,7 @@ export class KnowledgeDatabase {
           result.publishedAt,
           result.canonicalUrl,
           result.markdown,
+          result.extractorVersion ?? null,
           result.warning,
           timestamp,
           job.captureId,

@@ -17,6 +17,38 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect(page.locator(".markdown-preview img")).toHaveCount(0);
   expect(await page.evaluate(() => (window as typeof window & { __zhiyeXss?: boolean }).__zhiyeXss)).toBeUndefined();
 
+  await page.getByRole("button", { name: "采集历史" }).click();
+  const captureHistory = page.getByRole("complementary", { name: "采集历史" });
+  await expect(captureHistory.getByText("e2e-capture@1")).toBeVisible();
+  await captureHistory.getByRole("button", { name: "从快照重新提取" }).click();
+  await expect(captureHistory.getByText("已从本地 HTML 快照生成候选，尚未修改正文。")).toBeVisible();
+  await expect(page.getByLabel("Markdown 编辑器")).not.toContainText("只来自本地 HTML 快照");
+  await captureHistory.getByLabel("替换 Markdown 正文").check();
+  await page.evaluate(async () => {
+    const list = await fetch("/api/documents?page=1").then((response) => response.json()) as {
+      items: Array<{ id: string }>;
+    };
+    const document = await fetch(`/api/documents/${list.items[0].id}`).then((response) => response.json()) as {
+      id: string;
+      revision: number;
+    };
+    await fetch(`/api/documents/${document.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ revision: document.revision, markdown: "# 并发保护正文" }),
+    });
+  });
+  await captureHistory.getByRole("button", { name: "采纳选中内容" }).click();
+  await expect(captureHistory.getByText("文档已在别处变化，请重新从快照生成对比。")).toBeVisible();
+  await expect(page.getByLabel("Markdown 编辑器")).toContainText("并发保护正文");
+  await captureHistory.getByRole("button", { name: "从快照重新提取" }).click();
+  await expect(captureHistory.getByText("已从本地 HTML 快照生成候选，尚未修改正文。")).toBeVisible();
+  await captureHistory.getByLabel("替换 Markdown 正文").check();
+  await captureHistory.getByRole("button", { name: "采纳选中内容" }).click();
+  await expect(captureHistory.getByText("已采纳选中内容，原修订仍保留在历史中。")).toBeVisible();
+  await expect(page.getByLabel("Markdown 编辑器")).toContainText("只来自本地 HTML 快照");
+  await captureHistory.getByRole("button", { name: "关闭采集历史" }).click();
+
   await page.evaluate(async () => {
     const list = await fetch("/api/documents?page=1").then((response) => response.json()) as {
       items: Array<{ id: string }>;
@@ -89,6 +121,15 @@ test("imports, restores history, trashes, restores, searches, exports, and block
       markdown: string;
     } | null;
     return draft?.markdown ?? null;
+  });
+  const currentStoredMarkdown = () => page.evaluate(async () => {
+    const list = await fetch("/api/documents?page=1").then((response) => response.json()) as {
+      items: Array<{ id: string }>;
+    };
+    const document = await fetch(`/api/documents/${list.items[0].id}`).then((response) => response.json()) as {
+      markdown: string;
+    };
+    return document.markdown;
   });
   await expect(titleEditor).toHaveValue("人工整理标题");
   await expect.poll(currentStoredDraft).toBeNull();
@@ -191,7 +232,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect.poll(currentStoredDraft).toBeNull();
 
   await editor.fill("# 第二版\n\n这段文字会被历史恢复替换。");
-  await expect(page.getByText("已保存", { exact: true })).toBeVisible({ timeout: 5_000 });
+  await expect.poll(currentStoredMarkdown).toContain("这段文字会被历史恢复替换。");
   await page.getByRole("button", { name: "修订历史" }).click();
   await expect(page.getByRole("heading", { name: "修订历史" })).toBeVisible();
   const firstRevision = page.getByRole("listitem").filter({ hasText: "第一版正文" });

@@ -48,9 +48,11 @@ test("documents are queued once, indexed, tagged, and revision guarded", () => {
     const job = fixture.db.claimNextCapture();
     assert.ok(job);
     fixture.db.markExtracting(job, "http", 200);
+    writeFileSync(join(fixture.directory, "snapshots/test.html.gz"), "snapshot");
     const ready = fixture.db.completeCapture(
       job,
       {
+        extractorVersion: "defuddle@0.19.2",
         title: "A durable local article",
         author: "Ada",
         publishedAt: "2026-08-09",
@@ -66,12 +68,19 @@ test("documents are queued once, indexed, tagged, and revision guarded", () => {
     assert.equal(ready.status, "ready");
     assert.equal(ready.finalUrl, "https://example.com/final-article");
     const capture = fixture.db.sql.prepare(
-      "SELECT request_url, final_url, extracted_title, extracted_markdown FROM captures WHERE id = ?",
+      "SELECT request_url, final_url, extracted_title, extracted_markdown, extractor_version FROM captures WHERE id = ?",
     ).get(job.captureId) as Record<string, string>;
     assert.equal(capture.request_url, "https://example.com/article");
     assert.equal(capture.final_url, "https://example.com/final-article");
     assert.equal(capture.extracted_title, "A durable local article");
     assert.match(capture.extracted_markdown, /uniquely searchable/u);
+    assert.equal(capture.extractor_version, "defuddle@0.19.2");
+    const history = fixture.db.listCaptureHistory(ready.id);
+    assert.deepEqual(
+      history?.map(({ status, snapshotStored, extractorVersion }) => ({ status, snapshotStored, extractorVersion })),
+      [{ status: "ready", snapshotStored: "available", extractorVersion: "defuddle@0.19.2" }],
+    );
+    assert.ok((history?.[0]?.durationMs ?? -1) >= 0);
 
     const updated = fixture.db.updateDocument(ready.id, ready.revision, {
       title: "Edited title",
@@ -682,7 +691,7 @@ test("global tags are not limited to the first document page", () => {
   }
 });
 
-test("current migrations upgrade v3 and leave the v7 release schema unchanged", () => {
+test("current migrations upgrade v3 and the frozen v7 release schema", () => {
   const directory = mkdtempSync(join(tmpdir(), "zhiye-v3-upgrade-"));
   const path = join(directory, "zhiye.sqlite3");
   const documentId = "legacy-document";
@@ -727,39 +736,37 @@ test("current migrations upgrade v3 and leave the v7 release schema unchanged", 
       repeated.close();
     }
 
-    const currentDirectory = join(directory, "current-v7");
+    const currentDirectory = join(directory, "release-v7");
     mkdirSync(currentDirectory);
     const currentPath = join(currentDirectory, "zhiye.sqlite3");
     const fixture = new DatabaseSync(currentPath);
     fixture.exec(readFileSync(new URL("./fixtures/schema-v7.sql", import.meta.url), "utf8"));
-    const schemaBefore = fixture
-      .prepare(
-        `SELECT type, name, sql FROM sqlite_schema
-         WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name`,
-      )
-      .all();
     const migrationsBefore = fixture
       .prepare("SELECT version, applied_at FROM schema_migrations ORDER BY version")
       .all();
     fixture.close();
 
-    assert.equal(inspectDatabaseSchema(currentDirectory).status, "current");
+    assert.deepEqual(inspectDatabaseSchema(currentDirectory).pendingVersions, [8]);
     const current = openDatabase(currentDirectory);
     try {
       assert.equal(current.getDocument("release-document")?.markdown, "Frozen release schema body.");
       assert.deepEqual(current.getDocument("release-document")?.tags, ["Fixture"]);
       assert.equal(current.listDocuments({ q: "Frozen" }).total, 1);
-      assert.deepEqual(
-        current.sql
-          .prepare(
-            `SELECT type, name, sql FROM sqlite_schema
-             WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name`,
-          )
-          .all(),
-        schemaBefore,
+      assert.equal(
+        (current.sql.prepare("SELECT max(version) AS version FROM schema_migrations").get() as { version: number })
+          .version,
+        CURRENT_SCHEMA_VERSION,
+      );
+      assert.equal(
+        (
+          current.sql
+            .prepare("SELECT 1 AS found FROM pragma_table_info('captures') WHERE name = 'extractor_version'")
+            .get() as { found: number }
+        ).found,
+        1,
       );
       assert.deepEqual(
-        current.sql.prepare("SELECT version, applied_at FROM schema_migrations ORDER BY version").all(),
+        current.sql.prepare("SELECT version, applied_at FROM schema_migrations ORDER BY version LIMIT 7").all(),
         migrationsBefore,
       );
     } finally {
@@ -815,8 +822,7 @@ test("schema inspection is read-only and rejects future or incomplete histories"
 
     const raw = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));
     raw.exec(`
-      DROP TABLE backup_settings;
-      DROP TABLE backup_records;
+      ALTER TABLE captures DROP COLUMN extractor_version;
       DELETE FROM schema_migrations WHERE version = ${CURRENT_SCHEMA_VERSION};
     `);
     raw.close();
@@ -863,7 +869,7 @@ test("all pending migrations roll back together on failure", () => {
       currentVersion: 3,
       supportedVersion: CURRENT_SCHEMA_VERSION,
       appliedVersions: [1, 2, 3],
-      pendingVersions: [4, 5, 6, 7],
+      pendingVersions: [4, 5, 6, 7, 8],
     });
     const unchanged = new DatabaseSync(path, { readOnly: true });
     try {

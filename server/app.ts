@@ -1,9 +1,9 @@
-import { closeSync, createReadStream, existsSync, fsyncSync, openSync, statSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { closeSync, constants, createReadStream, existsSync, fsyncSync, openSync, statSync } from "node:fs";
+import { open, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, extname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { gzip } from "node:zlib";
+import { gunzip, gzip } from "node:zlib";
 
 import type {
   CaptureErrorCode,
@@ -35,8 +35,12 @@ import {
   type CaptureResult,
   type DocumentPatch,
 } from "./db.js";
+import { extractHtml } from "./extract.js";
 
 const gzipAsync = promisify(gzip);
+const gunzipAsync = promisify(gunzip);
+const MAX_HTML_BYTES = 5 * 1024 * 1024;
+const MAX_COMPRESSED_SNAPSHOT_BYTES = 6 * 1024 * 1024;
 const captureErrorCodes = new Set<CaptureErrorCode>([
   "INVALID_URL",
   "BLOCKED_ADDRESS",
@@ -82,6 +86,7 @@ function securityHeaders() {
 }
 
 export interface CapturedPage {
+  extractorVersion?: string;
   title: string;
   author: string | null;
   publishedAt: string | null;
@@ -330,6 +335,28 @@ function captureFailure(error: unknown): { code: CaptureErrorCode; message: stri
   return { code, message: message.slice(0, 2000) || "Capture failed" };
 }
 
+async function readSnapshotHtml(path: string) {
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW).catch((cause: unknown) => {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new HttpError(409, "SNAPSHOT_MISSING", "The HTML snapshot file is missing");
+    }
+    throw new HttpError(422, "SNAPSHOT_INVALID", "The HTML snapshot cannot be opened safely");
+  });
+  try {
+    const info = await file.stat();
+    if (!info.isFile() || info.size > MAX_COMPRESSED_SNAPSHOT_BYTES) {
+      throw new HttpError(422, "SNAPSHOT_INVALID", "The HTML snapshot is invalid or too large");
+    }
+    const html = await gunzipAsync(await file.readFile(), { maxOutputLength: MAX_HTML_BYTES });
+    return html.toString("utf8");
+  } catch (cause) {
+    if (cause instanceof HttpError) throw cause;
+    throw new HttpError(422, "SNAPSHOT_INVALID", "The HTML snapshot is corrupt or exceeds 5 MiB");
+  } finally {
+    await file.close();
+  }
+}
+
 function exportedMarkdown(document: KnowledgeDocument) {
   const frontMatter = [
     "---",
@@ -382,6 +409,7 @@ function createWorker(getDb: () => KnowledgeDatabase | null, capture: CaptureFun
         }
         const previous = db.getDocument(job.documentId)!;
         const result: CaptureResult = {
+          extractorVersion: page.extractorVersion,
           title: page.title.trim() || previous.title,
           author: page.author || null,
           publishedAt: page.publishedAt || null,
@@ -767,6 +795,68 @@ export function createApp(options: AppOptions) {
 
       if (pathname === "/api/tags" && request.method === "GET") {
         sendJson(response, 200, requireDatabase().listTags(trashFilter(requestUrl)));
+        return;
+      }
+
+      const reextractMatch = pathname.match(/^\/api\/documents\/([^/]+)\/captures\/([^/]+)\/reextract$/u);
+      if (reextractMatch && request.method === "POST") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length) {
+          throw new HttpError(400, "INVALID_REEXTRACTION_REQUEST", "Re-extraction does not accept options");
+        }
+        const database = requireDatabase();
+        const documentId = decodeId(reextractMatch[1]);
+        const captureId = decodeId(reextractMatch[2]);
+        const initialDocument = database.getDocument(documentId);
+        if (!initialDocument) throw new HttpError(404, "NOT_FOUND", "Document not found");
+        if (initialDocument.deletedAt) {
+          sendError(response, 409, "DOCUMENT_DELETED", "Restore the document before re-extracting", initialDocument);
+          return;
+        }
+        const source = database.getCaptureSnapshotSource(documentId, captureId);
+        if (source.kind === "missing") throw new HttpError(404, "CAPTURE_NOT_FOUND", "Capture not found");
+        if (source.kind === "snapshot_missing") {
+          throw new HttpError(409, "SNAPSHOT_MISSING", "This capture has no HTML snapshot");
+        }
+        if (source.kind === "snapshot_invalid") {
+          throw new HttpError(422, "SNAPSHOT_INVALID", "The capture references an unsafe HTML snapshot");
+        }
+        let extracted: Awaited<ReturnType<typeof extractHtml>>;
+        try {
+          extracted = await extractHtml(await readSnapshotHtml(source.path), source.sourceUrl);
+        } catch (cause) {
+          if (cause instanceof HttpError) throw cause;
+          throw new HttpError(422, "REEXTRACTION_FAILED", "The HTML snapshot could not be extracted");
+        }
+        if (!extracted.markdown.trim()) {
+          throw new HttpError(422, "EXTRACTION_EMPTY", "The HTML snapshot contains no extractable body");
+        }
+        const currentDatabase = requireDatabase();
+        if (currentDatabase !== database) {
+          throw new HttpError(409, "DATA_CHANGED", "Local data changed while the snapshot was being extracted");
+        }
+        const document = currentDatabase.getDocument(documentId);
+        if (!document) throw new HttpError(404, "NOT_FOUND", "Document not found");
+        if (document.deletedAt) {
+          sendError(response, 409, "DOCUMENT_DELETED", "Restore the document before re-extracting", document);
+          return;
+        }
+        sendJson(response, 200, {
+          captureId,
+          baseRevision: document.revision,
+          extractorVersion: extracted.extractorVersion,
+          before: { title: document.title, markdown: document.markdown },
+          after: { title: extracted.title, markdown: extracted.markdown },
+          createdAt: new Date().toISOString(),
+        });
+        return;
+      }
+
+      const captureHistoryMatch = pathname.match(/^\/api\/documents\/([^/]+)\/captures$/u);
+      if (captureHistoryMatch && request.method === "GET") {
+        const history = requireDatabase().listCaptureHistory(decodeId(captureHistoryMatch[1]));
+        if (!history) throw new HttpError(404, "NOT_FOUND", "Document not found");
+        sendJson(response, 200, history);
         return;
       }
 

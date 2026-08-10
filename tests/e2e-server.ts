@@ -9,6 +9,7 @@ import { openDatabase } from "../server/db.js";
 const root = mkdtempSync(join(tmpdir(), "zhiye-e2e-"));
 const dataDir = join(root, "data");
 const capture: CaptureFunction = async (url) => ({
+  extractorVersion: "e2e-capture@1",
   title: "远端测试文章",
   author: "测试作者",
   publishedAt: "2026-08-09",
@@ -17,7 +18,7 @@ const capture: CaptureFunction = async (url) => ({
   markdown: "# 抓取成功\n\n这是可搜索的本地知识正文。\n\n![追踪像素](http://127.0.0.1:9/private.png)\n\n<script>window.__zhiyeXss = true</script>",
   mode: "http",
   warning: null,
-  rawHtml: "<article><h1>抓取成功</h1><p>这是可搜索的本地知识正文。</p></article>",
+  rawHtml: "<!doctype html><title>远端测试文章</title><article><h1>快照重新提取</h1><p>这是只来自本地 HTML 快照的候选正文。</p></article>",
   httpStatus: 200,
 });
 const app = createApp({

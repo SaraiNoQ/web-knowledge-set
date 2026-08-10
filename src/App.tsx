@@ -9,11 +9,13 @@ import type { FormEvent, KeyboardEvent, ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type {
+  CaptureHistoryItem,
   CaptureStatus,
   DocumentDraft,
   DocumentRevision,
   DocumentSummary,
   KnowledgeDocument,
+  ReextractionPreview,
 } from "../shared/types";
 import { api, ApiRequestError } from "./api";
 import { DataSafety } from "./components/DataSafety";
@@ -153,6 +155,143 @@ function MarkdownPreview({ markdown, sourceUrl }: { markdown: string; sourceUrl:
   );
 }
 
+function captureDuration(value: number | null) {
+  if (value === null) return "未完成";
+  if (value < 1000) return `${value} ms`;
+  return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)} s`;
+}
+
+function CaptureHistoryPanel({
+  document,
+  blockedReason,
+  onClose,
+  onApply,
+}: {
+  document: KnowledgeDocument;
+  blockedReason: string | null;
+  onClose: () => void;
+  onApply: (preview: ReextractionPreview, applyTitle: boolean, applyMarkdown: boolean) => Promise<void>;
+}) {
+  const [captures, setCaptures] = useState<CaptureHistoryItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [reextracting, setReextracting] = useState("");
+  const [applying, setApplying] = useState(false);
+  const [preview, setPreview] = useState<ReextractionPreview | null>(null);
+  const [applyTitle, setApplyTitle] = useState(false);
+  const [applyMarkdown, setApplyMarkdown] = useState(false);
+  const previewHeading = useRef<HTMLHeadingElement>(null);
+
+  const load = useCallback(async (signal?: AbortSignal) => {
+    setLoading(true);
+    setError("");
+    try {
+      setCaptures(await api.listCaptureHistory(document.id, signal));
+    } catch (cause) {
+      if ((cause as Error).name !== "AbortError") setError((cause as Error).message);
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  }, [document.id, document.status]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
+
+  const reextract = async (capture: CaptureHistoryItem) => {
+    setReextracting(capture.id);
+    setError("");
+    setNotice("");
+    try {
+      const next = await api.reextractCapture(document.id, capture.id);
+      setPreview(next);
+      setApplyTitle(false);
+      setApplyMarkdown(false);
+      setNotice("已从本地 HTML 快照生成候选，尚未修改正文。");
+      requestAnimationFrame(() => previewHeading.current?.focus());
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setReextracting("");
+    }
+  };
+
+  const apply = async () => {
+    if (!preview || (!applyTitle && !applyMarkdown)) return;
+    setApplying(true);
+    setError("");
+    setNotice("");
+    try {
+      await onApply(preview, applyTitle, applyMarkdown);
+      setPreview(null);
+      setNotice("已采纳选中内容，原修订仍保留在历史中。");
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const titleChanged = Boolean(preview && preview.before.title.trim() !== preview.after.title.trim());
+  const markdownChanged = Boolean(preview && preview.before.markdown !== preview.after.markdown);
+
+  return (
+    <aside id="capture-history" className="revision-panel capture-history-panel" aria-label="采集历史">
+      <header>
+        <div><span className="eyebrow">SOURCE LEDGER</span><h3>采集历史</h3></div>
+        <button type="button" onClick={onClose} aria-label="关闭采集历史">×</button>
+      </header>
+
+      {(error || notice) && <div className={`capture-ledger-message ${error ? "is-error" : "is-notice"}`} role={error ? "alert" : "status"}>{error || notice}</div>}
+
+      {preview && (
+        <section className="reextract-preview" aria-labelledby="reextract-title">
+          <div className="reextract-head">
+            <div><span className="eyebrow">LOCAL SNAPSHOT · {preview.extractorVersion}</span><h4 id="reextract-title" ref={previewHeading} tabIndex={-1}>重新提取候选</h4></div>
+            <time dateTime={preview.createdAt}>{formatDateTime(preview.createdAt)}</time>
+          </div>
+          <div className="reextract-grid">
+            <article><span>当前内容</span><strong>{preview.before.title || "未命名网页"}</strong><pre>{preview.before.markdown || "空白正文"}</pre></article>
+            <article><span>快照候选</span><strong>{preview.after.title || "未命名网页"}</strong><pre>{preview.after.markdown || "空白正文"}</pre></article>
+          </div>
+          <fieldset disabled={applying || Boolean(blockedReason)}>
+            <legend>只采纳你明确选中的部分</legend>
+            <label><input type="checkbox" checked={applyTitle} onChange={(event) => setApplyTitle(event.target.checked)} disabled={!titleChanged} />替换标题 {!titleChanged && <small>无变化</small>}</label>
+            <label><input type="checkbox" checked={applyMarkdown} onChange={(event) => setApplyMarkdown(event.target.checked)} disabled={!markdownChanged} />替换 Markdown 正文 {!markdownChanged && <small>无变化</small>}</label>
+            <button type="button" className="primary-button" onClick={() => void apply()} disabled={!applyTitle && !applyMarkdown}>{applying ? "采纳中…" : "采纳选中内容"}</button>
+          </fieldset>
+          {blockedReason && <p className="reextract-blocked" role="note">{blockedReason}</p>}
+        </section>
+      )}
+
+      {loading ? <StatePanel kind="loading" title="正在翻阅采集记录" /> : error && !captures.length ? <div className="capture-load-error"><StatePanel kind="error" title="无法读取采集历史">{error}</StatePanel><button type="button" onClick={() => void load()}>重试</button></div> : !captures.length ? <StatePanel kind="empty" title="还没有采集记录">网页开始读取后，每次尝试都会出现在这里。</StatePanel> : (
+        <ol className="capture-ledger">
+          {captures.map((capture) => {
+            const source = resolveLink(capture.finalUrl || capture.requestUrl || undefined, document.sourceUrl);
+            const snapshotLabel = capture.snapshotStored === "available" ? "HTML 快照可用" : capture.snapshotStored === "missing" ? "HTML 快照缺失" : "无 HTML 快照";
+            return (
+              <li key={capture.id}>
+                <div className="capture-ledger-main">
+                  <div><DocumentStatus status={capture.status} /><time dateTime={capture.startedAt}>{formatDateTime(capture.startedAt)}</time></div>
+                  <strong>{capture.mode === "browser" ? "浏览器采集" : capture.mode === "http" ? "直接读取" : "未进入提取"}</strong>
+                  <p>{source ? <a href={source} target="_blank" rel="noreferrer noopener">{source}</a> : "未记录最终地址"}</p>
+                  {capture.warning && <p className="capture-ledger-warning">警告 · {capture.warning}</p>}
+                  {(capture.errorCode || capture.errorMessage) && <p className="capture-ledger-error">{capture.errorCode || "CAPTURE_FAILED"} · {capture.errorMessage || "采集失败"}</p>}
+                </div>
+                <dl><div><dt>耗时</dt><dd>{captureDuration(capture.durationMs)}</dd></div><div><dt>HTTP</dt><dd>{capture.httpStatus ?? "—"}</dd></div><div><dt>提取器</dt><dd>{capture.extractorVersion || "旧版"}</dd></div><div><dt>快照</dt><dd>{snapshotLabel}</dd></div></dl>
+                <button type="button" onClick={() => void reextract(capture)} disabled={capture.snapshotStored !== "available" || Boolean(reextracting) || applying || Boolean(document.deletedAt)} title={capture.snapshotStored !== "available" ? snapshotLabel : document.deletedAt ? "恢复文档后可重新提取" : undefined}>{reextracting === capture.id ? "提取中…" : "从快照重新提取"}</button>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </aside>
+  );
+}
+
 export default function App() {
   const [items, setItems] = useState<DocumentSummary[]>([]);
   const [total, setTotal] = useState(0);
@@ -191,6 +330,8 @@ export default function App() {
   const [historyError, setHistoryError] = useState("");
   const [revisions, setRevisions] = useState<DocumentRevision[]>([]);
   const [restoringRevision, setRestoringRevision] = useState<number | null>(null);
+  const [captureHistoryOpen, setCaptureHistoryOpen] = useState(false);
+  const [captureApplying, setCaptureApplying] = useState(false);
   const [closing, setClosing] = useState(false);
   const [safetyOpen, setSafetyOpen] = useState(false);
   const [safetyRecovery, setSafetyRecovery] = useState(false);
@@ -220,7 +361,7 @@ export default function App() {
   const persistedDraft = currentDoc ? draftOf(currentDoc) : null;
   const dirty = Boolean(draft && persistedDraft && !draftsEqual(draft, persistedDraft));
   const activeCapture = currentDoc ? ACTIVE_STATUSES.has(currentDoc.status) : false;
-  const editorLocked = closing || Boolean(lifecycleAction) || restoringRevision !== null || Boolean(conflict && saveState === "saving");
+  const editorLocked = closing || captureApplying || Boolean(lifecycleAction) || restoringRevision !== null || Boolean(conflict && saveState === "saving");
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
   const refreshKnownTags = useCallback((signal?: AbortSignal) => {
@@ -432,6 +573,7 @@ export default function App() {
     setConflict(null);
     setRemoteDraftConflict(null);
     setHistoryOpen(false);
+    setCaptureHistoryOpen(false);
     setHistoryLoading(false);
     setHistoryError("");
     setRevisions([]);
@@ -870,6 +1012,7 @@ export default function App() {
       return;
     }
     const documentId = currentDoc.id;
+    setCaptureHistoryOpen(false);
     setHistoryOpen(true);
     setHistoryLoading(true);
     setHistoryError("");
@@ -880,6 +1023,63 @@ export default function App() {
       if (selectedIdRef.current === documentId) setHistoryError((error as Error).message);
     } finally {
       if (selectedIdRef.current === documentId) setHistoryLoading(false);
+    }
+  };
+
+  const toggleCaptureHistory = () => {
+    if (closeAttemptRef.current || !currentDoc) return;
+    setHistoryOpen(false);
+    setCaptureHistoryOpen((value) => !value);
+  };
+
+  const applyReextraction = async (
+    preview: ReextractionPreview,
+    applyTitle: boolean,
+    applyMarkdown: boolean,
+  ) => {
+    if (closeAttemptRef.current || !currentDoc || !draft || (!applyTitle && !applyMarkdown)) return;
+    setCaptureApplying(true);
+    try {
+      await draftSaveChain.current;
+      const current = currentDocRef.current;
+      const value = draftRef.current;
+      if (!current || !value || current.id !== currentDoc.id || !draftsEqual(value, draftOf(current))) {
+        throw new Error("请先保存或放弃当前编辑，再采纳快照候选。");
+      }
+      if (current.revision !== preview.baseRevision) {
+        throw new Error("文档已变化，请重新从快照生成对比。");
+      }
+      const stored = persistedDraftRef.current;
+      if (stored?.documentId === current.id) {
+        await tombstoneDraft(current.id, stored.draftRevision);
+        await draftSaveChain.current;
+      }
+      const updated = await api.updateDocument(current.id, {
+        revision: preview.baseRevision,
+        ...(applyTitle ? { title: preview.after.title } : {}),
+        ...(applyMarkdown ? { markdown: preview.after.markdown } : {}),
+      });
+      if (selectedIdRef.current === updated.id) {
+        setCurrentDoc(updated);
+        setDraft(draftOf(updated));
+        setTagText(updated.tags.join(", "));
+        setSaveState("saved");
+        updateListItem(updated);
+        refreshKnownTags();
+      }
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 409 && error.document) {
+        if (selectedIdRef.current === error.document.id) {
+          setCurrentDoc(error.document);
+          setDraft(draftOf(error.document));
+          setTagText(error.document.tags.join(", "));
+          alignLibraryWithDocument(error.document);
+        }
+        throw new Error("文档已在别处变化，请重新从快照生成对比。");
+      }
+      throw error;
+    } finally {
+      setCaptureApplying(false);
     }
   };
 
@@ -1045,6 +1245,15 @@ export default function App() {
     const parts = [query && `“${query}”`, tag && `#${tag}`, status && STATUS_LABEL[status]].filter(Boolean);
     return parts.length ? parts.join(" · ") : inTrash ? "已移除的网页" : "全部网页";
   }, [inTrash, query, status, tag]);
+  const captureBlockedReason = !currentDoc || currentDoc.status !== "ready"
+    ? "只能从已就绪的文档采纳候选。"
+    : currentDoc.deletedAt
+      ? "先从回收站恢复文档，再采纳候选。"
+      : dirty || saveState === "saving"
+        ? "请先保存或放弃当前编辑。"
+        : conflict || remoteDraftConflict
+          ? "请先处理当前的版本或草稿冲突。"
+          : null;
 
   return (
     <div className="app-shell">
@@ -1155,13 +1364,14 @@ export default function App() {
                   <label className="tag-field"><span>标签</span><input value={tagText} onChange={(event) => { if (!closeAttemptRef.current) { setTagText(event.target.value); setDraft({ ...draft, tags: parseTags(event.target.value) }); } }} placeholder="用逗号分隔" disabled={Boolean(currentDoc.deletedAt) || currentDoc.status !== "ready" || editorLocked} /></label>
                   <dl><div><dt>作者</dt><dd>{currentDoc.author || "未识别"}</dd></div><div><dt>收取</dt><dd>{currentDoc.captureMode === "browser" ? "浏览器" : currentDoc.captureMode === "http" ? "直接读取" : "—"}</dd></div></dl>
                 </div>
-                {!currentDoc.deletedAt && (
-                  <div className="document-actions">
+                <div className="document-actions">
+                  <button type="button" className="history-button" onClick={toggleCaptureHistory} disabled={closing} aria-expanded={captureHistoryOpen} aria-controls="capture-history">采集历史</button>
+                  {!currentDoc.deletedAt && (
                     <button type="button" className="text-button danger" onClick={() => void moveToTrash()} disabled={closing || Boolean(remoteDraftConflict) || Boolean(lifecycleAction) || dirty || saveState === "saving"} title={dirty || remoteDraftConflict ? "请先处理当前草稿" : undefined}>
                       {lifecycleAction === "delete" ? "正在移除…" : "移入回收站"}
                     </button>
-                  </div>
-                )}
+                  )}
+                </div>
               </header>
 
               {currentDoc.warning && <div className="notice warning" role="status"><strong>注意</strong><span>{currentDoc.warning}</span></div>}
@@ -1170,6 +1380,14 @@ export default function App() {
               {detailError && <div className="notice error" role="alert"><strong>请求失败</strong><span>{detailError}</span></div>}
               {remoteDraftConflict && <div className="conflict-banner" role="alert"><div><strong>草稿在另一窗口发生了变化</strong><span>{remoteDraftConflict.remote ? "你的当前编辑仍在内存中，可以显式保留，或切换到另一窗口的草稿。" : "另一窗口已放弃草稿；你可保留当前编辑，或恢复正式版本。"}</span></div><div><button type="button" onClick={useRemoteDraft} disabled={closing || saveState === "saving"}>{remoteDraftConflict.remote ? "使用另一窗口草稿" : "恢复正式版本"}</button><button type="button" className="primary-button" onClick={() => void keepLocalDraft()} disabled={closing || saveState === "saving"}>{saveState === "saving" ? "处理中…" : "保留我的草稿"}</button></div></div>}
               {conflict && <div className="conflict-banner" role="alert"><div><strong>{conflict.deletedAt ? "这篇知识已被移入回收站" : "这篇知识在别处被修改过"}</strong><span>{conflict.deletedAt ? "可接受回收站状态，或恢复文档后保存你的本地修改。" : "选择保留服务器新版，或基于新版继续保存你的文字。"}</span></div><div><button type="button" onClick={() => void acceptServerVersion()} disabled={closing || Boolean(remoteDraftConflict) || saveState === "saving"}>{conflict.deletedAt ? "查看回收站版本" : "使用新版"}</button><button type="button" className="primary-button" onClick={() => void keepLocalVersion()} disabled={closing || Boolean(remoteDraftConflict) || saveState === "saving"}>{saveState === "saving" ? "处理中…" : "保留我的修改"}</button></div></div>}
+              {captureHistoryOpen && (
+                <CaptureHistoryPanel
+                  document={currentDoc}
+                  blockedReason={captureBlockedReason}
+                  onClose={() => setCaptureHistoryOpen(false)}
+                  onApply={applyReextraction}
+                />
+              )}
 
               {currentDoc.deletedAt ? (
                 <div className="trash-workbench">

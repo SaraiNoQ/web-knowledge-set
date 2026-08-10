@@ -10,11 +10,13 @@ import { createApp, type CaptureFunction } from "../server/app.js";
 import { openDatabase } from "../server/db.js";
 import type {
   BackupRecord,
+  CaptureHistoryItem,
   DataSafetyStatus,
   DocumentDraft,
   DocumentListResponse,
   DocumentRevision,
   KnowledgeDocument,
+  ReextractionPreview,
 } from "../shared/types.js";
 
 const mutableFs = createRequire(import.meta.url)("node:fs") as {
@@ -50,6 +52,7 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
       await new Promise<void>((resolve) => { releaseSlowCapture = resolve; });
     }
     return {
+      extractorVersion: "test-extractor@1",
       title: "Captured article",
       author: "Author",
       publishedAt: null,
@@ -58,7 +61,7 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
       markdown: "# Captured\n\nKnowledge body",
       mode: "http",
       warning: null,
-      rawHtml: "<article>Knowledge body</article>",
+      rawHtml: "<!doctype html><title>Snapshot article</title><article><h1>Snapshot article</h1><p>Knowledge body preserved in the local HTML snapshot for a safe extraction preview.</p></article>",
       httpStatus: 200,
     };
   };
@@ -262,6 +265,30 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
       null,
     );
     assert.deepEqual(await (await fetch(`${base}/api/tags`, { headers: { Cookie: cookie } })).json(), ["Inbox"]);
+
+    const captures = (await (
+      await fetch(`${base}/api/documents/${ready.id}/captures`, { headers: { Cookie: cookie } })
+    ).json()) as CaptureHistoryItem[];
+    assert.equal(captures.length, 1);
+    assert.equal(captures[0].status, "ready");
+    assert.equal(captures[0].snapshotStored, "available");
+    assert.equal(captures[0].extractorVersion, "test-extractor@1");
+    const previewResponse = await fetch(
+      `${base}/api/documents/${ready.id}/captures/${captures[0].id}/reextract`,
+      { method: "POST", headers: jsonHeaders, body: "{}" },
+    );
+    assert.equal(previewResponse.status, 200);
+    const preview = (await previewResponse.json()) as ReextractionPreview;
+    assert.equal(preview.captureId, captures[0].id);
+    assert.equal(preview.baseRevision, edited.revision);
+    assert.equal(preview.extractorVersion, "defuddle@0.19.2");
+    assert.deepEqual(preview.before, { title: edited.title, markdown: "# Human edit" });
+    assert.match(preview.after.markdown, /Knowledge body/u);
+    const unchangedAfterPreview = (await (
+      await fetch(`${base}/api/documents/${ready.id}`, { headers: { Cookie: cookie } })
+    ).json()) as KnowledgeDocument;
+    assert.equal(unchangedAfterPreview.revision, edited.revision);
+    assert.equal(unchangedAfterPreview.markdown, "# Human edit");
 
     const revisions = (await (
       await fetch(`${base}/api/documents/${ready.id}/revisions`, { headers: { Cookie: cookie } })
