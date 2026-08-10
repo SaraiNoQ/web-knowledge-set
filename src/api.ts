@@ -2,23 +2,28 @@ import type {
   ApiError,
   BackupRecord,
   BackupSettings,
+  BatchDocumentsRequest,
+  BatchDocumentsResponse,
   CaptureHistoryItem,
   CaptureQueueStatus,
-  CaptureStatus,
   CreateDocumentResponse,
   DataSafetyStatus,
   DeleteCollectionResponse,
   DocumentAsset,
   DocumentDraft,
+  DocumentFilters,
   DocumentListResponse,
   DocumentRevision,
   DocumentSummary,
   KnowledgeCollection,
   KnowledgeDocument,
+  KnowledgeTag,
+  MergeCollectionResponse,
   ReextractionPreview,
+  TagMutationResponse,
 } from "../shared/types";
 
-export type { DataSafetyStatus } from "../shared/types";
+export type { DataSafetyStatus, DocumentFilters } from "../shared/types";
 
 const DATA_EPOCH_HEADER = "X-Zhiye-Data-Epoch";
 let dataEpoch: string | null = null;
@@ -73,14 +78,6 @@ async function request<T>(path: string, init: RequestInit = {}, replaceDataEpoch
 
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
-}
-
-export interface DocumentFilters {
-  q?: string;
-  tag?: string;
-  status?: CaptureStatus | "";
-  trash?: "only";
-  page?: number;
 }
 
 export interface DocumentPatch {
@@ -154,6 +151,31 @@ export const api = {
     return request<string[]>(`/api/tags${trash ? "?trash=only" : ""}`, { signal });
   },
 
+  listManagedTags(signal?: AbortSignal) {
+    return request<KnowledgeTag[]>("/api/tags/manage", { signal });
+  },
+
+  renameTag(name: string, newName: string) {
+    return request<TagMutationResponse>(`/api/tags/${encodeURIComponent(name)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: newName }),
+    });
+  },
+
+  mergeTag(name: string, targetName: string) {
+    return request<TagMutationResponse>(`/api/tags/${encodeURIComponent(name)}/merge`, {
+      method: "POST",
+      body: JSON.stringify({ target: targetName }),
+    });
+  },
+
+  deleteTag(name: string) {
+    return request<TagMutationResponse>(`/api/tags/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+      body: JSON.stringify({}),
+    });
+  },
+
   listCollections(signal?: AbortSignal) {
     return request<KnowledgeCollection[]>("/api/collections", { signal });
   },
@@ -179,14 +201,37 @@ export const api = {
     });
   },
 
+  mergeCollection(id: string, targetId: string) {
+    return request<MergeCollectionResponse>(`/api/collections/${encodeURIComponent(id)}/merge`, {
+      method: "POST",
+      body: JSON.stringify({ targetId }),
+    });
+  },
+
   listDocuments(filters: DocumentFilters, signal?: AbortSignal) {
     const query = new URLSearchParams();
     if (filters.q?.trim()) query.set("q", filters.q.trim());
+    if (filters.scope) query.set("scope", filters.scope);
     if (filters.tag) query.set("tag", filters.tag);
+    if (filters.collectionId) query.set("collectionId", filters.collectionId);
     if (filters.status) query.set("status", filters.status);
+    if (filters.favorite !== undefined) query.set("favorite", String(filters.favorite));
+    if (filters.archived !== undefined) query.set("archived", String(filters.archived));
+    if (filters.unorganized !== undefined) query.set("unorganized", String(filters.unorganized));
+    if (filters.from) query.set("from", filters.from);
+    if (filters.to) query.set("to", filters.to);
+    if (filters.captureMode) query.set("captureMode", filters.captureMode);
+    if (filters.sort) query.set("sort", filters.sort);
     if (filters.trash) query.set("trash", filters.trash);
     query.set("page", String(filters.page || 1));
     return request<DocumentListResponse>(`/api/documents?${query}`, { signal });
+  },
+
+  batchDocuments(body: BatchDocumentsRequest) {
+    return request<BatchDocumentsResponse>("/api/documents/batch", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
   },
 
   createDocument(url: string, force = false) {

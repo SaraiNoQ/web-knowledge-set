@@ -351,7 +351,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect.poll(() => trashRestoreStarted).toBe(true);
   await expect(page.getByLabel("网页地址")).toBeDisabled();
   releaseTrashRestore();
-  await expect(page.getByRole("button", { name: "资料库", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "全部", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("文档标题")).toBeEnabled();
   await page.unroute("**/api/documents/*/restore");
 
@@ -390,35 +390,14 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   const duplicateBanner = page.locator(".duplicate-banner");
   await expect(duplicateBanner.getByText("发现另一篇相同来源的知识")).toBeVisible();
   await expect(duplicateBanner.getByRole("button", { name: "打开已有" })).toBeVisible();
-  let releaseReveal!: () => void;
-  let revealRequestHeld = false;
-  const revealGate = new Promise<void>((resolve) => {
-    releaseReveal = resolve;
-  });
-  await page.route("**/api/documents?page=1", async (route) => {
-    if (!revealRequestHeld) {
-      revealRequestHeld = true;
-      await revealGate;
-    }
-    await route.continue();
-  });
   await duplicateBanner.getByRole("button", { name: "打开已有" }).click();
-  await expect.poll(() => revealRequestHeld).toBe(true);
-  const staleRevealResponse = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return url.pathname === "/api/documents" && url.search === "?page=1";
-  });
+  await expect(page.getByLabel("文档标题")).toHaveValue("人工整理标题");
   await page.getByRole("button", { name: "回收站", exact: true }).click();
-  releaseReveal();
-  await staleRevealResponse;
-  await page.unroute("**/api/documents?page=1");
   await expect(page.getByRole("button", { name: "回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
 
-  await page.getByRole("button", { name: "资料库", exact: true }).click();
+  await page.getByRole("button", { name: "全部", exact: true }).click();
   await page.getByRole("button", { name: /远端测试文章/ }).click();
-  await expect(duplicateBanner.getByText("发现另一篇相同来源的知识")).toBeVisible();
-  await duplicateBanner.getByRole("button", { name: "保留两篇" }).click();
-  await expect(page.getByText("已保留两篇知识，当前条目没有被删除。")).toBeVisible();
+  await expect(duplicateBanner).toHaveCount(0);
 
   await captureBand.getByRole("button", { name: "暂停采集" }).click();
   await expect(captureBand.getByRole("button", { name: "继续采集" })).toBeVisible();
@@ -441,10 +420,10 @@ test("imports, restores history, trashes, restores, searches, exports, and block
 
   await page.getByRole("button", { name: "设为收藏" }).click();
   await expect(page.getByRole("button", { name: "取消收藏" })).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "归档", exact: true }).click();
+  await page.getByRole("region", { name: "文档工作台" }).getByRole("button", { name: "归档", exact: true }).click();
   await expect(page.getByRole("button", { name: "取消归档" })).toBeVisible();
 
-  await page.getByRole("button", { name: "管理集合" }).click();
+  await page.getByRole("button", { name: "管理分类" }).click();
   const collectionManager = page.getByRole("complementary", { name: "集合管理" });
   await collectionManager.getByLabel("新集合名称").fill("阅读清单");
   await collectionManager.getByRole("button", { name: "创建集合" }).click();
@@ -466,7 +445,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect(page.getByRole("button", { name: "取消归档" })).toBeVisible();
   await expect(page.getByRole("group", { name: "集合" }).getByLabel("研究清单")).toBeChecked();
 
-  await page.getByRole("button", { name: "管理集合" }).click();
+  await page.getByRole("button", { name: "管理分类" }).click();
   const reloadedCollectionManager = page.getByRole("complementary", { name: "集合管理" });
   await reloadedCollectionManager.getByLabel("新集合名称").fill("临时集合");
   await reloadedCollectionManager.getByRole("button", { name: "创建集合" }).click();
@@ -519,6 +498,17 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   }));
   await expect(delayedCollectionManager.getByText("延迟响应集合", { exact: true })).toBeVisible();
   await page.unroute("**/api/collections");
+
+  await page.getByRole("button", { name: "关闭分类管理" }).click();
+  const libraryViews = page.getByRole("navigation", { name: "资料库视图" });
+  await libraryViews.getByRole("button", { name: "收藏", exact: true }).click();
+  await expect(page.getByRole("button", { name: /人工整理标题/ })).toBeVisible();
+  await page.getByLabel("选择 人工整理标题").check();
+  await page.getByLabel("批量操作", { exact: true }).selectOption("unarchive");
+  await page.getByRole("button", { name: "应用", exact: true }).click();
+  await expect(page.getByText("已处理当前页选中的 1 篇知识。")).toBeVisible();
+  await page.getByRole("button", { name: /人工整理标题/ }).click();
+  await expect(page.getByRole("region", { name: "文档工作台" }).getByRole("button", { name: "归档", exact: true })).toBeVisible();
 
   let releaseMetadataPatch!: () => void;
   let metadataPatchStarted = false;

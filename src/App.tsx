@@ -9,7 +9,9 @@ import type { FormEvent, KeyboardEvent, ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type {
+  BatchDocumentAction,
   CaptureHistoryItem,
+  CaptureMode,
   CaptureQueueStatus,
   CaptureStatus,
   DocumentAsset,
@@ -18,6 +20,7 @@ import type {
   DocumentSummary,
   KnowledgeCollection,
   KnowledgeDocument,
+  KnowledgeTag,
   ReextractionPreview,
 } from "../shared/types";
 import { api, ApiRequestError } from "./api";
@@ -28,6 +31,25 @@ import { MarkdownEditor } from "./components/MarkdownEditor";
 type EditorMode = "edit" | "split" | "preview";
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
 type StatusFilter = CaptureStatus | "";
+type LibraryView = "all" | "recent" | "favorites" | "unorganized" | "archived" | "failed" | "trash";
+type SearchScope = "all" | "title" | "body" | "source";
+type SortOrder = "updated" | "created" | "title";
+
+interface SavedFilter {
+  label: string;
+  query: string;
+  scope: SearchScope;
+  tag: string;
+  collectionId: string;
+  status: StatusFilter;
+  favorite: boolean | undefined;
+  archived: boolean | undefined;
+  unorganized: boolean;
+  captureMode: CaptureMode | "";
+  from: string;
+  to: string;
+  sort: SortOrder;
+}
 
 interface Draft {
   title: string;
@@ -144,6 +166,15 @@ function sourceName(url: string) {
 
 function parseTags(value: string) {
   return [...new Set(value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean))];
+}
+
+function recentFilters(): SavedFilter[] {
+  try {
+    const value = JSON.parse(localStorage.getItem("zhiye.recentFilters") || "[]");
+    return Array.isArray(value) ? value.slice(0, 5) : [];
+  } catch {
+    return [];
+  }
 }
 
 function revisionPreview(markdown: string) {
@@ -412,8 +443,26 @@ export default function App() {
   const [pageSize, setPageSize] = useState(30);
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState("");
+  const [searchScope, setSearchScope] = useState<SearchScope>("all");
   const [tag, setTag] = useState("");
+  const [collectionFilter, setCollectionFilter] = useState("");
   const [status, setStatus] = useState<StatusFilter>("");
+  const [favoriteFilter, setFavoriteFilter] = useState<boolean | undefined>();
+  const [archivedFilter, setArchivedFilter] = useState<boolean | undefined>();
+  const [captureModeFilter, setCaptureModeFilter] = useState<CaptureMode | "">("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("updated");
+  const [unorganizedFilter, setUnorganizedFilter] = useState(false);
+  const [libraryView, setLibraryView] = useState<LibraryView>("all");
+  const [savedFilters, setSavedFilters] = useState<SavedFilter[]>(recentFilters);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [batchAction, setBatchAction] = useState<BatchDocumentAction | "">("");
+  const [batchCollectionId, setBatchCollectionId] = useState("");
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchNotice, setBatchNotice] = useState("");
+  const [batchError, setBatchError] = useState("");
+  const [listRefresh, setListRefresh] = useState(0);
   const [inTrash, setInTrash] = useState(false);
   const [knownTags, setKnownTags] = useState<string[]>([]);
   const [listLoading, setListLoading] = useState(true);
@@ -467,6 +516,8 @@ export default function App() {
   const [collectionName, setCollectionName] = useState("");
   const [renamingCollection, setRenamingCollection] = useState<{ id: string; name: string } | null>(null);
   const [collectionAction, setCollectionAction] = useState<string | null>(null);
+  const [managedTags, setManagedTags] = useState<KnowledgeTag[]>([]);
+  const [tagAction, setTagAction] = useState<string | null>(null);
   const [organizationSaving, setOrganizationSaving] = useState(false);
   const [organizationError, setOrganizationError] = useState("");
   const [organizationNotice, setOrganizationNotice] = useState("");
@@ -484,6 +535,9 @@ export default function App() {
   const organizationInFlight = useRef(false);
   const organizationPromiseRef = useRef<Promise<unknown> | null>(null);
   const organizationConflictRef = useRef<OrganizationConflict | null>(null);
+  const selectionContextRef = useRef<string | null>(null);
+  const listContextRef = useRef("");
+  const itemsContextRef = useRef("");
   const collectionsRequestRef = useRef<{ sequence: number; controller: AbortController } | null>(null);
   const collectionsRequestSequenceRef = useRef(0);
   const keptDuplicateIdsRef = useRef(new Set<string>());
@@ -493,6 +547,11 @@ export default function App() {
   draftRef.current = draft;
   currentDocRef.current = currentDoc;
   sourceMetadataRef.current = sourceMetadata;
+  const listContextKey = JSON.stringify([
+    query, searchScope, tag, collectionFilter, status, favoriteFilter, archivedFilter,
+    unorganizedFilter, captureModeFilter, dateFrom, dateTo, sortOrder, inTrash, page,
+  ]);
+  listContextRef.current = listContextKey;
 
   const updateOrganizationConflict = useCallback((value: OrganizationConflict | null) => {
     organizationConflictRef.current = value;
@@ -513,9 +572,9 @@ export default function App() {
   const metadataDirty = Boolean(sourceMetadata && currentDoc && !sourceMetadataEqual(sourceMetadata, currentDoc));
   const hasUnsavedChanges = dirty || metadataDirty;
   const activeCapture = currentDoc ? ACTIVE_STATUSES.has(currentDoc.status) : false;
-  const editorLocked = closing || captureApplying || organizationSaving || Boolean(collectionAction) || metadataDirty || Boolean(organizationConflict) || Boolean(lifecycleAction) || restoringRevision !== null || Boolean(conflict && saveState === "saving");
+  const editorLocked = closing || captureApplying || organizationSaving || batchBusy || Boolean(collectionAction) || Boolean(tagAction) || metadataDirty || Boolean(organizationConflict) || Boolean(lifecycleAction) || restoringRevision !== null || Boolean(conflict && saveState === "saving");
   const organizationLocked = (
-    closing || captureApplying || organizationSaving || Boolean(collectionAction) || dirty || saveState === "saving" ||
+    closing || captureApplying || organizationSaving || batchBusy || Boolean(collectionAction) || Boolean(tagAction) || dirty || saveState === "saving" ||
     Boolean(conflict) || Boolean(remoteDraftConflict) || Boolean(organizationConflict) ||
     Boolean(lifecycleAction) || restoringRevision !== null || Boolean(currentDoc?.deletedAt) || currentDoc?.status !== "ready"
   );
@@ -799,14 +858,38 @@ export default function App() {
 
   useEffect(() => {
     const controller = new AbortController();
+    itemsContextRef.current = "";
+    selectionContextRef.current = null;
+    setSelectedIds(new Set());
     const timer = window.setTimeout(async () => {
       setListLoading(true);
       setListError("");
       try {
         const result = await api.listDocuments(
-          { q: query, tag, status, page, trash: inTrash ? "only" : undefined },
+          {
+            q: query,
+            scope: searchScope,
+            tag,
+            collectionId: collectionFilter,
+            status,
+            favorite: favoriteFilter,
+            archived: archivedFilter,
+            unorganized: unorganizedFilter || undefined,
+            captureMode: captureModeFilter || undefined,
+            from: dateFrom,
+            to: dateTo,
+            sort: sortOrder,
+            page,
+            trash: inTrash ? "only" : undefined,
+          },
           controller.signal,
         );
+        const lastPage = Math.max(1, Math.ceil(result.total / (result.pageSize || 30)));
+        if (page > lastPage) {
+          setPage(lastPage);
+          return;
+        }
+        itemsContextRef.current = listContextKey;
         setItems(result.items);
         setTotal(result.total);
         setPageSize(result.pageSize || 30);
@@ -821,7 +904,7 @@ export default function App() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [inTrash, page, query, refreshKnownTags, status, tag]);
+  }, [archivedFilter, captureModeFilter, collectionFilter, dateFrom, dateTo, favoriteFilter, inTrash, listRefresh, page, query, refreshKnownTags, searchScope, sortOrder, status, tag, unorganizedFilter]);
 
   useEffect(() => {
     if (!items.some(needsCapturePolling)) return;
@@ -830,12 +913,27 @@ export default function App() {
       try {
         const result = await api.listDocuments({
           q: query,
+          scope: searchScope,
           tag,
+          collectionId: collectionFilter,
           status,
+          favorite: favoriteFilter,
+          archived: archivedFilter,
+          unorganized: unorganizedFilter || undefined,
+          captureMode: captureModeFilter || undefined,
+          from: dateFrom,
+          to: dateTo,
+          sort: sortOrder,
           page,
           trash: inTrash ? "only" : undefined,
         }, controller.signal);
         if (controller.signal.aborted) return;
+        const lastPage = Math.max(1, Math.ceil(result.total / (result.pageSize || 30)));
+        if (page > lastPage) {
+          setPage(lastPage);
+          return;
+        }
+        itemsContextRef.current = listContextKey;
         setItems(result.items);
         setTotal(result.total);
         refreshKnownTags();
@@ -848,7 +946,49 @@ export default function App() {
       window.clearInterval(timer);
       controller.abort();
     };
-  }, [inTrash, items, page, query, refreshKnownTags, status, tag]);
+  }, [archivedFilter, captureModeFilter, collectionFilter, dateFrom, dateTo, favoriteFilter, inTrash, items, page, query, refreshKnownTags, searchScope, sortOrder, status, tag, unorganizedFilter]);
+
+  useEffect(() => {
+    setSelectedIds((previous) => new Set(items.filter((item) => previous.has(item.id)).map((item) => item.id)));
+  }, [items]);
+
+  useEffect(() => {
+    selectionContextRef.current = null;
+    setSelectedIds(new Set());
+    setBatchAction("");
+  }, [listContextKey]);
+
+  useEffect(() => {
+    setLibraryView((value) => inTrash ? "trash" : value === "trash" ? "all" : value);
+  }, [inTrash]);
+
+  useEffect(() => {
+    if (inTrash || (!query.trim() && searchScope === "all" && !tag && !collectionFilter && !status && favoriteFilter === undefined && archivedFilter === undefined && !captureModeFilter && !dateFrom && !dateTo && sortOrder === "updated")) return;
+    const timer = window.setTimeout(() => {
+      const saved: SavedFilter = {
+        label: [query.trim() && `“${query.trim()}”`, tag && `#${tag}`, collectionFilter && "集合", status && STATUS_LABEL[status], favoriteFilter && "收藏", archivedFilter && "归档", unorganizedFilter && "未整理"].filter(Boolean).join(" · ") || "组合筛选",
+        query: query.trim(),
+        scope: searchScope,
+        tag,
+        collectionId: collectionFilter,
+        status,
+        favorite: favoriteFilter,
+        archived: archivedFilter,
+        unorganized: unorganizedFilter,
+        captureMode: captureModeFilter,
+        from: dateFrom,
+        to: dateTo,
+        sort: sortOrder,
+      };
+      setSavedFilters((previous) => {
+        const signature = JSON.stringify({ ...saved, label: undefined });
+        const next = [saved, ...previous.filter((value) => JSON.stringify({ ...value, label: undefined }) !== signature)].slice(0, 5);
+        localStorage.setItem("zhiye.recentFilters", JSON.stringify(next));
+        return next;
+      });
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [archivedFilter, captureModeFilter, collectionFilter, dateFrom, dateTo, favoriteFilter, inTrash, query, searchScope, sortOrder, status, tag, unorganizedFilter]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -1052,6 +1192,7 @@ export default function App() {
       if (selectedIdRef.current !== currentDoc.id) return;
       installCurrentDocument(updated);
       updateListItem(updated);
+      setListRefresh((value) => value + 1);
       refreshKnownTags();
       const unchangedSinceRequest = Boolean(draftRef.current && draftsEqual(draftRef.current, sent));
       if (unchangedSinceRequest) {
@@ -1189,16 +1330,27 @@ export default function App() {
 
   const revealDocument = async (document: DocumentSummary, guard: NavigationGuard) => {
     const inTargetTrash = Boolean(document.deletedAt);
-    const refreshed = await api.listDocuments({ page: 1, trash: inTargetTrash ? "only" : undefined });
     if (!canApplyNavigation(guard)) return false;
+    itemsContextRef.current = "";
+    selectionContextRef.current = null;
+    setLibraryView(inTargetTrash ? "trash" : "all");
     setQuery("");
+    setSearchScope("all");
     setTag("");
+    setCollectionFilter("");
     setStatus("");
+    setFavoriteFilter(undefined);
+    setArchivedFilter(undefined);
+    setUnorganizedFilter(false);
+    setCaptureModeFilter("");
+    setDateFrom("");
+    setDateTo("");
+    setSortOrder("updated");
     setPage(1);
     setInTrash(inTargetTrash);
-    setItems(refreshed.items);
-    setTotal(refreshed.total);
-    setPageSize(refreshed.pageSize || 30);
+    setItems([]);
+    setSelectedIds(new Set());
+    setListRefresh((value) => value + 1);
     setSelectedId(document.id);
     focusReader();
     return true;
@@ -1298,6 +1450,7 @@ export default function App() {
     setDraft(draftOf(updated));
     setTagText(updated.tags.join(", "));
     updateListItem(updated);
+    setListRefresh((value) => value + 1);
     updateOrganizationConflict(null);
     setOrganizationError("");
     setOrganizationNotice(message);
@@ -1439,6 +1592,7 @@ export default function App() {
       const updated = await trackOrganizationTask(api.updateCollection(id, name));
       invalidateCollectionsLoad();
       setCollections((previous) => previous.map((value) => value.id === id ? updated : value));
+      setListRefresh((value) => value + 1);
       const document = currentDocRef.current;
       if (document?.collections.some((value) => value.id === id)) {
         const renamed = {
@@ -1477,6 +1631,7 @@ export default function App() {
         return { result: deleted, refreshed: nextDocument };
       })());
       setCollections((previous) => previous.filter((value) => value.id !== collection.id));
+      setListRefresh((value) => value + 1);
       setRenamingCollection((value) => value?.id === collection.id ? null : value);
       if (refreshed && selectedIdRef.current === refreshed.id) {
         installCurrentDocument(refreshed);
@@ -1488,6 +1643,104 @@ export default function App() {
     } catch (error) {
       setOrganizationError((error as Error).message);
       void loadCollections();
+    } finally {
+      setCollectionAction(null);
+    }
+  };
+
+  const refreshClassificationData = async () => {
+    const [tags] = await Promise.all([api.listManagedTags(), loadCollections()]);
+    setManagedTags(tags);
+    refreshKnownTags();
+    setListRefresh((value) => value + 1);
+    const document = currentDocRef.current;
+    if (document) {
+      const refreshed = await api.getDocument(document.id);
+      if (selectedIdRef.current === refreshed.id) {
+        installCurrentDocument(refreshed);
+        setDraft(draftOf(refreshed));
+        setTagText(refreshed.tags.join(", "));
+        updateListItem(refreshed);
+      }
+    }
+  };
+
+  const renameTag = async (tagValue: KnowledgeTag) => {
+    const name = window.prompt(`将标签“${tagValue.name}”重命名为`, tagValue.name)?.trim();
+    if (!name || name === tagValue.name || tagAction || organizationInFlight.current) return;
+    setTagAction(tagValue.name);
+    setOrganizationError("");
+    try {
+      const result = await trackOrganizationTask((async () => {
+        const response = await api.renameTag(tagValue.name, name);
+        await refreshClassificationData();
+        return response;
+      })());
+      setOrganizationNotice(`已在 ${result.affectedDocuments} 篇知识中将标签更名为“${name}”。`);
+    } catch (error) {
+      setOrganizationError((error as Error).message);
+    } finally {
+      setTagAction(null);
+    }
+  };
+
+  const mergeTag = async (tagValue: KnowledgeTag) => {
+    const targetName = window.prompt(`将标签“${tagValue.name}”合并到哪个标签？`)?.trim();
+    if (!targetName || targetName === tagValue.name || tagAction || organizationInFlight.current) return;
+    if (!window.confirm(`将影响 ${tagValue.documentCount} 篇知识，源标签将被删除。继续？`)) return;
+    setTagAction(tagValue.name);
+    setOrganizationError("");
+    try {
+      const result = await trackOrganizationTask((async () => {
+        const response = await api.mergeTag(tagValue.name, targetName);
+        await refreshClassificationData();
+        return response;
+      })());
+      setOrganizationNotice(`已合并 ${result.affectedDocuments} 篇知识的标签。`);
+    } catch (error) {
+      setOrganizationError((error as Error).message);
+    } finally {
+      setTagAction(null);
+    }
+  };
+
+  const deleteTag = async (tagValue: KnowledgeTag) => {
+    if (tagAction || organizationInFlight.current || !window.confirm(`从 ${tagValue.documentCount} 篇知识中移除标签“${tagValue.name}”？文档本身不会删除。`)) return;
+    setTagAction(tagValue.name);
+    setOrganizationError("");
+    try {
+      const result = await trackOrganizationTask((async () => {
+        const response = await api.deleteTag(tagValue.name);
+        await refreshClassificationData();
+        return response;
+      })());
+      setOrganizationNotice(`已从 ${result.affectedDocuments} 篇知识中移除标签。`);
+    } catch (error) {
+      setOrganizationError((error as Error).message);
+    } finally {
+      setTagAction(null);
+    }
+  };
+
+  const mergeCollection = async (collection: KnowledgeCollection) => {
+    const targetName = window.prompt(`将集合“${collection.name}”合并到哪个集合？`)?.trim();
+    const target = collections.find((value) => value.name.toLocaleLowerCase() === targetName?.toLocaleLowerCase());
+    if (!targetName || !target || target.id === collection.id) {
+      if (targetName) setOrganizationError("请输入另一个已有集合的完整名称。");
+      return;
+    }
+    if (!window.confirm(`将影响 ${collection.documentCount} 篇知识，源集合将被删除。继续？`)) return;
+    setCollectionAction(collection.id);
+    setOrganizationError("");
+    try {
+      const result = await trackOrganizationTask((async () => {
+        const response = await api.mergeCollection(collection.id, target.id);
+        await refreshClassificationData();
+        return response;
+      })());
+      setOrganizationNotice(`已合并 ${result.affectedDocuments} 篇知识的集合。`);
+    } catch (error) {
+      setOrganizationError((error as Error).message);
     } finally {
       setCollectionAction(null);
     }
@@ -1538,16 +1791,103 @@ export default function App() {
     setSelectedId(null);
   };
 
-  const switchLibrary = (trashView: boolean) => {
-    if (closeAttemptRef.current || organizationInFlight.current || trashView === inTrash || lifecycleAction || restoringRevision !== null) return;
-    if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
+  const applyLibraryView = (view: LibraryView) => {
+    if (closeAttemptRef.current || organizationInFlight.current || lifecycleAction || restoringRevision !== null) return false;
+    if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，确定离开吗？")) return false;
     invalidateNavigation();
-    setInTrash(trashView);
+    setLibraryView(view);
+    setInTrash(view === "trash");
     setPage(1);
     setItems([]);
     setSelectedId(null);
+    setSelectedIds(new Set());
+    setQuery("");
+    setSearchScope("all");
     setTag("");
+    setCollectionFilter("");
+    setCaptureModeFilter("");
+    setDateTo("");
+    setFavoriteFilter(view === "favorites" ? true : undefined);
+    setArchivedFilter(view === "archived" ? true : view === "unorganized" ? false : undefined);
+    setUnorganizedFilter(view === "unorganized");
+    setStatus(view === "failed" ? "failed" : "");
+    setDateFrom(view === "recent" ? new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10) : "");
     setImportNotice("");
+    return true;
+  };
+
+  const applySavedFilter = (saved: SavedFilter) => {
+    if (!applyLibraryView("all")) return;
+    setQuery(saved.query);
+    setSearchScope(saved.scope);
+    setTag(saved.tag);
+    setCollectionFilter(saved.collectionId);
+    setStatus(saved.status);
+    setFavoriteFilter(saved.favorite);
+    setArchivedFilter(saved.archived);
+    setUnorganizedFilter(Boolean(saved.unorganized));
+    setCaptureModeFilter(saved.captureMode);
+    setDateFrom(saved.from);
+    setDateTo(saved.to);
+    setSortOrder(saved.sort);
+  };
+
+  const runBatchAction = async () => {
+    if (
+      !batchAction || !selectedIds.size || batchBusy || listLoading || hasUnsavedChanges ||
+      organizationInFlight.current || itemsContextRef.current !== listContextKey ||
+      selectionContextRef.current !== listContextKey
+    ) return;
+    const requestContext = listContextKey;
+    let value: string | undefined;
+    if (batchAction === "add-tag" || batchAction === "remove-tag") {
+      value = window.prompt(batchAction === "add-tag" ? "输入要添加的标签" : "输入要移除的标签")?.trim();
+      if (!value) return;
+    }
+    if (batchAction === "add-collection" || batchAction === "remove-collection") {
+      value = batchCollectionId;
+      if (!value) return;
+    }
+    if (batchAction === "trash" && !window.confirm(`将当前页选中的 ${selectedIds.size} 篇知识移入回收站？`)) return;
+    setBatchBusy(true);
+    setBatchError("");
+    setBatchNotice("");
+    try {
+      await trackOrganizationTask((async () => {
+        const result = await api.batchDocuments({
+          documents: items.filter((item) => selectedIds.has(item.id)).map((item) => ({ id: item.id, revision: item.revision })),
+          action: batchAction,
+          value,
+        });
+        if (listContextRef.current === requestContext) {
+          setBatchNotice(`已处理当前页选中的 ${result.affectedDocuments} 篇知识。`);
+          if (selectedIdRef.current && (batchAction === "trash" || batchAction === "restore")) {
+            invalidateNavigation();
+            setSelectedId(null);
+          } else if (selectedIdRef.current) {
+            try {
+              const document = await api.getDocument(selectedIdRef.current);
+              installCurrentDocument(document);
+              setDraft(draftOf(document));
+              setTagText(document.tags.join(", "));
+              updateListItem(document);
+            } catch {
+              setSelectedId(null);
+            }
+          }
+        }
+        selectionContextRef.current = null;
+        setSelectedIds(new Set());
+        setBatchAction("");
+        setListRefresh((value) => value + 1);
+        await loadCollections();
+        refreshKnownTags();
+      })());
+    } catch (error) {
+      setBatchError((error as Error).message);
+    } finally {
+      setBatchBusy(false);
+    }
   };
 
   const alignLibraryWithDocument = (document: KnowledgeDocument) => {
@@ -1768,6 +2108,9 @@ export default function App() {
     setCaptureHistoryOpen(false);
     setQualityOpen(false);
     setRenamingCollection(null);
+    if (!collectionsOpen) {
+      void api.listManagedTags().then(setManagedTags).catch((error) => setOrganizationError((error as Error).message));
+    }
     setCollectionsOpen((value) => !value);
   };
 
@@ -1966,10 +2309,8 @@ export default function App() {
         setInTrash(false);
         setTag("");
       }
-      const refreshed = await api.listDocuments({ q: query, tag: wasDeleted ? "" : tag, status, page: 1 });
-      setItems(refreshed.items);
-      setTotal(refreshed.total);
-      setPageSize(refreshed.pageSize || 30);
+      updateListItem(updated);
+      setListRefresh((value) => value + 1);
       void api.listTags().then(setKnownTags).catch(() => undefined);
       focusReader();
     } catch (error) {
@@ -1985,9 +2326,17 @@ export default function App() {
   };
 
   const filteredDescription = useMemo(() => {
-    const parts = [query && `“${query}”`, tag && `#${tag}`, status && STATUS_LABEL[status]].filter(Boolean);
+    const parts = [
+      query && `“${query}”`,
+      tag && `#${tag}`,
+      collectionFilter && collections.find((value) => value.id === collectionFilter)?.name,
+      status && STATUS_LABEL[status],
+      favoriteFilter === true && "已收藏",
+      archivedFilter === true && "已归档",
+      unorganizedFilter && "未整理",
+    ].filter(Boolean);
     return parts.length ? parts.join(" · ") : inTrash ? "已移除的网页" : "全部网页";
-  }, [inTrash, query, status, tag]);
+  }, [archivedFilter, collectionFilter, collections, favoriteFilter, inTrash, query, status, tag, unorganizedFilter]);
   const queueLabel = !captureQueue
     ? "正在读取队列"
     : captureQueue.paused
@@ -2092,28 +2441,56 @@ export default function App() {
           </div>
 
           <nav className="library-tabs" aria-label="资料库视图">
-            <button type="button" aria-pressed={!inTrash} onClick={() => switchLibrary(false)}>资料库</button>
-            <button type="button" aria-pressed={inTrash} onClick={() => switchLibrary(true)}>回收站</button>
+            {([
+              ["all", "全部"], ["recent", "最近"], ["favorites", "收藏"], ["unorganized", "未整理"],
+              ["archived", "归档"], ["failed", "失败"], ["trash", "回收站"],
+            ] as Array<[LibraryView, string]>).map(([value, label]) => (
+              <button key={value} type="button" aria-pressed={libraryView === value} onClick={() => applyLibraryView(value)} disabled={listLoading || batchBusy}>{label}</button>
+            ))}
           </nav>
 
-          <div className="filters">
+          <fieldset className="filters" disabled={listLoading || batchBusy}>
             <label className="search-field">
               <span className="sr-only">搜索知识</span>
               <Icon size={17}><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></Icon>
               <input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="搜索标题与正文" />
               {query && <button type="button" className="clear-search" onClick={() => setQuery("")} aria-label="清空搜索">×</button>}
             </label>
+            <label className="scope-field"><span>搜索范围</span><select value={searchScope} onChange={(event) => { setSearchScope(event.target.value as SearchScope); setPage(1); }}><option value="all">全部字段</option><option value="title">仅标题</option><option value="body">仅正文</option><option value="source">仅来源</option></select></label>
             <div className="select-row">
               <label><span className="sr-only">按标签筛选</span><select value={tag} onChange={(event) => { setTag(event.target.value); setPage(1); }}><option value="">全部标签</option>{knownTags.map((value) => <option key={value} value={value}>#{value}</option>)}</select></label>
               <label><span className="sr-only">按状态筛选</span><select value={status} onChange={(event) => { setStatus(event.target.value as StatusFilter); setPage(1); }}><option value="">全部状态</option><option value="ready">已就绪</option><option value="queued">等待中</option><option value="fetching">抓取中</option><option value="extracting">整理中</option><option value="failed">抓取失败</option></select></label>
             </div>
-          </div>
+            <div className="select-row">
+              <label><span className="sr-only">按集合筛选</span><select value={collectionFilter} onChange={(event) => { setCollectionFilter(event.target.value); setPage(1); }}><option value="">全部集合</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</select></label>
+              <label><span className="sr-only">排序</span><select value={sortOrder} onChange={(event) => { setSortOrder(event.target.value as SortOrder); setPage(1); }}><option value="updated">最近更新</option><option value="created">最近创建</option><option value="title">标题排序</option></select></label>
+            </div>
+            <details className="advanced-filters">
+              <summary>更多筛选</summary>
+              <div className="select-row">
+                <label><span>收藏</span><select value={favoriteFilter === undefined ? "" : String(favoriteFilter)} onChange={(event) => { setFavoriteFilter(event.target.value === "" ? undefined : event.target.value === "true"); setPage(1); }}><option value="">不限</option><option value="true">已收藏</option><option value="false">未收藏</option></select></label>
+                <label><span>归档</span><select value={archivedFilter === undefined ? "" : String(archivedFilter)} onChange={(event) => { setArchivedFilter(event.target.value === "" ? undefined : event.target.value === "true"); setPage(1); }}><option value="">不限</option><option value="true">已归档</option><option value="false">未归档</option></select></label>
+              </div>
+              <label><span>采集方式</span><select value={captureModeFilter} onChange={(event) => { setCaptureModeFilter(event.target.value as CaptureMode | ""); setPage(1); }}><option value="">不限</option><option value="http">直接读取</option><option value="browser">浏览器采集</option></select></label>
+              <div className="date-filter-row"><label><span>起始日期</span><input type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPage(1); }} /></label><label><span>结束日期</span><input type="date" value={dateTo} onChange={(event) => { setDateTo(event.target.value); setPage(1); }} /></label></div>
+            </details>
+            {!!savedFilters.length && <div className="recent-filters" aria-label="最近筛选"><span>最近</span>{savedFilters.map((saved, index) => <button type="button" key={`${saved.label}-${index}`} onClick={() => applySavedFilter(saved)}>{saved.label}</button>)}</div>}
+          </fieldset>
 
           <div className="result-caption"><span>{filteredDescription}</span>{items.some(needsCapturePolling) && <span className="polling-mark"><i />更新中</span>}</div>
 
+          {!!items.length && <div className="bulk-toolbar" aria-label="当前页批量操作">
+            <label><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={items.length > 0 && items.every((item) => selectedIds.has(item.id))} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds(event.target.checked ? new Set(items.map((item) => item.id)) : new Set()); }} />选中当前页 <strong>{selectedIds.size}</strong> 篇</label>
+            {!!selectedIds.size && <><select aria-label="批量操作" disabled={listLoading || batchBusy} value={batchAction} onChange={(event) => setBatchAction(event.target.value as BatchDocumentAction | "")}><option value="">选择操作</option><option value="add-tag">添加标签</option><option value="remove-tag">移除标签</option><option value="add-collection">加入集合</option><option value="remove-collection">移出集合</option>{inTrash ? <option value="restore">恢复</option> : <><option value="archive">归档</option><option value="unarchive">取消归档</option><option value="trash">删除（移入回收站）</option></>}</select>{(batchAction === "add-collection" || batchAction === "remove-collection") && <select aria-label="批量操作集合" disabled={listLoading || batchBusy} value={batchCollectionId} onChange={(event) => setBatchCollectionId(event.target.value)}><option value="">选择集合</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</select>}<button type="button" onClick={() => void runBatchAction()} disabled={listLoading || batchBusy || !batchAction}>{batchBusy ? "处理中…" : "应用"}</button></>}
+          </div>}
+          {batchNotice && <p className="batch-message" role="status">{batchNotice}</p>}
+          {batchError && <p className="batch-message error-text" role="alert">{batchError}</p>}
+
           <div className="document-list" onKeyDown={handleListKeyDown}>
             {listLoading && !items.length ? <StatePanel kind="loading" title="正在翻阅知识库" /> : listError ? <StatePanel kind="error" title="无法读取列表">{listError}</StatePanel> : !items.length ? <StatePanel kind="empty" title={inTrash ? "回收站是空的" : "还没有找到织片"}>{query || tag || status ? "试试放宽筛选条件。" : inTrash ? "移除的网页会暂存在这里。" : "从上方收藏第一张网页。"}</StatePanel> : items.map((item, index) => (
-              <button type="button" key={item.id} className={`document-row ${selectedId === item.id ? "is-selected" : ""}`} onClick={() => selectDocument(item.id)} aria-current={selectedId === item.id ? "true" : undefined}>
+              <div key={item.id} className={`document-row-wrap ${selectedId === item.id ? "is-selected" : ""}`}>
+                <label className="row-select"><span className="sr-only">选择 {item.title || "未命名网页"}</span><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={selectedIds.has(item.id)} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds((previous) => { const next = new Set(previous); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; }); }} /></label>
+                <button type="button" className={`document-row ${selectedId === item.id ? "is-selected" : ""}`} onClick={() => selectDocument(item.id)} aria-current={selectedId === item.id ? "true" : undefined}>
                 <span className="row-number">{String((page - 1) * pageSize + index + 1).padStart(2, "0")}</span>
                 <span className="row-body">
                   <strong>{item.title || "未命名网页"}</strong>
@@ -2127,11 +2504,12 @@ export default function App() {
                   </span>
                 </span>
                 <span className="row-arrow" aria-hidden="true">↗</span>
-              </button>
+                </button>
+              </div>
             ))}
           </div>
 
-          {pageCount > 1 && <nav className="pagination" aria-label="知识列表分页"><button type="button" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>上一页</button><span>{page} / {pageCount}</span><button type="button" disabled={page >= pageCount} onClick={() => setPage((value) => value + 1)}>下一页</button></nav>}
+          {pageCount > 1 && <nav className="pagination" aria-label="知识列表分页"><button type="button" disabled={listLoading || batchBusy || page <= 1} onClick={() => setPage((value) => value - 1)}>上一页</button><span>{page} / {pageCount}</span><button type="button" disabled={listLoading || batchBusy || page >= pageCount} onClick={() => setPage((value) => value + 1)}>下一页</button></nav>}
         </aside>
 
         <section ref={readerPanelRef} className="reader-panel" aria-label="文档工作台" tabIndex={-1}>
@@ -2189,7 +2567,7 @@ export default function App() {
                 <div className="document-actions">
                   <button type="button" className={`favorite-button ${currentDoc.favorite ? "is-active" : ""}`} aria-pressed={currentDoc.favorite} onClick={() => void toggleFavorite()} disabled={organizationLocked || metadataDirty}>{currentDoc.favorite ? "★ 取消收藏" : "☆ 设为收藏"}</button>
                   <button type="button" className="history-button" onClick={() => void toggleArchive()} disabled={organizationLocked || metadataDirty}>{currentDoc.archivedAt ? "取消归档" : "归档"}</button>
-                  <button type="button" className="history-button" onClick={toggleCollectionManager} disabled={closing} aria-expanded={collectionsOpen} aria-controls="collection-manager">管理集合</button>
+                  <button type="button" className="history-button" onClick={toggleCollectionManager} disabled={closing} aria-expanded={collectionsOpen} aria-controls="collection-manager">管理分类</button>
                   <button type="button" className="history-button" onClick={toggleQuality} disabled={closing || currentDoc.status !== "ready"} aria-expanded={qualityOpen} aria-controls="capture-quality">质量检查</button>
                   <button type="button" className="history-button" onClick={toggleCaptureHistory} disabled={closing} aria-expanded={captureHistoryOpen} aria-controls="capture-history">采集历史</button>
                   {!currentDoc.deletedAt && (
@@ -2202,7 +2580,8 @@ export default function App() {
 
               {collectionsOpen && (
                 <aside id="collection-manager" className="collection-manager" aria-label="集合管理">
-                  <header><div><span className="eyebrow">COLLECTION INDEX</span><h3>管理集合</h3></div><button type="button" onClick={() => setCollectionsOpen(false)} aria-label="关闭集合管理">×</button></header>
+                  <header><div><span className="eyebrow">CLASSIFICATION INDEX</span><h3>管理集合与标签</h3></div><button type="button" onClick={() => setCollectionsOpen(false)} aria-label="关闭分类管理">×</button></header>
+                  <h4>集合</h4>
                   <form className="collection-create" onSubmit={createCollection}>
                     <label><span className="sr-only">新集合名称</span><input aria-label="新集合名称" maxLength={100} value={collectionName} onChange={(event) => setCollectionName(event.target.value)} placeholder="新集合名称" disabled={organizationLocked || metadataDirty} /></label>
                     <button type="submit" className="primary-button" disabled={organizationLocked || metadataDirty || !collectionName.trim()}>{collectionAction === "create" ? "创建中…" : "创建集合"}</button>
@@ -2218,12 +2597,14 @@ export default function App() {
                               <button type="button" onClick={() => setRenamingCollection(null)}>取消</button>
                             </form>
                           ) : (
-                            <><div><strong>{collection.name}</strong><span>{collection.documentCount} 篇知识</span></div><div><button type="button" onClick={() => setRenamingCollection({ id: collection.id, name: collection.name })} disabled={organizationLocked || metadataDirty} aria-label={`重命名 ${collection.name}`}>重命名</button><button type="button" className="danger" onClick={() => void deleteCollection(collection)} disabled={organizationLocked || metadataDirty} aria-label={`删除 ${collection.name}`}>删除</button></div></>
+                            <><div><strong>{collection.name}</strong><span>{collection.documentCount} 篇知识</span></div><div><button type="button" onClick={() => setRenamingCollection({ id: collection.id, name: collection.name })} disabled={organizationLocked || metadataDirty} aria-label={`重命名 ${collection.name}`}>重命名</button><button type="button" onClick={() => void mergeCollection(collection)} disabled={organizationLocked || metadataDirty} aria-label={`合并 ${collection.name}`}>合并</button><button type="button" className="danger" onClick={() => void deleteCollection(collection)} disabled={organizationLocked || metadataDirty} aria-label={`删除 ${collection.name}`}>删除</button></div></>
                           )}
                         </li>
                       ))}
                     </ul>
                   )}
+                  <h4>标签</h4>
+                  {!managedTags.length ? <p className="collection-empty">还没有标签。</p> : <ul className="tag-manager-list">{managedTags.map((tagValue) => <li key={tagValue.name}><div><strong>#{tagValue.name}</strong><span>{tagValue.documentCount} 篇知识</span></div><div><button type="button" onClick={() => void renameTag(tagValue)} disabled={Boolean(tagAction) || organizationLocked}>重命名</button><button type="button" onClick={() => void mergeTag(tagValue)} disabled={Boolean(tagAction) || organizationLocked}>合并</button><button type="button" className="danger" onClick={() => void deleteTag(tagValue)} disabled={Boolean(tagAction) || organizationLocked}>删除</button></div></li>)}</ul>}
                 </aside>
               )}
 

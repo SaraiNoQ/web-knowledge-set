@@ -21,6 +21,7 @@ import type {
   DocumentRevision,
   KnowledgeDocument,
   KnowledgeCollection,
+  KnowledgeTag,
   ReextractionPreview,
 } from "../shared/types.js";
 
@@ -483,6 +484,33 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
       null,
     );
     assert.deepEqual(await (await fetch(`${base}/api/tags`, { headers: { Cookie: cookie } })).json(), ["Inbox"]);
+    assert.deepEqual(
+      (await (await fetch(`${base}/api/tags/manage`, { headers: { Cookie: cookie } })).json()) as KnowledgeTag[],
+      [{ name: "Inbox", documentCount: 1 }],
+    );
+    const filtered = (await (
+      await fetch(`${base}/api/documents?q=Human&scope=body&status=ready&captureMode=http&sort=title&page=1`, {
+        headers: { Cookie: cookie },
+      })
+    ).json()) as DocumentListResponse;
+    assert.equal(filtered.total, 1);
+    assert.equal((await fetch(`${base}/api/documents?page=1&page=2`, { headers: { Cookie: cookie } })).status, 400);
+    assert.equal((await fetch(`${base}/api/documents?unknown=1`, { headers: { Cookie: cookie } })).status, 400);
+    const staleBatch = await fetch(`${base}/api/documents/batch`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        documents: [{ id: edited.id, revision: edited.revision - 1 }],
+        action: "add-tag",
+        value: "Bulk",
+      }),
+    });
+    assert.equal(staleBatch.status, 409);
+    assert.equal(((await staleBatch.json()) as { error: { code: string } }).error.code, "BATCH_CONFLICT");
+    assert.deepEqual(
+      ((await (await fetch(`${base}/api/documents/${edited.id}`, { headers: { Cookie: cookie } })).json()) as KnowledgeDocument).tags,
+      ["Inbox"],
+    );
 
     const captures = (await (
       await fetch(`${base}/api/documents/${ready.id}/captures`, { headers: { Cookie: cookie } })

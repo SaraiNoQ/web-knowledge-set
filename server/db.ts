@@ -9,12 +9,15 @@ import type {
   AssetStatus,
   BackupRecord,
   BackupSettings,
+  BatchDocumentAction,
+  BatchDocumentsResponse,
   CaptureErrorCode,
   CaptureHistoryItem,
   CaptureMode,
   CaptureStatus,
   DatabaseHealth,
   DocumentCollection,
+  DocumentFilters,
   DocumentListResponse,
   DocumentDraft,
   DocumentRevision,
@@ -22,6 +25,8 @@ import type {
   DocumentAsset,
   KnowledgeDocument,
   KnowledgeCollection,
+  KnowledgeTag,
+  TagMutationResponse,
 } from "../shared/types.js";
 
 const PAGE_SIZE = 30;
@@ -366,6 +371,11 @@ interface CollectionRow {
   updated_at: string;
 }
 
+interface TagRow {
+  name: string;
+  document_count: number;
+}
+
 interface DocumentDraftRow {
   document_id: string;
   draft_revision: number;
@@ -453,13 +463,7 @@ export interface DocumentPatch {
   collectionIds?: string[];
 }
 
-export interface ListFilters {
-  q?: string;
-  tag?: string;
-  status?: CaptureStatus;
-  page?: number;
-  trash?: "only";
-}
+export type ListFilters = DocumentFilters;
 
 function now() {
   return new Date().toISOString();
@@ -1427,17 +1431,34 @@ export class KnowledgeDatabase {
 
     if (filters.q?.trim()) {
       const terms = searchTerms(filters.q);
-      if (terms.every((term) => [...term].length >= 3)) {
-        from += " JOIN documents_fts ON documents_fts.rowid = d.rowid";
+      const scope = filters.scope ?? "all";
+      if (scope !== "source" && terms.every((term) => [...term].length >= 3)) {
+        from = "FROM documents_fts CROSS JOIN documents d ON d.rowid = documents_fts.rowid";
         where.push("documents_fts MATCH ?");
-        params.push(ftsQuery(filters.q));
+        const query = ftsQuery(filters.q);
+        params.push(scope === "all" ? query : `${scope === "body" ? "markdown" : "title"} : (${query})`);
       } else {
         for (const term of terms) {
-          where.push(
-            "(d.title LIKE ? ESCAPE '\\' OR d.markdown LIKE ? ESCAPE '\\' OR d.source_url LIKE ? ESCAPE '\\')",
-          );
           const pattern = `%${escapeLike(term)}%`;
-          params.push(pattern, pattern, pattern);
+          if (scope === "title") {
+            where.push("d.title LIKE ? ESCAPE '\\'");
+            params.push(pattern);
+          } else if (scope === "body") {
+            where.push("d.markdown LIKE ? ESCAPE '\\'");
+            params.push(pattern);
+          } else if (scope === "source") {
+            where.push(
+              `(d.source_url LIKE ? ESCAPE '\\' OR COALESCE(d.final_url, '') LIKE ? ESCAPE '\\' OR
+                COALESCE(d.canonical_url, '') LIKE ? ESCAPE '\\' OR COALESCE(d.author, '') LIKE ? ESCAPE '\\' OR
+                d.source_note LIKE ? ESCAPE '\\')`,
+            );
+            params.push(pattern, pattern, pattern, pattern, pattern);
+          } else {
+            where.push(
+              "(d.title LIKE ? ESCAPE '\\' OR d.markdown LIKE ? ESCAPE '\\' OR d.source_url LIKE ? ESCAPE '\\')",
+            );
+            params.push(pattern, pattern, pattern);
+          }
         }
       }
     }
@@ -1450,12 +1471,50 @@ export class KnowledgeDatabase {
       );
       params.push(filters.tag.trim());
     }
+    if (filters.collectionId) {
+      where.push(
+        `EXISTS (
+          SELECT 1 FROM document_collections dc
+          WHERE dc.document_id = d.id AND dc.collection_id = ?
+        )`,
+      );
+      params.push(filters.collectionId);
+    }
     if (filters.status) {
       where.push("d.status = ?");
       params.push(filters.status);
     }
+    if (filters.favorite !== undefined) {
+      where.push("d.favorite = ?");
+      params.push(Number(filters.favorite));
+    }
+    if (filters.archived !== undefined) {
+      where.push(filters.archived ? "d.archived_at IS NOT NULL" : "d.archived_at IS NULL");
+    }
+    if (filters.unorganized !== undefined) {
+      const hasOrganization = `(EXISTS (SELECT 1 FROM document_tags dt WHERE dt.document_id = d.id) OR
+        EXISTS (SELECT 1 FROM document_collections dc WHERE dc.document_id = d.id))`;
+      where.push(filters.unorganized ? `NOT ${hasOrganization}` : hasOrganization);
+    }
+    if (filters.from) {
+      where.push("d.updated_at >= ?");
+      params.push(filters.from);
+    }
+    if (filters.to) {
+      where.push("d.updated_at < ?");
+      params.push(filters.to);
+    }
+    if (filters.captureMode) {
+      where.push("d.capture_mode = ?");
+      params.push(filters.captureMode);
+    }
 
     const condition = where.length ? ` WHERE ${where.join(" AND ")}` : "";
+    const order = filters.sort === "created"
+      ? "d.created_at DESC, d.id"
+      : filters.sort === "title"
+        ? "d.title COLLATE NOCASE, d.id"
+        : "d.updated_at DESC, d.id";
     const totalRow = this.sql
       .prepare(`SELECT count(*) AS total ${from}${condition}`)
       .get(...params) as { total: number };
@@ -1466,7 +1525,7 @@ export class KnowledgeDatabase {
                 d.error_code, d.error_message, NULL AS capture_mode,
                 d.favorite, d.archived_at, '' AS source_note,
                 d.revision, d.deleted_at, d.created_at, d.updated_at
-         ${from}${condition} ORDER BY d.updated_at DESC LIMIT ? OFFSET ?`,
+         ${from}${condition} ORDER BY ${order} LIMIT ? OFFSET ?`,
       )
       .all(...params, PAGE_SIZE, (page - 1) * PAGE_SIZE) as unknown as DocumentRow[];
 
@@ -1490,6 +1549,113 @@ export class KnowledgeDatabase {
         )
         .all() as Array<{ name: string }>
     ).map(({ name }) => name);
+  }
+
+  listManagedTags(): KnowledgeTag[] {
+    return (
+      this.sql
+        .prepare(
+          `SELECT t.name, count(dt.document_id) AS document_count
+           FROM tags t
+           LEFT JOIN document_tags dt ON dt.tag_id = t.id
+           GROUP BY t.id
+           ORDER BY lower(t.name), t.name`,
+        )
+        .all() as unknown as TagRow[]
+    ).map(({ name, document_count }) => ({ name, documentCount: Number(document_count) }));
+  }
+
+  private getManagedTag(name: string): KnowledgeTag | null {
+    const row = this.sql
+      .prepare(
+        `SELECT t.name, count(dt.document_id) AS document_count
+         FROM tags t
+         LEFT JOIN document_tags dt ON dt.tag_id = t.id
+         WHERE t.name = ? COLLATE NOCASE
+         GROUP BY t.id`,
+      )
+      .get(name) as TagRow | undefined;
+    return row ? { name: row.name, documentCount: Number(row.document_count) } : null;
+  }
+
+  private documentIdsForTag(name: string) {
+    return (
+      this.sql
+        .prepare(
+          `SELECT dt.document_id AS id
+           FROM document_tags dt JOIN tags t ON t.id = dt.tag_id
+           WHERE t.name = ? COLLATE NOCASE ORDER BY dt.document_id`,
+        )
+        .all(name) as Array<{ id: string }>
+    ).map(({ id }) => id);
+  }
+
+  private touchDocuments(documentIds: string[], timestamp: string, recordTags = false) {
+    if (!documentIds.length) return;
+    const placeholders = documentIds.map(() => "?").join(", ");
+    this.sql
+      .prepare(`UPDATE documents SET revision = revision + 1, updated_at = ? WHERE id IN (${placeholders})`)
+      .run(timestamp, ...documentIds);
+    if (recordTags) {
+      for (const id of documentIds) this.recordRevision(this.getDocument(id)!);
+    }
+  }
+
+  renameTag(name: string, newName: string) {
+    return transaction(this.sql, () => {
+      const current = this.getManagedTag(name);
+      if (!current) return { kind: "missing" as const };
+      const duplicate = this.sql
+        .prepare("SELECT 1 FROM tags WHERE name = ? COLLATE NOCASE AND name <> ? COLLATE NOCASE")
+        .get(newName, current.name);
+      if (duplicate) return { kind: "duplicate" as const, tag: this.getManagedTag(newName)! };
+      const documentIds = this.documentIdsForTag(current.name);
+      this.sql.prepare("UPDATE tags SET name = ? WHERE name = ? COLLATE NOCASE").run(newName, current.name);
+      this.touchDocuments(documentIds, now(), true);
+      return {
+        kind: "renamed" as const,
+        response: { tag: this.getManagedTag(newName), affectedDocuments: documentIds.length } satisfies TagMutationResponse,
+      };
+    });
+  }
+
+  mergeTag(name: string, targetName: string) {
+    return transaction(this.sql, () => {
+      const source = this.getManagedTag(name);
+      const target = this.getManagedTag(targetName);
+      if (!source || !target) return { kind: "missing" as const };
+      if (source.name.toLocaleLowerCase() === target.name.toLocaleLowerCase()) return { kind: "same" as const };
+      const documentIds = this.documentIdsForTag(source.name);
+      this.sql
+        .prepare(
+          `INSERT OR IGNORE INTO document_tags(document_id, tag_id)
+           SELECT dt.document_id, target.id
+           FROM document_tags dt JOIN tags source ON source.id = dt.tag_id
+           JOIN tags target ON target.name = ? COLLATE NOCASE
+           WHERE source.name = ? COLLATE NOCASE`,
+        )
+        .run(target.name, source.name);
+      this.sql.prepare("DELETE FROM tags WHERE name = ? COLLATE NOCASE").run(source.name);
+      this.touchDocuments(documentIds, now(), true);
+      return {
+        kind: "merged" as const,
+        response: { tag: this.getManagedTag(target.name), affectedDocuments: documentIds.length } satisfies TagMutationResponse,
+      };
+    });
+  }
+
+  deleteTag(name: string) {
+    return transaction(this.sql, () => {
+      const current = this.getManagedTag(name);
+      if (!current) return { kind: "missing" as const };
+      const documentIds = this.documentIdsForTag(current.name);
+      this.sql.prepare("DELETE FROM tags WHERE name = ? COLLATE NOCASE").run(current.name);
+      this.touchDocuments(documentIds, now(), true);
+      return {
+        kind: "deleted" as const,
+        response: { tag: null, affectedDocuments: documentIds.length } satisfies TagMutationResponse,
+      };
+    });
   }
 
   listCollections(): KnowledgeCollection[] {
@@ -1552,14 +1718,145 @@ export class KnowledgeDatabase {
     return transaction(this.sql, () => {
       const current = this.getCollection(id);
       if (!current) return { kind: "missing" as const };
-      const affected = this.sql
-        .prepare(
-          `UPDATE documents SET revision = revision + 1, updated_at = ?
-           WHERE id IN (SELECT document_id FROM document_collections WHERE collection_id = ?)`,
-        )
-        .run(now(), id);
+      const documentIds = (
+        this.sql
+          .prepare("SELECT document_id AS id FROM document_collections WHERE collection_id = ? ORDER BY document_id")
+          .all(id) as Array<{ id: string }>
+      ).map(({ id: documentId }) => documentId);
+      this.touchDocuments(documentIds, now());
       this.sql.prepare("DELETE FROM collections WHERE id = ?").run(id);
-      return { kind: "deleted" as const, affectedDocuments: Number(affected.changes) };
+      return { kind: "deleted" as const, affectedDocuments: documentIds.length };
+    });
+  }
+
+  mergeCollection(id: string, targetId: string) {
+    return transaction(this.sql, () => {
+      const source = this.getCollection(id);
+      const target = this.getCollection(targetId);
+      if (!source || !target) return { kind: "missing" as const };
+      if (source.id === target.id) return { kind: "same" as const };
+      const documentIds = (
+        this.sql
+          .prepare("SELECT document_id AS id FROM document_collections WHERE collection_id = ? ORDER BY document_id")
+          .all(id) as Array<{ id: string }>
+      ).map(({ id: documentId }) => documentId);
+      this.sql
+        .prepare(
+          `INSERT OR IGNORE INTO document_collections(document_id, collection_id)
+           SELECT document_id, ? FROM document_collections WHERE collection_id = ?`,
+        )
+        .run(targetId, id);
+      this.sql.prepare("DELETE FROM collections WHERE id = ?").run(id);
+      this.touchDocuments(documentIds, now());
+      return {
+        kind: "merged" as const,
+        collection: this.getCollection(targetId)!,
+        affectedDocuments: documentIds.length,
+      };
+    });
+  }
+
+  batchDocuments(targets: Array<{ id: string; revision: number }>, action: BatchDocumentAction, value?: string) {
+    return transaction(this.sql, () => {
+      const documentIds = targets.map(({ id }) => id);
+      const documents = documentIds.map((id) => this.getDocument(id));
+      const missing = documentIds.filter((_, index) => !documents[index]);
+      if (missing.length) return { kind: "missing" as const, documentIds: missing };
+      const current = documents as KnowledgeDocument[];
+      const conflicts = current
+        .filter((document, index) => document.revision !== targets[index]!.revision)
+        .map(({ id }) => id);
+      if (conflicts.length) return { kind: "conflict" as const, documentIds: conflicts };
+      const expectsDeleted = action === "restore";
+      const invalidState = current
+        .filter((document) => expectsDeleted ? !document.deletedAt : Boolean(document.deletedAt))
+        .map(({ id }) => id);
+      if (invalidState.length) return { kind: "invalid_state" as const, documentIds: invalidState };
+
+      if ((action === "add-tag" || action === "remove-tag") && !value) {
+        return { kind: "invalid_tag" as const };
+      }
+      if (action === "add-collection" || action === "remove-collection") {
+        if (!value || !this.getCollection(value)) return { kind: "invalid_collection" as const };
+      }
+
+      const storedTag = action === "add-tag" || action === "remove-tag" ? this.getManagedTag(value!) : null;
+      let changedIds: string[];
+      if (action === "add-tag") {
+        changedIds = current
+          .filter((document) => !storedTag || !document.tags.includes(storedTag.name))
+          .map(({ id }) => id);
+        const overLimit = current
+          .filter((document) => changedIds.includes(document.id) && document.tags.length >= 50)
+          .map(({ id }) => id);
+        if (overLimit.length) return { kind: "tag_limit" as const, documentIds: overLimit };
+      } else if (action === "remove-tag") {
+        changedIds = storedTag
+          ? current.filter((document) => document.tags.includes(storedTag.name)).map(({ id }) => id)
+          : [];
+      } else if (action === "add-collection") {
+        changedIds = current.filter((document) => !document.collections.some(({ id }) => id === value)).map(({ id }) => id);
+        const overLimit = current
+          .filter((document) => changedIds.includes(document.id) && document.collections.length >= 100)
+          .map(({ id }) => id);
+        if (overLimit.length) return { kind: "collection_limit" as const, documentIds: overLimit };
+      } else if (action === "remove-collection") {
+        changedIds = current.filter((document) => document.collections.some(({ id }) => id === value)).map(({ id }) => id);
+      } else if (action === "archive") {
+        changedIds = current.filter((document) => !document.archivedAt).map(({ id }) => id);
+      } else if (action === "unarchive") {
+        changedIds = current.filter((document) => Boolean(document.archivedAt)).map(({ id }) => id);
+      } else {
+        changedIds = [...documentIds];
+      }
+
+      const timestamp = now();
+      if (changedIds.length) {
+        const placeholders = changedIds.map(() => "?").join(", ");
+        if (action === "add-tag") {
+          this.sql.prepare("INSERT INTO tags(name) VALUES (?) ON CONFLICT(name) DO NOTHING").run(value!);
+          const tag = this.sql.prepare("SELECT id FROM tags WHERE name = ? COLLATE NOCASE").get(value!) as { id: number };
+          const insert = this.sql.prepare("INSERT INTO document_tags(document_id, tag_id) VALUES (?, ?)");
+          for (const id of changedIds) insert.run(id, tag.id);
+        } else if (action === "remove-tag") {
+          this.sql
+            .prepare(
+              `DELETE FROM document_tags WHERE document_id IN (${placeholders}) AND tag_id IN (
+                 SELECT id FROM tags WHERE name = ? COLLATE NOCASE
+               )`,
+            )
+            .run(...changedIds, value!);
+          this.sql.prepare("DELETE FROM tags WHERE NOT EXISTS (SELECT 1 FROM document_tags WHERE tag_id = tags.id)").run();
+        } else if (action === "add-collection") {
+          const insert = this.sql.prepare("INSERT INTO document_collections(document_id, collection_id) VALUES (?, ?)");
+          for (const id of changedIds) insert.run(id, value!);
+        } else if (action === "remove-collection") {
+          this.sql
+            .prepare(`DELETE FROM document_collections WHERE document_id IN (${placeholders}) AND collection_id = ?`)
+            .run(...changedIds, value!);
+        } else if (action === "archive") {
+          this.sql.prepare(`UPDATE documents SET archived_at = ? WHERE id IN (${placeholders})`).run(timestamp, ...changedIds);
+        } else if (action === "unarchive") {
+          this.sql.prepare(`UPDATE documents SET archived_at = NULL WHERE id IN (${placeholders})`).run(...changedIds);
+        } else if (action === "trash") {
+          this.sql.prepare(`UPDATE documents SET deleted_at = ? WHERE id IN (${placeholders})`).run(timestamp, ...changedIds);
+        } else if (action === "restore") {
+          this.sql.prepare(`UPDATE documents SET deleted_at = NULL WHERE id IN (${placeholders})`).run(...changedIds);
+        }
+        this.touchDocuments(changedIds, timestamp, action === "add-tag" || action === "remove-tag");
+      }
+      const changed = new Set(changedIds);
+      return {
+        kind: "updated" as const,
+        response: {
+          affectedDocuments: changedIds.length,
+          results: documentIds.map((id) => ({
+            id,
+            changed: changed.has(id),
+            revision: this.getDocument(id)!.revision,
+          })),
+        } satisfies BatchDocumentsResponse,
+      };
     });
   }
 

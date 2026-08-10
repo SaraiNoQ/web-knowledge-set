@@ -11,8 +11,8 @@ const db = openDatabase(root);
 try {
   const insert = db.sql.prepare(
     `INSERT INTO documents(
-       id, source_url, title, markdown, status, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, 'ready', ?, ?)`,
+       id, source_url, title, markdown, status, capture_mode, favorite, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, 'ready', 'http', ?, ?, ?)`,
   );
   db.sql.exec("BEGIN IMMEDIATE");
   try {
@@ -24,10 +24,22 @@ try {
         `https://example.com/articles/${index}`,
         `${index % 2 ? "Knowledge" : "知识"} article ${index}`,
         `${index % 2 ? "Local knowledge benchmark body" : "本地知识库基准正文"} ${index}`,
+        Number(index % 10 === 0),
         timestamp,
         timestamp,
       );
     }
+    db.sql.exec(`
+      INSERT INTO tags(name) VALUES ('Benchmark');
+      INSERT INTO collections(id, name, created_at, updated_at)
+      VALUES ('benchmark-collection', 'Benchmark', '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z');
+      INSERT INTO document_tags(document_id, tag_id)
+      SELECT id, (SELECT id FROM tags WHERE name = 'Benchmark') FROM documents
+      WHERE CAST(substr(id, -5) AS INTEGER) % 10 = 0;
+      INSERT INTO document_collections(document_id, collection_id)
+      SELECT id, 'benchmark-collection' FROM documents
+      WHERE CAST(substr(id, -5) AS INTEGER) % 10 = 0;
+    `);
     db.sql.exec("COMMIT");
   } catch (error) {
     db.sql.exec("ROLLBACK");
@@ -52,6 +64,16 @@ try {
       recent: measure(() => db.listDocuments({ page: 1 })),
       englishSearch: measure(() => db.listDocuments({ q: "knowledge", page: 1 })),
       chineseSearch: measure(() => db.listDocuments({ q: "知识", page: 1 })),
+      titleSort: measure(() => db.listDocuments({ sort: "title", page: 1 })),
+      combined: measure(() => db.listDocuments({
+        tag: "Benchmark",
+        collectionId: "benchmark-collection",
+        status: "ready",
+        favorite: true,
+        captureMode: "http",
+        sort: "title",
+        page: 1,
+      })),
     },
   };
   console.log(JSON.stringify(results, null, 2));

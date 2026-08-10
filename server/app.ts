@@ -7,10 +7,15 @@ import { promisify } from "node:util";
 import { gunzip, gzip } from "node:zlib";
 
 import type {
+  BatchDocumentAction,
+  BatchDocumentsRequest,
   CaptureErrorCode,
   CaptureMode,
   CaptureStatus,
   DataSafetyStatus,
+  DocumentFilters,
+  DocumentSearchScope,
+  DocumentSort,
   KnowledgeDocument,
 } from "../shared/types.js";
 import { cacheDocumentAssets, type AssetFetchFunction } from "./assets.js";
@@ -58,6 +63,19 @@ const captureErrorCodes = new Set<CaptureErrorCode>([
   "INTERNAL_ERROR",
 ]);
 const statuses = new Set<CaptureStatus>(["queued", "fetching", "extracting", "ready", "failed"]);
+const captureModes = new Set<CaptureMode>(["http", "browser"]);
+const searchScopes = new Set<DocumentSearchScope>(["all", "title", "body", "source"]);
+const documentSorts = new Set<DocumentSort>(["updated", "created", "title"]);
+const batchActions = new Set<BatchDocumentAction>([
+  "add-tag",
+  "remove-tag",
+  "add-collection",
+  "remove-collection",
+  "archive",
+  "unarchive",
+  "trash",
+  "restore",
+]);
 const contentTypes: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -361,10 +379,13 @@ function tagsValue(value: unknown) {
   }
   const unique = new Map<string, string>();
   for (const item of value) {
-    if (typeof item !== "string" || !item.trim() || item.trim().length > 100) {
+    if (typeof item !== "string") {
       throw new HttpError(400, "INVALID_TAGS", "each tag must contain 1 to 100 characters");
     }
-    const name = item.trim();
+    const name = item.normalize("NFKC").trim();
+    if (!name || name.length > 100) {
+      throw new HttpError(400, "INVALID_TAGS", "each tag must contain 1 to 100 characters");
+    }
     unique.set(name.toLocaleLowerCase(), name);
   }
   return [...unique.values()];
@@ -422,6 +443,143 @@ function trashFilter(requestUrl: URL) {
   const trash = requestUrl.searchParams.get("trash") ?? undefined;
   if (trash && trash !== "only") throw new HttpError(400, "INVALID_TRASH_FILTER", "trash must be 'only'");
   return trash === "only" ? trash : undefined;
+}
+
+function tagNameValue(value: unknown) {
+  return tagsValue([value])[0]!;
+}
+
+function tagName(body: Record<string, unknown>, field: "name" | "target") {
+  if (Object.keys(body).some((key) => key !== field)) {
+    throw new HttpError(400, "INVALID_TAG", `${field} must be the only field`);
+  }
+  return tagNameValue(body[field]);
+}
+
+function strictBoolean(value: string | null, field: string) {
+  if (value === null) return undefined;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new HttpError(400, "INVALID_FILTER", `${field} must be true or false`);
+}
+
+function filterDate(value: string | null, field: "from" | "to") {
+  if (value === null) return undefined;
+  const trimmed = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/u.test(trimmed)) {
+    const parsed = Date.parse(`${trimmed}T00:00:00.000Z`);
+    if (!Number.isFinite(parsed) || new Date(parsed).toISOString().slice(0, 10) !== trimmed) {
+      throw new HttpError(400, "INVALID_DATE_FILTER", `${field} must be a real date or ISO timestamp`);
+    }
+    return field === "from"
+      ? `${trimmed}T00:00:00.000Z`
+      : new Date(parsed + 24 * 60 * 60 * 1000).toISOString();
+  }
+  const parsed = Date.parse(trimmed);
+  if (!trimmed || trimmed.length > 50 || !Number.isFinite(parsed)) {
+    throw new HttpError(400, "INVALID_DATE_FILTER", `${field} must be a real date or ISO timestamp`);
+  }
+  return new Date(parsed).toISOString();
+}
+
+function documentFilters(requestUrl: URL): DocumentFilters {
+  const allowed = new Set([
+    "q", "scope", "tag", "collectionId", "status", "favorite", "archived", "unorganized",
+    "from", "to", "captureMode", "sort", "page", "trash",
+  ]);
+  for (const key of requestUrl.searchParams.keys()) {
+    if (!allowed.has(key)) throw new HttpError(400, "INVALID_FILTER", `Unknown document filter: ${key}`);
+    if (requestUrl.searchParams.getAll(key).length !== 1) {
+      throw new HttpError(400, "INVALID_FILTER", `Document filter may only appear once: ${key}`);
+    }
+  }
+
+  const q = requestUrl.searchParams.get("q")?.trim() || undefined;
+  if (q && q.length > 500) throw new HttpError(400, "INVALID_QUERY", "Search query is too long");
+  const scopeValue = requestUrl.searchParams.get("scope") ?? undefined;
+  if (scopeValue && !searchScopes.has(scopeValue as DocumentSearchScope)) {
+    throw new HttpError(400, "INVALID_FILTER", "Unknown search scope");
+  }
+  const tagValue = requestUrl.searchParams.get("tag");
+  const tag = tagValue === null ? undefined : tagNameValue(tagValue);
+  const collectionIdValue = requestUrl.searchParams.get("collectionId");
+  const collectionId = collectionIdValue === null ? undefined : collectionIdsValue([collectionIdValue])[0];
+  const statusValue = requestUrl.searchParams.get("status") ?? undefined;
+  if (statusValue && !statuses.has(statusValue as CaptureStatus)) {
+    throw new HttpError(400, "INVALID_STATUS", "Unknown capture status");
+  }
+  const captureModeValue = requestUrl.searchParams.get("captureMode") ?? undefined;
+  if (captureModeValue && !captureModes.has(captureModeValue as CaptureMode)) {
+    throw new HttpError(400, "INVALID_FILTER", "Unknown capture mode");
+  }
+  const sortValue = requestUrl.searchParams.get("sort") ?? undefined;
+  if (sortValue && !documentSorts.has(sortValue as DocumentSort)) {
+    throw new HttpError(400, "INVALID_FILTER", "Unknown document sort");
+  }
+  const pageValue = requestUrl.searchParams.get("page");
+  const page = pageValue === null ? 1 : Number(pageValue);
+  if (!Number.isInteger(page) || page < 1 || page > 1_000_000) {
+    throw new HttpError(400, "INVALID_PAGE", "page must be an integer from 1 to 1000000");
+  }
+  const from = filterDate(requestUrl.searchParams.get("from"), "from");
+  const to = filterDate(requestUrl.searchParams.get("to"), "to");
+  if (from && to && from > to) throw new HttpError(400, "INVALID_DATE_FILTER", "from must not be after to");
+  return {
+    q,
+    scope: scopeValue as DocumentSearchScope | undefined,
+    tag,
+    collectionId,
+    status: statusValue as CaptureStatus | undefined,
+    favorite: strictBoolean(requestUrl.searchParams.get("favorite"), "favorite"),
+    archived: strictBoolean(requestUrl.searchParams.get("archived"), "archived"),
+    unorganized: strictBoolean(requestUrl.searchParams.get("unorganized"), "unorganized"),
+    from,
+    to,
+    captureMode: captureModeValue as CaptureMode | undefined,
+    sort: sortValue as DocumentSort | undefined,
+    page,
+    trash: trashFilter(requestUrl),
+  };
+}
+
+function batchDocumentsRequest(body: Record<string, unknown>): BatchDocumentsRequest {
+  if (Object.keys(body).some((key) => key !== "documents" && key !== "action" && key !== "value")) {
+    throw new HttpError(400, "INVALID_BATCH", "Batch request contains an unknown field");
+  }
+  if (!Array.isArray(body.documents) || body.documents.length < 1 || body.documents.length > 30) {
+    throw new HttpError(400, "INVALID_BATCH", "documents must contain 1 to 30 current-page items");
+  }
+  const seen = new Set<string>();
+  const documents = body.documents.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new HttpError(400, "INVALID_BATCH", "each document target must contain id and revision");
+    }
+    const target = item as Record<string, unknown>;
+    if (Object.keys(target).some((key) => key !== "id" && key !== "revision")) {
+      throw new HttpError(400, "INVALID_BATCH", "document target contains an unknown field");
+    }
+    if (typeof target.id !== "string" || !target.id || target.id.length > 200 || target.id !== target.id.trim()) {
+      throw new HttpError(400, "INVALID_BATCH", "document id must contain 1 to 200 characters");
+    }
+    if (seen.has(target.id)) throw new HttpError(400, "INVALID_BATCH", "document ids must be unique");
+    seen.add(target.id);
+    return { id: target.id, revision: bodyRevision({ revision: target.revision }) };
+  });
+  if (typeof body.action !== "string" || !batchActions.has(body.action as BatchDocumentAction)) {
+    throw new HttpError(400, "INVALID_BATCH", "Unknown batch action");
+  }
+  const action = body.action as BatchDocumentAction;
+  const needsValue = action === "add-tag" || action === "remove-tag" ||
+    action === "add-collection" || action === "remove-collection";
+  if (!needsValue && body.value !== undefined) {
+    throw new HttpError(400, "INVALID_BATCH", "This batch action does not accept value");
+  }
+  let value: string | undefined;
+  if (action === "add-tag" || action === "remove-tag") value = tagNameValue(body.value);
+  if (action === "add-collection" || action === "remove-collection") {
+    value = collectionIdsValue([body.value])[0];
+  }
+  return { documents, action, ...(value === undefined ? {} : { value }) };
 }
 
 function captureFailure(error: unknown): { code: CaptureErrorCode; message: string } {
@@ -999,6 +1157,33 @@ export function createApp(options: AppOptions) {
         throw new HttpError(503, "DATA_UNAVAILABLE", "Knowledge-base data needs recovery");
       }
 
+      if (pathname === "/api/documents/batch" && request.method === "POST") {
+        const body = batchDocumentsRequest(await mutationBody(request));
+        const result = requireDatabase().batchDocuments(body.documents, body.action, body.value);
+        if (result.kind === "missing") {
+          throw new HttpError(404, "BATCH_DOCUMENT_NOT_FOUND", "One or more selected documents no longer exist");
+        }
+        if (result.kind === "conflict") {
+          throw new HttpError(409, "BATCH_CONFLICT", "One or more selected documents changed since selection");
+        }
+        if (result.kind === "invalid_state") {
+          throw new HttpError(409, "BATCH_INVALID_STATE", "Selected documents are not in the state required by this action");
+        }
+        if (result.kind === "invalid_collection") {
+          throw new HttpError(400, "INVALID_COLLECTION_IDS", "The selected collection does not exist");
+        }
+        if (result.kind === "tag_limit") {
+          throw new HttpError(400, "TAG_LIMIT", "A selected document already has the maximum of 50 tags");
+        }
+        if (result.kind === "collection_limit") {
+          throw new HttpError(400, "COLLECTION_LIMIT", "A selected document already has the maximum of 100 collections");
+        }
+        if (result.kind === "invalid_tag") throw new HttpError(400, "INVALID_TAG", "A tag is required");
+        if (body.action === "restore" && result.response.affectedDocuments) worker.wake();
+        sendJson(response, 200, result.response);
+        return;
+      }
+
       if (pathname === "/api/documents" && request.method === "POST") {
         const body = await mutationBody(request);
         if (body.force !== undefined && typeof body.force !== "boolean") {
@@ -1014,29 +1199,48 @@ export function createApp(options: AppOptions) {
       }
 
       if (pathname === "/api/documents" && request.method === "GET") {
-        const statusValue = requestUrl.searchParams.get("status") ?? undefined;
-        if (statusValue && !statuses.has(statusValue as CaptureStatus)) {
-          throw new HttpError(400, "INVALID_STATUS", "Unknown capture status");
-        }
-        const q = requestUrl.searchParams.get("q") ?? undefined;
-        if (q && q.length > 500) throw new HttpError(400, "INVALID_QUERY", "Search query is too long");
-        const requestedPage = Number(requestUrl.searchParams.get("page") ?? 1);
-        sendJson(
-          response,
-          200,
-          requireDatabase().listDocuments({
-            q,
-            tag: requestUrl.searchParams.get("tag") ?? undefined,
-            status: statusValue as CaptureStatus | undefined,
-            page: Number.isFinite(requestedPage) ? requestedPage : 1,
-            trash: trashFilter(requestUrl),
-          }),
-        );
+        sendJson(response, 200, requireDatabase().listDocuments(documentFilters(requestUrl)));
+        return;
+      }
+
+      if (pathname === "/api/tags/manage" && request.method === "GET") {
+        sendJson(response, 200, requireDatabase().listManagedTags());
         return;
       }
 
       if (pathname === "/api/tags" && request.method === "GET") {
         sendJson(response, 200, requireDatabase().listTags(trashFilter(requestUrl)));
+        return;
+      }
+
+      const mergeTagMatch = pathname.match(/^\/api\/tags\/([^/]+)\/merge$/u);
+      if (mergeTagMatch && request.method === "POST") {
+        const source = tagNameValue(decodeId(mergeTagMatch[1]));
+        const target = tagName(await mutationBody(request), "target");
+        const result = requireDatabase().mergeTag(source, target);
+        if (result.kind === "missing") throw new HttpError(404, "TAG_NOT_FOUND", "Source or target tag not found");
+        if (result.kind === "same") throw new HttpError(400, "SAME_TAG", "A tag cannot be merged into itself");
+        sendJson(response, 200, result.response);
+        return;
+      }
+
+      const tagMatch = pathname.match(/^\/api\/tags\/([^/]+)$/u);
+      if (tagMatch && request.method === "PATCH") {
+        const currentName = tagNameValue(decodeId(tagMatch[1]));
+        const result = requireDatabase().renameTag(currentName, tagName(await mutationBody(request), "name"));
+        if (result.kind === "missing") throw new HttpError(404, "TAG_NOT_FOUND", "Tag not found");
+        if (result.kind === "duplicate") {
+          throw new HttpError(409, "TAG_NAME_CONFLICT", "A tag with this name already exists");
+        }
+        sendJson(response, 200, result.response);
+        return;
+      }
+      if (tagMatch && request.method === "DELETE") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length) throw new HttpError(400, "INVALID_TAG_DELETE", "Tag deletion accepts no options");
+        const result = requireDatabase().deleteTag(tagNameValue(decodeId(tagMatch[1])));
+        if (result.kind === "missing") throw new HttpError(404, "TAG_NOT_FOUND", "Tag not found");
+        sendJson(response, 200, result.response);
         return;
       }
 
@@ -1052,6 +1256,27 @@ export function createApp(options: AppOptions) {
           throw new HttpError(409, "COLLECTION_NAME_CONFLICT", "A collection with this name already exists");
         }
         sendJson(response, 201, result.collection);
+        return;
+      }
+
+      const mergeCollectionMatch = pathname.match(/^\/api\/collections\/([^/]+)\/merge$/u);
+      if (mergeCollectionMatch && request.method === "POST") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).some((key) => key !== "targetId")) {
+          throw new HttpError(400, "INVALID_COLLECTION_MERGE", "targetId must be the only field");
+        }
+        const [targetId] = collectionIdsValue([body.targetId]);
+        const result = requireDatabase().mergeCollection(decodeId(mergeCollectionMatch[1]), targetId!);
+        if (result.kind === "missing") {
+          throw new HttpError(404, "COLLECTION_NOT_FOUND", "Source or target collection not found");
+        }
+        if (result.kind === "same") {
+          throw new HttpError(400, "SAME_COLLECTION", "A collection cannot be merged into itself");
+        }
+        sendJson(response, 200, {
+          collection: result.collection,
+          affectedDocuments: result.affectedDocuments,
+        });
         return;
       }
 

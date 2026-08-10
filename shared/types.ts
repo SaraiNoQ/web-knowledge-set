@@ -19,6 +19,16 @@ export interface DocumentCollection {
   name: string;
 }
 
+export interface KnowledgeTag {
+  name: string;
+  documentCount: number;
+}
+
+export interface TagMutationResponse {
+  tag: KnowledgeTag | null;
+  affectedDocuments: number;
+}
+
 export interface KnowledgeCollection extends DocumentCollection {
   documentCount: number;
   createdAt: string;
@@ -27,6 +37,11 @@ export interface KnowledgeCollection extends DocumentCollection {
 
 export interface DeleteCollectionResponse {
   deleted: true;
+  affectedDocuments: number;
+}
+
+export interface MergeCollectionResponse {
+  collection: KnowledgeCollection;
   affectedDocuments: number;
 }
 
@@ -63,6 +78,59 @@ export interface DocumentListResponse {
   page: number;
   pageSize: number;
   total: number;
+}
+
+export type DocumentSearchScope = "all" | "title" | "body" | "source";
+
+export type DocumentSort = "updated" | "created" | "title";
+
+export interface DocumentFilters {
+  q?: string;
+  scope?: DocumentSearchScope;
+  tag?: string;
+  collectionId?: string;
+  status?: CaptureStatus | "";
+  favorite?: boolean;
+  archived?: boolean;
+  unorganized?: boolean;
+  from?: string;
+  to?: string;
+  captureMode?: CaptureMode;
+  sort?: DocumentSort;
+  page?: number;
+  trash?: "only";
+}
+
+export type BatchDocumentAction =
+  | "add-tag"
+  | "remove-tag"
+  | "add-collection"
+  | "remove-collection"
+  | "archive"
+  | "unarchive"
+  | "trash"
+  | "restore";
+
+export interface BatchDocumentTarget {
+  id: string;
+  revision: number;
+}
+
+export interface BatchDocumentsRequest {
+  documents: BatchDocumentTarget[];
+  action: BatchDocumentAction;
+  value?: string;
+}
+
+export interface BatchDocumentResult {
+  id: string;
+  changed: boolean;
+  revision: number | null;
+}
+
+export interface BatchDocumentsResponse {
+  affectedDocuments: number;
+  results: BatchDocumentResult[];
 }
 
 export type DuplicateKind = "source" | "resolved" | null;

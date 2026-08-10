@@ -170,6 +170,101 @@ test("collections and document metadata update atomically without losing manual 
   }
 });
 
+test("composable filters and organization batches stay transactional", () => {
+  const fixture = database();
+  try {
+    const capture = (url: string, title: string, markdown: string) => {
+      const document = fixture.db.createOrGetDocument(url).document;
+      const job = fixture.db.claimNextCapture();
+      assert.ok(job);
+      return fixture.db.completeCapture(job, {
+        title,
+        author: "Source author",
+        publishedAt: "2026-08-10",
+        finalUrl: `${url}/final`,
+        canonicalUrl: null,
+        markdown,
+        mode: "http",
+        warning: null,
+        httpStatus: 200,
+      }, null);
+    };
+    const alpha = capture("https://alpha.example/article", "Title needle", "First body");
+    const beta = capture("https://beta.example/article", "Second title", "Body needle");
+    const plain = capture("https://plain.example/article", "Unsorted", "Plain body");
+    const firstCollection = fixture.db.createCollection("First").collection;
+    const secondCollection = fixture.db.createCollection("Second").collection;
+    const organizedAlpha = fixture.db.updateDocument(alpha.id, alpha.revision, {
+      tags: ["Alpha", "Shared"],
+      collectionIds: [firstCollection.id, secondCollection.id],
+      favorite: true,
+      archived: true,
+    });
+    const organizedBeta = fixture.db.updateDocument(beta.id, beta.revision, {
+      tags: ["Beta", "Shared"],
+      collectionIds: [firstCollection.id],
+    });
+    assert.equal(organizedAlpha.kind, "updated");
+    assert.equal(organizedBeta.kind, "updated");
+    assert.equal(fixture.db.listDocuments({ q: "needle", scope: "title" }).total, 1);
+    assert.equal(fixture.db.listDocuments({ q: "needle", scope: "body" }).total, 1);
+    assert.equal(fixture.db.listDocuments({ q: "alpha.example", scope: "source" }).total, 1);
+    assert.equal(fixture.db.listDocuments({ unorganized: true }).items[0]?.id, plain.id);
+    assert.equal(fixture.db.listDocuments({
+      tag: "shared",
+      collectionId: firstCollection.id,
+      status: "ready",
+      favorite: true,
+      archived: true,
+      captureMode: "http",
+      from: "2020-01-01T00:00:00.000Z",
+      to: "2030-01-01T00:00:00.000Z",
+    }).total, 1);
+    assert.deepEqual(
+      fixture.db.listDocuments({ sort: "title" }).items.map(({ title }) => title),
+      ["Second title", "Title needle", "Unsorted"],
+    );
+    assert.deepEqual(
+      fixture.db.listManagedTags().map(({ name, documentCount }) => [name, documentCount]),
+      [["Alpha", 1], ["Beta", 1], ["Shared", 2]],
+    );
+
+    const alphaBeforeRename = fixture.db.getDocument(alpha.id)!;
+    assert.equal(fixture.db.renameTag("Alpha", "Renamed").kind, "renamed");
+    assert.equal(fixture.db.getDocument(alpha.id)!.revision, alphaBeforeRename.revision + 1);
+    const mergeTag = fixture.db.mergeTag("Renamed", "Shared");
+    assert.equal(mergeTag.kind, "merged");
+    assert.equal(mergeTag.kind === "merged" ? mergeTag.response.affectedDocuments : 0, 1);
+    assert.deepEqual(fixture.db.getDocument(alpha.id)!.tags, ["Shared"]);
+    assert.equal(fixture.db.deleteTag("Beta").kind, "deleted");
+    const collectionRevision = fixture.db.getDocument(alpha.id)!.revision;
+    const mergeCollection = fixture.db.mergeCollection(secondCollection.id, firstCollection.id);
+    assert.equal(mergeCollection.kind, "merged");
+    assert.equal(mergeCollection.kind === "merged" ? mergeCollection.affectedDocuments : 0, 1);
+    assert.equal(fixture.db.getDocument(alpha.id)!.revision, collectionRevision + 1);
+
+    const beforeBatch = [fixture.db.getDocument(alpha.id)!, fixture.db.getDocument(beta.id)!];
+    const batch = fixture.db.batchDocuments(
+      beforeBatch.map(({ id, revision }) => ({ id, revision })),
+      "add-tag",
+      "Bulk",
+    );
+    assert.equal(batch.kind, "updated");
+    assert.equal(batch.kind === "updated" ? batch.response.affectedDocuments : 0, 2);
+    const afterBatch = beforeBatch.map(({ id }) => fixture.db.getDocument(id)!);
+    const stale = fixture.db.batchDocuments(
+      [{ id: afterBatch[0]!.id, revision: beforeBatch[0]!.revision }, { id: afterBatch[1]!.id, revision: afterBatch[1]!.revision }],
+      "remove-tag",
+      "Bulk",
+    );
+    assert.equal(stale.kind, "conflict");
+    assert.ok(afterBatch.every(({ id, revision }) => fixture.db.getDocument(id)!.revision === revision));
+    assert.ok(afterBatch.every(({ id }) => fixture.db.getDocument(id)!.tags.includes("Bulk")));
+  } finally {
+    fixture.close();
+  }
+});
+
 test("resolved duplicates can be kept and queued captures can be cancelled then retried", () => {
   const fixture = database();
   try {
