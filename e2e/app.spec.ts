@@ -560,4 +560,46 @@ test("imports, restores history, trashes, restores, searches, exports, and block
     window.dispatchEvent(new CustomEvent("zhiye:close-timeout", { detail: { attemptId } }));
   }, metadataCloseAttemptId);
   await page.unroute("**/api/documents/*");
+
+  let releaseOrganizationConflict!: () => void;
+  let organizationPatchStarted = false;
+  let conflictCloseReadyCount = 0;
+  const organizationConflictGate = new Promise<void>((resolve) => {
+    releaseOrganizationConflict = resolve;
+  });
+  await page.route("**/api/documents/*", async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    const body = request.method() === "PATCH" ? request.postDataJSON() as { favorite?: boolean } : {};
+    if (!/^\/api\/documents\/[^/]+$/u.test(pathname) || typeof body.favorite !== "boolean") {
+      await route.continue();
+      return;
+    }
+    organizationPatchStarted = true;
+    await organizationConflictGate;
+    const current = await route.fetch({ method: "GET", headers: { Accept: "application/json" } });
+    await route.fulfill({
+      status: 409,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Zhiye-Data-Epoch": request.headers()["x-zhiye-data-epoch"],
+      },
+      body: JSON.stringify({ error: { code: "REVISION_CONFLICT", message: "conflict", document: await current.json() } }),
+    });
+  });
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" && new URL(request.url()).pathname === "/api/desktop/close-ready" &&
+      (request.postDataJSON() as { attemptId?: string }).attemptId === "9003"
+    ) conflictCloseReadyCount += 1;
+  });
+  await page.getByRole("button", { name: "取消收藏" }).click();
+  await expect.poll(() => organizationPatchStarted).toBe(true);
+  await page.evaluate(() => {
+    window.dispatchEvent(new CustomEvent("zhiye:close-requested", { detail: { attemptId: "9003" } }));
+  });
+  releaseOrganizationConflict();
+  await expect(page.getByText("关闭前无法保存更改：请先处理来源信息的版本冲突。")).toBeVisible();
+  expect(conflictCloseReadyCount).toBe(0);
+  await page.unroute("**/api/documents/*");
 });

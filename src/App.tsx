@@ -483,6 +483,7 @@ export default function App() {
   const saveInFlight = useRef(false);
   const organizationInFlight = useRef(false);
   const organizationPromiseRef = useRef<Promise<unknown> | null>(null);
+  const organizationConflictRef = useRef<OrganizationConflict | null>(null);
   const collectionsRequestRef = useRef<{ sequence: number; controller: AbortController } | null>(null);
   const collectionsRequestSequenceRef = useRef(0);
   const keptDuplicateIdsRef = useRef(new Set<string>());
@@ -492,6 +493,11 @@ export default function App() {
   draftRef.current = draft;
   currentDocRef.current = currentDoc;
   sourceMetadataRef.current = sourceMetadata;
+
+  const updateOrganizationConflict = useCallback((value: OrganizationConflict | null) => {
+    organizationConflictRef.current = value;
+    setOrganizationConflict(value);
+  }, []);
 
   useEffect(() => {
     void api.getDataSafety().then((value) => {
@@ -866,7 +872,7 @@ export default function App() {
     setDraftError("");
     setOrganizationError("");
     setOrganizationNotice("");
-    setOrganizationConflict(null);
+    updateOrganizationConflict(null);
     setCollectionsOpen(false);
     setRenamingCollection(null);
     persistedDraftRef.current = null;
@@ -1132,8 +1138,9 @@ export default function App() {
       setClosing(true);
       void (async () => {
         try {
-          if (organizationConflict) throw new Error("请先处理来源信息的版本冲突。");
+          if (organizationConflictRef.current) throw new Error("请先处理来源信息的版本冲突。");
           if (organizationPromiseRef.current) await organizationPromiseRef.current;
+          if (organizationConflictRef.current) throw new Error("请先处理来源信息的版本冲突。");
           await draftSaveChain.current;
           if (closeAttemptRef.current !== attemptId) return;
           let document = currentDocRef.current;
@@ -1178,7 +1185,7 @@ export default function App() {
       window.removeEventListener("zhiye:close-requested", prepareClose);
       window.removeEventListener("zhiye:close-timeout", closeTimedOut);
     };
-  }, [installCurrentDocument, organizationConflict, persistDraft, safetyOpen, safetyRecovery, sendOrganizationPatch, tombstoneDraft, trackOrganizationTask, updateListItem]);
+  }, [installCurrentDocument, persistDraft, safetyOpen, safetyRecovery, sendOrganizationPatch, tombstoneDraft, trackOrganizationTask, updateListItem]);
 
   const revealDocument = async (document: DocumentSummary, guard: NavigationGuard) => {
     const inTargetTrash = Boolean(document.deletedAt);
@@ -1291,7 +1298,7 @@ export default function App() {
     setDraft(draftOf(updated));
     setTagText(updated.tags.join(", "));
     updateListItem(updated);
-    setOrganizationConflict(null);
+    updateOrganizationConflict(null);
     setOrganizationError("");
     setOrganizationNotice(message);
   };
@@ -1323,7 +1330,7 @@ export default function App() {
           error instanceof ApiRequestError && error.status === 409 && error.document &&
           selectedIdRef.current === baseDocument.id
         ) {
-          setOrganizationConflict({ server: error.document, patch, successMessage, rebase });
+          updateOrganizationConflict({ server: error.document, patch, successMessage, rebase });
           setOrganizationError("这篇知识已在别处更新，请基于最新版本重试或放弃这次更改。");
         } else if (selectedIdRef.current === baseDocument.id) {
           setOrganizationError((error as Error).message);
@@ -1357,7 +1364,7 @@ export default function App() {
     setDraft(draftOf(server));
     setTagText(server.tags.join(", "));
     updateListItem(server);
-    setOrganizationConflict(null);
+    updateOrganizationConflict(null);
     setOrganizationError("");
     setOrganizationNotice("已放弃这次组织与来源信息更改。");
   };
