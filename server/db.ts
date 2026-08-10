@@ -14,12 +14,14 @@ import type {
   CaptureMode,
   CaptureStatus,
   DatabaseHealth,
+  DocumentCollection,
   DocumentListResponse,
   DocumentDraft,
   DocumentRevision,
   DocumentSummary,
   DocumentAsset,
   KnowledgeDocument,
+  KnowledgeCollection,
 } from "../shared/types.js";
 
 const PAGE_SIZE = 30;
@@ -279,6 +281,33 @@ const migrations = [
     id, max_asset_bytes, max_assets_per_document, max_document_asset_bytes, concurrency
   ) VALUES (1, 10485760, 100, 104857600, 3);
   `,
+  `
+  ALTER TABLE documents ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0
+    CHECK (favorite IN (0, 1));
+  ALTER TABLE documents ADD COLUMN archived_at TEXT;
+  ALTER TABLE documents ADD COLUMN source_note TEXT NOT NULL DEFAULT '';
+  ALTER TABLE documents ADD COLUMN author_edited INTEGER NOT NULL DEFAULT 0
+    CHECK (author_edited IN (0, 1));
+  ALTER TABLE documents ADD COLUMN published_at_edited INTEGER NOT NULL DEFAULT 0
+    CHECK (published_at_edited IN (0, 1));
+  CREATE INDEX documents_archive_favorite_updated
+    ON documents(deleted_at, archived_at, favorite, updated_at DESC);
+
+  CREATE TABLE collections (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE document_collections (
+    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    PRIMARY KEY (document_id, collection_id)
+  );
+  CREATE INDEX document_collections_collection
+    ON document_collections(collection_id, document_id);
+  `,
 ];
 
 export const CURRENT_SCHEMA_VERSION = migrations.length;
@@ -320,8 +349,19 @@ interface DocumentRow {
   error_code: CaptureErrorCode | null;
   error_message: string | null;
   capture_mode: CaptureMode | null;
+  favorite: number;
+  archived_at: string | null;
+  source_note: string;
   revision: number;
   deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface CollectionRow {
+  id: string;
+  name: string;
+  document_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -405,6 +445,12 @@ export interface DocumentPatch {
   title?: string;
   markdown?: string;
   tags?: string[];
+  author?: string | null;
+  publishedAt?: string | null;
+  sourceNote?: string;
+  favorite?: boolean;
+  archived?: boolean;
+  collectionIds?: string[];
 }
 
 export interface ListFilters {
@@ -963,6 +1009,28 @@ export class KnowledgeDatabase {
     ).map(({ name }) => name);
   }
 
+  private collectionsFor(documentId: string): DocumentCollection[] {
+    return (
+      this.sql
+        .prepare(
+          `SELECT c.id, c.name FROM collections c
+           JOIN document_collections dc ON dc.collection_id = c.id
+           WHERE dc.document_id = ? ORDER BY lower(c.name), c.name`,
+        )
+        .all(documentId) as Array<{ id: string; name: string }>
+    ).map(({ id, name }) => ({ id, name }));
+  }
+
+  private toCollection(row: CollectionRow): KnowledgeCollection {
+    return {
+      id: row.id,
+      name: row.name,
+      documentCount: Number(row.document_count),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
   private toDocument(row: DocumentRow): KnowledgeDocument {
     return {
       id: row.id,
@@ -979,16 +1047,25 @@ export class KnowledgeDatabase {
       errorMessage: row.error_message,
       captureMode: row.capture_mode,
       tags: this.tagsFor(row.id),
+      collections: this.collectionsFor(row.id),
+      favorite: Boolean(row.favorite),
+      archivedAt: row.archived_at,
       revision: row.revision,
       deletedAt: row.deleted_at,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      sourceNote: row.source_note,
     };
   }
 
   private toSummary(row: DocumentRow): DocumentSummary {
-    const { publishedAt: _publishedAt, markdown: _markdown, captureMode: _captureMode, ...summary } =
-      this.toDocument(row);
+    const {
+      publishedAt: _publishedAt,
+      markdown: _markdown,
+      captureMode: _captureMode,
+      sourceNote: _sourceNote,
+      ...summary
+    } = this.toDocument(row);
     return summary;
   }
 
@@ -1387,6 +1464,7 @@ export class KnowledgeDatabase {
         `SELECT d.id, d.source_url, d.final_url, d.canonical_url, d.title, d.author,
                 NULL AS published_at, '' AS markdown, d.status, d.warning,
                 d.error_code, d.error_message, NULL AS capture_mode,
+                d.favorite, d.archived_at, '' AS source_note,
                 d.revision, d.deleted_at, d.created_at, d.updated_at
          ${from}${condition} ORDER BY d.updated_at DESC LIMIT ? OFFSET ?`,
       )
@@ -1414,6 +1492,77 @@ export class KnowledgeDatabase {
     ).map(({ name }) => name);
   }
 
+  listCollections(): KnowledgeCollection[] {
+    return (
+      this.sql
+        .prepare(
+          `SELECT c.id, c.name, count(dc.document_id) AS document_count,
+                  c.created_at, c.updated_at
+           FROM collections c
+           LEFT JOIN document_collections dc ON dc.collection_id = c.id
+           GROUP BY c.id
+           ORDER BY lower(c.name), c.name`,
+        )
+        .all() as unknown as CollectionRow[]
+    ).map((row) => this.toCollection(row));
+  }
+
+  getCollection(id: string): KnowledgeCollection | null {
+    const row = this.sql
+      .prepare(
+        `SELECT c.id, c.name, count(dc.document_id) AS document_count,
+                c.created_at, c.updated_at
+         FROM collections c
+         LEFT JOIN document_collections dc ON dc.collection_id = c.id
+         WHERE c.id = ? GROUP BY c.id`,
+      )
+      .get(id) as CollectionRow | undefined;
+    return row ? this.toCollection(row) : null;
+  }
+
+  createCollection(name: string) {
+    return transaction(this.sql, () => {
+      const existing = this.sql
+        .prepare("SELECT id FROM collections WHERE name = ? COLLATE NOCASE")
+        .get(name) as { id: string } | undefined;
+      if (existing) return { kind: "duplicate" as const, collection: this.getCollection(existing.id)! };
+      const id = randomUUID();
+      const timestamp = now();
+      this.sql
+        .prepare("INSERT INTO collections(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)")
+        .run(id, name, timestamp, timestamp);
+      return { kind: "created" as const, collection: this.getCollection(id)! };
+    });
+  }
+
+  renameCollection(id: string, name: string) {
+    return transaction(this.sql, () => {
+      const current = this.getCollection(id);
+      if (!current) return { kind: "missing" as const };
+      const duplicate = this.sql
+        .prepare("SELECT id FROM collections WHERE name = ? COLLATE NOCASE AND id <> ?")
+        .get(name, id) as { id: string } | undefined;
+      if (duplicate) return { kind: "duplicate" as const, collection: this.getCollection(duplicate.id)! };
+      this.sql.prepare("UPDATE collections SET name = ?, updated_at = ? WHERE id = ?").run(name, now(), id);
+      return { kind: "renamed" as const, collection: this.getCollection(id)! };
+    });
+  }
+
+  deleteCollection(id: string) {
+    return transaction(this.sql, () => {
+      const current = this.getCollection(id);
+      if (!current) return { kind: "missing" as const };
+      const affected = this.sql
+        .prepare(
+          `UPDATE documents SET revision = revision + 1, updated_at = ?
+           WHERE id IN (SELECT document_id FROM document_collections WHERE collection_id = ?)`,
+        )
+        .run(now(), id);
+      this.sql.prepare("DELETE FROM collections WHERE id = ?").run(id);
+      return { kind: "deleted" as const, affectedDocuments: Number(affected.changes) };
+    });
+  }
+
   updateDocument(id: string, revision: number, patch: DocumentPatch) {
     return transaction(this.sql, () => {
       const current = this.getDocument(id);
@@ -1421,8 +1570,9 @@ export class KnowledgeDatabase {
       if (current.deletedAt) return { kind: "deleted" as const, document: current };
       if (current.revision !== revision) return { kind: "conflict" as const, document: current };
 
+      const timestamp = now();
       const assignments = ["revision = revision + 1", "updated_at = ?"];
-      const values: Array<string | number> = [now()];
+      const values: Array<string | number | null> = [timestamp];
       if (patch.title !== undefined) {
         assignments.push("title = ?", "title_edited = 1");
         values.push(patch.title);
@@ -1431,11 +1581,38 @@ export class KnowledgeDatabase {
         assignments.push("markdown = ?", "markdown_edited = 1");
         values.push(patch.markdown);
       }
+      if (patch.author !== undefined) {
+        assignments.push("author = ?", "author_edited = 1");
+        values.push(patch.author);
+      }
+      if (patch.publishedAt !== undefined) {
+        assignments.push("published_at = ?", "published_at_edited = 1");
+        values.push(patch.publishedAt);
+      }
+      if (patch.sourceNote !== undefined) {
+        assignments.push("source_note = ?");
+        values.push(patch.sourceNote);
+      }
+      if (patch.favorite !== undefined) {
+        assignments.push("favorite = ?");
+        values.push(Number(patch.favorite));
+      }
+      if (patch.archived !== undefined) {
+        assignments.push("archived_at = ?");
+        values.push(patch.archived ? timestamp : null);
+      }
+      if (patch.collectionIds !== undefined) {
+        const missingCollectionIds = this.missingCollectionIds(patch.collectionIds);
+        if (missingCollectionIds.length) {
+          return { kind: "invalid_collections" as const, missingCollectionIds, document: current };
+        }
+      }
       this.sql
         .prepare(`UPDATE documents SET ${assignments.join(", ")} WHERE id = ?`)
         .run(...values, id);
 
       if (patch.tags !== undefined) this.replaceTags(id, patch.tags);
+      if (patch.collectionIds !== undefined) this.replaceCollections(id, patch.collectionIds);
       if (patch.title !== undefined && patch.markdown !== undefined && patch.tags !== undefined) {
         this.sql
           .prepare(
@@ -1443,10 +1620,12 @@ export class KnowledgeDatabase {
              SET draft_revision = draft_revision + 1, deleted = 1, updated_at = ?
              WHERE document_id = ? AND title = ? AND markdown = ? AND tags_json = ? AND deleted = 0`,
           )
-          .run(now(), id, patch.title, patch.markdown, JSON.stringify(patch.tags));
+          .run(timestamp, id, patch.title, patch.markdown, JSON.stringify(patch.tags));
       }
       const document = this.getDocument(id)!;
-      this.recordRevision(document);
+      if (patch.title !== undefined || patch.markdown !== undefined || patch.tags !== undefined) {
+        this.recordRevision(document);
+      }
       return { kind: "updated" as const, document };
     });
   }
@@ -1461,6 +1640,27 @@ export class KnowledgeDatabase {
       this.sql.prepare("INSERT INTO document_tags(document_id, tag_id) VALUES (?, ?)").run(documentId, tag.id);
     }
     this.sql.prepare("DELETE FROM tags WHERE NOT EXISTS (SELECT 1 FROM document_tags WHERE tag_id = tags.id)").run();
+  }
+
+  private missingCollectionIds(collectionIds: string[]) {
+    if (!collectionIds.length) return [];
+    const placeholders = collectionIds.map(() => "?").join(", ");
+    const found = new Set(
+      (
+        this.sql.prepare(`SELECT id FROM collections WHERE id IN (${placeholders})`).all(...collectionIds) as Array<{
+          id: string;
+        }>
+      ).map(({ id }) => id),
+    );
+    return collectionIds.filter((id) => !found.has(id));
+  }
+
+  private replaceCollections(documentId: string, collectionIds: string[]) {
+    this.sql.prepare("DELETE FROM document_collections WHERE document_id = ?").run(documentId);
+    const insert = this.sql.prepare(
+      "INSERT INTO document_collections(document_id, collection_id) VALUES (?, ?)",
+    );
+    for (const collectionId of collectionIds) insert.run(documentId, collectionId);
   }
 
   private recordRevision(document: KnowledgeDocument) {
@@ -1848,7 +2048,8 @@ export class KnowledgeDatabase {
              final_url = ?,
              canonical_url = ?,
              title = CASE WHEN title_edited = 0 THEN ? ELSE title END,
-             author = ?, published_at = ?,
+             author = CASE WHEN author_edited = 0 THEN ? ELSE author END,
+             published_at = CASE WHEN published_at_edited = 0 THEN ? ELSE published_at END,
              markdown = CASE WHEN markdown_edited = 0 THEN ? ELSE markdown END,
              status = 'ready', warning = ?, error_code = NULL, error_message = NULL,
              capture_mode = ?, revision = revision + 1, updated_at = ?

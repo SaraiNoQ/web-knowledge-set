@@ -16,10 +16,12 @@ import type {
   DocumentDraft,
   DocumentRevision,
   DocumentSummary,
+  KnowledgeCollection,
   KnowledgeDocument,
   ReextractionPreview,
 } from "../shared/types";
 import { api, ApiRequestError } from "./api";
+import type { DocumentPatch } from "./api";
 import { DataSafety } from "./components/DataSafety";
 import { MarkdownEditor } from "./components/MarkdownEditor";
 
@@ -31,6 +33,19 @@ interface Draft {
   title: string;
   markdown: string;
   tags: string[];
+}
+
+interface SourceMetadataDraft {
+  author: string;
+  publishedDate: string;
+  sourceNote: string;
+}
+
+interface OrganizationConflict {
+  server: KnowledgeDocument;
+  patch: Omit<DocumentPatch, "revision">;
+  successMessage: string;
+  rebase?: (server: KnowledgeDocument) => Omit<DocumentPatch, "revision">;
 }
 
 interface RemoteDraftConflict {
@@ -47,6 +62,7 @@ interface NavigationGuard {
   generation: number;
   selectedId: string | null;
   dirty: { documentId: string; draft: Draft } | null;
+  metadata: { documentId: string; draft: SourceMetadataDraft } | null;
 }
 
 const ACTIVE_STATUSES = new Set<CaptureStatus>(["queued", "fetching", "extracting"]);
@@ -64,6 +80,35 @@ function draftOf(document: KnowledgeDocument): Draft {
 
 function draftsEqual(a: Draft, b: Draft) {
   return a.title.trim() === b.title.trim() && a.markdown === b.markdown && a.tags.join("\0") === b.tags.join("\0");
+}
+
+function sourceMetadataOf(document: KnowledgeDocument): SourceMetadataDraft {
+  return {
+    author: document.author || "",
+    publishedDate: document.publishedAt ? document.publishedAt.slice(0, 10) : "",
+    sourceNote: document.sourceNote,
+  };
+}
+
+function sourceMetadataEqual(a: SourceMetadataDraft, document: KnowledgeDocument) {
+  const current = sourceMetadataOf(document);
+  return (
+    a.author.trim() === current.author.trim() &&
+    a.publishedDate === current.publishedDate &&
+    a.sourceNote === current.sourceNote
+  );
+}
+
+function sourceMetadataPatch(value: SourceMetadataDraft, document: KnowledgeDocument) {
+  const patch: Omit<DocumentPatch, "revision"> = {};
+  const author = value.author.trim() || null;
+  if (author !== document.author) patch.author = author;
+  const currentPublishedDate = document.publishedAt ? document.publishedAt.slice(0, 10) : "";
+  if (value.publishedDate !== currentPublishedDate) {
+    patch.publishedAt = value.publishedDate || null;
+  }
+  if (value.sourceNote !== document.sourceNote) patch.sourceNote = value.sourceNote;
+  return patch;
 }
 
 function formatDate(value: string) {
@@ -378,6 +423,7 @@ export default function App() {
   const [currentDoc, setCurrentDoc] = useState<KnowledgeDocument | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [tagText, setTagText] = useState("");
+  const [sourceMetadata, setSourceMetadata] = useState<SourceMetadataDraft | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
   const [assets, setAssets] = useState<DocumentAsset[]>([]);
@@ -415,21 +461,37 @@ export default function App() {
   const [closing, setClosing] = useState(false);
   const [safetyOpen, setSafetyOpen] = useState(false);
   const [safetyRecovery, setSafetyRecovery] = useState(false);
+  const [collections, setCollections] = useState<KnowledgeCollection[]>([]);
+  const [collectionsOpen, setCollectionsOpen] = useState(false);
+  const [collectionsLoading, setCollectionsLoading] = useState(false);
+  const [collectionName, setCollectionName] = useState("");
+  const [renamingCollection, setRenamingCollection] = useState<{ id: string; name: string } | null>(null);
+  const [collectionAction, setCollectionAction] = useState<string | null>(null);
+  const [organizationSaving, setOrganizationSaving] = useState(false);
+  const [organizationError, setOrganizationError] = useState("");
+  const [organizationNotice, setOrganizationNotice] = useState("");
+  const [organizationConflict, setOrganizationConflict] = useState<OrganizationConflict | null>(null);
 
   const selectedIdRef = useRef(selectedId);
   const draftRef = useRef(draft);
   const currentDocRef = useRef(currentDoc);
+  const sourceMetadataRef = useRef(sourceMetadata);
   const persistedDraftRef = useRef<DocumentDraft | null>(null);
   const draftSaveChain = useRef<Promise<void>>(Promise.resolve());
   const draftSyncPendingRef = useRef(0);
   const closeAttemptRef = useRef<string | null>(null);
   const saveInFlight = useRef(false);
+  const organizationInFlight = useRef(false);
+  const organizationPromiseRef = useRef<Promise<unknown> | null>(null);
+  const collectionsRequestRef = useRef<{ sequence: number; controller: AbortController } | null>(null);
+  const collectionsRequestSequenceRef = useRef(0);
   const keptDuplicateIdsRef = useRef(new Set<string>());
   const navigationGenerationRef = useRef(0);
   const readerPanelRef = useRef<HTMLElement>(null);
   selectedIdRef.current = selectedId;
   draftRef.current = draft;
   currentDocRef.current = currentDoc;
+  sourceMetadataRef.current = sourceMetadata;
 
   useEffect(() => {
     void api.getDataSafety().then((value) => {
@@ -442,8 +504,16 @@ export default function App() {
 
   const persistedDraft = currentDoc ? draftOf(currentDoc) : null;
   const dirty = Boolean(draft && persistedDraft && !draftsEqual(draft, persistedDraft));
+  const metadataDirty = Boolean(sourceMetadata && currentDoc && !sourceMetadataEqual(sourceMetadata, currentDoc));
+  const hasUnsavedChanges = dirty || metadataDirty;
   const activeCapture = currentDoc ? ACTIVE_STATUSES.has(currentDoc.status) : false;
-  const editorLocked = closing || captureApplying || Boolean(lifecycleAction) || restoringRevision !== null || Boolean(conflict && saveState === "saving");
+  const editorLocked = closing || captureApplying || organizationSaving || Boolean(collectionAction) || metadataDirty || Boolean(organizationConflict) || Boolean(lifecycleAction) || restoringRevision !== null || Boolean(conflict && saveState === "saving");
+  const organizationLocked = (
+    closing || captureApplying || organizationSaving || Boolean(collectionAction) || dirty || saveState === "saving" ||
+    Boolean(conflict) || Boolean(remoteDraftConflict) || Boolean(organizationConflict) ||
+    Boolean(lifecycleAction) || restoringRevision !== null || Boolean(currentDoc?.deletedAt) || currentDoc?.status !== "ready"
+  );
+  const navigationMutationLocked = Boolean(lifecycleAction) || restoringRevision !== null;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
   const loadCaptureQueue = useCallback(async (signal?: AbortSignal) => {
@@ -468,6 +538,47 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [captureQueue?.active, captureQueue?.queued, loadCaptureQueue, safetyOpen]);
 
+  const invalidateCollectionsLoad = useCallback(() => {
+    collectionsRequestSequenceRef.current += 1;
+    collectionsRequestRef.current?.controller.abort();
+    collectionsRequestRef.current = null;
+    setCollectionsLoading(false);
+  }, []);
+
+  const loadCollections = useCallback(async (signal?: AbortSignal) => {
+    const sequence = ++collectionsRequestSequenceRef.current;
+    collectionsRequestRef.current?.controller.abort();
+    const controller = new AbortController();
+    collectionsRequestRef.current = { sequence, controller };
+    const abort = () => controller.abort();
+    if (signal?.aborted) controller.abort();
+    else signal?.addEventListener("abort", abort, { once: true });
+    setCollectionsLoading(true);
+    try {
+      const result = await api.listCollections(controller.signal);
+      if (collectionsRequestSequenceRef.current === sequence && !controller.signal.aborted) {
+        setCollections(result);
+      }
+    } catch (error) {
+      if ((error as Error).name !== "AbortError" && collectionsRequestSequenceRef.current === sequence) {
+        setOrganizationError((error as Error).message);
+      }
+    } finally {
+      signal?.removeEventListener("abort", abort);
+      if (collectionsRequestRef.current?.sequence === sequence) {
+        collectionsRequestRef.current = null;
+        setCollectionsLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (safetyOpen) return;
+    const controller = new AbortController();
+    void loadCollections(controller.signal);
+    return () => controller.abort();
+  }, [loadCollections, safetyOpen]);
+
   const refreshKnownTags = useCallback((signal?: AbortSignal) => {
     void api.listTags(inTrash ? "only" : undefined, signal).then(setKnownTags).catch(() => {
       // Keep the last complete tag list when this secondary refresh fails.
@@ -485,9 +596,35 @@ export default function App() {
       errorMessage: document.errorMessage,
       revision: document.revision,
       deletedAt: document.deletedAt,
+      favorite: document.favorite,
+      archivedAt: document.archivedAt,
+      collections: document.collections,
       updatedAt: document.updatedAt,
     } : item));
   }, []);
+
+  const installCurrentDocument = useCallback((document: KnowledgeDocument | null) => {
+    const metadata = document ? sourceMetadataOf(document) : null;
+    currentDocRef.current = document;
+    sourceMetadataRef.current = metadata;
+    setCurrentDoc(document);
+    setSourceMetadata(metadata);
+  }, []);
+
+  const trackOrganizationTask = useCallback(function track<T>(request: Promise<T>) {
+    organizationInFlight.current = true;
+    organizationPromiseRef.current = request;
+    return request.finally(() => {
+      if (organizationPromiseRef.current === request) {
+        organizationPromiseRef.current = null;
+        organizationInFlight.current = false;
+      }
+    });
+  }, []);
+
+  const sendOrganizationPatch = useCallback((document: KnowledgeDocument, patch: Omit<DocumentPatch, "revision">) => (
+    api.updateDocument(document.id, { ...patch, revision: document.revision })
+  ), []);
 
   const focusReader = useCallback(() => {
     window.requestAnimationFrame(() => readerPanelRef.current?.focus());
@@ -500,17 +637,34 @@ export default function App() {
     return { documentId: document.id, draft: { ...value, tags: [...value.tags] } };
   };
 
+  const currentDirtySourceMetadata = () => {
+    const document = currentDocRef.current;
+    const value = sourceMetadataRef.current;
+    if (!document || !value || sourceMetadataEqual(value, document)) return null;
+    return { documentId: document.id, draft: { ...value } };
+  };
+
   const beginNavigation = (): NavigationGuard => ({
     generation: ++navigationGenerationRef.current,
     selectedId: selectedIdRef.current,
     dirty: currentDirtyDraft(),
+    metadata: currentDirtySourceMetadata(),
   });
 
   const canApplyNavigation = (guard: NavigationGuard) => {
     if (navigationGenerationRef.current !== guard.generation || selectedIdRef.current !== guard.selectedId) return false;
-    const live = currentDirtyDraft();
-    if (!live) return true;
-    return Boolean(guard.dirty && guard.dirty.documentId === live.documentId && draftsEqual(guard.dirty.draft, live.draft));
+    const liveDraft = currentDirtyDraft();
+    const sameDraft = !liveDraft || Boolean(
+      guard.dirty && guard.dirty.documentId === liveDraft.documentId && draftsEqual(guard.dirty.draft, liveDraft.draft)
+    );
+    const liveMetadata = currentDirtySourceMetadata();
+    const sameMetadata = !liveMetadata || Boolean(
+      guard.metadata && guard.metadata.documentId === liveMetadata.documentId &&
+      guard.metadata.draft.author === liveMetadata.draft.author &&
+      guard.metadata.draft.publishedDate === liveMetadata.draft.publishedDate &&
+      guard.metadata.draft.sourceNote === liveMetadata.draft.sourceNote
+    );
+    return sameDraft && sameMetadata;
   };
 
   const invalidateNavigation = () => {
@@ -612,6 +766,9 @@ export default function App() {
   const prepareDataSafetyOperation = useCallback(async () => {
     if (closeAttemptRef.current) throw new Error("应用正在关闭，请重新打开后再操作。");
     if (remoteDraftConflict) throw new Error("请先处理当前草稿冲突。");
+    if (currentDirtySourceMetadata() || organizationInFlight.current || organizationConflict) {
+      throw new Error("请先保存或放弃当前来源信息。");
+    }
     await draftSaveChain.current;
     const document = currentDocRef.current;
     const value = draftRef.current;
@@ -619,7 +776,7 @@ export default function App() {
     if (draftsEqual(value, draftOf(document))) await tombstoneDraft(document.id);
     else await persistDraft(document, value);
     await draftSaveChain.current;
-  }, [persistDraft, remoteDraftConflict, tombstoneDraft]);
+  }, [organizationConflict, persistDraft, remoteDraftConflict, tombstoneDraft]);
 
   const reloadDraftConflict = useCallback(async (documentId: string) => {
     const [document, stored] = await Promise.all([
@@ -627,12 +784,12 @@ export default function App() {
       api.getDocumentDraft(documentId),
     ]);
     if (selectedIdRef.current !== documentId) return;
-    setCurrentDoc(document);
+    installCurrentDocument(document);
     updateListItem(document);
     setRemoteDraftConflict({ remote: stored });
     setSaveState("conflict");
     setDraftNotice("检测到另一个窗口写入的草稿，你的当前编辑未被覆盖。");
-  }, [updateListItem]);
+  }, [installCurrentDocument, updateListItem]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -689,14 +846,14 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedId) {
-      setCurrentDoc(null);
+      installCurrentDocument(null);
       setDraft(null);
       setAssets([]);
       setAssetError("");
       return;
     }
     const controller = new AbortController();
-    setCurrentDoc(null);
+    installCurrentDocument(null);
     setDraft(null);
     setAssets([]);
     setAssetError("");
@@ -707,6 +864,11 @@ export default function App() {
     setSaveError("");
     setDraftNotice("");
     setDraftError("");
+    setOrganizationError("");
+    setOrganizationNotice("");
+    setOrganizationConflict(null);
+    setCollectionsOpen(false);
+    setRenamingCollection(null);
     persistedDraftRef.current = null;
     setConflict(null);
     setRemoteDraftConflict(null);
@@ -725,7 +887,7 @@ export default function App() {
       api.getDocumentDraft(selectedId, controller.signal),
     ])
       .then(([document, stored]) => {
-        setCurrentDoc(document);
+        installCurrentDocument(document);
         const serverDraft = draftOf(document);
         const recovered = stored
           ? { title: stored.title, markdown: stored.markdown, tags: [...stored.tags] }
@@ -821,7 +983,7 @@ export default function App() {
           !needsCapturePolling(live)
         ) return;
         updateListItem(document);
-        setCurrentDoc(document);
+        installCurrentDocument(document);
         setDraft(draftOf(document));
         setTagText(document.tags.join(", "));
       } catch (error) {
@@ -871,7 +1033,8 @@ export default function App() {
   const saveNow = useCallback(async () => {
     if (
       closeAttemptRef.current || !currentDoc || !draft || currentDoc.status !== "ready" || !dirty ||
-      saveInFlight.current || conflict || remoteDraftConflict
+      saveInFlight.current || organizationInFlight.current || collectionAction || metadataDirty || organizationConflict ||
+      conflict || remoteDraftConflict
     ) return;
     const sent = { ...draft, tags: [...draft.tags] };
     saveInFlight.current = true;
@@ -881,7 +1044,7 @@ export default function App() {
       await persistDraft(currentDoc, sent);
       const updated = await api.updateDocument(currentDoc.id, { ...sent, revision: currentDoc.revision });
       if (selectedIdRef.current !== currentDoc.id) return;
-      setCurrentDoc(updated);
+      installCurrentDocument(updated);
       updateListItem(updated);
       refreshKnownTags();
       const unchangedSinceRequest = Boolean(draftRef.current && draftsEqual(draftRef.current, sent));
@@ -907,7 +1070,7 @@ export default function App() {
     } finally {
       saveInFlight.current = false;
     }
-  }, [conflict, currentDoc, dirty, draft, persistDraft, refreshKnownTags, remoteDraftConflict, updateListItem]);
+  }, [collectionAction, conflict, currentDoc, dirty, draft, metadataDirty, organizationConflict, persistDraft, refreshKnownTags, remoteDraftConflict, updateListItem]);
 
   useEffect(() => {
     if (closing || !dirty || saveState === "conflict" || saveState === "error" || currentDoc?.status !== "ready") return;
@@ -944,6 +1107,9 @@ export default function App() {
         : !storedForDocument || Boolean(document && stored && draftsEqual(stored, draftOf(document)));
       if (
         draftSyncPendingRef.current === 0 &&
+        !currentDirtySourceMetadata() &&
+        !organizationInFlight.current &&
+        !organizationConflict &&
         !remoteDraftConflict &&
         safelyPersisted
       ) return;
@@ -952,7 +1118,7 @@ export default function App() {
     };
     window.addEventListener("beforeunload", warnUnsaved);
     return () => window.removeEventListener("beforeunload", warnUnsaved);
-  }, [remoteDraftConflict]);
+  }, [organizationConflict, remoteDraftConflict]);
 
   useEffect(() => {
     const prepareClose = (event: Event) => {
@@ -966,10 +1132,20 @@ export default function App() {
       setClosing(true);
       void (async () => {
         try {
+          if (organizationConflict) throw new Error("请先处理来源信息的版本冲突。");
+          if (organizationPromiseRef.current) await organizationPromiseRef.current;
           await draftSaveChain.current;
           if (closeAttemptRef.current !== attemptId) return;
-          const document = currentDocRef.current;
+          let document = currentDocRef.current;
           const value = draftRef.current;
+          const metadata = sourceMetadataRef.current;
+          if (!safetyRecovery && document && metadata && !sourceMetadataEqual(metadata, document)) {
+            document = await trackOrganizationTask(
+              sendOrganizationPatch(document, sourceMetadataPatch(metadata, document)),
+            );
+            installCurrentDocument(document);
+            updateListItem(document);
+          }
           if (!safetyRecovery && document && value) {
             const stored = persistedDraftRef.current;
             const alreadyDurable = stored?.documentId === document.id && draftsEqual(value, stored);
@@ -985,7 +1161,7 @@ export default function App() {
           if (closeAttemptRef.current !== attemptId) return;
           closeAttemptRef.current = null;
           setClosing(false);
-          setDraftError(`关闭前无法保存草稿：${(error as Error).message}`);
+          setDraftError(`关闭前无法保存更改：${(error as Error).message}`);
         }
       })();
     };
@@ -1002,7 +1178,7 @@ export default function App() {
       window.removeEventListener("zhiye:close-requested", prepareClose);
       window.removeEventListener("zhiye:close-timeout", closeTimedOut);
     };
-  }, [persistDraft, safetyOpen, safetyRecovery, tombstoneDraft]);
+  }, [installCurrentDocument, organizationConflict, persistDraft, safetyOpen, safetyRecovery, sendOrganizationPatch, tombstoneDraft, trackOrganizationTask, updateListItem]);
 
   const revealDocument = async (document: DocumentSummary, guard: NavigationGuard) => {
     const inTargetTrash = Boolean(document.deletedAt);
@@ -1051,11 +1227,11 @@ export default function App() {
 
   const handleImport = async (event: FormEvent) => {
     event.preventDefault();
-    if (closeAttemptRef.current) return;
+    if (closeAttemptRef.current || lifecycleAction || restoringRevision !== null) return;
     setImportError("");
     setImportNotice("");
     setImportDuplicate(null);
-    if (dirty && !window.confirm("当前修改尚未保存，继续收取新网页吗？")) return;
+    if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，继续收取新网页吗？")) return;
     let normalized: string;
     try {
       const parsed = new URL(importUrl.trim());
@@ -1069,9 +1245,9 @@ export default function App() {
   };
 
   const openImportedDuplicate = async () => {
-    if (!importDuplicate || closeAttemptRef.current) return;
+    if (!importDuplicate || closeAttemptRef.current || lifecycleAction || restoringRevision !== null) return;
     const prompt = importDuplicate;
-    if (dirty && prompt.document.id !== currentDoc?.id && !window.confirm("当前修改尚未保存，确定打开已有知识吗？")) return;
+    if (hasUnsavedChanges && prompt.document.id !== currentDoc?.id && !window.confirm("当前修改尚未保存，确定打开已有知识吗？")) return;
     const guard = beginNavigation();
     setImporting(true);
     setImportError("");
@@ -1088,8 +1264,11 @@ export default function App() {
   };
 
   const keepImportedDuplicate = async () => {
-    if (!importDuplicate || importDuplicate.kind !== "resolved" || closeAttemptRef.current) return;
-    if (dirty && !window.confirm("当前修改尚未保存，仍要保留为另一篇知识吗？")) return;
+    if (
+      !importDuplicate || importDuplicate.kind !== "resolved" || closeAttemptRef.current ||
+      lifecycleAction || restoringRevision !== null
+    ) return;
+    if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，仍要保留为另一篇知识吗？")) return;
     await importDocument(importDuplicate.url, true, beginNavigation());
   };
 
@@ -1106,9 +1285,210 @@ export default function App() {
     }
   };
 
+  const finishOrganizationUpdate = (updated: KnowledgeDocument, message: string) => {
+    if (selectedIdRef.current !== updated.id) return;
+    installCurrentDocument(updated);
+    setDraft(draftOf(updated));
+    setTagText(updated.tags.join(", "));
+    updateListItem(updated);
+    setOrganizationConflict(null);
+    setOrganizationError("");
+    setOrganizationNotice(message);
+  };
+
+  const commitOrganization = async (
+    patch: Omit<DocumentPatch, "revision">,
+    successMessage: string,
+    baseDocument = currentDocRef.current,
+    retryingConflict = false,
+    rebase?: OrganizationConflict["rebase"],
+  ) => {
+    const body = draftRef.current;
+    if (
+      closeAttemptRef.current || organizationInFlight.current || saveInFlight.current || !baseDocument ||
+      baseDocument.status !== "ready" || baseDocument.deletedAt || !body || !draftsEqual(body, draftOf(currentDocRef.current || baseDocument)) ||
+      conflict || remoteDraftConflict || (!retryingConflict && organizationConflict)
+    ) return false;
+    setOrganizationSaving(true);
+    setOrganizationError("");
+    setOrganizationNotice("");
+    return trackOrganizationTask((async () => {
+      try {
+        const updated = await sendOrganizationPatch(baseDocument, patch);
+        finishOrganizationUpdate(updated, successMessage);
+        if ("collectionIds" in patch) await loadCollections();
+        return true;
+      } catch (error) {
+        if (
+          error instanceof ApiRequestError && error.status === 409 && error.document &&
+          selectedIdRef.current === baseDocument.id
+        ) {
+          setOrganizationConflict({ server: error.document, patch, successMessage, rebase });
+          setOrganizationError("这篇知识已在别处更新，请基于最新版本重试或放弃这次更改。");
+        } else if (selectedIdRef.current === baseDocument.id) {
+          setOrganizationError((error as Error).message);
+        }
+        return false;
+      } finally {
+        setOrganizationSaving(false);
+      }
+    })());
+  };
+
+  const saveSourceMetadata = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!currentDoc || !sourceMetadata || organizationLocked) return;
+    const patch = sourceMetadataPatch(sourceMetadata, currentDoc);
+    if (!Object.keys(patch).length) return;
+    await commitOrganization(patch, "来源信息已保存。");
+  };
+
+  const retryOrganizationUpdate = async () => {
+    if (!organizationConflict) return;
+    const pending = organizationConflict;
+    const patch = pending.rebase ? pending.rebase(pending.server) : pending.patch;
+    await commitOrganization(patch, pending.successMessage, pending.server, true, pending.rebase);
+  };
+
+  const discardOrganizationUpdate = () => {
+    if (!organizationConflict) return;
+    const server = organizationConflict.server;
+    installCurrentDocument(server);
+    setDraft(draftOf(server));
+    setTagText(server.tags.join(", "));
+    updateListItem(server);
+    setOrganizationConflict(null);
+    setOrganizationError("");
+    setOrganizationNotice("已放弃这次组织与来源信息更改。");
+  };
+
+  const toggleFavorite = async () => {
+    if (!currentDoc || organizationLocked || metadataDirty) return;
+    await commitOrganization(
+      { favorite: !currentDoc.favorite },
+      currentDoc.favorite ? "已取消收藏。" : "已加入收藏。",
+    );
+  };
+
+  const toggleArchive = async () => {
+    if (!currentDoc || organizationLocked || metadataDirty) return;
+    await commitOrganization(
+      { archived: !currentDoc.archivedAt },
+      currentDoc.archivedAt ? "已取消归档。" : "已归档。",
+    );
+  };
+
+  const toggleDocumentCollection = async (collectionId: string, checked: boolean) => {
+    if (!currentDoc || organizationLocked || metadataDirty) return;
+    const ids = currentDoc.collections.map((collection) => collection.id);
+    const next = checked ? [...new Set([...ids, collectionId])] : ids.filter((id) => id !== collectionId);
+    const rebase = (server: KnowledgeDocument) => {
+      const serverIds = server.collections.map((collection) => collection.id);
+      return {
+        collectionIds: checked
+          ? [...new Set([...serverIds, collectionId])]
+          : serverIds.filter((id) => id !== collectionId),
+      };
+    };
+    await commitOrganization(
+      { collectionIds: next },
+      checked ? "已加入集合。" : "已移出集合。",
+      currentDoc,
+      false,
+      rebase,
+    );
+  };
+
+  const createCollection = async (event: FormEvent) => {
+    event.preventDefault();
+    const name = collectionName.trim();
+    if (!name || organizationInFlight.current || closeAttemptRef.current) return;
+    setCollectionAction("create");
+    setOrganizationError("");
+    setOrganizationNotice("");
+    try {
+      const created = await trackOrganizationTask(api.createCollection(name));
+      invalidateCollectionsLoad();
+      setCollections((previous) => [...previous, created].sort((a, b) => a.name.localeCompare(b.name, "zh-CN")));
+      setCollectionName("");
+      setOrganizationNotice(`已创建集合“${created.name}”。`);
+    } catch (error) {
+      setOrganizationError((error as Error).message);
+    } finally {
+      setCollectionAction(null);
+    }
+  };
+
+  const renameCollection = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!renamingCollection || organizationInFlight.current || closeAttemptRef.current) return;
+    const name = renamingCollection.name.trim();
+    if (!name) return;
+    const id = renamingCollection.id;
+    setCollectionAction(id);
+    setOrganizationError("");
+    setOrganizationNotice("");
+    try {
+      const updated = await trackOrganizationTask(api.updateCollection(id, name));
+      invalidateCollectionsLoad();
+      setCollections((previous) => previous.map((value) => value.id === id ? updated : value));
+      const document = currentDocRef.current;
+      if (document?.collections.some((value) => value.id === id)) {
+        const renamed = {
+          ...document,
+          collections: document.collections.map((value) => value.id === id ? { id, name: updated.name } : value),
+        };
+        currentDocRef.current = renamed;
+        setCurrentDoc(renamed);
+        updateListItem(renamed);
+      }
+      setRenamingCollection(null);
+      setOrganizationNotice(`集合已更名为“${updated.name}”。`);
+    } catch (error) {
+      setOrganizationError((error as Error).message);
+    } finally {
+      setCollectionAction(null);
+    }
+  };
+
+  const deleteCollection = async (collection: KnowledgeCollection) => {
+    if (
+      organizationInFlight.current || closeAttemptRef.current ||
+      !window.confirm(`删除集合“${collection.name}”？它将从 ${collection.documentCount} 篇知识中移除，文档本身不会删除。`)
+    ) return;
+    setCollectionAction(collection.id);
+    setOrganizationError("");
+    setOrganizationNotice("");
+    try {
+      const document = currentDocRef.current;
+      const { result, refreshed } = await trackOrganizationTask((async () => {
+        const deleted = await api.deleteCollection(collection.id);
+        invalidateCollectionsLoad();
+        const nextDocument = document?.collections.some((value) => value.id === collection.id)
+          ? await api.getDocument(document.id)
+          : null;
+        return { result: deleted, refreshed: nextDocument };
+      })());
+      setCollections((previous) => previous.filter((value) => value.id !== collection.id));
+      setRenamingCollection((value) => value?.id === collection.id ? null : value);
+      if (refreshed && selectedIdRef.current === refreshed.id) {
+        installCurrentDocument(refreshed);
+        setDraft(draftOf(refreshed));
+        setTagText(refreshed.tags.join(", "));
+        updateListItem(refreshed);
+      }
+      setOrganizationNotice(`已删除集合“${collection.name}”，从 ${result.affectedDocuments} 篇知识中移除。`);
+    } catch (error) {
+      setOrganizationError((error as Error).message);
+      void loadCollections();
+    } finally {
+      setCollectionAction(null);
+    }
+  };
+
   const openResolvedDuplicate = async () => {
-    if (!resolvedDuplicate || closeAttemptRef.current) return;
-    if (dirty && !window.confirm("当前修改尚未保存，确定打开已有知识吗？")) return;
+    if (!resolvedDuplicate || closeAttemptRef.current || lifecycleAction || restoringRevision !== null) return;
+    if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，确定打开已有知识吗？")) return;
     const duplicate = resolvedDuplicate;
     const guard = beginNavigation();
     setResolvedDuplicate(null);
@@ -1138,22 +1518,22 @@ export default function App() {
   };
 
   const selectDocument = (id: string) => {
-    if (closeAttemptRef.current || id === selectedId || lifecycleAction || restoringRevision !== null) return;
-    if (dirty && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
+    if (closeAttemptRef.current || organizationInFlight.current || id === selectedId || lifecycleAction || restoringRevision !== null) return;
+    if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
     invalidateNavigation();
     setSelectedId(id);
   };
 
   const closeDocument = () => {
-    if (closeAttemptRef.current || lifecycleAction || restoringRevision !== null) return;
-    if (dirty && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
+    if (closeAttemptRef.current || organizationInFlight.current || lifecycleAction || restoringRevision !== null) return;
+    if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
     invalidateNavigation();
     setSelectedId(null);
   };
 
   const switchLibrary = (trashView: boolean) => {
-    if (closeAttemptRef.current || trashView === inTrash || lifecycleAction || restoringRevision !== null) return;
-    if (dirty && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
+    if (closeAttemptRef.current || organizationInFlight.current || trashView === inTrash || lifecycleAction || restoringRevision !== null) return;
+    if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
     invalidateNavigation();
     setInTrash(trashView);
     setPage(1);
@@ -1190,7 +1570,7 @@ export default function App() {
     setDetailError("");
     try {
       const updated = await api.retryDocument(currentDoc.id);
-      setCurrentDoc(updated);
+      installCurrentDocument(updated);
       setDraft(draftOf(updated));
       setTagText(updated.tags.join(", "));
       updateListItem(updated);
@@ -1210,7 +1590,7 @@ export default function App() {
     try {
       const updated = await api.cancelDocument(documentId);
       if (selectedIdRef.current !== documentId) return;
-      setCurrentDoc(updated);
+      installCurrentDocument(updated);
       setDraft(draftOf(updated));
       setTagText(updated.tags.join(", "));
       updateListItem(updated);
@@ -1223,12 +1603,12 @@ export default function App() {
   };
 
   const moveToTrash = async () => {
-    if (closeAttemptRef.current || remoteDraftConflict || !currentDoc || dirty || !window.confirm(`把“${currentDoc.title || "未命名网页"}”移入回收站？之后可以恢复。`)) return;
+    if (closeAttemptRef.current || organizationInFlight.current || remoteDraftConflict || organizationConflict || !currentDoc || hasUnsavedChanges || !window.confirm(`把“${currentDoc.title || "未命名网页"}”移入回收站？之后可以恢复。`)) return;
     setLifecycleAction("delete");
     setDetailError("");
     try {
       const deleted = await api.deleteDocument(currentDoc.id, currentDoc.revision);
-      setCurrentDoc(deleted);
+      installCurrentDocument(deleted);
       setDraft(draftOf(deleted));
       setTagText(deleted.tags.join(", "));
       setInTrash(true);
@@ -1238,7 +1618,7 @@ export default function App() {
       focusReader();
     } catch (error) {
       if (error instanceof ApiRequestError && error.status === 409 && error.document) {
-        setCurrentDoc(error.document);
+        installCurrentDocument(error.document);
         setDraft(draftOf(error.document));
         setTagText(error.document.tags.join(", "));
         alignLibraryWithDocument(error.document);
@@ -1250,13 +1630,16 @@ export default function App() {
   };
 
   const restoreFromTrash = async () => {
-    if (closeAttemptRef.current || !currentDoc) return;
+    if (closeAttemptRef.current || importing || !currentDoc) return;
+    const document = currentDoc;
+    const guard = beginNavigation();
     const recovered = dirty && draft ? { ...draft, tags: [...draft.tags] } : null;
     setLifecycleAction("restore");
     setDetailError("");
     try {
-      const restored = await api.restoreDocument(currentDoc.id, currentDoc.revision);
-      setCurrentDoc(restored);
+      const restored = await api.restoreDocument(document.id, document.revision);
+      if (!canApplyNavigation(guard)) return;
+      installCurrentDocument(restored);
       if (recovered) {
         setDraft(recovered);
         setTagText(recovered.tags.join(", "));
@@ -1271,8 +1654,9 @@ export default function App() {
       setItems([]);
       focusReader();
     } catch (error) {
+      if (!canApplyNavigation(guard)) return;
       if (error instanceof ApiRequestError && error.status === 409 && error.document) {
-        setCurrentDoc(error.document);
+        installCurrentDocument(error.document);
         alignLibraryWithDocument(error.document);
         if (recovered) {
           setDraft(recovered);
@@ -1291,7 +1675,7 @@ export default function App() {
   };
 
   const permanentlyDelete = async () => {
-    if (closeAttemptRef.current || !currentDoc || dirty || conflict || remoteDraftConflict || !window.confirm(`永久删除“${currentDoc.title || "未命名网页"}”？抓取快照和历史版本也会被删除，此操作无法撤销。`)) return;
+    if (closeAttemptRef.current || organizationInFlight.current || !currentDoc || hasUnsavedChanges || conflict || organizationConflict || remoteDraftConflict || !window.confirm(`永久删除“${currentDoc.title || "未命名网页"}”？抓取快照和历史版本也会被删除，此操作无法撤销。`)) return;
     setLifecycleAction("permanent");
     setDetailError("");
     try {
@@ -1319,7 +1703,7 @@ export default function App() {
         return;
       }
       if (error instanceof ApiRequestError && error.status === 409 && error.document) {
-        setCurrentDoc(error.document);
+        installCurrentDocument(error.document);
         alignLibraryWithDocument(error.document);
         if (error.code !== "DRAFT_EXISTS") {
           setDraft(draftOf(error.document));
@@ -1333,7 +1717,7 @@ export default function App() {
   };
 
   const toggleHistory = async () => {
-    if (closeAttemptRef.current) return;
+    if (closeAttemptRef.current || organizationInFlight.current || hasUnsavedChanges) return;
     if (!currentDoc || historyOpen) {
       setHistoryOpen(false);
       return;
@@ -1341,6 +1725,7 @@ export default function App() {
     const documentId = currentDoc.id;
     setCaptureHistoryOpen(false);
     setQualityOpen(false);
+    setCollectionsOpen(false);
     setHistoryOpen(true);
     setHistoryLoading(true);
     setHistoryError("");
@@ -1358,6 +1743,7 @@ export default function App() {
     if (closeAttemptRef.current || !currentDoc) return;
     setHistoryOpen(false);
     setQualityOpen(false);
+    setCollectionsOpen(false);
     setCaptureHistoryOpen((value) => !value);
   };
 
@@ -1365,7 +1751,17 @@ export default function App() {
     if (closeAttemptRef.current || !currentDoc) return;
     setHistoryOpen(false);
     setCaptureHistoryOpen(false);
+    setCollectionsOpen(false);
     setQualityOpen((value) => !value);
+  };
+
+  const toggleCollectionManager = () => {
+    if (closeAttemptRef.current || !currentDoc) return;
+    setHistoryOpen(false);
+    setCaptureHistoryOpen(false);
+    setQualityOpen(false);
+    setRenamingCollection(null);
+    setCollectionsOpen((value) => !value);
   };
 
   const applyReextraction = async (
@@ -1396,7 +1792,7 @@ export default function App() {
         ...(applyMarkdown ? { markdown: preview.after.markdown } : {}),
       });
       if (selectedIdRef.current === updated.id) {
-        setCurrentDoc(updated);
+        installCurrentDocument(updated);
         setDraft(draftOf(updated));
         setTagText(updated.tags.join(", "));
         setSaveState("saved");
@@ -1406,7 +1802,7 @@ export default function App() {
     } catch (error) {
       if (error instanceof ApiRequestError && error.status === 409 && error.document) {
         if (selectedIdRef.current === error.document.id) {
-          setCurrentDoc(error.document);
+          installCurrentDocument(error.document);
           setDraft(draftOf(error.document));
           setTagText(error.document.tags.join(", "));
           alignLibraryWithDocument(error.document);
@@ -1420,12 +1816,15 @@ export default function App() {
   };
 
   const restoreRevision = async (revision: DocumentRevision) => {
-    if (closeAttemptRef.current || !currentDoc || dirty) return;
+    if (closeAttemptRef.current || organizationInFlight.current || importing || !currentDoc || hasUnsavedChanges) return;
+    const document = currentDoc;
+    const guard = beginNavigation();
     setRestoringRevision(revision.revision);
     setHistoryError("");
     try {
-      const restored = await api.restoreDocumentRevision(currentDoc.id, revision.revision, currentDoc.revision);
-      setCurrentDoc(restored);
+      const restored = await api.restoreDocumentRevision(document.id, revision.revision, document.revision);
+      if (!canApplyNavigation(guard)) return;
+      installCurrentDocument(restored);
       setDraft(draftOf(restored));
       setTagText(restored.tags.join(", "));
       updateListItem(restored);
@@ -1434,6 +1833,7 @@ export default function App() {
       setSaveState("saved");
       focusReader();
     } catch (error) {
+      if (!canApplyNavigation(guard)) return;
       if (error instanceof ApiRequestError && error.status === 409 && error.document) {
         setDraft({ title: revision.title, markdown: revision.markdown, tags: [...revision.tags] });
         setTagText(revision.tags.join(", "));
@@ -1502,7 +1902,7 @@ export default function App() {
       await tombstoneDraft(server.id);
       const latest = await api.getDocument(server.id);
       persistedDraftRef.current = null;
-      setCurrentDoc(latest);
+      installCurrentDocument(latest);
       setDraft(draftOf(latest));
       setTagText(latest.tags.join(", "));
       updateListItem(latest);
@@ -1548,7 +1948,7 @@ export default function App() {
       await persistDraft(base, local);
       const updated = await api.updateDocument(base.id, { ...local, revision: base.revision });
       persistedDraftRef.current = null;
-      setCurrentDoc(updated);
+      installCurrentDocument(updated);
       setDraft(draftOf(updated));
       setTagText(updated.tags.join(", "));
       setConflict(null);
@@ -1594,9 +1994,9 @@ export default function App() {
     ? "只能从已就绪的文档采纳候选。"
     : currentDoc.deletedAt
       ? "先从回收站恢复文档，再采纳候选。"
-      : dirty || saveState === "saving"
+      : hasUnsavedChanges || saveState === "saving" || organizationSaving
         ? "请先保存或放弃当前编辑。"
-        : conflict || remoteDraftConflict
+        : conflict || remoteDraftConflict || organizationConflict
           ? "请先处理当前的版本或草稿冲突。"
           : null;
   const qualityIssues: Array<{ title: string; detail: string }> = [];
@@ -1659,8 +2059,8 @@ export default function App() {
         <form className="capture-form" onSubmit={handleImport}>
           <label className="sr-only" htmlFor="capture-url">网页地址</label>
           <span className="url-prefix" aria-hidden="true">URL</span>
-          <input id="capture-url" value={importUrl} onChange={(event) => { setImportUrl(event.target.value); setImportDuplicate(null); setImportError(""); setImportNotice(""); }} placeholder="https://example.com/an-article" inputMode="url" autoComplete="url" disabled={importing || closing} />
-          <button className="primary-button" type="submit" disabled={closing || importing || !importUrl.trim()}>
+          <input id="capture-url" value={importUrl} onChange={(event) => { setImportUrl(event.target.value); setImportDuplicate(null); setImportError(""); setImportNotice(""); }} placeholder="https://example.com/an-article" inputMode="url" autoComplete="url" disabled={importing || closing || navigationMutationLocked} />
+          <button className="primary-button" type="submit" disabled={closing || importing || navigationMutationLocked || !importUrl.trim()}>
             {importing ? <><Spinner />收取中</> : <><span>收取网页</span><Icon><path d="M5 12h14M13 6l6 6-6 6" /></Icon></>}
           </button>
         </form>
@@ -1669,8 +2069,8 @@ export default function App() {
             <div className="import-duplicate" role="status">
               <span>{importDuplicate.kind === "source" ? "这个网址已经收藏过。" : "这个网址指向已有知识。"}{importDuplicate.document.deletedAt ? " 已有条目在回收站。" : ""}</span>
               <span className="import-duplicate-actions">
-                <button type="button" onClick={() => void openImportedDuplicate()} disabled={importing || closing}>打开已有</button>
-                {importDuplicate.kind === "resolved" && <button type="button" onClick={() => void keepImportedDuplicate()} disabled={importing || closing}>保留两篇</button>}
+                <button type="button" onClick={() => void openImportedDuplicate()} disabled={importing || closing || navigationMutationLocked}>打开已有</button>
+                {importDuplicate.kind === "resolved" && <button type="button" onClick={() => void keepImportedDuplicate()} disabled={importing || closing || navigationMutationLocked}>保留两篇</button>}
               </span>
             </div>
           ) : importNotice && <span className="notice-text">{importNotice}</span>}
@@ -1711,7 +2111,13 @@ export default function App() {
                 <span className="row-body">
                   <strong>{item.title || "未命名网页"}</strong>
                   <span className="row-source">{sourceName(item.sourceUrl)}<b>·</b>{formatDate(item.updatedAt)}</span>
-                  <span className="row-footer"><DocumentStatus status={item.status} />{item.tags.slice(0, 2).map((value) => <em key={value}>#{value}</em>)}</span>
+                  <span className="row-footer">
+                    <DocumentStatus status={item.status} />
+                    {item.favorite && <span className="favorite-mark" aria-label="已收藏">★</span>}
+                    {item.archivedAt && <em className="archived-mark">已归档</em>}
+                    {item.collections.slice(0, 1).map((value) => <em className="collection-mark" key={value.id}>{value.name}</em>)}
+                    {item.tags.slice(0, 2).map((value) => <em key={value}>#{value}</em>)}
+                  </span>
                 </span>
                 <span className="row-arrow" aria-hidden="true">↗</span>
               </button>
@@ -1741,31 +2147,90 @@ export default function App() {
                   <DocumentStatus status={currentDoc.status} />
                   <a href={currentDoc.finalUrl || currentDoc.sourceUrl} target="_blank" rel="noreferrer noopener">{sourceName(currentDoc.finalUrl || currentDoc.sourceUrl)}<Icon size={13}><path d="M14 5h5v5M10 14 19 5M19 14v5H5V5h5" /></Icon></a>
                   <span>{formatDate(currentDoc.updatedAt)}</span>
+                  {currentDoc.archivedAt && <span className="archive-stamp">已归档</span>}
                 </div>
                 <label className="title-field"><span className="sr-only">文档标题</span><textarea rows={2} value={draft.title} onChange={(event) => { if (!closeAttemptRef.current) setDraft({ ...draft, title: event.target.value }); }} disabled={Boolean(currentDoc.deletedAt) || currentDoc.status !== "ready" || editorLocked} /></label>
                 <div className="document-meta">
                   <label className="tag-field"><span>标签</span><input value={tagText} onChange={(event) => { if (!closeAttemptRef.current) { setTagText(event.target.value); setDraft({ ...draft, tags: parseTags(event.target.value) }); } }} placeholder="用逗号分隔" disabled={Boolean(currentDoc.deletedAt) || currentDoc.status !== "ready" || editorLocked} /></label>
-                  <dl><div><dt>作者</dt><dd>{currentDoc.author || "未识别"}</dd></div><div><dt>收取</dt><dd>{currentDoc.captureMode === "browser" ? "浏览器" : currentDoc.captureMode === "http" ? "直接读取" : "—"}</dd></div></dl>
+                  <fieldset className="collection-picker" disabled={organizationLocked || metadataDirty}>
+                    <legend>集合</legend>
+                    <div>
+                      {collectionsLoading && !collections.length ? <span>读取中…</span> : !collections.length ? <span>尚未创建</span> : collections.map((collection) => (
+                        <label key={collection.id}>
+                          <input
+                            type="checkbox"
+                            checked={currentDoc.collections.some((value) => value.id === collection.id)}
+                            onChange={(event) => void toggleDocumentCollection(collection.id, event.target.checked)}
+                          />
+                          {collection.name}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
                 </div>
+                {sourceMetadata && (
+                  <form className="source-metadata-form" aria-label="来源信息" onSubmit={saveSourceMetadata}>
+                    <label><span>作者</span><input aria-label="作者" maxLength={1000} value={sourceMetadata.author} onChange={(event) => { setSourceMetadata({ ...sourceMetadata, author: event.target.value }); setOrganizationNotice(""); setOrganizationError(""); }} placeholder="未识别" disabled={organizationLocked} /></label>
+                    <label><span>发布日期</span><input aria-label="发布日期" type="date" value={sourceMetadata.publishedDate} onChange={(event) => { setSourceMetadata({ ...sourceMetadata, publishedDate: event.target.value }); setOrganizationNotice(""); setOrganizationError(""); }} disabled={organizationLocked} /></label>
+                    <label className="source-note-field"><span>来源备注</span><textarea aria-label="来源备注" maxLength={50_000} rows={2} value={sourceMetadata.sourceNote} onChange={(event) => { setSourceMetadata({ ...sourceMetadata, sourceNote: event.target.value }); setOrganizationNotice(""); setOrganizationError(""); }} placeholder="记下收录背景、可信度或阅读线索" disabled={organizationLocked} /></label>
+                    <div className="source-metadata-save">
+                      <span>收取·{currentDoc.captureMode === "browser" ? "浏览器" : currentDoc.captureMode === "http" ? "直接读取" : "—"}</span>
+                      <button type="submit" disabled={organizationLocked || !metadataDirty}>{organizationSaving ? "保存中…" : "保存来源信息"}</button>
+                    </div>
+                  </form>
+                )}
                 <div className="document-actions">
+                  <button type="button" className={`favorite-button ${currentDoc.favorite ? "is-active" : ""}`} aria-pressed={currentDoc.favorite} onClick={() => void toggleFavorite()} disabled={organizationLocked || metadataDirty}>{currentDoc.favorite ? "★ 取消收藏" : "☆ 设为收藏"}</button>
+                  <button type="button" className="history-button" onClick={() => void toggleArchive()} disabled={organizationLocked || metadataDirty}>{currentDoc.archivedAt ? "取消归档" : "归档"}</button>
+                  <button type="button" className="history-button" onClick={toggleCollectionManager} disabled={closing} aria-expanded={collectionsOpen} aria-controls="collection-manager">管理集合</button>
                   <button type="button" className="history-button" onClick={toggleQuality} disabled={closing || currentDoc.status !== "ready"} aria-expanded={qualityOpen} aria-controls="capture-quality">质量检查</button>
                   <button type="button" className="history-button" onClick={toggleCaptureHistory} disabled={closing} aria-expanded={captureHistoryOpen} aria-controls="capture-history">采集历史</button>
                   {!currentDoc.deletedAt && (
-                    <button type="button" className="text-button danger" onClick={() => void moveToTrash()} disabled={closing || Boolean(remoteDraftConflict) || Boolean(lifecycleAction) || dirty || saveState === "saving"} title={dirty || remoteDraftConflict ? "请先处理当前草稿" : undefined}>
+                    <button type="button" className="text-button danger" onClick={() => void moveToTrash()} disabled={closing || organizationSaving || Boolean(organizationConflict) || Boolean(remoteDraftConflict) || Boolean(lifecycleAction) || hasUnsavedChanges || saveState === "saving"} title={hasUnsavedChanges || remoteDraftConflict || organizationConflict ? "请先处理当前更改" : undefined}>
                       {lifecycleAction === "delete" ? "正在移除…" : "移入回收站"}
                     </button>
                   )}
                 </div>
               </header>
 
+              {collectionsOpen && (
+                <aside id="collection-manager" className="collection-manager" aria-label="集合管理">
+                  <header><div><span className="eyebrow">COLLECTION INDEX</span><h3>管理集合</h3></div><button type="button" onClick={() => setCollectionsOpen(false)} aria-label="关闭集合管理">×</button></header>
+                  <form className="collection-create" onSubmit={createCollection}>
+                    <label><span className="sr-only">新集合名称</span><input aria-label="新集合名称" maxLength={100} value={collectionName} onChange={(event) => setCollectionName(event.target.value)} placeholder="新集合名称" disabled={organizationLocked || metadataDirty} /></label>
+                    <button type="submit" className="primary-button" disabled={organizationLocked || metadataDirty || !collectionName.trim()}>{collectionAction === "create" ? "创建中…" : "创建集合"}</button>
+                  </form>
+                  {collectionsLoading && !collections.length ? <StatePanel kind="loading" title="正在读取集合" /> : !collections.length ? <p className="collection-empty">用集合把不同来源的知识放进同一个主题。</p> : (
+                    <ul>
+                      {collections.map((collection) => (
+                        <li key={collection.id}>
+                          {renamingCollection?.id === collection.id ? (
+                            <form className="collection-rename" onSubmit={renameCollection}>
+                              <label><span className="sr-only">集合名称</span><input aria-label="集合名称" maxLength={100} value={renamingCollection.name} onChange={(event) => setRenamingCollection({ id: collection.id, name: event.target.value })} autoFocus /></label>
+                              <button type="submit" disabled={Boolean(collectionAction) || !renamingCollection.name.trim()}>保存名称</button>
+                              <button type="button" onClick={() => setRenamingCollection(null)}>取消</button>
+                            </form>
+                          ) : (
+                            <><div><strong>{collection.name}</strong><span>{collection.documentCount} 篇知识</span></div><div><button type="button" onClick={() => setRenamingCollection({ id: collection.id, name: collection.name })} disabled={organizationLocked || metadataDirty} aria-label={`重命名 ${collection.name}`}>重命名</button><button type="button" className="danger" onClick={() => void deleteCollection(collection)} disabled={organizationLocked || metadataDirty} aria-label={`删除 ${collection.name}`}>删除</button></div></>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </aside>
+              )}
+
               {currentDoc.warning && <div className="notice warning" role="status"><strong>注意</strong><span>{currentDoc.warning}</span></div>}
+              {organizationNotice && <div className="notice organization-notice" role="status"><strong>已更新</strong><span>{organizationNotice}</span></div>}
+              {organizationError && !organizationConflict && <div className="notice error" role="alert"><strong>组织信息未保存</strong><span>{organizationError}</span></div>}
               {assetError && <div className="notice error" role="alert"><strong>离线图片状态不可用</strong><span>{assetError}。预览不会连接原站。</span></div>}
               {draftNotice && <div className="notice warning" role="status"><strong>草稿恢复</strong><span>{draftNotice}</span></div>}
               {draftError && <div className="notice error" role="alert"><strong>草稿未保存</strong><span>{draftError}</span></div>}
               {detailError && <div className="notice error" role="alert"><strong>请求失败</strong><span>{detailError}</span></div>}
               {duplicateError && <div className="notice error" role="alert"><strong>重复检测不可用</strong><span>{duplicateError}</span></div>}
               {duplicateNotice && <div className="notice warning" role="status"><strong>重复知识</strong><span>{duplicateNotice}</span></div>}
-              {resolvedDuplicate && <div className="conflict-banner duplicate-banner" role="alert"><div><strong>发现另一篇相同来源的知识</strong><span>已有条目“{resolvedDuplicate.title || "未命名网页"}”{resolvedDuplicate.deletedAt ? "在回收站中" : "仍在资料库中"}。你可以打开已有条目，或明确保留两篇；当前条目不会自动删除。</span></div><div><button type="button" onClick={() => void openResolvedDuplicate()} disabled={closing}>打开已有</button><button type="button" className="primary-button" onClick={keepResolvedDuplicate} disabled={closing}>保留两篇</button></div></div>}
+              {resolvedDuplicate && <div className="conflict-banner duplicate-banner" role="alert"><div><strong>发现另一篇相同来源的知识</strong><span>已有条目“{resolvedDuplicate.title || "未命名网页"}”{resolvedDuplicate.deletedAt ? "在回收站中" : "仍在资料库中"}。你可以打开已有条目，或明确保留两篇；当前条目不会自动删除。</span></div><div><button type="button" onClick={() => void openResolvedDuplicate()} disabled={closing || navigationMutationLocked}>打开已有</button><button type="button" className="primary-button" onClick={keepResolvedDuplicate} disabled={closing || navigationMutationLocked}>保留两篇</button></div></div>}
+              {organizationConflict && <div className="conflict-banner" role="alert"><div><strong>来源或组织信息已在别处更新</strong><span>你的这次操作尚未覆盖服务端数据。可基于最新修订重试，或放弃这次更改。</span></div><div><button type="button" onClick={discardOrganizationUpdate} disabled={closing || organizationSaving}>放弃更改</button><button type="button" className="primary-button" onClick={() => void retryOrganizationUpdate()} disabled={closing || organizationSaving}>{organizationSaving ? "重试中…" : "基于新版重试"}</button></div></div>}
               {qualityOpen && (
                 <aside id="capture-quality" className="quality-panel" aria-label="提取质量检查">
                   <header><div><span className="eyebrow">CAPTURE QUALITY</span><h3>提取质量</h3></div><button type="button" onClick={() => setQualityOpen(false)} aria-label="关闭提取质量">×</button></header>
@@ -1789,8 +2254,8 @@ export default function App() {
                   <div className="trash-callout">
                     <div><span className="eyebrow">READ ONLY · {formatDateTime(currentDoc.deletedAt)}</span><h3>这张织片在回收站中</h3><p>正文与历史版本仍完整保留。恢复后才能继续编辑。</p></div>
                     <div className="trash-actions">
-                      <button type="button" className="primary-button" onClick={() => void restoreFromTrash()} disabled={closing || Boolean(lifecycleAction)}>{lifecycleAction === "restore" ? <><Spinner />恢复中</> : "恢复到资料库"}</button>
-                      <button type="button" className="text-button danger" onClick={() => void permanentlyDelete()} disabled={closing || Boolean(lifecycleAction) || dirty || Boolean(conflict) || Boolean(remoteDraftConflict)} title={dirty || conflict || remoteDraftConflict ? "请先处理恢复的本地草稿" : undefined}>{lifecycleAction === "permanent" ? "删除中…" : "永久删除"}</button>
+                      <button type="button" className="primary-button" onClick={() => void restoreFromTrash()} disabled={closing || importing || Boolean(lifecycleAction)}>{lifecycleAction === "restore" ? <><Spinner />恢复中</> : "恢复到资料库"}</button>
+                      <button type="button" className="text-button danger" onClick={() => void permanentlyDelete()} disabled={closing || organizationSaving || Boolean(lifecycleAction) || hasUnsavedChanges || Boolean(conflict) || Boolean(organizationConflict) || Boolean(remoteDraftConflict)} title={hasUnsavedChanges || conflict || organizationConflict || remoteDraftConflict ? "请先处理当前更改" : undefined}>{lifecycleAction === "permanent" ? "删除中…" : "永久删除"}</button>
                     </div>
                   </div>
                   <section className="trash-preview" aria-label="回收站文档预览">
@@ -1826,7 +2291,7 @@ export default function App() {
                     </div>
                     {saveState === "error" && <button type="button" className="text-button danger" onClick={() => void saveNow()} disabled={closing}>重试</button>}
                     <button type="button" className="text-button save-button" onClick={() => void saveNow()} disabled={closing || !dirty || saveState === "saving" || saveState === "conflict"} title="保存（⌘S）">保存</button>
-                    <button type="button" className="history-button" onClick={() => void toggleHistory()} disabled={closing || dirty || saveState === "saving"} aria-expanded={historyOpen} aria-controls="revision-history">修订历史</button>
+                    <button type="button" className="history-button" onClick={() => void toggleHistory()} disabled={closing || organizationSaving || hasUnsavedChanges || saveState === "saving"} aria-expanded={historyOpen} aria-controls="revision-history">修订历史</button>
                     <a className="export-button" href={api.exportUrl(currentDoc.id)} download><Icon size={15}><path d="M12 3v12M7 10l5 5 5-5M5 20h14" /></Icon>导出 .md</a>
                   </div>
 
@@ -1838,7 +2303,7 @@ export default function App() {
                         <ol>
                           {revisions.map((revision) => {
                             const isCurrent = revision.revision === currentDoc.revision;
-                            return <li key={revision.revision} className={isCurrent ? "is-current" : undefined}><div className="revision-meta"><strong>版本 {revision.revision}</strong><time dateTime={revision.createdAt}>{formatDateTime(revision.createdAt)}</time></div><h4>{revision.title || "未命名网页"}</h4><p>{revisionPreview(revision.markdown)}</p><div className="revision-foot"><span>{revision.tags.length ? revision.tags.map((value) => `#${value}`).join(" ") : "无标签"}</span><button type="button" onClick={() => void restoreRevision(revision)} disabled={isCurrent || dirty || restoringRevision !== null}>{isCurrent ? "当前版本" : restoringRevision === revision.revision ? "恢复中…" : "恢复此版本"}</button></div></li>;
+                            return <li key={revision.revision} className={isCurrent ? "is-current" : undefined}><div className="revision-meta"><strong>版本 {revision.revision}</strong><time dateTime={revision.createdAt}>{formatDateTime(revision.createdAt)}</time></div><h4>{revision.title || "未命名网页"}</h4><p>{revisionPreview(revision.markdown)}</p><div className="revision-foot"><span>{revision.tags.length ? revision.tags.map((value) => `#${value}`).join(" ") : "无标签"}</span><button type="button" onClick={() => void restoreRevision(revision)} disabled={isCurrent || importing || hasUnsavedChanges || restoringRevision !== null}>{isCurrent ? "当前版本" : restoringRevision === revision.revision ? "恢复中…" : "恢复此版本"}</button></div></li>;
                           })}
                         </ol>
                       )}

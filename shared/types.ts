@@ -14,6 +14,22 @@ export type CaptureErrorCode =
   | "CAPTURE_CANCELLED"
   | "INTERNAL_ERROR";
 
+export interface DocumentCollection {
+  id: string;
+  name: string;
+}
+
+export interface KnowledgeCollection extends DocumentCollection {
+  documentCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DeleteCollectionResponse {
+  deleted: true;
+  affectedDocuments: number;
+}
+
 export interface DocumentSummary {
   id: string;
   title: string;
@@ -26,6 +42,9 @@ export interface DocumentSummary {
   errorCode: CaptureErrorCode | null;
   errorMessage: string | null;
   tags: string[];
+  collections: DocumentCollection[];
+  favorite: boolean;
+  archivedAt: string | null;
   revision: number;
   deletedAt: string | null;
   createdAt: string;
@@ -36,6 +55,7 @@ export interface KnowledgeDocument extends DocumentSummary {
   publishedAt: string | null;
   markdown: string;
   captureMode: CaptureMode | null;
+  sourceNote: string;
 }
 
 export interface DocumentListResponse {

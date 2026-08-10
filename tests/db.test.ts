@@ -101,6 +101,75 @@ test("documents are queued once, indexed, tagged, and revision guarded", () => {
   }
 });
 
+test("collections and document metadata update atomically without losing manual source fields", () => {
+  const fixture = database();
+  try {
+    const created = fixture.db.createOrGetDocument("https://example.com/organized").document;
+    const collectionResult = fixture.db.createCollection("Projects");
+    assert.equal(collectionResult.kind, "created");
+    const collection = collectionResult.collection;
+    assert.equal(fixture.db.createCollection("projects").kind, "duplicate");
+
+    const organized = fixture.db.updateDocument(created.id, created.revision, {
+      author: "Manual author",
+      publishedAt: "2026-08-10",
+      sourceNote: "Useful primary source.",
+      favorite: true,
+      archived: true,
+      collectionIds: [collection.id],
+    });
+    assert.equal(organized.kind, "updated");
+    if (organized.kind !== "updated") return;
+    assert.equal(organized.document.favorite, true);
+    assert.ok(organized.document.archivedAt);
+    assert.equal(organized.document.sourceNote, "Useful primary source.");
+    assert.deepEqual(organized.document.collections, [{ id: collection.id, name: "Projects" }]);
+    assert.equal(fixture.db.listCollections()[0]?.documentCount, 1);
+
+    const job = fixture.db.claimNextCapture();
+    assert.ok(job);
+    const ready = fixture.db.completeCapture(job, {
+      title: "Captured title",
+      author: "Captured author",
+      publishedAt: "2020-01-01",
+      finalUrl: created.sourceUrl,
+      canonicalUrl: null,
+      markdown: "Captured body",
+      mode: "http",
+      warning: null,
+      httpStatus: 200,
+    }, null);
+    assert.equal(ready.author, "Manual author");
+    assert.equal(ready.publishedAt, "2026-08-10");
+
+    const invalid = fixture.db.updateDocument(ready.id, ready.revision, {
+      favorite: false,
+      collectionIds: ["missing"],
+    });
+    assert.equal(invalid.kind, "invalid_collections");
+    assert.equal(fixture.db.getDocument(ready.id)?.revision, ready.revision);
+    assert.equal(fixture.db.getDocument(ready.id)?.favorite, true);
+
+    const renamed = fixture.db.renameCollection(collection.id, "Reading list");
+    assert.equal(renamed.kind, "renamed");
+    assert.deepEqual(fixture.db.getDocument(ready.id)?.collections, [{ id: collection.id, name: "Reading list" }]);
+    const beforeDeleteRevision = fixture.db.getDocument(ready.id)!.revision;
+    const deleted = fixture.db.deleteCollection(collection.id);
+    assert.deepEqual(deleted, { kind: "deleted", affectedDocuments: 1 });
+    const afterDelete = fixture.db.getDocument(ready.id)!;
+    assert.equal(afterDelete.revision, beforeDeleteRevision + 1);
+    assert.deepEqual(afterDelete.collections, []);
+    assert.equal(fixture.db.getCollection(collection.id), null);
+
+    const summary = fixture.db.listDocuments().items[0]!;
+    assert.equal(summary.favorite, true);
+    assert.ok(summary.archivedAt);
+    assert.equal("sourceNote" in summary, false);
+  } finally {
+    fixture.close();
+  }
+});
+
 test("resolved duplicates can be kept and queued captures can be cancelled then retried", () => {
   const fixture = database();
   try {
@@ -790,11 +859,15 @@ test("current migrations upgrade v3 and the frozen v7 release schema", () => {
       .all();
     fixture.close();
 
-    assert.deepEqual(inspectDatabaseSchema(currentDirectory).pendingVersions, [8, 9]);
+    assert.deepEqual(inspectDatabaseSchema(currentDirectory).pendingVersions, [8, 9, 10]);
     const current = openDatabase(currentDirectory);
     try {
       assert.equal(current.getDocument("release-document")?.markdown, "Frozen release schema body.");
       assert.deepEqual(current.getDocument("release-document")?.tags, ["Fixture"]);
+      assert.deepEqual(current.getDocument("release-document")?.collections, []);
+      assert.equal(current.getDocument("release-document")?.favorite, false);
+      assert.equal(current.getDocument("release-document")?.archivedAt, null);
+      assert.equal(current.getDocument("release-document")?.sourceNote, "");
       assert.equal(current.listDocuments({ q: "Frozen" }).total, 1);
       assert.equal(
         (current.sql.prepare("SELECT max(version) AS version FROM schema_migrations").get() as { version: number })
@@ -866,9 +939,14 @@ test("schema inspection is read-only and rejects future or incomplete histories"
 
     const raw = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));
     raw.exec(`
-      DROP TABLE document_assets;
-      DROP TABLE assets;
-      DROP TABLE asset_settings;
+      DROP INDEX documents_archive_favorite_updated;
+      DROP TABLE document_collections;
+      DROP TABLE collections;
+      ALTER TABLE documents DROP COLUMN published_at_edited;
+      ALTER TABLE documents DROP COLUMN author_edited;
+      ALTER TABLE documents DROP COLUMN source_note;
+      ALTER TABLE documents DROP COLUMN archived_at;
+      ALTER TABLE documents DROP COLUMN favorite;
       DELETE FROM schema_migrations WHERE version = ${CURRENT_SCHEMA_VERSION};
     `);
     raw.close();
@@ -915,7 +993,7 @@ test("all pending migrations roll back together on failure", () => {
       currentVersion: 3,
       supportedVersion: CURRENT_SCHEMA_VERSION,
       appliedVersions: [1, 2, 3],
-      pendingVersions: [4, 5, 6, 7, 8, 9],
+      pendingVersions: [4, 5, 6, 7, 8, 9, 10],
     });
     const unchanged = new DatabaseSync(path, { readOnly: true });
     try {

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { closeSync, constants, createReadStream, existsSync, fsyncSync, openSync, statSync } from "node:fs";
 import { open, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -42,6 +43,8 @@ const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
 const MAX_COMPRESSED_SNAPSHOT_BYTES = 6 * 1024 * 1024;
+const DATA_EPOCH_HEADER = "X-Zhiye-Data-Epoch";
+const JSON_MUTATION_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
 const captureErrorCodes = new Set<CaptureErrorCode>([
   "INVALID_URL",
   "BLOCKED_ADDRESS",
@@ -238,6 +241,21 @@ function decodeId(value: string) {
 
 function documentPatch(body: Record<string, unknown>) {
   const revision = bodyRevision(body);
+  const allowed = new Set([
+    "revision",
+    "title",
+    "markdown",
+    "tags",
+    "author",
+    "publishedAt",
+    "sourceNote",
+    "favorite",
+    "archived",
+    "collectionIds",
+  ]);
+  if (Object.keys(body).some((key) => !allowed.has(key))) {
+    throw new HttpError(400, "INVALID_DOCUMENT_PATCH", "Document patch contains an unknown field");
+  }
   const patch: DocumentPatch = {};
   if (body.title !== undefined) {
     if (typeof body.title !== "string" || !body.title.trim() || body.title.length > 1000) {
@@ -254,10 +272,87 @@ function documentPatch(body: Record<string, unknown>) {
   if (body.tags !== undefined) {
     patch.tags = tagsValue(body.tags);
   }
+  if (body.author !== undefined) {
+    patch.author = nullableText(body.author, "author", 1000);
+  }
+  if (body.publishedAt !== undefined) {
+    patch.publishedAt = publishedDate(body.publishedAt);
+  }
+  if (body.sourceNote !== undefined) {
+    if (typeof body.sourceNote !== "string" || body.sourceNote.length > 50_000) {
+      throw new HttpError(400, "INVALID_SOURCE_NOTE", "sourceNote must be a string under 50000 characters");
+    }
+    patch.sourceNote = body.sourceNote;
+  }
+  if (body.favorite !== undefined) {
+    if (typeof body.favorite !== "boolean") {
+      throw new HttpError(400, "INVALID_FAVORITE", "favorite must be boolean");
+    }
+    patch.favorite = body.favorite;
+  }
+  if (body.archived !== undefined) {
+    if (typeof body.archived !== "boolean") {
+      throw new HttpError(400, "INVALID_ARCHIVED", "archived must be boolean");
+    }
+    patch.archived = body.archived;
+  }
+  if (body.collectionIds !== undefined) {
+    patch.collectionIds = collectionIdsValue(body.collectionIds);
+  }
   if (!Object.keys(patch).length) {
     throw new HttpError(400, "EMPTY_PATCH", "At least one editable field is required");
   }
   return { revision, patch };
+}
+
+function nullableText(value: unknown, field: string, maxLength: number) {
+  if (value === null) return null;
+  if (typeof value !== "string" || !value.trim() || value.length > maxLength) {
+    const code = field.replace(/[A-Z]/gu, (letter) => `_${letter}`).toUpperCase();
+    throw new HttpError(400, `INVALID_${code}`, `${field} must be null or a non-empty string under ${maxLength} characters`);
+  }
+  return value.trim();
+}
+
+function publishedDate(value: unknown) {
+  if (value === null) return null;
+  if (typeof value !== "string") {
+    throw new HttpError(400, "INVALID_PUBLISHED_AT", "publishedAt must be null or a YYYY-MM-DD date");
+  }
+  const date = value.trim();
+  const parsed = Date.parse(`${date}T00:00:00.000Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(date) || !Number.isFinite(parsed) || new Date(parsed).toISOString().slice(0, 10) !== date) {
+    throw new HttpError(400, "INVALID_PUBLISHED_AT", "publishedAt must be null or a real YYYY-MM-DD date");
+  }
+  return date;
+}
+
+function collectionIdsValue(value: unknown) {
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new HttpError(400, "INVALID_COLLECTION_IDS", "collectionIds must be an array with at most 100 items");
+  }
+  const unique = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== "string" || !item || item.length > 200 || item !== item.trim()) {
+      throw new HttpError(400, "INVALID_COLLECTION_IDS", "each collection ID must contain 1 to 200 characters");
+    }
+    unique.add(item);
+  }
+  return [...unique];
+}
+
+function collectionName(body: Record<string, unknown>) {
+  if (Object.keys(body).some((key) => key !== "name")) {
+    throw new HttpError(400, "INVALID_COLLECTION", "name must be the only field");
+  }
+  if (typeof body.name !== "string") {
+    throw new HttpError(400, "INVALID_COLLECTION_NAME", "name must contain 1 to 100 characters");
+  }
+  const name = body.name.normalize("NFKC").trim();
+  if (!name || name.length > 100) {
+    throw new HttpError(400, "INVALID_COLLECTION_NAME", "name must contain 1 to 100 characters");
+  }
+  return name;
 }
 
 function tagsValue(value: unknown) {
@@ -427,6 +522,10 @@ function exportedMarkdown(document: KnowledgeDocument) {
     ...(document.publishedAt ? [`published_at: ${JSON.stringify(document.publishedAt)}`] : []),
     `captured_at: ${JSON.stringify(document.createdAt)}`,
     `tags: ${JSON.stringify(document.tags)}`,
+    `collections: ${JSON.stringify(document.collections.map(({ name }) => name))}`,
+    `favorite: ${JSON.stringify(document.favorite)}`,
+    `archived_at: ${JSON.stringify(document.archivedAt)}`,
+    `source_note: ${JSON.stringify(document.sourceNote)}`,
     "---",
     "",
   ];
@@ -564,6 +663,7 @@ function serveStatic(request: IncomingMessage, response: ServerResponse, pathnam
 
 export function createApp(options: AppOptions) {
   let db = options.database;
+  let dataEpoch = randomUUID();
   let recoveryError: unknown = options.recoveryError ?? null;
   const backupRoot = options.backupRoot ?? defaultBackupRoot(options.dataDir);
   const auth = createAuth({
@@ -591,9 +691,25 @@ export function createApp(options: AppOptions) {
     return db;
   };
 
-  const mutationBody = async (request: IncomingMessage) => {
+  function assertDataEpoch(
+    enteringEpoch: string | string[] | null | undefined,
+  ): asserts enteringEpoch is string {
+    if (enteringEpoch !== dataEpoch) {
+      throw new HttpError(409, "STALE_DATA_EPOCH", "Knowledge-base data was restored; reload before writing");
+    }
+  }
+
+  const guardDataMutation = (request: IncomingMessage) => {
     guardMutation(request);
+    const enteringEpoch = request.headers[DATA_EPOCH_HEADER.toLowerCase()];
+    assertDataEpoch(enteringEpoch);
+    return enteringEpoch;
+  };
+
+  const mutationBody = async (request: IncomingMessage) => {
+    const enteringEpoch = request.headers[DATA_EPOCH_HEADER.toLowerCase()];
     const body = await readJson(request);
+    assertDataEpoch(enteringEpoch);
     requireDatabase();
     return body;
   };
@@ -655,6 +771,7 @@ export function createApp(options: AppOptions) {
       }
       const requestUrl = new URL(request.url ?? "/", `http://${request.headers.host}`);
       const { pathname } = requestUrl;
+      if (pathname.startsWith("/api/")) response.setHeader(DATA_EPOCH_HEADER, dataEpoch);
 
       if (request.method === "GET" && pathname === "/health") {
         sendJson(response, 200, { ok: true });
@@ -668,6 +785,9 @@ export function createApp(options: AppOptions) {
         sendError(response, 401, "UNAUTHORIZED", "Authentication required");
         return;
       }
+      const enteringDataEpoch = pathname.startsWith("/api/") && JSON_MUTATION_METHODS.has(request.method ?? "")
+        ? guardDataMutation(request)
+        : null;
 
       if (pathname === "/api/data-safety" && request.method === "GET") {
         sendJson(response, 200, await status());
@@ -691,10 +811,11 @@ export function createApp(options: AppOptions) {
 
       if (pathname === "/api/desktop/close-ready" && request.method === "POST") {
         if (!options.onDesktopCloseReady) throw new HttpError(404, "NOT_FOUND", "API endpoint not found");
-        guardMutation(request);
         const closeBody = await readJson(request);
+        assertDataEpoch(enteringDataEpoch);
         const attemptId = closeAttemptId(closeBody.attemptId);
         await maintenanceDone;
+        assertDataEpoch(enteringDataEpoch);
         sendJson(response, 200, { ok: true });
         setImmediate(() => options.onDesktopCloseReady?.(attemptId));
         return;
@@ -777,8 +898,8 @@ export function createApp(options: AppOptions) {
 
       const restoreBackupMatch = pathname.match(/^\/api\/data-safety\/backups\/([^/]+)\/restore$/u);
       if (restoreBackupMatch && request.method === "POST") {
-        guardMutation(request);
         const body = await readJson(request);
+        assertDataEpoch(enteringDataEpoch);
         if (maintenanceKind) throw new HttpError(503, "MAINTENANCE", "Another data operation is in progress");
         if (Object.keys(body).some((key) => key !== "allowQuarantine")) {
           throw new HttpError(400, "INVALID_RESTORE_REQUEST", "Only allowQuarantine may be provided");
@@ -789,6 +910,7 @@ export function createApp(options: AppOptions) {
         const queueWasPaused = worker.isPaused();
         const result = await runMaintenance("restore", async () => {
           await worker.stop();
+          assertDataEpoch(enteringDataEpoch);
           const reopenExpected = db !== null;
           try {
             const selected = await resolveBackupRecord(
@@ -822,6 +944,7 @@ export function createApp(options: AppOptions) {
               },
             });
             db = openDatabase(options.dataDir);
+            dataEpoch = randomUUID();
             recoveryError = null;
             try {
               await reconcileBackupRecords(db, backupRoot);
@@ -867,6 +990,7 @@ export function createApp(options: AppOptions) {
             worker.setPaused(queueWasPaused);
           }
         });
+        response.setHeader(DATA_EPOCH_HEADER, dataEpoch);
         sendJson(response, 200, result);
         return;
       }
@@ -913,6 +1037,44 @@ export function createApp(options: AppOptions) {
 
       if (pathname === "/api/tags" && request.method === "GET") {
         sendJson(response, 200, requireDatabase().listTags(trashFilter(requestUrl)));
+        return;
+      }
+
+      if (pathname === "/api/collections" && request.method === "GET") {
+        sendJson(response, 200, requireDatabase().listCollections());
+        return;
+      }
+
+      if (pathname === "/api/collections" && request.method === "POST") {
+        const name = collectionName(await mutationBody(request));
+        const result = requireDatabase().createCollection(name);
+        if (result.kind === "duplicate") {
+          throw new HttpError(409, "COLLECTION_NAME_CONFLICT", "A collection with this name already exists");
+        }
+        sendJson(response, 201, result.collection);
+        return;
+      }
+
+      const collectionMatch = pathname.match(/^\/api\/collections\/([^/]+)$/u);
+      if (collectionMatch && request.method === "PATCH") {
+        const name = collectionName(await mutationBody(request));
+        const result = requireDatabase().renameCollection(decodeId(collectionMatch[1]), name);
+        if (result.kind === "missing") throw new HttpError(404, "NOT_FOUND", "Collection not found");
+        if (result.kind === "duplicate") {
+          throw new HttpError(409, "COLLECTION_NAME_CONFLICT", "A collection with this name already exists");
+        }
+        sendJson(response, 200, result.collection);
+        return;
+      }
+
+      if (collectionMatch && request.method === "DELETE") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length) {
+          throw new HttpError(400, "INVALID_COLLECTION_DELETE", "Collection deletion does not accept options");
+        }
+        const result = requireDatabase().deleteCollection(decodeId(collectionMatch[1]));
+        if (result.kind === "missing") throw new HttpError(404, "NOT_FOUND", "Collection not found");
+        sendJson(response, 200, { deleted: true, affectedDocuments: result.affectedDocuments });
         return;
       }
 
@@ -1198,6 +1360,16 @@ export function createApp(options: AppOptions) {
           sendError(response, 409, "REVISION_CONFLICT", "Document changed since it was loaded", result.document);
           return;
         }
+        if (result.kind === "invalid_collections") {
+          sendJson(response, 400, {
+            error: {
+              code: "INVALID_COLLECTION_IDS",
+              message: "One or more collections do not exist",
+              missingCollectionIds: result.missingCollectionIds,
+            },
+          });
+          return;
+        }
         sendJson(response, 200, result.document);
         return;
       }
@@ -1227,6 +1399,7 @@ export function createApp(options: AppOptions) {
         response.destroy(error instanceof Error ? error : undefined);
         return;
       }
+      if ((request.url ?? "").startsWith("/api/")) response.setHeader(DATA_EPOCH_HEADER, dataEpoch);
       if (error instanceof HttpError) sendError(response, error.status, error.code, error.message);
       else if (error instanceof DataSafetyError) sendError(response, error.status, error.code, error.message);
       else if (error instanceof BackupError) {

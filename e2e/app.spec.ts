@@ -43,7 +43,9 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect(page.getByLabel("Markdown 编辑器")).not.toContainText("只来自本地 HTML 快照");
   await captureHistory.getByLabel("替换 Markdown 正文").check();
   await page.evaluate(async () => {
-    const list = await fetch("/api/documents?page=1").then((response) => response.json()) as {
+    const listResponse = await fetch("/api/documents?page=1");
+    const epoch = listResponse.headers.get("X-Zhiye-Data-Epoch")!;
+    const list = await listResponse.json() as {
       items: Array<{ id: string }>;
     };
     const document = await fetch(`/api/documents/${list.items[0].id}`).then((response) => response.json()) as {
@@ -52,7 +54,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
     };
     await fetch(`/api/documents/${document.id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch },
       body: JSON.stringify({ revision: document.revision, markdown: "# 并发保护正文" }),
     });
   });
@@ -68,7 +70,9 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await captureHistory.getByRole("button", { name: "关闭采集历史" }).click();
 
   await page.evaluate(async () => {
-    const list = await fetch("/api/documents?page=1").then((response) => response.json()) as {
+    const listResponse = await fetch("/api/documents?page=1");
+    const epoch = listResponse.headers.get("X-Zhiye-Data-Epoch")!;
+    const list = await listResponse.json() as {
       items: Array<{ id: string }>;
     };
     const document = await fetch(`/api/documents/${list.items[0].id}`).then((response) => response.json()) as {
@@ -79,7 +83,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
     };
     await fetch(`/api/documents/${document.id}/draft`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch },
       body: JSON.stringify({
         expectedDraftRevision: null,
         baseRevision: document.revision,
@@ -213,7 +217,9 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await editor.fill(`${firstMarkdown}\n\n准备草稿`);
   await expect.poll(currentStoredDraft).toContain("准备草稿");
   await page.evaluate(async (markdown) => {
-    const list = await fetch("/api/documents?page=1").then((response) => response.json()) as {
+    const listResponse = await fetch("/api/documents?page=1");
+    const epoch = listResponse.headers.get("X-Zhiye-Data-Epoch")!;
+    const list = await listResponse.json() as {
       items: Array<{ id: string }>;
     };
     const document = await fetch(`/api/documents/${list.items[0].id}`).then((response) => response.json()) as {
@@ -227,7 +233,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
     };
     await fetch(`/api/documents/${document.id}/draft`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch },
       body: JSON.stringify({
         expectedDraftRevision: draft.draftRevision,
         baseRevision: document.revision,
@@ -256,7 +262,9 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   const firstRevision = page.getByRole("listitem").filter({ hasText: "第一版正文" });
   await expect(firstRevision).toBeVisible();
   await page.evaluate(async () => {
-    const list = await fetch("/api/documents?page=1").then((response) => response.json()) as {
+    const listResponse = await fetch("/api/documents?page=1");
+    const epoch = listResponse.headers.get("X-Zhiye-Data-Epoch")!;
+    const list = await listResponse.json() as {
       items: Array<{ id: string }>;
     };
     const document = await fetch(`/api/documents/${list.items[0].id}`).then((response) => response.json()) as {
@@ -265,12 +273,26 @@ test("imports, restores history, trashes, restores, searches, exports, and block
     };
     await fetch(`/api/documents/${document.id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch },
       body: JSON.stringify({ revision: document.revision, title: "另一窗口更新" }),
     });
   });
+  let releaseRevisionRestore!: () => void;
+  let revisionRestoreStarted = false;
+  const revisionRestoreGate = new Promise<void>((resolve) => {
+    releaseRevisionRestore = resolve;
+  });
+  await page.route("**/api/documents/*/revisions/*/restore", async (route) => {
+    revisionRestoreStarted = true;
+    await revisionRestoreGate;
+    await route.continue();
+  });
   await firstRevision.getByRole("button", { name: "恢复此版本" }).click();
+  await expect.poll(() => revisionRestoreStarted).toBe(true);
+  await expect(page.getByLabel("网页地址")).toBeDisabled();
+  releaseRevisionRestore();
   await expect(page.getByText("这篇知识在别处被修改过")).toBeVisible();
+  await page.unroute("**/api/documents/*/revisions/*/restore");
   await expect.poll(currentStoredDraft).toContain("第一版正文");
   const conflictMarker = `conflict-${Date.now()}`;
   await editor.fill(`# 第一版\n\n第一版正文\n\n${conflictMarker}`);
@@ -288,12 +310,14 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await editor.press("Control+A");
   await editor.fill("# 第一版\n\n第一版正文\n\n删除冲突后仍保留。");
   await page.evaluate(async () => {
-    const list = await fetch("/api/documents?page=1").then((response) => response.json()) as {
+    const listResponse = await fetch("/api/documents?page=1");
+    const epoch = listResponse.headers.get("X-Zhiye-Data-Epoch")!;
+    const list = await listResponse.json() as {
       items: Array<{ id: string; revision: number }>;
     };
     await fetch(`/api/documents/${list.items[0].id}`, {
       method: "DELETE",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch },
       body: JSON.stringify({ revision: list.items[0].revision }),
     });
   });
@@ -313,9 +337,23 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await page.getByRole("button", { name: "移入回收站" }).click();
   await expect(page.getByRole("button", { name: "回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("文档标题")).toBeDisabled();
+  let releaseTrashRestore!: () => void;
+  let trashRestoreStarted = false;
+  const trashRestoreGate = new Promise<void>((resolve) => {
+    releaseTrashRestore = resolve;
+  });
+  await page.route("**/api/documents/*/restore", async (route) => {
+    trashRestoreStarted = true;
+    await trashRestoreGate;
+    await route.continue();
+  });
   await page.getByRole("button", { name: "恢复到资料库" }).click();
+  await expect.poll(() => trashRestoreStarted).toBe(true);
+  await expect(page.getByLabel("网页地址")).toBeDisabled();
+  releaseTrashRestore();
   await expect(page.getByRole("button", { name: "资料库", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("文档标题")).toBeEnabled();
+  await page.unroute("**/api/documents/*/restore");
 
   await page.reload();
   await page.getByRole("button", { name: /人工整理标题/ }).click();
@@ -392,4 +430,134 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect(page.getByText("CAPTURE_CANCELLED")).toBeVisible();
   await captureBand.getByRole("button", { name: "继续采集" }).click();
   await expect(captureBand.getByRole("button", { name: "暂停采集" })).toBeVisible();
+
+  await page.getByRole("button", { name: /人工整理标题/ }).click();
+  await expect(page.getByLabel("文档标题")).toHaveValue("人工整理标题");
+  await page.getByLabel("作者", { exact: true }).fill("林舟");
+  await page.getByLabel("发布日期").fill("2025-05-06");
+  await page.getByLabel("来源备注").fill("用于 M3 的来源核验。");
+  await page.getByRole("button", { name: "保存来源信息" }).click();
+  await expect(page.getByText("来源信息已保存。")).toBeVisible();
+
+  await page.getByRole("button", { name: "设为收藏" }).click();
+  await expect(page.getByRole("button", { name: "取消收藏" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "归档", exact: true }).click();
+  await expect(page.getByRole("button", { name: "取消归档" })).toBeVisible();
+
+  await page.getByRole("button", { name: "管理集合" }).click();
+  const collectionManager = page.getByRole("complementary", { name: "集合管理" });
+  await collectionManager.getByLabel("新集合名称").fill("阅读清单");
+  await collectionManager.getByRole("button", { name: "创建集合" }).click();
+  await expect(collectionManager.getByText("阅读清单", { exact: true })).toBeVisible();
+  await page.getByRole("group", { name: "集合" }).getByLabel("阅读清单").click();
+  await expect(page.getByText("已加入集合。")).toBeVisible();
+  await expect(page.getByRole("group", { name: "集合" }).getByLabel("阅读清单")).toBeChecked();
+  await collectionManager.getByRole("button", { name: "重命名 阅读清单" }).click();
+  await collectionManager.getByLabel("集合名称", { exact: true }).fill("研究清单");
+  await collectionManager.getByRole("button", { name: "保存名称" }).click();
+  await expect(page.getByText("集合已更名为“研究清单”。")).toBeVisible();
+
+  await page.reload();
+  await page.getByRole("button", { name: /人工整理标题/ }).click();
+  await expect(page.getByLabel("作者", { exact: true })).toHaveValue("林舟");
+  await expect(page.getByLabel("发布日期")).toHaveValue("2025-05-06");
+  await expect(page.getByLabel("来源备注")).toHaveValue("用于 M3 的来源核验。");
+  await expect(page.getByRole("button", { name: "取消收藏" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "取消归档" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "集合" }).getByLabel("研究清单")).toBeChecked();
+
+  await page.getByRole("button", { name: "管理集合" }).click();
+  const reloadedCollectionManager = page.getByRole("complementary", { name: "集合管理" });
+  await reloadedCollectionManager.getByLabel("新集合名称").fill("临时集合");
+  await reloadedCollectionManager.getByRole("button", { name: "创建集合" }).click();
+  await page.getByRole("group", { name: "集合" }).getByLabel("临时集合").click();
+  await expect(page.getByText("已加入集合。")).toBeVisible();
+  const temporaryCollection = reloadedCollectionManager.getByRole("listitem").filter({ hasText: "临时集合" });
+  await expect(temporaryCollection.getByText("1 篇知识")).toBeVisible();
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("临时集合");
+    expect(dialog.message()).toContain("1 篇知识");
+    await dialog.accept();
+  });
+  await temporaryCollection.getByRole("button", { name: "删除 临时集合" }).click();
+  await expect(page.getByText("已删除集合“临时集合”，从 1 篇知识中移除。")).toBeVisible();
+  await expect(page.getByRole("group", { name: "集合" }).getByLabel("临时集合")).toHaveCount(0);
+
+  let releaseStaleCollections!: () => void;
+  let staleCollectionsReady = false;
+  let staleCollectionsSettled = false;
+  const staleCollectionsGate = new Promise<void>((resolve) => {
+    releaseStaleCollections = resolve;
+  });
+  await page.route("**/api/collections", async (route) => {
+    if (route.request().method() !== "GET" || staleCollectionsReady) {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    staleCollectionsReady = true;
+    await staleCollectionsGate;
+    try {
+      await route.fulfill({ response });
+    } catch {
+      // A successful collection mutation aborts this obsolete request.
+    } finally {
+      staleCollectionsSettled = true;
+    }
+  });
+  await page.getByRole("button", { name: "数据安全" }).click();
+  await page.getByRole("button", { name: "返回资料库" }).click();
+  await expect.poll(() => staleCollectionsReady).toBe(true);
+  const delayedCollectionManager = page.getByRole("complementary", { name: "集合管理" });
+  await delayedCollectionManager.getByLabel("新集合名称").fill("延迟响应集合");
+  await delayedCollectionManager.getByRole("button", { name: "创建集合" }).click();
+  await expect(delayedCollectionManager.getByText("延迟响应集合", { exact: true })).toBeVisible();
+  releaseStaleCollections();
+  await expect.poll(() => staleCollectionsSettled).toBe(true);
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
+  await expect(delayedCollectionManager.getByText("延迟响应集合", { exact: true })).toBeVisible();
+  await page.unroute("**/api/collections");
+
+  let releaseMetadataPatch!: () => void;
+  let metadataPatchStarted = false;
+  let metadataPatchCount = 0;
+  const metadataPatchGate = new Promise<void>((resolve) => {
+    releaseMetadataPatch = resolve;
+  });
+  await page.route("**/api/documents/*", async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (request.method() === "PATCH" && /^\/api\/documents\/[^/]+$/u.test(pathname)) {
+      const body = request.postDataJSON() as { sourceNote?: string };
+      if (body.sourceNote?.includes("关闭等待回归")) {
+        metadataPatchCount += 1;
+        if (metadataPatchCount === 1) {
+          metadataPatchStarted = true;
+          await metadataPatchGate;
+        }
+      }
+    }
+    await route.continue();
+  });
+  await page.getByLabel("来源备注").fill("关闭等待回归：不应用旧 revision 重复保存。");
+  await page.getByRole("button", { name: "保存来源信息" }).click();
+  await expect.poll(() => metadataPatchStarted).toBe(true);
+  const metadataCloseAttemptId = "9002";
+  const metadataCloseReady = page.waitForRequest((request) => {
+    if (request.method() !== "POST" || new URL(request.url()).pathname !== "/api/desktop/close-ready") return false;
+    return (request.postDataJSON() as { attemptId?: string }).attemptId === metadataCloseAttemptId;
+  });
+  await page.evaluate((attemptId) => {
+    window.dispatchEvent(new CustomEvent("zhiye:close-requested", { detail: { attemptId } }));
+  }, metadataCloseAttemptId);
+  releaseMetadataPatch();
+  await metadataCloseReady;
+  expect(metadataPatchCount).toBe(1);
+  await expect(page.getByLabel("来源备注")).toHaveValue("关闭等待回归：不应用旧 revision 重复保存。");
+  await page.evaluate((attemptId) => {
+    window.dispatchEvent(new CustomEvent("zhiye:close-timeout", { detail: { attemptId } }));
+  }, metadataCloseAttemptId);
+  await page.unroute("**/api/documents/*");
 });

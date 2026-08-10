@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, fsyncSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -14,11 +14,13 @@ import type {
   CaptureQueueStatus,
   CreateDocumentResponse,
   DataSafetyStatus,
+  DeleteCollectionResponse,
   DocumentAsset,
   DocumentDraft,
   DocumentListResponse,
   DocumentRevision,
   KnowledgeDocument,
+  KnowledgeCollection,
   ReextractionPreview,
 } from "../shared/types.js";
 
@@ -96,12 +98,27 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
       401,
     );
     const cookie = (launch.headers.get("set-cookie") ?? "").split(";", 1)[0];
-    const jsonHeaders = { Cookie: cookie, Origin: base, "Content-Type": "application/json" };
-
+    const queueResponse = await fetch(`${base}/api/capture-queue`, { headers: { Cookie: cookie } });
+    const initialDataEpoch = queueResponse.headers.get("x-zhiye-data-epoch");
+    assert.ok(initialDataEpoch);
+    const jsonHeaders: Record<string, string> = {
+      Cookie: cookie,
+      Origin: base,
+      "Content-Type": "application/json",
+      "X-Zhiye-Data-Epoch": initialDataEpoch,
+    };
     assert.deepEqual(
-      (await (await fetch(`${base}/api/capture-queue`, { headers: { Cookie: cookie } })).json()) as CaptureQueueStatus,
+      (await queueResponse.json()) as CaptureQueueStatus,
       { paused: false, active: 0, queued: 0 },
     );
+    const missingEpoch = await fetch(`${base}/api/capture-queue`, {
+      method: "PATCH",
+      headers: { Cookie: cookie, Origin: base, "Content-Type": "application/json" },
+      body: JSON.stringify({ paused: true }),
+    });
+    assert.equal(missingEpoch.status, 409);
+    assert.equal(missingEpoch.headers.get("x-zhiye-data-epoch"), initialDataEpoch);
+    assert.equal(((await missingEpoch.json()) as { error: { code: string } }).error.code, "STALE_DATA_EPOCH");
     const paused = (await (
       await fetch(`${base}/api/capture-queue`, {
         method: "PATCH",
@@ -143,7 +160,124 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
       })
     ).json()) as CaptureQueueStatus;
     assert.equal(resumed.paused, false);
-    await waitFor(base, cookie, cancellable.id, "ready");
+    const cancellableReady = await waitFor(base, cookie, cancellable.id, "ready");
+
+    const collectionResponse = await fetch(`${base}/api/collections`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ name: "Projects" }),
+    });
+    assert.equal(collectionResponse.status, 201);
+    const collection = (await collectionResponse.json()) as KnowledgeCollection;
+    assert.equal(collection.documentCount, 0);
+    assert.equal(
+      (
+        await fetch(`${base}/api/collections`, {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify({ name: "projects" }),
+        })
+      ).status,
+      409,
+    );
+    assert.equal(
+      (
+        await fetch(`${base}/api/collections`, {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify({ name: "x".repeat(101) }),
+        })
+      ).status,
+      400,
+    );
+    const missingCollection = await fetch(`${base}/api/documents/${cancellable.id}`, {
+      method: "PATCH",
+      headers: jsonHeaders,
+      body: JSON.stringify({ revision: cancellableReady.revision, collectionIds: ["missing"] }),
+    });
+    assert.equal(missingCollection.status, 400);
+    assert.equal(
+      ((await missingCollection.json()) as { error: { code: string } }).error.code,
+      "INVALID_COLLECTION_IDS",
+    );
+    assert.equal(
+      (
+        await fetch(`${base}/api/documents/${cancellable.id}`, {
+          method: "PATCH",
+          headers: jsonHeaders,
+          body: JSON.stringify({ revision: cancellableReady.revision, publishedAt: "2026-02-30" }),
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await fetch(`${base}/api/documents/${cancellable.id}`, {
+          method: "PATCH",
+          headers: jsonHeaders,
+          body: JSON.stringify({ revision: cancellableReady.revision, sourceNote: "x".repeat(50_001) }),
+        })
+      ).status,
+      400,
+    );
+    const organizedResponse = await fetch(`${base}/api/documents/${cancellable.id}`, {
+      method: "PATCH",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        revision: cancellableReady.revision,
+        author: "Manual author",
+        publishedAt: "2026-08-10",
+        sourceNote: "Primary source note",
+        favorite: true,
+        archived: true,
+        collectionIds: [collection.id],
+      }),
+    });
+    assert.equal(organizedResponse.status, 200);
+    const organized = (await organizedResponse.json()) as KnowledgeDocument;
+    assert.equal(organized.author, "Manual author");
+    assert.equal(organized.publishedAt, "2026-08-10");
+    assert.equal(organized.sourceNote, "Primary source note");
+    assert.equal(organized.favorite, true);
+    assert.ok(organized.archivedAt);
+    assert.deepEqual(organized.collections, [{ id: collection.id, name: "Projects" }]);
+    const organizedExport = await (
+      await fetch(`${base}/api/documents/${cancellable.id}/export.md`, { headers: { Cookie: cookie } })
+    ).text();
+    assert.match(organizedExport, /collections: \["Projects"\]/u);
+    assert.match(organizedExport, /favorite: true/u);
+    assert.match(organizedExport, /archived_at: "\d{4}-\d{2}-\d{2}T/u);
+    assert.match(organizedExport, /source_note: "Primary source note"/u);
+    assert.equal(
+      (
+        (await (await fetch(`${base}/api/collections`, { headers: { Cookie: cookie } })).json()) as KnowledgeCollection[]
+      )[0]?.documentCount,
+      1,
+    );
+    const renamedCollection = (await (
+      await fetch(`${base}/api/collections/${collection.id}`, {
+        method: "PATCH",
+        headers: jsonHeaders,
+        body: JSON.stringify({ name: "Reading list" }),
+      })
+    ).json()) as KnowledgeCollection;
+    assert.equal(renamedCollection.name, "Reading list");
+    const collectionDelete = await fetch(`${base}/api/collections/${collection.id}`, {
+      method: "DELETE",
+      headers: jsonHeaders,
+      body: "{}",
+    });
+    assert.equal(collectionDelete.status, 200);
+    assert.deepEqual(await collectionDelete.json(), {
+      deleted: true,
+      affectedDocuments: 1,
+    } satisfies DeleteCollectionResponse);
+    const afterCollectionDelete = (await (
+      await fetch(`${base}/api/documents/${cancellable.id}`, { headers: { Cookie: cookie } })
+    ).json()) as KnowledgeDocument;
+    assert.equal(afterCollectionDelete.revision, organized.revision + 1);
+    assert.deepEqual(afterCollectionDelete.collections, []);
+    assert.deepEqual(await (await fetch(`${base}/api/collections`, { headers: { Cookie: cookie } })).json(), []);
 
     const dataSafety = (await (
       await fetch(`${base}/api/data-safety`, { headers: { Cookie: cookie } })
@@ -429,7 +563,10 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     assert.equal(exported.status, 200);
     const exportedText = await exported.text();
     assert.match(exportedText, /^---\ntitle: "Captured article"\nsource: "https:\/\/example\.com\/article"/u);
-    assert.match(exportedText, /tags: \["Inbox"\]\n---\n\n# Human edit\n$/u);
+    assert.match(
+      exportedText,
+      /tags: \["Inbox"\]\ncollections: \[\]\nfavorite: false\narchived_at: null\nsource_note: ""\n---\n\n# Human edit\n$/u,
+    );
 
     const failedCreate = await fetch(`${base}/api/documents`, {
       method: "POST",
@@ -643,16 +780,55 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
         .paused,
       true,
     );
-    assert.equal(
-      (
-        await fetch(`${base}/api/data-safety/backups/${encodeURIComponent(backupRecord.id)}/restore`, {
-          method: "POST",
-          headers: jsonHeaders,
-          body: "{}",
-        })
-      ).status,
-      200,
+    const beforeRestore = (await (
+      await fetch(`${base}/api/documents/${cancellable.id}`, { headers: { Cookie: cookie } })
+    ).json()) as KnowledgeDocument;
+    const staleJsonHeaders = { ...jsonHeaders };
+    const staleBody = JSON.stringify({ revision: beforeRestore.revision, sourceNote: "stale overwrite" });
+    let markStaleBodyFlushed!: () => void;
+    let finishStaleWrite!: () => void;
+    const staleBodyFlushed = new Promise<void>((resolve) => {
+      markStaleBodyFlushed = resolve;
+    });
+    const staleWriteResponse = new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const request = httpRequest(`${base}/api/documents/${cancellable.id}`, {
+        method: "PATCH",
+        headers: { ...staleJsonHeaders, "Content-Length": Buffer.byteLength(staleBody) },
+      }, (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+        response.on("end", () => resolve({
+          status: response.statusCode ?? 0,
+          body: Buffer.concat(chunks).toString("utf8"),
+        }));
+      });
+      request.on("error", reject);
+      request.write(staleBody.slice(0, -1), markStaleBodyFlushed);
+      finishStaleWrite = () => request.end(staleBody.slice(-1));
+    });
+    await staleBodyFlushed;
+    await fetch(`${base}/api/data-safety`, { headers: { Cookie: cookie } });
+    const restoreResponse = await fetch(
+      `${base}/api/data-safety/backups/${encodeURIComponent(backupRecord.id)}/restore`,
+      { method: "POST", headers: jsonHeaders, body: "{}" },
     );
+    finishStaleWrite();
+    assert.equal(restoreResponse.status, 200);
+    const restoredDataEpoch = restoreResponse.headers.get("x-zhiye-data-epoch");
+    assert.ok(restoredDataEpoch);
+    assert.notEqual(restoredDataEpoch, initialDataEpoch);
+    jsonHeaders["X-Zhiye-Data-Epoch"] = restoredDataEpoch;
+    const staleEpochWrite = await staleWriteResponse;
+    assert.equal(staleEpochWrite.status, 409);
+    assert.equal(
+      (JSON.parse(staleEpochWrite.body) as { error: { code: string } }).error.code,
+      "STALE_DATA_EPOCH",
+    );
+    const afterRestore = (await (
+      await fetch(`${base}/api/documents/${cancellable.id}`, { headers: { Cookie: cookie } })
+    ).json()) as KnowledgeDocument;
+    assert.equal(afterRestore.revision, beforeRestore.revision);
+    assert.equal(afterRestore.sourceNote, "Primary source note");
     assert.equal(
       ((await (await fetch(`${base}/api/capture-queue`, { headers: { Cookie: cookie } })).json()) as CaptureQueueStatus)
         .paused,
@@ -742,10 +918,18 @@ test("asset API exposes ready files and keeps per-image failures separate from c
   try {
     const launch = await fetch(`${base}/launch?token=asset-bootstrap-token`, { redirect: "manual" });
     const cookie = (launch.headers.get("set-cookie") ?? "").split(";", 1)[0];
+    const initialResponse = await fetch(`${base}/api/documents`, { headers: { Cookie: cookie } });
+    const dataEpoch = initialResponse.headers.get("x-zhiye-data-epoch");
+    assert.ok(dataEpoch);
     const created = ((await (
       await fetch(`${base}/api/documents`, {
         method: "POST",
-        headers: { Cookie: cookie, Origin: base, "Content-Type": "application/json" },
+        headers: {
+          Cookie: cookie,
+          Origin: base,
+          "Content-Type": "application/json",
+          "X-Zhiye-Data-Epoch": dataEpoch,
+        },
         body: JSON.stringify({ url: "https://example.com/article/images" }),
       })
     ).json()) as CreateDocumentResponse).document;

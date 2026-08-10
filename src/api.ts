@@ -7,16 +7,21 @@ import type {
   CaptureStatus,
   CreateDocumentResponse,
   DataSafetyStatus,
+  DeleteCollectionResponse,
   DocumentAsset,
   DocumentDraft,
   DocumentListResponse,
   DocumentRevision,
   DocumentSummary,
+  KnowledgeCollection,
   KnowledgeDocument,
   ReextractionPreview,
 } from "../shared/types";
 
 export type { DataSafetyStatus } from "../shared/types";
+
+const DATA_EPOCH_HEADER = "X-Zhiye-Data-Epoch";
+let dataEpoch: string | null = null;
 
 export class ApiRequestError extends Error {
   constructor(
@@ -31,16 +36,24 @@ export class ApiRequestError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, replaceDataEpoch = false): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
   if (init.body) headers.set("Content-Type", "application/json");
+  if (init.body && dataEpoch) headers.set(DATA_EPOCH_HEADER, dataEpoch);
 
   const response = await fetch(path, {
     ...init,
     headers,
     credentials: "same-origin",
   });
+  const responseEpoch = response.headers.get(DATA_EPOCH_HEADER);
+  if (responseEpoch) {
+    if (dataEpoch === null || (replaceDataEpoch && response.ok)) dataEpoch = responseEpoch;
+    else if (responseEpoch !== dataEpoch) {
+      throw new ApiRequestError("本地知识库已从留档恢复，请刷新页面后继续。", 409, "STALE_DATA_EPOCH");
+    }
+  }
 
   if (!response.ok) {
     let payload: ApiError | undefined;
@@ -74,6 +87,12 @@ export interface DocumentPatch {
   title?: string;
   markdown?: string;
   tags?: string[];
+  author?: string | null;
+  publishedAt?: string | null;
+  sourceNote?: string;
+  favorite?: boolean;
+  archived?: boolean;
+  collectionIds?: string[];
   revision: number;
 }
 
@@ -114,7 +133,7 @@ export const api = {
     return request<RestoreBackupResult>(`/api/data-safety/backups/${encodeURIComponent(id)}/restore`, {
       method: "POST",
       body: JSON.stringify({ allowQuarantine }),
-    });
+    }, true);
   },
 
   updateBackupSettings(automaticRetentionCount: number) {
@@ -133,6 +152,31 @@ export const api = {
 
   listTags(trash?: "only", signal?: AbortSignal) {
     return request<string[]>(`/api/tags${trash ? "?trash=only" : ""}`, { signal });
+  },
+
+  listCollections(signal?: AbortSignal) {
+    return request<KnowledgeCollection[]>("/api/collections", { signal });
+  },
+
+  createCollection(name: string) {
+    return request<KnowledgeCollection>("/api/collections", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+  },
+
+  updateCollection(id: string, name: string) {
+    return request<KnowledgeCollection>(`/api/collections/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    });
+  },
+
+  deleteCollection(id: string) {
+    return request<DeleteCollectionResponse>(`/api/collections/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      body: JSON.stringify({}),
+    });
   },
 
   listDocuments(filters: DocumentFilters, signal?: AbortSignal) {
