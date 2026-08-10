@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, unlinkSync } from "node:fs";
+import { chmodSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, unlinkSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type {
+  AssetMimeType,
+  AssetSettings,
+  AssetStatus,
   BackupRecord,
   BackupSettings,
   CaptureErrorCode,
@@ -15,6 +18,7 @@ import type {
   DocumentDraft,
   DocumentRevision,
   DocumentSummary,
+  DocumentAsset,
   KnowledgeDocument,
 } from "../shared/types.js";
 
@@ -234,6 +238,47 @@ const migrations = [
   `
   ALTER TABLE captures ADD COLUMN extractor_version TEXT;
   `,
+  `
+  CREATE TABLE assets (
+    hash TEXT PRIMARY KEY
+      CHECK (length(hash) = 64 AND hash NOT GLOB '*[^0-9a-f]*'),
+    mime TEXT NOT NULL
+      CHECK (mime IN ('image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif')),
+    bytes INTEGER NOT NULL CHECK (bytes >= 0),
+    created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE document_assets (
+    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    source_url TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('queued', 'fetching', 'ready', 'failed')),
+    asset_hash TEXT REFERENCES assets(hash) ON DELETE RESTRICT,
+    error_code TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (document_id, source_url),
+    CHECK ((status = 'ready' AND asset_hash IS NOT NULL) OR
+           (status <> 'ready' AND asset_hash IS NULL))
+  );
+  CREATE INDEX document_assets_status ON document_assets(status, updated_at);
+  CREATE INDEX document_assets_hash ON document_assets(asset_hash)
+    WHERE asset_hash IS NOT NULL;
+
+  CREATE TABLE asset_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    max_asset_bytes INTEGER NOT NULL DEFAULT 10485760
+      CHECK (max_asset_bytes BETWEEN 1 AND 10485760),
+    max_assets_per_document INTEGER NOT NULL DEFAULT 100
+      CHECK (max_assets_per_document BETWEEN 1 AND 100),
+    max_document_asset_bytes INTEGER NOT NULL DEFAULT 104857600
+      CHECK (max_document_asset_bytes BETWEEN 1 AND 104857600),
+    concurrency INTEGER NOT NULL DEFAULT 3 CHECK (concurrency BETWEEN 1 AND 3)
+  );
+  INSERT INTO asset_settings(
+    id, max_asset_bytes, max_assets_per_document, max_document_asset_bytes, concurrency
+  ) VALUES (1, 10485760, 100, 104857600, 3);
+  `,
 ];
 
 export const CURRENT_SCHEMA_VERSION = migrations.length;
@@ -321,6 +366,19 @@ interface CaptureRow {
   request_url: string | null;
   final_url: string | null;
   extractor_version: string | null;
+}
+
+interface DocumentAssetRow {
+  document_id: string;
+  source_url: string;
+  status: AssetStatus;
+  asset_hash: string | null;
+  mime: AssetMimeType | null;
+  bytes: number | null;
+  error_code: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface CaptureJob {
@@ -494,19 +552,26 @@ function syncDirectory(path: string) {
   }
 }
 
-function secureSnapshotsDirectory(path: string) {
+function secureStorageDirectory(path: string) {
   let created = false;
   try {
-    if (!lstatSync(path).isDirectory()) throw new Error("Snapshots path must be a real directory");
+    if (!lstatSync(path).isDirectory()) throw new Error("Storage path must be a real directory");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     mkdirSync(path, { recursive: true, mode: 0o700 });
     created = true;
-    if (!lstatSync(path).isDirectory()) throw new Error("Snapshots path must be a real directory");
+    if (!lstatSync(path).isDirectory()) throw new Error("Storage path must be a real directory");
   }
   chmodSync(path, 0o700);
   syncDirectory(path);
   if (created) syncDirectory(dirname(path));
+}
+
+function cleanupAssetTemporaries(path: string) {
+  for (const entry of readdirSync(path, { withFileTypes: true })) {
+    if (entry.isFile() && /^\.asset-[a-f0-9-]{36}\.tmp$/u.test(entry.name)) unlinkSync(join(path, entry.name));
+  }
+  syncDirectory(path);
 }
 
 function configureDatabase(sql: DatabaseSync) {
@@ -586,12 +651,16 @@ function escapeLike(value: string) {
 export class KnowledgeDatabase {
   readonly dataDir: string;
   readonly snapshotsDir: string;
+  readonly assetsDir: string;
   readonly sql: DatabaseSync;
 
   constructor(dataDir: string) {
     this.dataDir = dataDir;
     this.snapshotsDir = join(dataDir, "snapshots");
-    secureSnapshotsDirectory(this.snapshotsDir);
+    this.assetsDir = join(dataDir, "assets");
+    secureStorageDirectory(this.snapshotsDir);
+    secureStorageDirectory(this.assetsDir);
+    cleanupAssetTemporaries(this.assetsDir);
     const databasePath = databaseFile(dataDir);
     assertMigratable(inspectDatabaseSchema(dataDir));
     assertDatabaseFile(databasePath);
@@ -632,6 +701,14 @@ export class KnowledgeDatabase {
         .prepare(
           `UPDATE documents SET status = 'queued', updated_at = ?
            WHERE status IN ('fetching', 'extracting')`,
+        )
+        .run(timestamp);
+      this.sql
+        .prepare(
+          `UPDATE document_assets
+           SET status = 'failed', asset_hash = NULL, error_code = 'INTERRUPTED',
+               error_message = 'Asset caching interrupted by application restart', updated_at = ?
+           WHERE status IN ('queued', 'fetching')`,
         )
         .run(timestamp);
     });
@@ -762,6 +839,29 @@ export class KnowledgeDatabase {
     return this.getBackupSettings();
   }
 
+  getAssetSettings(): AssetSettings {
+    const row = this.sql
+      .prepare(
+        `SELECT max_asset_bytes, max_assets_per_document, max_document_asset_bytes, concurrency
+         FROM asset_settings WHERE id = 1`,
+      )
+      .get() as
+      | {
+          max_asset_bytes: number;
+          max_assets_per_document: number;
+          max_document_asset_bytes: number;
+          concurrency: number;
+        }
+      | undefined;
+    if (!row) throw new Error("Asset settings are missing");
+    return {
+      maxAssetBytes: row.max_asset_bytes,
+      maxAssetsPerDocument: row.max_assets_per_document,
+      maxDocumentAssetBytes: row.max_document_asset_bytes,
+      concurrency: row.concurrency,
+    };
+  }
+
   getDatabaseHealth(): DatabaseHealth {
     const integrityCheck = (
       this.sql.prepare("PRAGMA integrity_check").all() as Array<{ integrity_check: string }>
@@ -784,6 +884,15 @@ export class KnowledgeDatabase {
         .prepare(
           `SELECT DISTINCT snapshot_path AS path FROM captures
            WHERE snapshot_path IS NOT NULL ORDER BY snapshot_path`,
+        )
+        .all() as Array<{ path: string }>
+    ).map(({ path }) => path);
+    const referencedAssetPaths = (
+      this.sql
+        .prepare(
+          `SELECT DISTINCT 'assets/' || a.hash AS path
+           FROM assets a JOIN document_assets da ON da.asset_hash = a.hash
+           WHERE da.status = 'ready' ORDER BY path`,
         )
         .all() as Array<{ path: string }>
     ).map(({ path }) => path);
@@ -810,6 +919,9 @@ export class KnowledgeDatabase {
                     COALESCE(finished_at, started_at) AS occurred_at
              FROM captures WHERE error_message IS NOT NULL
              UNION ALL
+             SELECT 'asset', error_code, error_message, updated_at
+             FROM document_assets WHERE error_message IS NOT NULL
+             UNION ALL
              SELECT 'backup', error_code, error_message, COALESCE(finished_at, created_at)
              FROM backup_records WHERE error_message IS NOT NULL
              UNION ALL
@@ -833,6 +945,7 @@ export class KnowledgeDatabase {
       integrityCheck,
       foreignKeyViolations,
       referencedSnapshotPaths,
+      referencedAssetPaths,
       pendingFileDeletions,
       recentErrors,
     };
@@ -912,6 +1025,135 @@ export class KnowledgeDatabase {
       | DocumentRow
       | undefined;
     return row ? this.toDocument(row) : null;
+  }
+
+  private toDocumentAsset(row: DocumentAssetRow): DocumentAsset {
+    return {
+      documentId: row.document_id,
+      sourceUrl: row.source_url,
+      status: row.status,
+      assetHash: row.asset_hash,
+      mimeType: row.mime,
+      byteSize: row.bytes,
+      errorCode: row.error_code,
+      errorMessage: row.error_message,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  prepareDocumentAssets(documentId: string, sourceUrls: string[]) {
+    return transaction(this.sql, () => {
+      if (!this.sql.prepare("SELECT 1 FROM documents WHERE id = ?").get(documentId)) return false;
+      const timestamp = now();
+      for (const sourceUrl of new Set(sourceUrls)) {
+        this.sql
+          .prepare(
+            `INSERT INTO document_assets(
+               document_id, source_url, status, created_at, updated_at
+             ) VALUES (?, ?, 'queued', ?, ?)
+             ON CONFLICT(document_id, source_url) DO UPDATE SET
+               status = 'queued', asset_hash = NULL, error_code = NULL, error_message = NULL,
+               updated_at = excluded.updated_at
+             WHERE document_assets.status = 'failed'`,
+          )
+          .run(documentId, sourceUrl, timestamp, timestamp);
+      }
+      return true;
+    });
+  }
+
+  listDocumentAssets(documentId: string): DocumentAsset[] | null {
+    if (!this.sql.prepare("SELECT 1 FROM documents WHERE id = ?").get(documentId)) return null;
+    const rows = this.sql
+      .prepare(
+        `SELECT da.*, a.mime, a.bytes
+         FROM document_assets da LEFT JOIN assets a ON a.hash = da.asset_hash
+         WHERE da.document_id = ? ORDER BY da.created_at, da.source_url`,
+      )
+      .all(documentId) as unknown as DocumentAssetRow[];
+    return rows.map((row) => this.toDocumentAsset(row));
+  }
+
+  markAssetFetching(documentId: string, sourceUrl: string) {
+    return (
+      this.sql
+        .prepare(
+          `UPDATE document_assets
+           SET status = 'fetching', asset_hash = NULL, error_code = NULL,
+               error_message = NULL, updated_at = ?
+           WHERE document_id = ? AND source_url = ? AND status = 'queued'`,
+        )
+        .run(now(), documentId, sourceUrl).changes === 1
+    );
+  }
+
+  completeAsset(
+    documentId: string,
+    sourceUrl: string,
+    hash: string,
+    mime: AssetMimeType,
+    bytes: number,
+  ) {
+    return transaction(this.sql, () => {
+      const mapping = this.sql
+        .prepare(
+          `SELECT 1 AS found FROM document_assets
+           WHERE document_id = ? AND source_url = ? AND status = 'fetching'`,
+        )
+        .get(documentId, sourceUrl);
+      if (!mapping) return false;
+      const timestamp = now();
+      this.sql
+        .prepare(
+          `INSERT INTO assets(hash, mime, bytes, created_at) VALUES (?, ?, ?, ?)
+           ON CONFLICT(hash) DO NOTHING`,
+        )
+        .run(hash, mime, bytes, timestamp);
+      const existing = this.sql.prepare("SELECT mime, bytes FROM assets WHERE hash = ?").get(hash) as {
+        mime: string;
+        bytes: number;
+      };
+      if (existing.mime !== mime || existing.bytes !== bytes) {
+        throw new Error("Stored asset metadata does not match its content hash");
+      }
+      const result = this.sql
+        .prepare(
+          `UPDATE document_assets
+           SET status = 'ready', asset_hash = ?, error_code = NULL, error_message = NULL,
+               updated_at = ?
+           WHERE document_id = ? AND source_url = ? AND status = 'fetching'`,
+        )
+        .run(hash, timestamp, documentId, sourceUrl);
+      return result.changes === 1;
+    });
+  }
+
+  failAsset(documentId: string, sourceUrl: string, code: string, message: string) {
+    return (
+      this.sql
+        .prepare(
+          `UPDATE document_assets
+           SET status = 'failed', asset_hash = NULL, error_code = ?, error_message = ?, updated_at = ?
+           WHERE document_id = ? AND source_url = ? AND status IN ('queued', 'fetching')`,
+        )
+        .run(code.slice(0, 100), message.slice(0, 2000), now(), documentId, sourceUrl).changes === 1
+    );
+  }
+
+  getAsset(hash: string) {
+    if (!/^[a-f0-9]{64}$/u.test(hash)) return null;
+    const row = this.sql.prepare("SELECT hash, mime, bytes, created_at FROM assets WHERE hash = ?").get(hash) as
+      | { hash: string; mime: AssetMimeType; bytes: number; created_at: string }
+      | undefined;
+    return row
+      ? { hash: row.hash, mimeType: row.mime, byteSize: row.bytes, createdAt: row.created_at }
+      : null;
+  }
+
+  assetFilePath(hash: string) {
+    if (!/^[a-f0-9]{64}$/u.test(hash)) throw new Error("Asset hash is invalid");
+    return this.storagePath(`assets/${hash}`);
   }
 
   listCaptureHistory(documentId: string): CaptureHistoryItem[] | null {
@@ -1286,11 +1528,18 @@ export class KnowledgeDatabase {
         return { kind: "draft_exists" as const, document: current };
       }
       const active = this.sql
-        .prepare("SELECT 1 AS found FROM capture_jobs WHERE document_id = ? AND status = 'running' LIMIT 1")
-        .get(id) as { found: number } | undefined;
+        .prepare(
+          `SELECT 1 AS found FROM capture_jobs
+           WHERE document_id = ? AND status = 'running'
+           UNION ALL
+           SELECT 1 FROM document_assets
+           WHERE document_id = ? AND status IN ('queued', 'fetching')
+           LIMIT 1`,
+        )
+        .get(id, id) as { found: number } | undefined;
       if (active) return { kind: "capture_running" as const, document: current };
 
-      const relativePaths = (
+      const snapshotPaths = (
         this.sql
           .prepare(
             `SELECT DISTINCT c.snapshot_path FROM captures c
@@ -1302,11 +1551,24 @@ export class KnowledgeDatabase {
           )
           .all(id) as Array<{ snapshot_path: string }>
       ).map(({ snapshot_path }) => snapshot_path);
+      const assetHashes = (
+        this.sql
+          .prepare(
+            `SELECT DISTINCT da.asset_hash AS hash FROM document_assets da
+             WHERE da.document_id = ? AND da.asset_hash IS NOT NULL
+               AND NOT EXISTS (
+                 SELECT 1 FROM document_assets other
+                 WHERE other.asset_hash = da.asset_hash AND other.document_id <> da.document_id
+               )`,
+          )
+          .all(id) as Array<{ hash: string }>
+      ).map(({ hash }) => hash);
+      const relativePaths = [...snapshotPaths, ...assetHashes.map((hash) => `assets/${hash}`)];
       try {
         for (const relativePath of relativePaths) {
-          const path = this.snapshotPath(relativePath);
+          const path = this.storagePath(relativePath);
           try {
-            if (!lstatSync(path).isFile()) throw new Error("Snapshot path is not a file");
+            if (!lstatSync(path).isFile()) throw new Error("Stored path is not a file");
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
           }
@@ -1325,6 +1587,11 @@ export class KnowledgeDatabase {
           .run(path, timestamp, timestamp);
       }
       this.sql.prepare("DELETE FROM documents WHERE id = ?").run(id);
+      for (const hash of assetHashes) {
+        this.sql
+          .prepare("DELETE FROM assets WHERE hash = ? AND NOT EXISTS (SELECT 1 FROM document_assets WHERE asset_hash = ?)")
+          .run(hash, hash);
+      }
       this.sql.prepare("DELETE FROM tags WHERE NOT EXISTS (SELECT 1 FROM document_tags WHERE tag_id = tags.id)").run();
       return { kind: "deleted" as const };
     });
@@ -1332,27 +1599,48 @@ export class KnowledgeDatabase {
     return result;
   }
 
+  private storagePath(relativePath: string) {
+    const snapshot = /^snapshots\/([a-zA-Z0-9-]+\.html\.gz)$/u.exec(relativePath);
+    if (snapshot) {
+      const root = resolve(this.snapshotsDir);
+      if (!lstatSync(root).isDirectory()) throw new Error("Stored path is outside storage");
+      return join(root, snapshot[1]);
+    }
+    const asset = /^assets\/([a-f0-9]{64})$/u.exec(relativePath);
+    if (asset) {
+      const root = resolve(this.assetsDir);
+      if (!lstatSync(root).isDirectory()) throw new Error("Stored path is outside storage");
+      return join(root, asset[1]);
+    }
+    throw new Error("Stored path is outside storage");
+  }
+
   private snapshotPath(relativePath: string) {
-    const root = resolve(this.snapshotsDir);
-    const match = /^snapshots\/([a-zA-Z0-9-]+\.html\.gz)$/u.exec(relativePath);
-    if (!match || !lstatSync(root).isDirectory()) throw new Error("Snapshot path is outside storage");
-    return join(root, match[1]);
+    if (!relativePath.startsWith("snapshots/")) throw new Error("Snapshot path is outside storage");
+    return this.storagePath(relativePath);
   }
 
   queueSnapshotDeletions(paths: string[]) {
+    for (const path of paths) this.snapshotPath(path);
+    return this.queueFileDeletions(paths);
+  }
+
+  queueFileDeletions(paths: string[]) {
     return transaction(this.sql, () => {
       const timestamp = now();
       const queued: string[] = [];
       const referenced: string[] = [];
       for (const path of new Set(paths)) {
-        this.snapshotPath(path);
-        const inUse = this.sql
-          .prepare("SELECT 1 AS found FROM captures WHERE snapshot_path = ? LIMIT 1")
-          .get(path);
+        this.storagePath(path);
+        const assetHash = /^assets\/([a-f0-9]{64})$/u.exec(path)?.[1];
+        const inUse = assetHash
+          ? this.sql.prepare("SELECT 1 AS found FROM document_assets WHERE asset_hash = ? LIMIT 1").get(assetHash)
+          : this.sql.prepare("SELECT 1 AS found FROM captures WHERE snapshot_path = ? LIMIT 1").get(path);
         if (inUse) {
           referenced.push(path);
           continue;
         }
+        if (assetHash) this.sql.prepare("DELETE FROM assets WHERE hash = ?").run(assetHash);
         const result = this.sql
           .prepare(
             `INSERT INTO file_deletions(path, created_at, updated_at) VALUES (?, ?, ?)
@@ -1371,9 +1659,9 @@ export class KnowledgeDatabase {
     }>;
     for (const row of rows) {
       try {
-        const path = this.snapshotPath(row.path);
+        const path = this.storagePath(row.path);
         try {
-          if (!lstatSync(path).isFile()) throw new Error("Snapshot path is not a file");
+          if (!lstatSync(path).isFile()) throw new Error("Stored path is not a file");
           unlinkSync(path);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;

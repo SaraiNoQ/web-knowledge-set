@@ -75,6 +75,7 @@ function protectExistingDataDirectory(dataDir: string) {
   const target = dataTarget(dataDir);
   if (!existsSync(target) || !lstatSync(target).isDirectory() || realpathSync(target) !== target) return;
   const appEntries = new Set([
+    "assets",
     "snapshots",
     "zhiye.sqlite3",
     "zhiye.sqlite3-shm",

@@ -868,7 +868,19 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .markdown-preview code { padding: .16em .38em; color: #713d2f; background: rgba(114,86,56,.09); border-radius: 2px; font: .83em/1.5 var(--font-mono); }
 .markdown-preview pre { overflow: auto; margin: 1.5em 0; padding: 18px 20px; color: #e8e0d0; background: #2f2d28; border-left: 3px solid var(--vermilion); }
 .markdown-preview pre code { padding: 0; color: inherit; background: transparent; }
-.external-image-note { display: block; margin: 1.4em 0; padding: 11px 13px; color: var(--ink-faint); background: var(--paper-deep); border: 1px solid var(--line); font: 10px/1.5 var(--font-sans); }
+.external-image-note {
+  display: block;
+  margin: 1.4em 0;
+  padding: 12px 14px;
+  color: var(--ink-faint);
+  background: var(--paper-deep);
+  border: 1px solid var(--line);
+  font: 10px/1.55 var(--font-sans);
+}
+.external-image-note strong { display: block; color: var(--ink-soft); font-size: 11px; font-weight: 600; }
+.external-image-note small { display: block; margin-top: 3px; color: var(--ink-faint); }
+.offline-image { display: block; margin: 1.5em 0; padding: 8px; background: var(--paper-deep); border: 1px solid var(--line); }
+.offline-image img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
 .markdown-preview hr { margin: 3em auto; width: 28%; border: 0; border-top: 1px solid var(--line-strong); }
 .markdown-preview ul, .markdown-preview ol { padding-left: 1.5em; }
 .markdown-preview li { margin: .35em 0; padding-left: .25em; }

@@ -24,13 +24,15 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 
 const FORMAT = "zhiye-backup";
-const FORMAT_VERSION = 1;
+const FORMAT_VERSION = 2;
 const DATABASE_FILE = "database.sqlite3";
 const LIVE_DATABASE_FILE = "zhiye.sqlite3";
 const MANIFEST_FILE = "manifest.json";
 const MAX_MANIFEST_BYTES = 1024 * 1024;
-const MAX_FILES = 100_001;
+const MAX_FILES = 200_001;
 const SNAPSHOT_PATH = /^snapshots\/[a-zA-Z0-9-]+\.html\.gz$/u;
+const ASSET_PATH = /^assets\/[a-f0-9]{64}$/u;
+const ASSET_TEMPORARY = /^\.asset-[a-f0-9-]{36}\.tmp$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
 const BACKUP_DIRECTORY = /^backup-[0-9]{8}T[0-9]{9}Z-[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
@@ -46,7 +48,7 @@ export interface BackupFile {
 
 export interface BackupManifest {
   format: typeof FORMAT;
-  version: typeof FORMAT_VERSION;
+  version: 1 | typeof FORMAT_VERSION;
   createdAt: string;
   reason: BackupReason;
   schemaVersion: number;
@@ -243,10 +245,17 @@ export async function deleteBackup(backupRoot: string, directoryName: string) {
 }
 
 function backupFilePath(root: string, path: string) {
-  if (path !== DATABASE_FILE && !SNAPSHOT_PATH.test(path)) {
+  if (path !== DATABASE_FILE && !SNAPSHOT_PATH.test(path) && !ASSET_PATH.test(path)) {
     fail("UNSAFE_PATH", `Backup contains an unsafe path: ${path}`);
   }
   return join(root, ...path.split("/"));
+}
+
+function sourceAssetPath(dataDir: string, path: string) {
+  if (!ASSET_PATH.test(path)) fail("UNSAFE_PATH", `Database contains an unsafe asset path: ${path}`);
+  const root = join(resolve(dataDir), "assets");
+  ensureDirectory(root);
+  return join(root, basename(path));
 }
 
 function sourceSnapshotPath(dataDir: string, path: string) {
@@ -271,10 +280,27 @@ function sourceSnapshots(dataDir: string, required: string[]) {
   return paths.sort();
 }
 
+function sourceAssets(dataDir: string, required: string[]) {
+  const root = join(resolve(dataDir), "assets");
+  ensureDirectory(root);
+  const paths = readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.isFile() && ASSET_TEMPORARY.test(entry.name)) return [];
+    const path = `assets/${entry.name}`;
+    if (!entry.isFile() || !ASSET_PATH.test(path)) {
+      fail("UNSAFE_PATH", `Asset directory contains an unsupported entry: ${entry.name}`);
+    }
+    return [path];
+  });
+  const present = new Set(paths);
+  if (required.some((path) => !present.has(path))) fail("MISSING_ASSET", "A database asset is missing");
+  return [...new Set(required)].sort();
+}
+
 function ensureSupportedDataLayout(dataDir: string) {
   const allowed = new Set([
     ".zhiye.lock",
     "snapshots",
+    "assets",
     LIVE_DATABASE_FILE,
     `${LIVE_DATABASE_FILE}-shm`,
     `${LIVE_DATABASE_FILE}-wal`,
@@ -283,7 +309,7 @@ function ensureSupportedDataLayout(dataDir: string) {
     if (!allowed.has(entry.name)) {
       fail("UNSUPPORTED_DATA", `Data directory contains an unsupported entry: ${entry.name}`);
     }
-    if (entry.name === "snapshots" ? !entry.isDirectory() : !entry.isFile()) {
+    if ((entry.name === "snapshots" || entry.name === "assets") ? !entry.isDirectory() : !entry.isFile()) {
       fail("UNSAFE_PATH", `Data directory entry has the wrong type: ${entry.name}`);
     }
   }
@@ -352,7 +378,26 @@ function databaseContents(database: DatabaseSync) {
       if (!SNAPSHOT_PATH.test(path)) fail("UNSAFE_PATH", `Database contains an unsafe snapshot path: ${path}`);
       return path;
     });
-    return { schemaVersion: migrations.length, snapshots };
+    const hasAssets = Boolean(
+      database
+        .prepare("SELECT 1 AS found FROM sqlite_schema WHERE type = 'table' AND name = 'assets'")
+        .get(),
+    );
+    const assets = hasAssets
+      ? (
+          database.prepare(
+            `SELECT DISTINCT 'assets/' || a.hash AS path
+             FROM assets a JOIN document_assets da ON da.asset_hash = a.hash
+             WHERE da.status = 'ready' ORDER BY path`,
+          ).all() as Array<{
+            path: string;
+          }>
+        ).map(({ path }) => {
+          if (!ASSET_PATH.test(path)) fail("UNSAFE_PATH", `Database contains an unsafe asset path: ${path}`);
+          return path;
+        })
+      : [];
+    return { schemaVersion: migrations.length, snapshots, assets };
   } catch (error) {
     if (error instanceof BackupError) throw error;
     fail("INVALID_DATABASE", "Backup database could not be validated", error);
@@ -398,9 +443,14 @@ function sourceSize(database: DatabaseSync, dataDir: string) {
   const pageCount = database.prepare("PRAGMA page_count").get() as { page_count: number };
   const pageSize = database.prepare("PRAGMA page_size").get() as { page_size: number };
   let bytes = BigInt(pageCount.page_count) * BigInt(pageSize.page_size);
-  const required = databaseContents(database).snapshots;
-  for (const path of sourceSnapshots(dataDir, required)) {
+  const contents = databaseContents(database);
+  for (const path of sourceSnapshots(dataDir, contents.snapshots)) {
     bytes += BigInt(ensureRegularFile(sourceSnapshotPath(dataDir, path), "MISSING_SNAPSHOT").size);
+  }
+  if (contents.assets.length) {
+    for (const path of sourceAssets(dataDir, contents.assets)) {
+      bytes += BigInt(ensureRegularFile(sourceAssetPath(dataDir, path), "MISSING_ASSET").size);
+    }
   }
   return bytes;
 }
@@ -409,6 +459,7 @@ function validateDataDirectory(dataDir: string) {
   ensureSupportedDataLayout(dataDir);
   const contents = inspectDatabase(join(dataDir, LIVE_DATABASE_FILE));
   sourceSnapshots(dataDir, contents.snapshots);
+  if (contents.assets.length) sourceAssets(dataDir, contents.assets);
   return contents;
 }
 
@@ -422,7 +473,10 @@ function parseManifest(path: string): BackupManifest {
     fail("INVALID_BACKUP", "Backup manifest is not valid JSON", error);
   }
   if (!record(value) || value.format !== FORMAT) fail("INVALID_BACKUP", "Unknown backup format");
-  if (value.version !== FORMAT_VERSION) fail("UNSUPPORTED_FORMAT", "Unsupported backup format version");
+  if (value.version !== 1 && value.version !== FORMAT_VERSION) {
+    fail("UNSUPPORTED_FORMAT", "Unsupported backup format version");
+  }
+  const version = value.version as 1 | typeof FORMAT_VERSION;
   if (
     typeof value.createdAt !== "string" ||
     Number.isNaN(Date.parse(value.createdAt)) ||
@@ -443,7 +497,9 @@ function parseManifest(path: string): BackupManifest {
     if (
       !record(item) ||
       typeof item.path !== "string" ||
-      (item.path !== DATABASE_FILE && !SNAPSHOT_PATH.test(item.path)) ||
+      (item.path !== DATABASE_FILE &&
+        !SNAPSHOT_PATH.test(item.path) &&
+        (version === 1 || !ASSET_PATH.test(item.path))) ||
       !Number.isSafeInteger(item.bytes) ||
       Number(item.bytes) < 0 ||
       typeof item.sha256 !== "string" ||
@@ -462,7 +518,7 @@ function parseManifest(path: string): BackupManifest {
   }
   return {
     format: FORMAT,
-    version: FORMAT_VERSION,
+    version,
     createdAt: value.createdAt,
     reason: value.reason as BackupReason,
     schemaVersion: Number(value.schemaVersion),
@@ -473,12 +529,16 @@ function parseManifest(path: string): BackupManifest {
 
 function verifyLayout(root: string, manifest: BackupManifest) {
   const expectedRoot = new Set([DATABASE_FILE, MANIFEST_FILE, "snapshots"]);
+  if (manifest.version >= 2) expectedRoot.add("assets");
   const expectedSnapshots = new Set(
-    manifest.files.filter(({ path }) => path !== DATABASE_FILE).map(({ path }) => basename(path)),
+    manifest.files.filter(({ path }) => SNAPSHOT_PATH.test(path)).map(({ path }) => basename(path)),
+  );
+  const expectedAssets = new Set(
+    manifest.files.filter(({ path }) => ASSET_PATH.test(path)).map(({ path }) => basename(path)),
   );
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     if (!expectedRoot.has(entry.name)) fail("INVALID_BACKUP", `Unexpected backup entry: ${entry.name}`);
-    if (entry.name === "snapshots" ? !entry.isDirectory() : !entry.isFile()) {
+    if ((entry.name === "snapshots" || entry.name === "assets") ? !entry.isDirectory() : !entry.isFile()) {
       fail("INVALID_BACKUP", `Backup entry has the wrong type: ${entry.name}`);
     }
   }
@@ -490,6 +550,16 @@ function verifyLayout(root: string, manifest: BackupManifest) {
     }
   }
   if (expectedSnapshots.size) fail("INVALID_BACKUP", "Backup snapshots are missing");
+  if (manifest.version >= 2) {
+    const assets = join(root, "assets");
+    ensureDirectory(assets, "INVALID_BACKUP");
+    for (const entry of readdirSync(assets, { withFileTypes: true })) {
+      if (!entry.isFile() || !expectedAssets.delete(entry.name)) {
+        fail("INVALID_BACKUP", `Unexpected asset entry: ${entry.name}`);
+      }
+    }
+    if (expectedAssets.size) fail("INVALID_BACKUP", "Backup assets are missing");
+  }
 }
 
 export async function verifyBackup(path: string): Promise<VerifiedBackup> {
@@ -502,17 +572,21 @@ export async function verifyBackup(path: string): Promise<VerifiedBackup> {
     const filePath = backupFilePath(root, file.path);
     const stat = ensureRegularFile(filePath);
     if (stat.size !== file.bytes) fail("CHECKSUM_MISMATCH", `Backup file size changed: ${file.path}`);
-    if ((await sha256File(filePath)) !== file.sha256) {
+    const actualHash = await sha256File(filePath);
+    if (actualHash !== file.sha256) {
       fail("CHECKSUM_MISMATCH", `Backup file checksum changed: ${file.path}`);
+    }
+    if (ASSET_PATH.test(file.path) && actualHash !== basename(file.path)) {
+      fail("CHECKSUM_MISMATCH", `Backup asset hash does not match its path: ${file.path}`);
     }
   }
   const contents = inspectDatabase(join(root, DATABASE_FILE));
   if (contents.schemaVersion !== manifest.schemaVersion) {
     fail("INVALID_BACKUP", "Backup schema version does not match its manifest");
   }
-  const expected = new Set([DATABASE_FILE, ...contents.snapshots]);
+  const expected = new Set([DATABASE_FILE, ...contents.snapshots, ...contents.assets]);
   for (const file of manifest.files) expected.delete(file.path);
-  if (expected.size) fail("INVALID_BACKUP", "Backup is missing snapshots referenced by the database");
+  if (expected.size) fail("INVALID_BACKUP", "Backup is missing files referenced by the database");
   return { path: root, manifest };
 }
 
@@ -539,7 +613,9 @@ export async function createBackup(options: CreateBackupOptions): Promise<Verifi
     const contents = inspectDatabase(databasePath);
 
     const snapshotsDir = join(temporaryPath, "snapshots");
+    const assetsDir = join(temporaryPath, "assets");
     mkdirSync(snapshotsDir, { mode: 0o700 });
+    mkdirSync(assetsDir, { mode: 0o700 });
     const files: BackupFile[] = [];
     const databaseStat = ensureRegularFile(databasePath);
     files.push({ path: DATABASE_FILE, bytes: databaseStat.size, sha256: await sha256File(databasePath) });
@@ -552,6 +628,18 @@ export async function createBackup(options: CreateBackupOptions): Promise<Verifi
       syncPath(destination);
       const stat = ensureRegularFile(destination);
       files.push({ path, bytes: stat.size, sha256: await sha256File(destination) });
+    }
+    if (contents.assets.length) {
+      for (const path of sourceAssets(dataDir, contents.assets)) {
+        const source = sourceAssetPath(dataDir, path);
+        const destination = backupFilePath(temporaryPath, path);
+        ensureRegularFile(source, "MISSING_ASSET");
+        copyFileSync(source, destination, fsConstants.COPYFILE_EXCL);
+        chmodSync(destination, 0o600);
+        syncPath(destination);
+        const stat = ensureRegularFile(destination);
+        files.push({ path, bytes: stat.size, sha256: await sha256File(destination) });
+      }
     }
     const totalBytes = files.reduce((sum, file) => sum + file.bytes, 0);
     if (!Number.isSafeInteger(totalBytes)) fail("BACKUP_TOO_LARGE", "Backup is too large to describe safely");
@@ -568,6 +656,7 @@ export async function createBackup(options: CreateBackupOptions): Promise<Verifi
     writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
     syncPath(manifestPath);
     syncPath(snapshotsDir);
+    syncPath(assetsDir);
     syncPath(temporaryPath);
     const verified = await verifyBackup(temporaryPath);
     renameSync(temporaryPath, finalPath);
@@ -696,11 +785,17 @@ export function recoverInterruptedRestore(dataDir: string): "none" | "kept-curre
 
 async function copyBackupToStaging(backupValue: VerifiedBackup, staging: string) {
   const snapshots = join(staging, "snapshots");
+  const assets = join(staging, "assets");
   mkdirSync(snapshots, { mode: 0o700 });
+  if (backupValue.manifest.version >= 2) mkdirSync(assets, { mode: 0o700 });
   for (const file of backupValue.manifest.files) {
     const source = backupFilePath(backupValue.path, file.path);
     const destination =
-      file.path === DATABASE_FILE ? join(staging, LIVE_DATABASE_FILE) : join(snapshots, basename(file.path));
+      file.path === DATABASE_FILE
+        ? join(staging, LIVE_DATABASE_FILE)
+        : ASSET_PATH.test(file.path)
+          ? join(assets, basename(file.path))
+          : join(snapshots, basename(file.path));
     copyFileSync(source, destination, fsConstants.COPYFILE_EXCL);
     chmodSync(destination, 0o600);
     syncPath(destination);
@@ -714,6 +809,7 @@ async function copyBackupToStaging(backupValue: VerifiedBackup, staging: string)
     fail("INVALID_DATABASE", "Restored staging database has the wrong schema version");
   }
   syncPath(snapshots);
+  if (backupValue.manifest.version >= 2) syncPath(assets);
   syncPath(staging);
 }
 
@@ -727,6 +823,7 @@ function validatePreparedStaging(staging: string, supportedSchemaVersion: number
   }
   chmodSync(staging, 0o700);
   chmodSync(join(staging, "snapshots"), 0o700);
+  if (contents.schemaVersion >= 9) chmodSync(join(staging, "assets"), 0o700);
   chmodSync(join(staging, LIVE_DATABASE_FILE), 0o600);
   syncPath(join(staging, LIVE_DATABASE_FILE));
   for (const path of sourceSnapshots(staging, contents.snapshots)) {
@@ -734,7 +831,15 @@ function validatePreparedStaging(staging: string, supportedSchemaVersion: number
     chmodSync(snapshot, 0o600);
     syncPath(snapshot);
   }
+  if (contents.schemaVersion >= 9) {
+    for (const path of sourceAssets(staging, contents.assets)) {
+      const asset = sourceAssetPath(staging, path);
+      chmodSync(asset, 0o600);
+      syncPath(asset);
+    }
+  }
   syncPath(join(staging, "snapshots"));
+  if (contents.schemaVersion >= 9) syncPath(join(staging, "assets"));
   syncPath(staging);
 }
 

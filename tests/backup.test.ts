@@ -74,7 +74,14 @@ function capturedDocument(db: KnowledgeDatabase, dataDir: string) {
   });
   assert.equal(updated.kind, "updated");
   if (updated.kind !== "updated") throw new Error("Document update failed");
-  return { document: updated.document, snapshotPath };
+  const assetSource = "https://example.com/backup-image.png";
+  const assetBody = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
+  const assetHash = createHash("sha256").update(assetBody).digest("hex");
+  assert.equal(db.prepareDocumentAssets(ready.id, [assetSource]), true);
+  assert.equal(db.markAssetFetching(ready.id, assetSource), true);
+  writeFileSync(db.assetFilePath(assetHash), assetBody, { mode: 0o600 });
+  assert.equal(db.completeAsset(ready.id, assetSource, assetHash, "image/png", assetBody.length), true);
+  return { document: updated.document, snapshotPath, assetPath: `assets/${assetHash}` };
 }
 
 function cleanup(root: string, db?: KnowledgeDatabase) {
@@ -138,6 +145,7 @@ test("creates a consistent, owner-only backup and verifies every file", async ()
   const fixture = workspace();
   try {
     const saved = capturedDocument(fixture.db, fixture.dataDir);
+    writeFileSync(join(fixture.dataDir, "assets/.asset-00000000-0000-4000-8000-000000000000.tmp"), "interrupted");
     mkdirSync(fixture.backupRoot, { mode: 0o777 });
     const result = await createBackup({
       dataDir: fixture.dataDir,
@@ -146,7 +154,7 @@ test("creates a consistent, owner-only backup and verifies every file", async ()
     });
 
     assert.equal(result.manifest.format, "zhiye-backup");
-    assert.equal(result.manifest.version, 1);
+    assert.equal(result.manifest.version, 2);
     assert.equal(
       result.manifest.schemaVersion,
       (fixture.db.sql.prepare("SELECT max(version) AS version FROM schema_migrations").get() as { version: number })
@@ -155,13 +163,14 @@ test("creates a consistent, owner-only backup and verifies every file", async ()
     assert.equal(result.manifest.reason, "manual");
     assert.deepEqual(
       result.manifest.files.map(({ path }) => path),
-      ["database.sqlite3", saved.snapshotPath],
+      ["database.sqlite3", saved.snapshotPath, saved.assetPath],
     );
     assert.equal(statSync(fixture.backupRoot).mode & 0o777, 0o700);
     assert.equal(statSync(result.path).mode & 0o777, 0o700);
     assert.equal(statSync(join(result.path, "manifest.json")).mode & 0o777, 0o600);
     assert.equal(statSync(join(result.path, "database.sqlite3")).mode & 0o777, 0o600);
     assert.equal(statSync(join(result.path, saved.snapshotPath)).mode & 0o777, 0o600);
+    assert.equal(statSync(join(result.path, saved.assetPath)).mode & 0o777, 0o600);
     assert.equal(existsSync(join(result.path, "database.sqlite3-wal")), false);
     assert.equal(existsSync(join(result.path, "database.sqlite3-shm")), false);
     assert.equal(readdirSync(fixture.backupRoot).some((name) => name.startsWith(".zhiye-backup-")), false);
@@ -182,6 +191,73 @@ test("creates a consistent, owner-only backup and verifies every file", async ()
     }
   } finally {
     cleanup(fixture.root, fixture.db);
+  }
+});
+
+test("rejects an asset whose content no longer matches its hash path", async () => {
+  const fixture = workspace();
+  try {
+    const saved = capturedDocument(fixture.db, fixture.dataDir);
+    const backupValue = await createBackup({
+      dataDir: fixture.dataDir,
+      backupRoot: fixture.backupRoot,
+      database: fixture.db.sql,
+    });
+    const asset = join(backupValue.path, saved.assetPath);
+    const body = readFileSync(asset);
+    body[body.length - 1] ^= 1;
+    writeFileSync(asset, body);
+    const manifestPath = join(backupValue.path, "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as BackupManifest;
+    const entry = manifest.files.find(({ path }) => path === saved.assetPath);
+    assert.ok(entry);
+    entry.sha256 = createHash("sha256").update(body).digest("hex");
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    await assert.rejects(
+      verifyBackup(backupValue.path),
+      (error: unknown) => error instanceof BackupError && error.code === "CHECKSUM_MISMATCH",
+    );
+  } finally {
+    cleanup(fixture.root, fixture.db);
+  }
+});
+
+test("verifies and restores legacy format v1 backups without an assets directory", async () => {
+  const fixture = workspace();
+  try {
+    const document = fixture.db.createOrGetDocument("https://example.com/legacy-v1").document;
+    const backupValue = await createBackup({
+      dataDir: fixture.dataDir,
+      backupRoot: fixture.backupRoot,
+      database: fixture.db.sql,
+    });
+    const manifestPath = join(backupValue.path, "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as BackupManifest;
+    manifest.version = 1;
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    rmSync(join(backupValue.path, "assets"), { recursive: true });
+    const legacy = await verifyBackup(backupValue.path);
+    assert.equal(legacy.manifest.version, 1);
+
+    fixture.db.close();
+    await restoreBackup({
+      dataDir: fixture.dataDir,
+      backupRoot: fixture.backupRoot,
+      backupPath: legacy.path,
+      supportedSchemaVersion: legacy.manifest.schemaVersion,
+      prepareStaging(staging) {
+        openDatabase(staging).close();
+      },
+    });
+    const restored = openDatabase(fixture.dataDir);
+    try {
+      assert.equal(restored.getDocument(document.id)?.sourceUrl, document.sourceUrl);
+      assert.equal(existsSync(restored.assetsDir), true);
+    } finally {
+      restored.close();
+    }
+  } finally {
+    cleanup(fixture.root);
   }
 });
 
@@ -268,6 +344,7 @@ test("restore round-trips data and keeps a verified pre-restore backup", async (
       assert.deepEqual(document.tags, saved.document.tags);
       assert.equal(current.listDocuments().total, 1);
       assert.equal(readFileSync(join(fixture.dataDir, saved.snapshotPath), "utf8"), "compressed-html");
+      assert.deepEqual(readFileSync(join(fixture.dataDir, saved.assetPath)), readFileSync(join(original.path, saved.assetPath)));
       assert.equal(readFileSync(join(fixture.dataDir, "snapshots/orphan.html.gz"), "utf8"), "recoverable orphan");
     } finally {
       current.close();

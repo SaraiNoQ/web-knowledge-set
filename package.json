@@ -28,6 +28,7 @@
     "defuddle": "^0.19.2",
     "ipaddr.js": "^2.5.0",
     "linkedom": "^0.18.13",
+    "mdast-util-from-markdown": "^2.0.3",
     "playwright": "^1.62.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

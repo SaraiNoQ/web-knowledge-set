@@ -89,6 +89,35 @@ export interface ReextractionPreview {
   createdAt: string;
 }
 
+export type AssetStatus = "queued" | "fetching" | "ready" | "failed";
+
+export type AssetMimeType =
+  | "image/jpeg"
+  | "image/png"
+  | "image/gif"
+  | "image/webp"
+  | "image/avif";
+
+export interface DocumentAsset {
+  documentId: string;
+  sourceUrl: string;
+  status: AssetStatus;
+  assetHash: string | null;
+  mimeType: AssetMimeType | null;
+  byteSize: number | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AssetSettings {
+  maxAssetBytes: number;
+  maxAssetsPerDocument: number;
+  maxDocumentAssetBytes: number;
+  concurrency: number;
+}
+
 export type BackupReason = "manual" | "automatic" | "pre-migration" | "pre-restore";
 
 export type BackupStatus = "creating" | "verified" | "failed" | "invalid" | "missing";
@@ -120,6 +149,7 @@ export interface DatabaseHealth {
     foreignKeyId: number;
   }>;
   referencedSnapshotPaths: string[];
+  referencedAssetPaths: string[];
   pendingFileDeletions: Array<{
     path: string;
     attempts: number;
@@ -128,7 +158,7 @@ export interface DatabaseHealth {
     updatedAt: string;
   }>;
   recentErrors: Array<{
-    source: "capture" | "backup" | "file-deletion";
+    source: "capture" | "asset" | "backup" | "file-deletion";
     code: string | null;
     message: string;
     occurredAt: string;
@@ -140,6 +170,9 @@ export interface DataSafetyHealth {
   missingSnapshots: string[];
   orphanSnapshots: string[];
   unsafeSnapshotEntries: string[];
+  missingAssets: string[];
+  orphanAssets: string[];
+  unsafeAssetEntries: string[];
   storageBytes: number;
   recentBackup: BackupRecord | null;
 }

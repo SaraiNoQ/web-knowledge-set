@@ -1,6 +1,14 @@
 import { expect, test } from "@playwright/test";
 
+const readyImageUrl = "https://assets.example.test/ready.png";
+const failedImageUrl = "https://assets.example.test/failed.png";
+
 test("imports, restores history, trashes, restores, searches, exports, and blocks raw scripts", async ({ page }) => {
+  const remoteImageRequests: string[] = [];
+  await page.route("https://assets.example.test/**", async (route) => {
+    remoteImageRequests.push(route.request().url());
+    await route.abort();
+  });
   await page.goto("/");
   await page.getByRole("button", { name: "数据安全" }).click();
   await expect(page.getByRole("heading", { name: "数据安全" })).toBeVisible();
@@ -13,8 +21,14 @@ test("imports, restores history, trashes, restores, searches, exports, and block
 
   await expect(page.getByLabel("文档标题")).toHaveValue("远端测试文章", { timeout: 8_000 });
   await expect(page.getByRole("heading", { name: "抓取成功" })).toBeVisible();
-  await expect(page.getByText("外部图片已隐藏：追踪像素")).toBeVisible();
-  await expect(page.locator(".markdown-preview img")).toHaveCount(0);
+  const offlineImage = page.locator(".offline-image img");
+  await expect(offlineImage).toHaveAttribute("src", /\/api\/assets\/[a-f0-9]{64}$/u);
+  await expect.poll(() => offlineImage.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+  await expect(page.getByText("图片离线保存失败", { exact: false })).toBeVisible();
+  await expect(page.locator(".markdown-preview img")).toHaveCount(1);
+  await expect(page.getByLabel("Markdown 编辑器")).toContainText(readyImageUrl);
+  await expect(page.getByLabel("Markdown 编辑器")).toContainText(failedImageUrl);
+  expect(remoteImageRequests).toEqual([]);
   expect(await page.evaluate(() => (window as typeof window & { __zhiyeXss?: boolean }).__zhiyeXss)).toBeUndefined();
 
   await page.getByRole("button", { name: "采集历史" }).click();
@@ -253,6 +267,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   });
   await firstRevision.getByRole("button", { name: "恢复此版本" }).click();
   await expect(page.getByText("这篇知识在别处被修改过")).toBeVisible();
+  await expect.poll(currentStoredDraft).toContain("第一版正文");
   const conflictMarker = `conflict-${Date.now()}`;
   await editor.fill(`# 第一版\n\n第一版正文\n\n${conflictMarker}`);
   await expect.poll(currentStoredDraft).toContain(conflictMarker);

@@ -746,7 +746,7 @@ test("current migrations upgrade v3 and the frozen v7 release schema", () => {
       .all();
     fixture.close();
 
-    assert.deepEqual(inspectDatabaseSchema(currentDirectory).pendingVersions, [8]);
+    assert.deepEqual(inspectDatabaseSchema(currentDirectory).pendingVersions, [8, 9]);
     const current = openDatabase(currentDirectory);
     try {
       assert.equal(current.getDocument("release-document")?.markdown, "Frozen release schema body.");
@@ -822,7 +822,9 @@ test("schema inspection is read-only and rejects future or incomplete histories"
 
     const raw = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));
     raw.exec(`
-      ALTER TABLE captures DROP COLUMN extractor_version;
+      DROP TABLE document_assets;
+      DROP TABLE assets;
+      DROP TABLE asset_settings;
       DELETE FROM schema_migrations WHERE version = ${CURRENT_SCHEMA_VERSION};
     `);
     raw.close();
@@ -869,7 +871,7 @@ test("all pending migrations roll back together on failure", () => {
       currentVersion: 3,
       supportedVersion: CURRENT_SCHEMA_VERSION,
       appliedVersions: [1, 2, 3],
-      pendingVersions: [4, 5, 6, 7, 8],
+      pendingVersions: [4, 5, 6, 7, 8, 9],
     });
     const unchanged = new DatabaseSync(path, { readOnly: true });
     try {

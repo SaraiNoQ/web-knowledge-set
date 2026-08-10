@@ -11,6 +11,7 @@ import remarkGfm from "remark-gfm";
 import type {
   CaptureHistoryItem,
   CaptureStatus,
+  DocumentAsset,
   DocumentDraft,
   DocumentRevision,
   DocumentSummary,
@@ -132,7 +133,59 @@ function resolveLink(href: string | undefined, sourceUrl: string) {
   }
 }
 
-function MarkdownPreview({ markdown, sourceUrl }: { markdown: string; sourceUrl: string }) {
+function assetSource(src: string | undefined, sourceUrl: string) {
+  if (!src) return null;
+  try {
+    const resolved = new URL(src, sourceUrl);
+    if (resolved.protocol !== "http:" && resolved.protocol !== "https:") return null;
+    resolved.hash = "";
+    return resolved.href;
+  } catch {
+    return null;
+  }
+}
+
+function ImagePlaceholder({ alt, children }: { alt?: string; children: string }) {
+  const label = alt ? `图片“${alt}”` : "图片";
+  return (
+    <span className="external-image-note" role="img" aria-label={`${label}：${children}`}>
+      <strong>{children}</strong>
+      {alt && <small>{alt}</small>}
+    </span>
+  );
+}
+
+function OfflineImage({ asset, alt }: { asset?: DocumentAsset; alt?: string }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [asset?.assetHash]);
+
+  if (!asset) return <ImagePlaceholder alt={alt}>图片未离线保存，不会连接原站。</ImagePlaceholder>;
+  if (asset.status === "queued" || asset.status === "fetching") {
+    return <ImagePlaceholder alt={alt}>图片正在保存到本地。</ImagePlaceholder>;
+  }
+  if (asset.status === "failed") {
+    return <ImagePlaceholder alt={alt}>{`图片离线保存失败${asset.errorMessage ? `：${asset.errorMessage}` : asset.errorCode ? `：${asset.errorCode}` : "。"}`}</ImagePlaceholder>;
+  }
+  if (!asset.assetHash || failed) {
+    return <ImagePlaceholder alt={alt}>{failed ? "本地图片无法读取，不会回退到原站。" : "离线图片记录不完整。"}</ImagePlaceholder>;
+  }
+  return (
+    <span className="offline-image">
+      <img src={api.assetUrl(asset.assetHash)} alt={alt || ""} loading="lazy" onError={() => setFailed(true)} />
+    </span>
+  );
+}
+
+function MarkdownPreview({ markdown, sourceUrl, assets = [] }: { markdown: string; sourceUrl: string; assets?: DocumentAsset[] }) {
+  const assetsBySource = useMemo(() => {
+    const result = new Map<string, DocumentAsset>();
+    for (const asset of assets) {
+      const source = assetSource(asset.sourceUrl, sourceUrl);
+      if (source) result.set(source, asset);
+    }
+    return result;
+  }, [assets, sourceUrl]);
+
   return (
     <article className="markdown-preview">
       <ReactMarkdown
@@ -144,9 +197,12 @@ function MarkdownPreview({ markdown, sourceUrl }: { markdown: string; sourceUrl:
             const external = !safeHref.startsWith("#");
             return <a {...props} href={safeHref} target={external ? "_blank" : undefined} rel={external ? "noreferrer noopener" : undefined}>{children}</a>;
           },
-          img: ({ node: _node, alt }) => (
-            <span className="external-image-note" role="note">外部图片已隐藏{alt ? `：${alt}` : ""}</span>
-          ),
+          img: ({ node: _node, src, alt }) => {
+            const source = assetSource(src, sourceUrl);
+            return source
+              ? <OfflineImage asset={assetsBySource.get(source)} alt={alt} />
+              : <ImagePlaceholder alt={alt}>图片地址不可用。</ImagePlaceholder>;
+          },
         }}
       >
         {markdown}
@@ -311,6 +367,8 @@ export default function App() {
   const [tagText, setTagText] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
+  const [assets, setAssets] = useState<DocumentAsset[]>([]);
+  const [assetError, setAssetError] = useState("");
   const [mode, setMode] = useState<EditorMode>("split");
 
   const [importUrl, setImportUrl] = useState("");
@@ -557,11 +615,15 @@ export default function App() {
     if (!selectedId) {
       setCurrentDoc(null);
       setDraft(null);
+      setAssets([]);
+      setAssetError("");
       return;
     }
     const controller = new AbortController();
     setCurrentDoc(null);
     setDraft(null);
+    setAssets([]);
+    setAssetError("");
     setTagText("");
     setDetailLoading(true);
     setDetailError("");
@@ -611,6 +673,40 @@ export default function App() {
       });
     return () => controller.abort();
   }, [selectedId]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const documentId = selectedId;
+    const controller = new AbortController();
+    void api.listDocumentAssets(documentId, controller.signal).then((result) => {
+      if (selectedIdRef.current !== documentId) return;
+      setAssets(result);
+      setAssetError("");
+    }).catch((error) => {
+      if ((error as Error).name !== "AbortError" && selectedIdRef.current === documentId) {
+        setAssetError((error as Error).message);
+      }
+    });
+    return () => controller.abort();
+  }, [currentDoc?.status, selectedId]);
+
+  const activeAssetCapture = assets.some((asset) => asset.status === "queued" || asset.status === "fetching");
+
+  useEffect(() => {
+    if (!selectedId || !activeAssetCapture) return;
+    const documentId = selectedId;
+    const timer = window.setInterval(async () => {
+      try {
+        const result = await api.listDocumentAssets(documentId);
+        if (selectedIdRef.current !== documentId) return;
+        setAssets(result);
+        setAssetError("");
+      } catch (error) {
+        if (selectedIdRef.current === documentId) setAssetError((error as Error).message);
+      }
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [activeAssetCapture, selectedId]);
 
   useEffect(() => {
     if (!selectedId || !currentDoc || !needsCapturePolling(currentDoc)) return;
@@ -1375,6 +1471,7 @@ export default function App() {
               </header>
 
               {currentDoc.warning && <div className="notice warning" role="status"><strong>注意</strong><span>{currentDoc.warning}</span></div>}
+              {assetError && <div className="notice error" role="alert"><strong>离线图片状态不可用</strong><span>{assetError}。预览不会连接原站。</span></div>}
               {draftNotice && <div className="notice warning" role="status"><strong>草稿恢复</strong><span>{draftNotice}</span></div>}
               {draftError && <div className="notice error" role="alert"><strong>草稿未保存</strong><span>{draftError}</span></div>}
               {detailError && <div className="notice error" role="alert"><strong>请求失败</strong><span>{detailError}</span></div>}
@@ -1400,7 +1497,7 @@ export default function App() {
                   </div>
                   <section className="trash-preview" aria-label="回收站文档预览">
                     <div className="pane-label">READ ONLY</div>
-                    {draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} /> : <StatePanel kind="empty" title="这张织片没有正文" />}
+                    {draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} /> : <StatePanel kind="empty" title="这张织片没有正文" />}
                   </section>
                 </div>
               ) : activeCapture ? (
@@ -1451,7 +1548,7 @@ export default function App() {
 
                   <div className={`editor-grid mode-${mode}`}>
                     {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><div className="pane-label">MARKDOWN</div><MarkdownEditor value={draft.markdown} onChange={(markdown) => { if (!closeAttemptRef.current) setDraft((value) => value ? { ...value, markdown } : value); }} readOnly={editorLocked} /></section>}
-                    {mode !== "edit" && <section className="preview-pane" aria-label="Markdown 预览"><div className="pane-label">PREVIEW</div>{draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} /> : <StatePanel kind="empty" title="这里还没有文字">在编辑区写下 Markdown，预览会同步出现。</StatePanel>}</section>}
+                    {mode !== "edit" && <section className="preview-pane" aria-label="Markdown 预览"><div className="pane-label">PREVIEW</div>{draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} /> : <StatePanel kind="empty" title="这里还没有文字">在编辑区写下 Markdown，预览会同步出现。</StatePanel>}</section>}
                   </div>
                 </div>
               )}

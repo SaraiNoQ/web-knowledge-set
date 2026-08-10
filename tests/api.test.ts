@@ -12,6 +12,7 @@ import type {
   BackupRecord,
   CaptureHistoryItem,
   DataSafetyStatus,
+  DocumentAsset,
   DocumentDraft,
   DocumentListResponse,
   DocumentRevision,
@@ -565,6 +566,105 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     assert.equal(recoveryClose.status, 200);
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.deepEqual(desktopCloseAttempts, ["314", "315"]);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await app.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("asset API exposes ready files and keeps per-image failures separate from capture", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zhiye-api-assets-"));
+  const directory = join(root, "data");
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
+  const capture: CaptureFunction = async (url) => ({
+    title: "Images",
+    author: null,
+    publishedAt: null,
+    finalUrl: url,
+    canonicalUrl: null,
+    markdown: "![ready](./ready.png)\n\n![failed](./failed.png)",
+    mode: "http",
+    warning: null,
+    rawHtml: "<article><p>Images</p></article>",
+    httpStatus: 200,
+  });
+  const app = createApp({
+    dataDir: directory,
+    database: openDatabase(directory),
+    bootstrapToken: "asset-bootstrap-token",
+    sessionToken: "asset-session-token",
+    capture,
+    fetchAsset: async (url) => {
+      if (url.endsWith("failed.png")) throw Object.assign(new Error("image unavailable"), { code: "HTTP_ERROR" });
+      return { body: png, contentType: "image/png", finalUrl: url, status: 200 };
+    },
+  });
+  const server = createServer((request, response) => void app.handler(request, response));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const base = `http://127.0.0.1:${address.port}`;
+  try {
+    const launch = await fetch(`${base}/launch?token=asset-bootstrap-token`, { redirect: "manual" });
+    const cookie = (launch.headers.get("set-cookie") ?? "").split(";", 1)[0];
+    const created = (await (
+      await fetch(`${base}/api/documents`, {
+        method: "POST",
+        headers: { Cookie: cookie, Origin: base, "Content-Type": "application/json" },
+        body: JSON.stringify({ url: "https://example.com/article/images" }),
+      })
+    ).json()) as KnowledgeDocument;
+    await waitFor(base, cookie, created.id, "ready");
+    let assets: DocumentAsset[] = [];
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      assets = (await (
+        await fetch(`${base}/api/documents/${created.id}/assets`, { headers: { Cookie: cookie } })
+      ).json()) as DocumentAsset[];
+      if (assets.length === 2 && assets.every(({ status }) => status === "ready" || status === "failed")) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const ready = assets.find((asset) => asset.status === "ready");
+    const failed = assets.find((asset) => asset.status === "failed");
+    const readyHash = ready?.assetHash;
+    assert.ok(readyHash);
+    assert.equal(failed?.errorCode, "HTTP_ERROR");
+    assert.equal((await fetch(`${base}/api/assets/${readyHash}`)).status, 401);
+
+    const response = await fetch(`${base}/api/assets/${readyHash}`, { headers: { Cookie: cookie } });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "image/png");
+    assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(response.headers.get("cross-origin-resource-policy"), "same-origin");
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
+    const etag = response.headers.get("etag");
+    assert.ok(etag);
+    assert.equal(
+      (
+        await fetch(`${base}/api/assets/${readyHash}`, {
+          method: "HEAD",
+          headers: { Cookie: cookie },
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await fetch(`${base}/api/assets/${readyHash}`, {
+          headers: { Cookie: cookie, "If-None-Match": etag },
+        })
+      ).status,
+      304,
+    );
+    assert.equal(
+      (await fetch(`${base}/api/assets/${readyHash.toUpperCase()}`, { headers: { Cookie: cookie } })).status,
+      400,
+    );
+    const current = (await (
+      await fetch(`${base}/api/documents/${created.id}`, { headers: { Cookie: cookie } })
+    ).json()) as KnowledgeDocument;
+    assert.equal(current.status, "ready");
+    assert.equal(current.errorCode, null);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await app.close();

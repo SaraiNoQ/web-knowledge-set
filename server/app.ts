@@ -12,6 +12,7 @@ import type {
   DataSafetyStatus,
   KnowledgeDocument,
 } from "../shared/types.js";
+import { cacheDocumentAssets, type AssetFetchFunction } from "./assets.js";
 import { createAuth } from "./auth.js";
 import { BackupError, recoverInterruptedRestore, restoreBackup } from "./backup.js";
 import {
@@ -111,6 +112,7 @@ export interface AppOptions {
   sessionToken?: string;
   dev?: boolean;
   capture?: CaptureFunction;
+  fetchAsset?: AssetFetchFunction;
   startWorker?: boolean;
   onDesktopCloseReady?: (attemptId: string) => void;
 }
@@ -357,6 +359,60 @@ async function readSnapshotHtml(path: string) {
   }
 }
 
+async function serveAsset(
+  request: IncomingMessage,
+  response: ServerResponse,
+  database: KnowledgeDatabase,
+  hash: string,
+) {
+  if (!/^[a-f0-9]{64}$/u.test(hash)) {
+    throw new HttpError(400, "INVALID_ASSET_HASH", "Asset hash must be 64 lowercase hexadecimal characters");
+  }
+  const asset = database.getAsset(hash);
+  if (!asset) throw new HttpError(404, "ASSET_NOT_FOUND", "Cached asset not found");
+  const file = await open(database.assetFilePath(hash), constants.O_RDONLY | constants.O_NOFOLLOW).catch(
+    (cause: unknown) => {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new HttpError(404, "ASSET_MISSING", "Cached asset file is missing");
+      }
+      throw new HttpError(422, "ASSET_INVALID", "Cached asset cannot be opened safely");
+    },
+  );
+  const etag = `"${hash}"`;
+  try {
+    const info = await file.stat();
+    if (!info.isFile() || info.size !== asset.byteSize) {
+      throw new HttpError(422, "ASSET_INVALID", "Cached asset does not match its database record");
+    }
+    const headers = {
+      "Content-Type": asset.mimeType,
+      "Content-Length": String(asset.byteSize),
+      "Cache-Control": "private, max-age=31536000, immutable",
+      "Cross-Origin-Resource-Policy": "same-origin",
+      ETag: etag,
+      ...securityHeaders(),
+    };
+    if (request.headers["if-none-match"] === etag) {
+      await file.close();
+      response.writeHead(304, headers);
+      response.end();
+      return;
+    }
+    response.writeHead(200, headers);
+    if (request.method === "HEAD") {
+      await file.close();
+      response.end();
+      return;
+    }
+    file.createReadStream({ autoClose: true })
+      .on("error", (error) => response.destroy(error))
+      .pipe(response);
+  } catch (error) {
+    await file.close().catch(() => undefined);
+    throw error;
+  }
+}
+
 function exportedMarkdown(document: KnowledgeDocument) {
   const frontMatter = [
     "---",
@@ -376,7 +432,12 @@ function exportedMarkdown(document: KnowledgeDocument) {
   return `${frontMatter.join("\n")}\n${document.markdown.trimEnd()}\n`;
 }
 
-function createWorker(getDb: () => KnowledgeDatabase | null, capture: CaptureFunction, enabled: boolean) {
+function createWorker(
+  getDb: () => KnowledgeDatabase | null,
+  capture: CaptureFunction,
+  fetchAsset: AssetFetchFunction | undefined,
+  enabled: boolean,
+) {
   let paused = !enabled;
   let stopped = false;
   let current: Promise<void> | null = null;
@@ -420,7 +481,18 @@ function createWorker(getDb: () => KnowledgeDatabase | null, capture: CaptureFun
           warning: page.warning || null,
           httpStatus: page.httpStatus ?? null,
         };
-        db.completeCapture(job, result, snapshotPath);
+        const document = db.completeCapture(job, result, snapshotPath);
+        try {
+          await cacheDocumentAssets(
+            db,
+            document.id,
+            document.markdown,
+            document.finalUrl ?? document.sourceUrl,
+            fetchAsset,
+          );
+        } catch (error) {
+          console.error("Image caching failed after capture completed", error);
+        }
       } catch (error) {
         const failure = captureFailure(error);
         db.failCapture(job, failure.code, failure.message);
@@ -490,7 +562,12 @@ export function createApp(options: AppOptions) {
   });
   const capture: CaptureFunction =
     options.capture ?? (async (url) => (await import("./capture.js")).captureUrl(url));
-  let worker = createWorker(() => db, capture, options.startWorker !== false && db !== null);
+  let worker = createWorker(
+    () => db,
+    capture,
+    options.fetchAsset,
+    options.startWorker !== false && db !== null,
+  );
   let maintenanceKind: string | null = null;
   let maintenanceDone: Promise<void> | null = null;
   let finishMaintenance: (() => void) | null = null;
@@ -658,7 +735,7 @@ export function createApp(options: AppOptions) {
       if (pathname === "/api/data-safety/cleanup" && request.method === "POST") {
         await mutationBody(request);
         const database = requireDatabase();
-        const result = await runMaintenance("snapshot cleanup", async () => {
+        const result = await runMaintenance("storage cleanup", async () => {
           await worker.pause();
           try {
             return cleanupOrphanSnapshots(database);
@@ -752,7 +829,12 @@ export function createApp(options: AppOptions) {
             }
             throw error;
           } finally {
-            worker = createWorker(() => db, capture, options.startWorker !== false && db !== null);
+            worker = createWorker(
+              () => db,
+              capture,
+              options.fetchAsset,
+              options.startWorker !== false && db !== null,
+            );
           }
         });
         sendJson(response, 200, result);
@@ -795,6 +877,20 @@ export function createApp(options: AppOptions) {
 
       if (pathname === "/api/tags" && request.method === "GET") {
         sendJson(response, 200, requireDatabase().listTags(trashFilter(requestUrl)));
+        return;
+      }
+
+      const assetFileMatch = pathname.match(/^\/api\/assets\/([^/]+)$/u);
+      if (assetFileMatch && (request.method === "GET" || request.method === "HEAD")) {
+        await serveAsset(request, response, requireDatabase(), decodeId(assetFileMatch[1]));
+        return;
+      }
+
+      const documentAssetsMatch = pathname.match(/^\/api\/documents\/([^/]+)\/assets$/u);
+      if (documentAssetsMatch && request.method === "GET") {
+        const assets = requireDatabase().listDocumentAssets(decodeId(documentAssetsMatch[1]));
+        if (!assets) throw new HttpError(404, "NOT_FOUND", "Document not found");
+        sendJson(response, 200, assets);
         return;
       }
 

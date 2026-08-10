@@ -18,6 +18,7 @@ import type { KnowledgeDatabase } from "./db.js";
 
 const backupDirectory = /^backup-[0-9]{8}T[0-9]{9}Z-[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
 const snapshotPath = /^snapshots\/[a-zA-Z0-9-]+\.html\.gz$/u;
+const assetPath = /^assets\/[a-f0-9]{64}$/u;
 
 export class DataSafetyError extends Error {
   readonly status: number;
@@ -276,6 +277,29 @@ function snapshotInventory(
   };
 }
 
+function assetInventory(
+  db: KnowledgeDatabase,
+  referencedPaths = db.getDatabaseHealth().referencedAssetPaths,
+) {
+  const referenced = new Set(referencedPaths);
+  const present = new Set<string>();
+  const unsafeAssetEntries: string[] = [];
+  if (!existsSync(db.assetsDir) || !lstatSync(db.assetsDir).isDirectory()) {
+    unsafeAssetEntries.push("assets");
+  } else {
+    for (const entry of readdirSync(db.assetsDir, { withFileTypes: true })) {
+      const path = `assets/${entry.name}`;
+      if (!entry.isFile() || !assetPath.test(path)) unsafeAssetEntries.push(path);
+      else present.add(path);
+    }
+  }
+  return {
+    missingAssets: [...referenced].filter((path) => !present.has(path)).sort(),
+    orphanAssets: [...present].filter((path) => !referenced.has(path)).sort(),
+    unsafeAssetEntries: unsafeAssetEntries.sort(),
+  };
+}
+
 function storageBytes(db: KnowledgeDatabase) {
   let total = 0;
   for (const path of [
@@ -290,6 +314,11 @@ function storageBytes(db: KnowledgeDatabase) {
       if (entry.isFile()) total += lstatSync(join(db.snapshotsDir, entry.name)).size;
     }
   }
+  if (existsSync(db.assetsDir) && lstatSync(db.assetsDir).isDirectory()) {
+    for (const entry of readdirSync(db.assetsDir, { withFileTypes: true })) {
+      if (entry.isFile()) total += lstatSync(join(db.assetsDir, entry.name)).size;
+    }
+  }
   return total;
 }
 
@@ -298,18 +327,21 @@ export function dataSafetyHealth(db: KnowledgeDatabase): DataSafetyHealth {
   return {
     database,
     ...snapshotInventory(db, database.referencedSnapshotPaths),
+    ...assetInventory(db, database.referencedAssetPaths),
     storageBytes: storageBytes(db),
     recentBackup: db.listBackupRecords().find((record) => record.status === "verified") ?? null,
   };
 }
 
 export function cleanupOrphanSnapshots(db: KnowledgeDatabase) {
-  const inventory = snapshotInventory(db);
-  const queued = db.queueSnapshotDeletions(inventory.orphanSnapshots);
+  const snapshots = snapshotInventory(db);
+  const assets = assetInventory(db);
+  const queued = db.queueFileDeletions([...snapshots.orphanSnapshots, ...assets.orphanAssets]);
   db.processPendingFileDeletions();
   return {
     ...queued,
     deleted: queued.queued.filter((path) => !existsSync(join(db.dataDir, path))),
-    unsafeSnapshotEntries: inventory.unsafeSnapshotEntries,
+    unsafeSnapshotEntries: snapshots.unsafeSnapshotEntries,
+    unsafeAssetEntries: assets.unsafeAssetEntries,
   };
 }

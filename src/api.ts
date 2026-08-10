@@ -5,6 +5,7 @@ import type {
   CaptureHistoryItem,
   CaptureStatus,
   DataSafetyStatus,
+  DocumentAsset,
   DocumentDraft,
   DocumentListResponse,
   DocumentRevision,
@@ -150,6 +151,14 @@ export const api = {
 
   getDocument(id: string, signal?: AbortSignal) {
     return request<KnowledgeDocument>(`/api/documents/${encodeURIComponent(id)}`, { signal });
+  },
+
+  listDocumentAssets(id: string, signal?: AbortSignal) {
+    return request<DocumentAsset[]>(`/api/documents/${encodeURIComponent(id)}/assets`, { signal });
+  },
+
+  assetUrl(hash: string) {
+    return `/api/assets/${encodeURIComponent(hash)}`;
   },
 
   listCaptureHistory(id: string, signal?: AbortSignal) {
