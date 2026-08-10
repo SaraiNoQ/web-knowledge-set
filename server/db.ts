@@ -1271,12 +1271,24 @@ export class KnowledgeDatabase {
     });
   }
 
-  createOrGetDocument(sourceUrl: string): { document: KnowledgeDocument; created: boolean } {
+  createOrGetDocument(sourceUrl: string, force = false) {
     return transaction(this.sql, () => {
       const existing = this.sql.prepare("SELECT * FROM documents WHERE source_url = ?").get(sourceUrl) as
         | DocumentRow
         | undefined;
-      if (existing) return { document: this.toDocument(existing), created: false };
+      if (existing) {
+        return { document: this.toDocument(existing), created: false, duplicateKind: "source" as const };
+      }
+      const resolved = this.sql
+        .prepare(
+          `SELECT * FROM documents
+           WHERE final_url = ? OR canonical_url = ?
+           ORDER BY deleted_at IS NOT NULL, updated_at DESC LIMIT 1`,
+        )
+        .get(sourceUrl, sourceUrl) as DocumentRow | undefined;
+      if (resolved && !force) {
+        return { document: this.toDocument(resolved), created: false, duplicateKind: "resolved" as const };
+      }
 
       const id = randomUUID();
       const timestamp = now();
@@ -1294,8 +1306,38 @@ export class KnowledgeDatabase {
            VALUES (?, 'queued', ?, ?, ?)`,
         )
         .run(id, timestamp, timestamp, timestamp);
-      return { document: this.getDocument(id)!, created: true };
+      return {
+        document: this.getDocument(id)!,
+        created: true,
+        duplicateKind: resolved ? "resolved" as const : null,
+      };
     });
+  }
+
+  findDuplicateDocument(id: string): DocumentSummary | null {
+    const target = this.getDocument(id);
+    if (!target) return null;
+    const urls = [...new Set([target.sourceUrl, target.finalUrl, target.canonicalUrl].filter(
+      (url): url is string => Boolean(url),
+    ))];
+    const placeholders = urls.map(() => "?").join(", ");
+    const rows = this.sql
+      .prepare(
+        `SELECT * FROM documents d
+         WHERE d.id <> ? AND (
+           d.source_url IN (${placeholders}) OR
+           d.final_url IN (${placeholders}) OR
+           d.canonical_url IN (${placeholders})
+         )`,
+      )
+      .all(id, ...urls, ...urls, ...urls) as unknown as DocumentRow[];
+    rows.sort((left, right) => {
+      const sourceDifference = Number(!urls.includes(left.source_url)) - Number(!urls.includes(right.source_url));
+      if (sourceDifference) return sourceDifference;
+      const trashDifference = Number(left.deleted_at !== null) - Number(right.deleted_at !== null);
+      return trashDifference || right.updated_at.localeCompare(left.updated_at);
+    });
+    return rows[0] ? this.toSummary(rows[0]) : null;
   }
 
   listDocuments(filters: ListFilters = {}): DocumentListResponse {
@@ -1700,6 +1742,43 @@ export class KnowledgeDatabase {
         .run(id, timestamp, timestamp, timestamp);
       return { kind: "queued" as const, document: this.getDocument(id)! };
     });
+  }
+
+  cancelQueuedCapture(id: string) {
+    return transaction(this.sql, () => {
+      const current = this.getDocument(id);
+      if (!current) return { kind: "missing" as const };
+      const timestamp = now();
+      const cancelled = this.sql
+        .prepare(
+          `UPDATE capture_jobs
+           SET status = 'failed', last_error = 'Capture cancelled by user', updated_at = ?
+           WHERE document_id = ? AND status = 'queued'`,
+        )
+        .run(timestamp, id);
+      if (cancelled.changes !== 1) return { kind: "not_queued" as const, document: current };
+      this.sql
+        .prepare(
+          `UPDATE documents
+           SET status = 'failed', warning = NULL, error_code = 'CAPTURE_CANCELLED',
+               error_message = 'Capture cancelled by user', revision = revision + 1, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(timestamp, id);
+      return { kind: "cancelled" as const, document: this.getDocument(id)! };
+    });
+  }
+
+  getCaptureQueueCounts() {
+    const row = this.sql
+      .prepare(
+        `SELECT
+           sum(CASE WHEN j.status = 'running' THEN 1 ELSE 0 END) AS active,
+           sum(CASE WHEN j.status = 'queued' AND d.deleted_at IS NULL THEN 1 ELSE 0 END) AS queued
+         FROM capture_jobs j JOIN documents d ON d.id = j.document_id`,
+      )
+      .get() as { active: number | null; queued: number | null };
+    return { active: Number(row.active ?? 0), queued: Number(row.queued ?? 0) };
   }
 
   claimNextCapture(): CaptureJob | null {

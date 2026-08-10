@@ -51,6 +51,7 @@ const captureErrorCodes = new Set<CaptureErrorCode>([
   "HTTP_ERROR",
   "EXTRACTION_EMPTY",
   "BROWSER_FAILED",
+  "CAPTURE_CANCELLED",
   "INTERNAL_ERROR",
 ]);
 const statuses = new Set<CaptureStatus>(["queued", "fetching", "extracting", "ready", "failed"]);
@@ -438,12 +439,14 @@ function createWorker(
   fetchAsset: AssetFetchFunction | undefined,
   enabled: boolean,
 ) {
-  let paused = !enabled;
+  let userPaused = !enabled;
+  let maintenancePaused = false;
   let stopped = false;
   let current: Promise<void> | null = null;
+  const paused = () => userPaused || maintenancePaused;
 
   const run = async () => {
-    while (!paused && !stopped) {
+    while (!paused() && !stopped) {
       const db = getDb();
       if (!db) return;
       const job = db.claimNextCapture();
@@ -501,27 +504,35 @@ function createWorker(
   };
 
   const wake = () => {
-    if (paused || stopped || current) return;
+    if (paused() || stopped || current) return;
     current = run().finally(() => {
       current = null;
-      if (!paused && !stopped && getDb()?.hasPendingCaptures()) queueMicrotask(wake);
+      if (!paused() && !stopped && getDb()?.hasPendingCaptures()) queueMicrotask(wake);
     });
   };
 
   if (enabled) queueMicrotask(wake);
   return {
     wake,
+    isPaused() {
+      return userPaused;
+    },
+    setPaused(value: boolean) {
+      if (stopped || !enabled) return;
+      userPaused = value;
+      if (!paused()) wake();
+    },
     async pause() {
-      paused = true;
+      maintenancePaused = true;
       await current;
     },
     resume() {
       if (stopped || !enabled) return;
-      paused = false;
-      wake();
+      maintenancePaused = false;
+      if (!paused()) wake();
     },
     async stop() {
-      paused = true;
+      maintenancePaused = true;
       stopped = true;
       await current;
     },
@@ -586,6 +597,8 @@ export function createApp(options: AppOptions) {
     requireDatabase();
     return body;
   };
+
+  const queueStatus = () => ({ paused: worker.isPaused(), ...requireDatabase().getCaptureQueueCounts() });
 
   const runMaintenance = async <T,>(kind: string, operation: () => Promise<T>) => {
     if (maintenanceKind) throw new HttpError(503, "MAINTENANCE", "Another data operation is in progress");
@@ -658,6 +671,21 @@ export function createApp(options: AppOptions) {
 
       if (pathname === "/api/data-safety" && request.method === "GET") {
         sendJson(response, 200, await status());
+        return;
+      }
+
+      if (pathname === "/api/capture-queue" && request.method === "GET") {
+        sendJson(response, 200, queueStatus());
+        return;
+      }
+
+      if (pathname === "/api/capture-queue" && request.method === "PATCH") {
+        const body = await mutationBody(request);
+        if (typeof body.paused !== "boolean" || Object.keys(body).some((key) => key !== "paused")) {
+          throw new HttpError(400, "INVALID_QUEUE_STATE", "paused must be the only field and must be boolean");
+        }
+        worker.setPaused(body.paused);
+        sendJson(response, 200, queueStatus());
         return;
       }
 
@@ -758,6 +786,7 @@ export function createApp(options: AppOptions) {
         if (body.allowQuarantine !== undefined && typeof body.allowQuarantine !== "boolean") {
           throw new HttpError(400, "INVALID_RESTORE_REQUEST", "allowQuarantine must be a boolean");
         }
+        const queueWasPaused = worker.isPaused();
         const result = await runMaintenance("restore", async () => {
           await worker.stop();
           const reopenExpected = db !== null;
@@ -835,6 +864,7 @@ export function createApp(options: AppOptions) {
               options.fetchAsset,
               options.startWorker !== false && db !== null,
             );
+            worker.setPaused(queueWasPaused);
           }
         });
         sendJson(response, 200, result);
@@ -847,9 +877,15 @@ export function createApp(options: AppOptions) {
 
       if (pathname === "/api/documents" && request.method === "POST") {
         const body = await mutationBody(request);
-        const result = requireDatabase().createOrGetDocument(normalizeUrl(body.url));
+        if (body.force !== undefined && typeof body.force !== "boolean") {
+          throw new HttpError(400, "INVALID_FORCE", "force must be boolean");
+        }
+        if (Object.keys(body).some((key) => key !== "url" && key !== "force")) {
+          throw new HttpError(400, "INVALID_IMPORT_REQUEST", "Only url and force may be provided");
+        }
+        const result = requireDatabase().createOrGetDocument(normalizeUrl(body.url), body.force === true);
         if (result.created) worker.wake();
-        sendJson(response, result.created ? 202 : 200, result.document);
+        sendJson(response, result.created ? 202 : 200, result);
         return;
       }
 
@@ -891,6 +927,31 @@ export function createApp(options: AppOptions) {
         const assets = requireDatabase().listDocumentAssets(decodeId(documentAssetsMatch[1]));
         if (!assets) throw new HttpError(404, "NOT_FOUND", "Document not found");
         sendJson(response, 200, assets);
+        return;
+      }
+
+      const duplicateMatch = pathname.match(/^\/api\/documents\/([^/]+)\/duplicate$/u);
+      if (duplicateMatch && request.method === "GET") {
+        const database = requireDatabase();
+        const id = decodeId(duplicateMatch[1]);
+        if (!database.getDocument(id)) throw new HttpError(404, "NOT_FOUND", "Document not found");
+        sendJson(response, 200, database.findDuplicateDocument(id));
+        return;
+      }
+
+      const cancelMatch = pathname.match(/^\/api\/documents\/([^/]+)\/cancel$/u);
+      if (cancelMatch && request.method === "POST") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length) {
+          throw new HttpError(400, "INVALID_CANCEL_REQUEST", "Cancellation does not accept options");
+        }
+        const result = requireDatabase().cancelQueuedCapture(decodeId(cancelMatch[1]));
+        if (result.kind === "missing") throw new HttpError(404, "NOT_FOUND", "Document not found");
+        if (result.kind === "not_queued") {
+          sendError(response, 409, "CAPTURE_NOT_QUEUED", "Only queued captures can be cancelled", result.document);
+          return;
+        }
+        sendJson(response, 200, result.document);
         return;
       }
 

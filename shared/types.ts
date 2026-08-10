@@ -11,6 +11,7 @@ export type CaptureErrorCode =
   | "HTTP_ERROR"
   | "EXTRACTION_EMPTY"
   | "BROWSER_FAILED"
+  | "CAPTURE_CANCELLED"
   | "INTERNAL_ERROR";
 
 export interface DocumentSummary {
@@ -42,6 +43,20 @@ export interface DocumentListResponse {
   page: number;
   pageSize: number;
   total: number;
+}
+
+export type DuplicateKind = "source" | "resolved" | null;
+
+export interface CreateDocumentResponse {
+  document: KnowledgeDocument;
+  created: boolean;
+  duplicateKind: DuplicateKind;
+}
+
+export interface CaptureQueueStatus {
+  paused: boolean;
+  active: number;
+  queued: number;
 }
 
 export interface DocumentRevision {

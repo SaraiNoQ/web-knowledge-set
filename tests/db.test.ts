@@ -101,6 +101,50 @@ test("documents are queued once, indexed, tagged, and revision guarded", () => {
   }
 });
 
+test("resolved duplicates can be kept and queued captures can be cancelled then retried", () => {
+  const fixture = database();
+  try {
+    const original = fixture.db.createOrGetDocument("https://example.com/requested").document;
+    const originalJob = fixture.db.claimNextCapture();
+    assert.ok(originalJob);
+    fixture.db.completeCapture(originalJob, {
+      title: "Original",
+      author: null,
+      publishedAt: null,
+      finalUrl: "https://example.com/final",
+      canonicalUrl: "https://example.com/canonical",
+      markdown: "Original body",
+      mode: "http",
+      warning: null,
+      httpStatus: 200,
+    }, null);
+
+    const sourceDuplicate = fixture.db.createOrGetDocument(original.sourceUrl);
+    assert.equal(sourceDuplicate.duplicateKind, "source");
+    const resolvedDuplicate = fixture.db.createOrGetDocument("https://example.com/canonical");
+    assert.equal(resolvedDuplicate.document.id, original.id);
+    assert.equal(resolvedDuplicate.duplicateKind, "resolved");
+    const kept = fixture.db.createOrGetDocument("https://example.com/canonical", true);
+    assert.equal(kept.created, true);
+    assert.equal(kept.duplicateKind, "resolved");
+    assert.equal(fixture.db.findDuplicateDocument(kept.document.id)?.id, original.id);
+    assert.deepEqual(fixture.db.getCaptureQueueCounts(), { active: 0, queued: 1 });
+
+    const cancelled = fixture.db.cancelQueuedCapture(kept.document.id);
+    assert.equal(cancelled.kind, "cancelled");
+    if (cancelled.kind !== "cancelled") return;
+    assert.equal(cancelled.document.errorCode, "CAPTURE_CANCELLED");
+    assert.deepEqual(fixture.db.getCaptureQueueCounts(), { active: 0, queued: 0 });
+    assert.equal(fixture.db.retryDocument(kept.document.id).kind, "queued");
+    const running = fixture.db.claimNextCapture();
+    assert.ok(running);
+    assert.deepEqual(fixture.db.getCaptureQueueCounts(), { active: 1, queued: 0 });
+    assert.equal(fixture.db.cancelQueuedCapture(kept.document.id).kind, "not_queued");
+  } finally {
+    fixture.close();
+  }
+});
+
 test("failed capture stays durable until an explicit retry", () => {
   const fixture = database();
   try {

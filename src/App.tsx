@@ -10,6 +10,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type {
   CaptureHistoryItem,
+  CaptureQueueStatus,
   CaptureStatus,
   DocumentAsset,
   DocumentDraft,
@@ -34,6 +35,18 @@ interface Draft {
 
 interface RemoteDraftConflict {
   remote: DocumentDraft | null;
+}
+
+interface ImportDuplicatePrompt {
+  document: DocumentSummary;
+  kind: "source" | "resolved";
+  url: string;
+}
+
+interface NavigationGuard {
+  generation: number;
+  selectedId: string | null;
+  dirty: { documentId: string; draft: Draft } | null;
 }
 
 const ACTIVE_STATUSES = new Set<CaptureStatus>(["queued", "fetching", "extracting"]);
@@ -375,6 +388,10 @@ export default function App() {
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
   const [importNotice, setImportNotice] = useState("");
+  const [importDuplicate, setImportDuplicate] = useState<ImportDuplicatePrompt | null>(null);
+  const [captureQueue, setCaptureQueue] = useState<CaptureQueueStatus | null>(null);
+  const [queueError, setQueueError] = useState("");
+  const [queueUpdating, setQueueUpdating] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [saveError, setSaveError] = useState("");
   const [draftNotice, setDraftNotice] = useState("");
@@ -382,6 +399,10 @@ export default function App() {
   const [conflict, setConflict] = useState<KnowledgeDocument | null>(null);
   const [remoteDraftConflict, setRemoteDraftConflict] = useState<RemoteDraftConflict | null>(null);
   const [retrying, setRetrying] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [resolvedDuplicate, setResolvedDuplicate] = useState<DocumentSummary | null>(null);
+  const [duplicateError, setDuplicateError] = useState("");
+  const [duplicateNotice, setDuplicateNotice] = useState("");
   const [lifecycleAction, setLifecycleAction] = useState<"delete" | "restore" | "permanent" | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -389,6 +410,7 @@ export default function App() {
   const [revisions, setRevisions] = useState<DocumentRevision[]>([]);
   const [restoringRevision, setRestoringRevision] = useState<number | null>(null);
   const [captureHistoryOpen, setCaptureHistoryOpen] = useState(false);
+  const [qualityOpen, setQualityOpen] = useState(false);
   const [captureApplying, setCaptureApplying] = useState(false);
   const [closing, setClosing] = useState(false);
   const [safetyOpen, setSafetyOpen] = useState(false);
@@ -402,6 +424,8 @@ export default function App() {
   const draftSyncPendingRef = useRef(0);
   const closeAttemptRef = useRef<string | null>(null);
   const saveInFlight = useRef(false);
+  const keptDuplicateIdsRef = useRef(new Set<string>());
+  const navigationGenerationRef = useRef(0);
   const readerPanelRef = useRef<HTMLElement>(null);
   selectedIdRef.current = selectedId;
   draftRef.current = draft;
@@ -421,6 +445,28 @@ export default function App() {
   const activeCapture = currentDoc ? ACTIVE_STATUSES.has(currentDoc.status) : false;
   const editorLocked = closing || captureApplying || Boolean(lifecycleAction) || restoringRevision !== null || Boolean(conflict && saveState === "saving");
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
+
+  const loadCaptureQueue = useCallback(async (signal?: AbortSignal) => {
+    try {
+      setCaptureQueue(await api.getCaptureQueue(signal));
+      setQueueError("");
+    } catch (error) {
+      if ((error as Error).name !== "AbortError") setQueueError((error as Error).message);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (safetyOpen) return;
+    const controller = new AbortController();
+    void loadCaptureQueue(controller.signal);
+    return () => controller.abort();
+  }, [loadCaptureQueue, safetyOpen]);
+
+  useEffect(() => {
+    if (safetyOpen || !captureQueue || (!captureQueue.active && !captureQueue.queued)) return;
+    const timer = window.setInterval(() => void loadCaptureQueue(), 1800);
+    return () => window.clearInterval(timer);
+  }, [captureQueue?.active, captureQueue?.queued, loadCaptureQueue, safetyOpen]);
 
   const refreshKnownTags = useCallback((signal?: AbortSignal) => {
     void api.listTags(inTrash ? "only" : undefined, signal).then(setKnownTags).catch(() => {
@@ -446,6 +492,30 @@ export default function App() {
   const focusReader = useCallback(() => {
     window.requestAnimationFrame(() => readerPanelRef.current?.focus());
   }, []);
+
+  const currentDirtyDraft = () => {
+    const document = currentDocRef.current;
+    const value = draftRef.current;
+    if (!document || !value || draftsEqual(value, draftOf(document))) return null;
+    return { documentId: document.id, draft: { ...value, tags: [...value.tags] } };
+  };
+
+  const beginNavigation = (): NavigationGuard => ({
+    generation: ++navigationGenerationRef.current,
+    selectedId: selectedIdRef.current,
+    dirty: currentDirtyDraft(),
+  });
+
+  const canApplyNavigation = (guard: NavigationGuard) => {
+    if (navigationGenerationRef.current !== guard.generation || selectedIdRef.current !== guard.selectedId) return false;
+    const live = currentDirtyDraft();
+    if (!live) return true;
+    return Boolean(guard.dirty && guard.dirty.documentId === live.documentId && draftsEqual(guard.dirty.draft, live.draft));
+  };
+
+  const invalidateNavigation = () => {
+    navigationGenerationRef.current += 1;
+  };
 
   const enqueueDraftSync = useCallback((work: () => Promise<void>) => {
     draftSyncPendingRef.current += 1;
@@ -592,6 +662,7 @@ export default function App() {
 
   useEffect(() => {
     if (!items.some(needsCapturePolling)) return;
+    const controller = new AbortController();
     const timer = window.setInterval(async () => {
       try {
         const result = await api.listDocuments({
@@ -600,15 +671,20 @@ export default function App() {
           status,
           page,
           trash: inTrash ? "only" : undefined,
-        });
+        }, controller.signal);
+        if (controller.signal.aborted) return;
         setItems(result.items);
         setTotal(result.total);
         refreshKnownTags();
-      } catch {
+      } catch (error) {
+        if ((error as Error).name === "AbortError") return;
         // Background refresh failures should not replace the current workspace.
       }
     }, 2500);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      controller.abort();
+    };
   }, [inTrash, items, page, query, refreshKnownTags, status, tag]);
 
   useEffect(() => {
@@ -634,8 +710,12 @@ export default function App() {
     persistedDraftRef.current = null;
     setConflict(null);
     setRemoteDraftConflict(null);
+    setResolvedDuplicate(null);
+    setDuplicateError("");
+    setDuplicateNotice("");
     setHistoryOpen(false);
     setCaptureHistoryOpen(false);
+    setQualityOpen(false);
     setHistoryLoading(false);
     setHistoryError("");
     setRevisions([]);
@@ -709,20 +789,51 @@ export default function App() {
   }, [activeAssetCapture, selectedId]);
 
   useEffect(() => {
+    if (!selectedId || currentDoc?.status !== "ready" || currentDoc.deletedAt || keptDuplicateIdsRef.current.has(selectedId)) {
+      setResolvedDuplicate(null);
+      setDuplicateError("");
+      return;
+    }
+    const documentId = selectedId;
+    const controller = new AbortController();
+    void api.getDocumentDuplicate(documentId, controller.signal).then((duplicate) => {
+      if (selectedIdRef.current !== documentId) return;
+      setResolvedDuplicate(duplicate);
+      setDuplicateError("");
+    }).catch((error) => {
+      if ((error as Error).name !== "AbortError" && selectedIdRef.current === documentId) {
+        setDuplicateError((error as Error).message);
+      }
+    });
+    return () => controller.abort();
+  }, [currentDoc?.deletedAt, currentDoc?.status, selectedId]);
+
+  useEffect(() => {
     if (!selectedId || !currentDoc || !needsCapturePolling(currentDoc)) return;
+    const documentId = selectedId;
+    const controller = new AbortController();
     const timer = window.setInterval(async () => {
       try {
-        const document = await api.getDocument(selectedId);
+        const document = await api.getDocument(documentId, controller.signal);
+        const live = currentDocRef.current;
+        if (
+          controller.signal.aborted || selectedIdRef.current !== documentId || !live || live.id !== documentId ||
+          !needsCapturePolling(live)
+        ) return;
         updateListItem(document);
         setCurrentDoc(document);
         setDraft(draftOf(document));
         setTagText(document.tags.join(", "));
-      } catch {
+      } catch (error) {
+        if ((error as Error).name === "AbortError") return;
         // The list poll remains the visible source of capture progress.
       }
     }, 1800);
-    return () => window.clearInterval(timer);
-  }, [currentDoc, selectedId, updateListItem]);
+    return () => {
+      window.clearInterval(timer);
+      controller.abort();
+    };
+  }, [currentDoc?.id, currentDoc?.status, selectedId, updateListItem]);
 
   useEffect(() => {
     const stored = persistedDraftRef.current;
@@ -893,11 +1004,57 @@ export default function App() {
     };
   }, [persistDraft, safetyOpen, safetyRecovery, tombstoneDraft]);
 
+  const revealDocument = async (document: DocumentSummary, guard: NavigationGuard) => {
+    const inTargetTrash = Boolean(document.deletedAt);
+    const refreshed = await api.listDocuments({ page: 1, trash: inTargetTrash ? "only" : undefined });
+    if (!canApplyNavigation(guard)) return false;
+    setQuery("");
+    setTag("");
+    setStatus("");
+    setPage(1);
+    setInTrash(inTargetTrash);
+    setItems(refreshed.items);
+    setTotal(refreshed.total);
+    setPageSize(refreshed.pageSize || 30);
+    setSelectedId(document.id);
+    focusReader();
+    return true;
+  };
+
+  const importDocument = async (url: string, force: boolean, guard: NavigationGuard) => {
+    setImporting(true);
+    setImportError("");
+    setImportNotice("");
+    try {
+      const result = await api.createDocument(url, force);
+      if (!canApplyNavigation(guard)) return;
+      if (!result.created) {
+        setImportDuplicate({
+          document: result.document,
+          kind: result.duplicateKind === "resolved" ? "resolved" : "source",
+          url,
+        });
+        return;
+      }
+      setImportDuplicate(null);
+      setImportUrl("");
+      if (force) keptDuplicateIdsRef.current.add(result.document.id);
+      if (!await revealDocument(result.document, guard)) return;
+      setImportNotice(force ? "已保留为另一篇知识，两篇内容都不会被删除。" : "");
+      void loadCaptureQueue();
+    } catch (error) {
+      if (canApplyNavigation(guard)) setImportError((error as Error).message);
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const handleImport = async (event: FormEvent) => {
     event.preventDefault();
     if (closeAttemptRef.current) return;
     setImportError("");
     setImportNotice("");
+    setImportDuplicate(null);
     if (dirty && !window.confirm("当前修改尚未保存，继续收取新网页吗？")) return;
     let normalized: string;
     try {
@@ -908,44 +1065,96 @@ export default function App() {
       setImportError("请输入完整的 http(s) 网页地址。");
       return;
     }
+    await importDocument(normalized, false, beginNavigation());
+  };
+
+  const openImportedDuplicate = async () => {
+    if (!importDuplicate || closeAttemptRef.current) return;
+    const prompt = importDuplicate;
+    if (dirty && prompt.document.id !== currentDoc?.id && !window.confirm("当前修改尚未保存，确定打开已有知识吗？")) return;
+    const guard = beginNavigation();
     setImporting(true);
+    setImportError("");
     try {
-      const created = await api.createDocument(normalized);
+      if (!await revealDocument(prompt.document, guard)) return;
       setImportUrl("");
-      setQuery("");
-      setTag("");
-      setStatus("");
-      setPage(1);
-      const duplicateInTrash = Boolean(created.deletedAt);
-      setInTrash(duplicateInTrash);
-      const refreshed = await api.listDocuments({ page: 1, trash: duplicateInTrash ? "only" : undefined });
-      setItems(refreshed.items);
-      setTotal(refreshed.total);
-      setPageSize(refreshed.pageSize || 30);
-      setSelectedId(created.id);
-      if (duplicateInTrash) setImportNotice("这张网页已在回收站中，已为你打开，可在右侧恢复。");
+      setImportDuplicate(null);
+      setImportNotice(prompt.document.deletedAt ? "已有知识在回收站中，可在右侧恢复。" : "已打开已有知识，没有创建重复条目。");
     } catch (error) {
-      setImportError((error as Error).message);
+      if (canApplyNavigation(guard)) setImportError((error as Error).message);
     } finally {
       setImporting(false);
     }
   };
 
+  const keepImportedDuplicate = async () => {
+    if (!importDuplicate || importDuplicate.kind !== "resolved" || closeAttemptRef.current) return;
+    if (dirty && !window.confirm("当前修改尚未保存，仍要保留为另一篇知识吗？")) return;
+    await importDocument(importDuplicate.url, true, beginNavigation());
+  };
+
+  const toggleCaptureQueue = async () => {
+    if (!captureQueue || closeAttemptRef.current) return;
+    setQueueUpdating(true);
+    setQueueError("");
+    try {
+      setCaptureQueue(await api.updateCaptureQueue(!captureQueue.paused));
+    } catch (error) {
+      setQueueError((error as Error).message);
+    } finally {
+      setQueueUpdating(false);
+    }
+  };
+
+  const openResolvedDuplicate = async () => {
+    if (!resolvedDuplicate || closeAttemptRef.current) return;
+    if (dirty && !window.confirm("当前修改尚未保存，确定打开已有知识吗？")) return;
+    const duplicate = resolvedDuplicate;
+    const guard = beginNavigation();
+    setResolvedDuplicate(null);
+    setDuplicateNotice("");
+    try {
+      if (!await revealDocument(duplicate, guard)) {
+        if (navigationGenerationRef.current === guard.generation && selectedIdRef.current === guard.selectedId) {
+          setResolvedDuplicate(duplicate);
+        }
+        return;
+      }
+      if (currentDoc) keptDuplicateIdsRef.current.add(currentDoc.id);
+      keptDuplicateIdsRef.current.add(duplicate.id);
+      setImportNotice(duplicate.deletedAt ? "重复知识在回收站中，可在右侧恢复。" : "已打开已有知识；当前条目仍完整保留。");
+    } catch (error) {
+      if (canApplyNavigation(guard)) {
+        setResolvedDuplicate(duplicate);
+        setDetailError((error as Error).message);
+      }
+    }
+  };
+
+  const keepResolvedDuplicate = () => {
+    if (currentDoc) keptDuplicateIdsRef.current.add(currentDoc.id);
+    setResolvedDuplicate(null);
+    setDuplicateNotice("已保留两篇知识，当前条目没有被删除。");
+  };
+
   const selectDocument = (id: string) => {
     if (closeAttemptRef.current || id === selectedId || lifecycleAction || restoringRevision !== null) return;
     if (dirty && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
+    invalidateNavigation();
     setSelectedId(id);
   };
 
   const closeDocument = () => {
     if (closeAttemptRef.current || lifecycleAction || restoringRevision !== null) return;
     if (dirty && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
+    invalidateNavigation();
     setSelectedId(null);
   };
 
   const switchLibrary = (trashView: boolean) => {
     if (closeAttemptRef.current || trashView === inTrash || lifecycleAction || restoringRevision !== null) return;
     if (dirty && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
+    invalidateNavigation();
     setInTrash(trashView);
     setPage(1);
     setItems([]);
@@ -985,10 +1194,31 @@ export default function App() {
       setDraft(draftOf(updated));
       setTagText(updated.tags.join(", "));
       updateListItem(updated);
+      void loadCaptureQueue();
     } catch (error) {
       setDetailError((error as Error).message);
     } finally {
       setRetrying(false);
+    }
+  };
+
+  const cancelCapture = async () => {
+    if (!currentDoc || currentDoc.status !== "queued" || closeAttemptRef.current) return;
+    const documentId = currentDoc.id;
+    setCancelling(true);
+    setDetailError("");
+    try {
+      const updated = await api.cancelDocument(documentId);
+      if (selectedIdRef.current !== documentId) return;
+      setCurrentDoc(updated);
+      setDraft(draftOf(updated));
+      setTagText(updated.tags.join(", "));
+      updateListItem(updated);
+      void loadCaptureQueue();
+    } catch (error) {
+      if (selectedIdRef.current === documentId) setDetailError((error as Error).message);
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -1074,6 +1304,7 @@ export default function App() {
       setItems((previous) => previous.filter((item) => item.id !== currentDoc.id));
       setTotal((value) => Math.max(0, value - 1));
       setPage(1);
+      invalidateNavigation();
       setSelectedId(null);
       focusReader();
     } catch (error) {
@@ -1109,6 +1340,7 @@ export default function App() {
     }
     const documentId = currentDoc.id;
     setCaptureHistoryOpen(false);
+    setQualityOpen(false);
     setHistoryOpen(true);
     setHistoryLoading(true);
     setHistoryError("");
@@ -1125,7 +1357,15 @@ export default function App() {
   const toggleCaptureHistory = () => {
     if (closeAttemptRef.current || !currentDoc) return;
     setHistoryOpen(false);
+    setQualityOpen(false);
     setCaptureHistoryOpen((value) => !value);
+  };
+
+  const toggleQuality = () => {
+    if (closeAttemptRef.current || !currentDoc) return;
+    setHistoryOpen(false);
+    setCaptureHistoryOpen(false);
+    setQualityOpen((value) => !value);
   };
 
   const applyReextraction = async (
@@ -1341,6 +1581,15 @@ export default function App() {
     const parts = [query && `“${query}”`, tag && `#${tag}`, status && STATUS_LABEL[status]].filter(Boolean);
     return parts.length ? parts.join(" · ") : inTrash ? "已移除的网页" : "全部网页";
   }, [inTrash, query, status, tag]);
+  const queueLabel = !captureQueue
+    ? "正在读取队列"
+    : captureQueue.paused
+      ? `队列已暂停${captureQueue.active ? ` · ${captureQueue.active} 篇仍在完成` : ""} · ${captureQueue.queued} 篇等待`
+      : captureQueue.active
+        ? `正在采集 ${captureQueue.active} 篇 · ${captureQueue.queued} 篇等待`
+        : captureQueue.queued
+          ? `${captureQueue.queued} 篇等待采集`
+          : "采集队列空闲";
   const captureBlockedReason = !currentDoc || currentDoc.status !== "ready"
     ? "只能从已就绪的文档采纳候选。"
     : currentDoc.deletedAt
@@ -1350,6 +1599,29 @@ export default function App() {
         : conflict || remoteDraftConflict
           ? "请先处理当前的版本或草稿冲突。"
           : null;
+  const qualityIssues: Array<{ title: string; detail: string }> = [];
+  if (currentDoc?.status === "ready") {
+    const bodyLength = currentDoc.markdown.replace(/\s/gu, "").length;
+    if (bodyLength < 200) {
+      qualityIssues.push({
+        title: "正文可能不完整",
+        detail: `当前正文约 ${bodyLength} 个非空白字符。可在采集历史中比较 HTML 快照的重新提取结果。`,
+      });
+    }
+    if (!currentDoc.title.trim() || currentDoc.title.trim().toLowerCase() === sourceName(currentDoc.sourceUrl).toLowerCase()) {
+      qualityIssues.push({
+        title: "未可靠识别标题",
+        detail: "当前标题仍像来源域名。可直接在上方标题框中补充，保存后不会被后续采集静默覆盖。",
+      });
+    }
+    const failedAssets = assets.filter((asset) => asset.status === "failed").length;
+    if (failedAssets) {
+      qualityIssues.push({
+        title: `${failedAssets} 张图片未能离线保存`,
+        detail: "预览不会回连原站；原始图片 URL 仍保留在 Markdown 中，可检查地址后手动调整。",
+      });
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -1376,17 +1648,32 @@ export default function App() {
         <div className="capture-copy">
           <h1 id="capture-title">收藏一张网页</h1>
           <p>输入链接，织页会留下正文、来源与可编辑的 Markdown。</p>
+          <div className={`queue-control ${captureQueue?.paused ? "is-paused" : ""}`}>
+            <span role="status"><i />{queueLabel}</span>
+            <button type="button" aria-pressed={captureQueue?.paused || false} onClick={() => void toggleCaptureQueue()} disabled={!captureQueue || queueUpdating || closing}>
+              {queueUpdating ? "调整中…" : captureQueue?.paused ? "继续采集" : "暂停采集"}
+            </button>
+          </div>
+          {queueError && <span className="queue-error" role="alert">队列状态不可用：{queueError}</span>}
         </div>
         <form className="capture-form" onSubmit={handleImport}>
           <label className="sr-only" htmlFor="capture-url">网页地址</label>
           <span className="url-prefix" aria-hidden="true">URL</span>
-          <input id="capture-url" value={importUrl} onChange={(event) => setImportUrl(event.target.value)} placeholder="https://example.com/an-article" inputMode="url" autoComplete="url" disabled={importing || closing} />
+          <input id="capture-url" value={importUrl} onChange={(event) => { setImportUrl(event.target.value); setImportDuplicate(null); setImportError(""); setImportNotice(""); }} placeholder="https://example.com/an-article" inputMode="url" autoComplete="url" disabled={importing || closing} />
           <button className="primary-button" type="submit" disabled={closing || importing || !importUrl.trim()}>
             {importing ? <><Spinner />收取中</> : <><span>收取网页</span><Icon><path d="M5 12h14M13 6l6 6-6 6" /></Icon></>}
           </button>
         </form>
         <div className="form-message" aria-live="polite">
-          {importError ? <span className="error-text">{importError}</span> : importNotice && <span className="notice-text">{importNotice}</span>}
+          {importError ? <span className="error-text">{importError}</span> : importDuplicate ? (
+            <div className="import-duplicate" role="status">
+              <span>{importDuplicate.kind === "source" ? "这个网址已经收藏过。" : "这个网址指向已有知识。"}{importDuplicate.document.deletedAt ? " 已有条目在回收站。" : ""}</span>
+              <span className="import-duplicate-actions">
+                <button type="button" onClick={() => void openImportedDuplicate()} disabled={importing || closing}>打开已有</button>
+                {importDuplicate.kind === "resolved" && <button type="button" onClick={() => void keepImportedDuplicate()} disabled={importing || closing}>保留两篇</button>}
+              </span>
+            </div>
+          ) : importNotice && <span className="notice-text">{importNotice}</span>}
         </div>
       </section>
 
@@ -1461,6 +1748,7 @@ export default function App() {
                   <dl><div><dt>作者</dt><dd>{currentDoc.author || "未识别"}</dd></div><div><dt>收取</dt><dd>{currentDoc.captureMode === "browser" ? "浏览器" : currentDoc.captureMode === "http" ? "直接读取" : "—"}</dd></div></dl>
                 </div>
                 <div className="document-actions">
+                  <button type="button" className="history-button" onClick={toggleQuality} disabled={closing || currentDoc.status !== "ready"} aria-expanded={qualityOpen} aria-controls="capture-quality">质量检查</button>
                   <button type="button" className="history-button" onClick={toggleCaptureHistory} disabled={closing} aria-expanded={captureHistoryOpen} aria-controls="capture-history">采集历史</button>
                   {!currentDoc.deletedAt && (
                     <button type="button" className="text-button danger" onClick={() => void moveToTrash()} disabled={closing || Boolean(remoteDraftConflict) || Boolean(lifecycleAction) || dirty || saveState === "saving"} title={dirty || remoteDraftConflict ? "请先处理当前草稿" : undefined}>
@@ -1475,6 +1763,16 @@ export default function App() {
               {draftNotice && <div className="notice warning" role="status"><strong>草稿恢复</strong><span>{draftNotice}</span></div>}
               {draftError && <div className="notice error" role="alert"><strong>草稿未保存</strong><span>{draftError}</span></div>}
               {detailError && <div className="notice error" role="alert"><strong>请求失败</strong><span>{detailError}</span></div>}
+              {duplicateError && <div className="notice error" role="alert"><strong>重复检测不可用</strong><span>{duplicateError}</span></div>}
+              {duplicateNotice && <div className="notice warning" role="status"><strong>重复知识</strong><span>{duplicateNotice}</span></div>}
+              {resolvedDuplicate && <div className="conflict-banner duplicate-banner" role="alert"><div><strong>发现另一篇相同来源的知识</strong><span>已有条目“{resolvedDuplicate.title || "未命名网页"}”{resolvedDuplicate.deletedAt ? "在回收站中" : "仍在资料库中"}。你可以打开已有条目，或明确保留两篇；当前条目不会自动删除。</span></div><div><button type="button" onClick={() => void openResolvedDuplicate()} disabled={closing}>打开已有</button><button type="button" className="primary-button" onClick={keepResolvedDuplicate} disabled={closing}>保留两篇</button></div></div>}
+              {qualityOpen && (
+                <aside id="capture-quality" className="quality-panel" aria-label="提取质量检查">
+                  <header><div><span className="eyebrow">CAPTURE QUALITY</span><h3>提取质量</h3></div><button type="button" onClick={() => setQualityOpen(false)} aria-label="关闭提取质量">×</button></header>
+                  {qualityIssues.length ? <ul>{qualityIssues.map((issue) => <li key={issue.title}><strong>{issue.title}</strong><span>{issue.detail}</span></li>)}</ul> : <div className="quality-ok"><i aria-hidden="true">✓</i><div><strong>未发现明显问题</strong><span>标题、正文长度与离线图片状态均通过基础检查。</span></div></div>}
+                  <button type="button" className="history-button" onClick={toggleCaptureHistory}>查看采集历史与本地快照</button>
+                </aside>
+              )}
               {remoteDraftConflict && <div className="conflict-banner" role="alert"><div><strong>草稿在另一窗口发生了变化</strong><span>{remoteDraftConflict.remote ? "你的当前编辑仍在内存中，可以显式保留，或切换到另一窗口的草稿。" : "另一窗口已放弃草稿；你可保留当前编辑，或恢复正式版本。"}</span></div><div><button type="button" onClick={useRemoteDraft} disabled={closing || saveState === "saving"}>{remoteDraftConflict.remote ? "使用另一窗口草稿" : "恢复正式版本"}</button><button type="button" className="primary-button" onClick={() => void keepLocalDraft()} disabled={closing || saveState === "saving"}>{saveState === "saving" ? "处理中…" : "保留我的草稿"}</button></div></div>}
               {conflict && <div className="conflict-banner" role="alert"><div><strong>{conflict.deletedAt ? "这篇知识已被移入回收站" : "这篇知识在别处被修改过"}</strong><span>{conflict.deletedAt ? "可接受回收站状态，或恢复文档后保存你的本地修改。" : "选择保留服务器新版，或基于新版继续保存你的文字。"}</span></div><div><button type="button" onClick={() => void acceptServerVersion()} disabled={closing || Boolean(remoteDraftConflict) || saveState === "saving"}>{conflict.deletedAt ? "查看回收站版本" : "使用新版"}</button><button type="button" className="primary-button" onClick={() => void keepLocalVersion()} disabled={closing || Boolean(remoteDraftConflict) || saveState === "saving"}>{saveState === "saving" ? "处理中…" : "保留我的修改"}</button></div></div>}
               {captureHistoryOpen && (
@@ -1503,10 +1801,11 @@ export default function App() {
               ) : activeCapture ? (
                 <div className="capture-progress" aria-live="polite">
                   <div className="progress-orbit"><i /><i /><span>织</span></div>
-                  <span className="eyebrow">{currentDoc.status.toUpperCase()}</span>
-                  <h3>{STATUS_LABEL[currentDoc.status]}</h3>
-                  <p>这通常只需片刻。你可以去看其他织片，完成后会自动刷新。</p>
-                  <div className="progress-line"><span /></div>
+                  <span className="eyebrow">{currentDoc.status === "queued" && captureQueue?.paused ? "PAUSED" : currentDoc.status.toUpperCase()}</span>
+                  <h3>{currentDoc.status === "queued" && captureQueue?.paused ? "等待继续采集" : STATUS_LABEL[currentDoc.status]}</h3>
+                  <p>{currentDoc.status === "queued" && captureQueue?.paused ? "采集队列已暂停。你可以继续队列，或取消这项等待任务。" : "这通常只需片刻。你可以去看其他织片，完成后会自动刷新。"}</p>
+                  {!(currentDoc.status === "queued" && captureQueue?.paused) && <div className="progress-line"><span /></div>}
+                  {currentDoc.status === "queued" && <button type="button" className="text-button danger" onClick={() => void cancelCapture()} disabled={cancelling || closing}>{cancelling ? "取消中…" : "取消等待"}</button>}
                 </div>
               ) : currentDoc.status === "failed" ? (
                 <div className="capture-failed" role="alert">

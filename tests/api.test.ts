@@ -11,6 +11,8 @@ import { openDatabase } from "../server/db.js";
 import type {
   BackupRecord,
   CaptureHistoryItem,
+  CaptureQueueStatus,
+  CreateDocumentResponse,
   DataSafetyStatus,
   DocumentAsset,
   DocumentDraft,
@@ -96,6 +98,53 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     const cookie = (launch.headers.get("set-cookie") ?? "").split(";", 1)[0];
     const jsonHeaders = { Cookie: cookie, Origin: base, "Content-Type": "application/json" };
 
+    assert.deepEqual(
+      (await (await fetch(`${base}/api/capture-queue`, { headers: { Cookie: cookie } })).json()) as CaptureQueueStatus,
+      { paused: false, active: 0, queued: 0 },
+    );
+    const paused = (await (
+      await fetch(`${base}/api/capture-queue`, {
+        method: "PATCH",
+        headers: jsonHeaders,
+        body: JSON.stringify({ paused: true }),
+      })
+    ).json()) as CaptureQueueStatus;
+    assert.equal(paused.paused, true);
+    const cancellable = ((await (
+      await fetch(`${base}/api/documents`, {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ url: "https://example.com/cancel-me" }),
+      })
+    ).json()) as CreateDocumentResponse).document;
+    assert.equal(paused.active, 0);
+    const cancelled = await fetch(`${base}/api/documents/${cancellable.id}/cancel`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: "{}",
+    });
+    assert.equal(cancelled.status, 200);
+    assert.equal(((await cancelled.json()) as KnowledgeDocument).errorCode, "CAPTURE_CANCELLED");
+    assert.equal(
+      (
+        await fetch(`${base}/api/documents/${cancellable.id}/retry`, {
+          method: "POST",
+          headers: jsonHeaders,
+          body: "{}",
+        })
+      ).status,
+      202,
+    );
+    const resumed = (await (
+      await fetch(`${base}/api/capture-queue`, {
+        method: "PATCH",
+        headers: jsonHeaders,
+        body: JSON.stringify({ paused: false }),
+      })
+    ).json()) as CaptureQueueStatus;
+    assert.equal(resumed.paused, false);
+    await waitFor(base, cookie, cancellable.id, "ready");
+
     const dataSafety = (await (
       await fetch(`${base}/api/data-safety`, { headers: { Cookie: cookie } })
     ).json()) as DataSafetyStatus;
@@ -152,7 +201,9 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
       body: JSON.stringify({ url: "https://example.com/article#fragment" }),
     });
     assert.equal(createdResponse.status, 202);
-    const created = (await createdResponse.json()) as KnowledgeDocument;
+    const createdResult = (await createdResponse.json()) as CreateDocumentResponse;
+    const created = createdResult.document;
+    assert.equal(createdResult.duplicateKind, null);
     const ready = await waitFor(base, cookie, created.id, "ready");
     assert.equal(ready.sourceUrl, "https://example.com/article");
 
@@ -162,7 +213,39 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
       body: JSON.stringify({ url: "https://example.com/article" }),
     });
     assert.equal(duplicate.status, 200);
-    assert.equal(((await duplicate.json()) as KnowledgeDocument).id, ready.id);
+    const duplicateResult = (await duplicate.json()) as CreateDocumentResponse;
+    assert.equal(duplicateResult.document.id, ready.id);
+    assert.equal(duplicateResult.duplicateKind, "source");
+
+    const canonicalUrl = "https://example.com/article-canonical";
+    app.db.sql
+      .prepare("UPDATE documents SET final_url = ?, canonical_url = ? WHERE id = ?")
+      .run("https://example.com/article-final", canonicalUrl, ready.id);
+    const resolvedDuplicate = (await (
+      await fetch(`${base}/api/documents`, {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ url: canonicalUrl }),
+      })
+    ).json()) as CreateDocumentResponse;
+    assert.equal(resolvedDuplicate.document.id, ready.id);
+    assert.equal(resolvedDuplicate.duplicateKind, "resolved");
+    const forcedDuplicate = (await (
+      await fetch(`${base}/api/documents`, {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ url: canonicalUrl, force: true }),
+      })
+    ).json()) as CreateDocumentResponse;
+    assert.equal(forcedDuplicate.created, true);
+    assert.equal(forcedDuplicate.duplicateKind, "resolved");
+    await waitFor(base, cookie, forcedDuplicate.document.id, "ready");
+    const duplicateGuidance = (await (
+      await fetch(`${base}/api/documents/${forcedDuplicate.document.id}/duplicate`, {
+        headers: { Cookie: cookie },
+      })
+    ).json()) as DocumentListResponse["items"][number] | null;
+    assert.equal(duplicateGuidance?.id, ready.id);
 
     const draftResponse = await fetch(`${base}/api/documents/${ready.id}/draft`, {
       method: "PUT",
@@ -353,7 +436,7 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
       headers: jsonHeaders,
       body: JSON.stringify({ url: "https://example.com/retry" }),
     });
-    const failedId = ((await failedCreate.json()) as KnowledgeDocument).id;
+    const failedId = ((await failedCreate.json()) as CreateDocumentResponse).document.id;
     await waitFor(base, cookie, failedId, "failed");
     const retry = await fetch(`${base}/api/documents/${failedId}/retry`, {
       method: "POST",
@@ -473,7 +556,7 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
         headers: jsonHeaders,
         body: JSON.stringify({ url: "https://example.com/snapshot-sync-failure" }),
       });
-      failedSnapshot = (await response.json()) as KnowledgeDocument;
+      failedSnapshot = ((await response.json()) as CreateDocumentResponse).document;
       await waitFor(base, cookie, failedSnapshot.id, "failed");
     } finally {
       mutableFs.fsyncSync = originalFsyncSync;
@@ -495,6 +578,15 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     });
     assert.equal(slowCapture.status, 202);
     await slowCaptureStarted;
+    const pausedDuringCapture = (await (
+      await fetch(`${base}/api/capture-queue`, {
+        method: "PATCH",
+        headers: jsonHeaders,
+        body: JSON.stringify({ paused: true }),
+      })
+    ).json()) as CaptureQueueStatus;
+    assert.equal(pausedDuringCapture.paused, true);
+    assert.equal(pausedDuringCapture.active, 1);
     const backupDuringCapture = fetch(`${base}/api/data-safety/backups`, {
       method: "POST",
       headers: jsonHeaders,
@@ -522,8 +614,50 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     releaseSlowCapture();
     assert.equal((await backupDuringCapture).status, 201);
     assert.equal((await closeReady).status, 200);
+    assert.equal(
+      ((await (await fetch(`${base}/api/capture-queue`, { headers: { Cookie: cookie } })).json()) as CaptureQueueStatus)
+        .paused,
+      true,
+    );
+    await fetch(`${base}/api/capture-queue`, {
+      method: "PATCH",
+      headers: jsonHeaders,
+      body: JSON.stringify({ paused: false }),
+    });
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.deepEqual(desktopCloseAttempts, ["314"]);
+
+    await fetch(`${base}/api/capture-queue`, {
+      method: "PATCH",
+      headers: jsonHeaders,
+      body: JSON.stringify({ paused: true }),
+    });
+    const missingRestore = await fetch(`${base}/api/data-safety/backups/missing/restore`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: "{}",
+    });
+    assert.equal(missingRestore.status, 404);
+    assert.equal(
+      ((await (await fetch(`${base}/api/capture-queue`, { headers: { Cookie: cookie } })).json()) as CaptureQueueStatus)
+        .paused,
+      true,
+    );
+    assert.equal(
+      (
+        await fetch(`${base}/api/data-safety/backups/${encodeURIComponent(backupRecord.id)}/restore`, {
+          method: "POST",
+          headers: jsonHeaders,
+          body: "{}",
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      ((await (await fetch(`${base}/api/capture-queue`, { headers: { Cookie: cookie } })).json()) as CaptureQueueStatus)
+        .paused,
+      true,
+    );
 
     const originalRenameSync = mutableFs.renameSync;
     mutableFs.renameSync = ((...args: Parameters<typeof renameSync>) => {
@@ -608,13 +742,13 @@ test("asset API exposes ready files and keeps per-image failures separate from c
   try {
     const launch = await fetch(`${base}/launch?token=asset-bootstrap-token`, { redirect: "manual" });
     const cookie = (launch.headers.get("set-cookie") ?? "").split(";", 1)[0];
-    const created = (await (
+    const created = ((await (
       await fetch(`${base}/api/documents`, {
         method: "POST",
         headers: { Cookie: cookie, Origin: base, "Content-Type": "application/json" },
         body: JSON.stringify({ url: "https://example.com/article/images" }),
       })
-    ).json()) as KnowledgeDocument;
+    ).json()) as CreateDocumentResponse).document;
     await waitFor(base, cookie, created.id, "ready");
     let assets: DocumentAsset[] = [];
     for (let attempt = 0; attempt < 100; attempt += 1) {

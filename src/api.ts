@@ -3,12 +3,15 @@ import type {
   BackupRecord,
   BackupSettings,
   CaptureHistoryItem,
+  CaptureQueueStatus,
   CaptureStatus,
+  CreateDocumentResponse,
   DataSafetyStatus,
   DocumentAsset,
   DocumentDraft,
   DocumentListResponse,
   DocumentRevision,
+  DocumentSummary,
   KnowledgeDocument,
   ReextractionPreview,
 } from "../shared/types";
@@ -142,15 +145,37 @@ export const api = {
     return request<DocumentListResponse>(`/api/documents?${query}`, { signal });
   },
 
-  createDocument(url: string) {
-    return request<KnowledgeDocument>("/api/documents", {
+  createDocument(url: string, force = false) {
+    return request<CreateDocumentResponse>("/api/documents", {
       method: "POST",
-      body: JSON.stringify({ url }),
+      body: JSON.stringify(force ? { url, force: true } : { url }),
+    });
+  },
+
+  getCaptureQueue(signal?: AbortSignal) {
+    return request<CaptureQueueStatus>("/api/capture-queue", { signal });
+  },
+
+  updateCaptureQueue(paused: boolean) {
+    return request<CaptureQueueStatus>("/api/capture-queue", {
+      method: "PATCH",
+      body: JSON.stringify({ paused }),
     });
   },
 
   getDocument(id: string, signal?: AbortSignal) {
     return request<KnowledgeDocument>(`/api/documents/${encodeURIComponent(id)}`, { signal });
+  },
+
+  getDocumentDuplicate(id: string, signal?: AbortSignal) {
+    return request<DocumentSummary | null>(`/api/documents/${encodeURIComponent(id)}/duplicate`, { signal });
+  },
+
+  cancelDocument(id: string) {
+    return request<KnowledgeDocument>(`/api/documents/${encodeURIComponent(id)}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
   },
 
   listDocumentAssets(id: string, signal?: AbortSignal) {

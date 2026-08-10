@@ -31,7 +31,11 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   expect(remoteImageRequests).toEqual([]);
   expect(await page.evaluate(() => (window as typeof window & { __zhiyeXss?: boolean }).__zhiyeXss)).toBeUndefined();
 
-  await page.getByRole("button", { name: "采集历史" }).click();
+  await page.getByRole("button", { name: "质量检查" }).click();
+  const quality = page.getByRole("complementary", { name: "提取质量检查" });
+  await expect(quality.getByText("正文可能不完整")).toBeVisible();
+  await expect(quality.getByText("1 张图片未能离线保存")).toBeVisible();
+  await quality.getByRole("button", { name: "查看采集历史与本地快照" }).click();
   const captureHistory = page.getByRole("complementary", { name: "采集历史" });
   await expect(captureHistory.getByText("e2e-capture@1")).toBeVisible();
   await captureHistory.getByRole("button", { name: "从快照重新提取" }).click();
@@ -319,4 +323,73 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect(page.getByRole("heading", { name: "第一版" })).toBeVisible();
   await page.getByPlaceholder("搜索标题与正文").fill("第一版正文");
   await expect(page.getByRole("button", { name: /人工整理标题/ })).toBeVisible();
+
+  const captureBand = page.locator(".capture-band");
+  const captureInput = page.getByLabel("网页地址");
+  await captureInput.fill("https://example.com/requested");
+  await page.getByRole("button", { name: "收取网页" }).click();
+  const sourceDuplicate = captureBand.locator(".import-duplicate");
+  await expect(sourceDuplicate.getByText("这个网址已经收藏过。")).toBeVisible();
+  await expect(sourceDuplicate.getByRole("button", { name: "保留两篇" })).toHaveCount(0);
+  await sourceDuplicate.getByRole("button", { name: "打开已有" }).click();
+  await expect(page.getByLabel("文档标题")).toHaveValue("人工整理标题");
+
+  await captureInput.fill("https://example.com/canonical");
+  await page.getByRole("button", { name: "收取网页" }).click();
+  const resolvedPrompt = captureBand.locator(".import-duplicate");
+  await expect(resolvedPrompt.getByText("这个网址指向已有知识。")).toBeVisible();
+  await expect(resolvedPrompt.getByRole("button", { name: "打开已有" })).toBeVisible();
+  await resolvedPrompt.getByRole("button", { name: "保留两篇" }).click();
+  await expect(page.getByLabel("文档标题")).toHaveValue("远端测试文章", { timeout: 8_000 });
+  await expect(captureBand.getByText("已保留为另一篇知识，两篇内容都不会被删除。")).toBeVisible();
+  await expect(page.locator(".duplicate-banner")).toHaveCount(0);
+  await page.getByRole("button", { name: /人工整理标题/ }).click();
+  await page.getByRole("button", { name: /远端测试文章/ }).click();
+  await expect(page.locator(".duplicate-banner")).toHaveCount(0);
+
+  await page.reload();
+  await page.getByRole("button", { name: /远端测试文章/ }).click();
+  const duplicateBanner = page.locator(".duplicate-banner");
+  await expect(duplicateBanner.getByText("发现另一篇相同来源的知识")).toBeVisible();
+  await expect(duplicateBanner.getByRole("button", { name: "打开已有" })).toBeVisible();
+  let releaseReveal!: () => void;
+  let revealRequestHeld = false;
+  const revealGate = new Promise<void>((resolve) => {
+    releaseReveal = resolve;
+  });
+  await page.route("**/api/documents?page=1", async (route) => {
+    if (!revealRequestHeld) {
+      revealRequestHeld = true;
+      await revealGate;
+    }
+    await route.continue();
+  });
+  await duplicateBanner.getByRole("button", { name: "打开已有" }).click();
+  await expect.poll(() => revealRequestHeld).toBe(true);
+  const staleRevealResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === "/api/documents" && url.search === "?page=1";
+  });
+  await page.getByRole("button", { name: "回收站", exact: true }).click();
+  releaseReveal();
+  await staleRevealResponse;
+  await page.unroute("**/api/documents?page=1");
+  await expect(page.getByRole("button", { name: "回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
+
+  await page.getByRole("button", { name: "资料库", exact: true }).click();
+  await page.getByRole("button", { name: /远端测试文章/ }).click();
+  await expect(duplicateBanner.getByText("发现另一篇相同来源的知识")).toBeVisible();
+  await duplicateBanner.getByRole("button", { name: "保留两篇" }).click();
+  await expect(page.getByText("已保留两篇知识，当前条目没有被删除。")).toBeVisible();
+
+  await captureBand.getByRole("button", { name: "暂停采集" }).click();
+  await expect(captureBand.getByRole("button", { name: "继续采集" })).toBeVisible();
+  await captureInput.fill("https://example.com/queued-cancel");
+  await page.getByRole("button", { name: "收取网页" }).click();
+  await expect(page.getByRole("heading", { name: "等待继续采集" })).toBeVisible();
+  await expect(captureBand.getByText("队列已暂停 · 1 篇等待")).toBeVisible();
+  await page.getByRole("button", { name: "取消等待" }).click();
+  await expect(page.getByText("CAPTURE_CANCELLED")).toBeVisible();
+  await captureBand.getByRole("button", { name: "继续采集" }).click();
+  await expect(captureBand.getByRole("button", { name: "暂停采集" })).toBeVisible();
 });
