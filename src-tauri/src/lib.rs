@@ -175,6 +175,8 @@ fn data_url(html: &str) -> String {
 }
 
 fn show_startup_error(app: &tauri::AppHandle, title: &str, message: &str, details: &str) {
+    #[cfg(debug_assertions)]
+    external::write_smoke_error(app, details);
     let title = escape_html(title);
     let message = escape_html(message);
     let details = escape_html(if details.trim().is_empty() {

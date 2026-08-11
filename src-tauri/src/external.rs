@@ -260,6 +260,16 @@ pub(crate) fn write_smoke_stage(app: &tauri::AppHandle, stage: &str) {
     }
 }
 
+#[cfg(debug_assertions)]
+pub(crate) fn write_smoke_error(app: &tauri::AppHandle, details: &str) {
+    if std::env::var("ZHIYE_DESKTOP_SMOKE").as_deref() == Ok("1") {
+        if let Ok(data_dir) = app.path().app_data_dir() {
+            let _ = fs::create_dir_all(&data_dir);
+            let _ = fs::write(data_dir.join(".desktop-smoke-error"), details);
+        }
+    }
+}
+
 pub(crate) fn focus_main(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();

@@ -14,6 +14,7 @@ DATA_DIR="$HOME/Library/Application Support/dev.local.zhiye"
 DATABASE="$DATA_DIR/zhiye.sqlite3"
 FILE_MARKER="$DATA_DIR/.desktop-smoke-files"
 INTENT_MARKER="$DATA_DIR/.desktop-smoke-intent"
+ERROR_MARKER="$DATA_DIR/.desktop-smoke-error"
 NOTE_DIR=$(mktemp -d)
 NOTE="$NOTE_DIR/finder-smoke.md"
 COLD_URL="https://example.com/zhiye-cold-smoke"
@@ -48,6 +49,7 @@ wait_for_source() {
   done
   echo "Timed out waiting for capture: $source_url" >&2
   [[ -f "$INTENT_MARKER" ]] && { echo 'Desktop intent stages:' >&2; cat "$INTENT_MARKER" >&2; }
+  [[ -f "$ERROR_MARKER" ]] && { echo 'Desktop startup error:' >&2; cat "$ERROR_MARKER" >&2; }
   ps -axo pid,ppid,command | grep -E 'zhiye|Zhiye Smoke|Contents/MacOS/node' >&2 || true
   find "$DATA_DIR" -maxdepth 1 -type f -print >&2 || true
   return 1
@@ -55,7 +57,7 @@ wait_for_source() {
 
 quit_app
 launchctl setenv ZHIYE_DESKTOP_SMOKE 1
-rm -f -- "$FILE_MARKER" "$INTENT_MARKER"
+rm -f -- "$FILE_MARKER" "$INTENT_MARKER" "$ERROR_MARKER"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"
 plutil -extract CFBundleURLTypes xml1 -o - "$APP/Contents/Info.plist" | grep -q '<string>zhiye</string>'
 open -b dev.local.zhiye "$COLD_LINK"
