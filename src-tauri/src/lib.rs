@@ -3,7 +3,7 @@ mod keychain;
 
 use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{DragDropEvent, Manager, RunEvent, WindowEvent};
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -16,6 +16,12 @@ const FAILED: u8 = 2;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 const STDERR_LIMIT: usize = 8 * 1024;
+const SIDECAR_ENVIRONMENT: [(&str, &str); 4] = [
+    ("KB_DEV", "0"),
+    ("KB_PORT", "0"),
+    ("KB_BOOTSTRAP_TOKEN", ""),
+    ("NODE_ENV", "production"),
+];
 
 struct LocalService {
     child: Mutex<Option<CommandChild>>,
@@ -24,6 +30,49 @@ struct LocalService {
     stopping: AtomicBool,
     close_attempt: Mutex<Option<u64>>,
     next_close_attempt: AtomicU64,
+    accepted_origin: Arc<Mutex<Option<String>>>,
+}
+
+fn parse_ready_url(value: &str) -> Result<(tauri::Url, String), String> {
+    let url = tauri::Url::parse(value.trim()).map_err(|_| "READY URL 格式无效".to_owned())?;
+    let port = url.port().filter(|port| *port > 0);
+    let mut query = url.query_pairs();
+    let token = query.next();
+    if url.scheme() != "http"
+        || url.host_str() != Some("127.0.0.1")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || port.is_none()
+        || url.path() != "/launch"
+        || url.fragment().is_some()
+        || !matches!(token.as_ref(), Some((key, value)) if key == "token" && !value.is_empty())
+        || query.next().is_some()
+    {
+        return Err("READY URL 不在允许的本地启动边界内".to_owned());
+    }
+    drop(token);
+    let origin = format!("http://127.0.0.1:{}", port.expect("checked port"));
+    Ok((url, origin))
+}
+
+fn navigation_allowed(accepted_origin: Option<&str>, url: &tauri::Url) -> bool {
+    match accepted_origin {
+        Some(origin) => {
+            url.scheme() == "http"
+                && url.host_str() == Some("127.0.0.1")
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.port().is_some()
+                && format!("http://127.0.0.1:{}", url.port().expect("checked port")) == origin
+        }
+        None => {
+            url.scheme() == "data"
+                || url.as_str() == "about:blank"
+                || (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
+                || (matches!(url.scheme(), "http" | "https")
+                    && url.host_str() == Some("tauri.localhost"))
+        }
+    }
 }
 
 fn stop_service(app: &tauri::AppHandle) {
@@ -243,6 +292,9 @@ fn fail_service(app: &tauri::AppHandle, reason: &str) {
     {
         return;
     }
+    if let Ok(mut origin) = service.accepted_origin.lock() {
+        origin.take();
+    }
 
     let captured = service
         .stderr
@@ -277,7 +329,18 @@ fn fail_service(app: &tauri::AppHandle, reason: &str) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let accepted_origin = Arc::new(Mutex::new(None));
+    let navigation_origin = accepted_origin.clone();
     let app = tauri::Builder::default()
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry, ()>::new("navigation-guard")
+                .on_navigation(move |webview, url| {
+                    let origin = navigation_origin.lock().ok();
+                    webview.label() != "main"
+                        || navigation_allowed(origin.as_deref().and_then(Option::as_deref), url)
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             external::focus_main(app);
         }))
@@ -300,6 +363,7 @@ pub fn run() {
             stopping: AtomicBool::new(false),
             close_attempt: Mutex::new(None),
             next_close_attempt: AtomicU64::new(1),
+            accepted_origin,
         })
         .setup(|app| {
             if let Ok(Some(urls)) = app.deep_link().get_current() {
@@ -363,12 +427,15 @@ pub fn run() {
 
             let command = match app.shell().sidecar("node") {
                 Ok(command) => {
-                    let command = command
+                    let mut command = command
                         .arg(server_entry)
                         .env("KB_DATA_DIR", data_dir)
                         .env("KB_STATIC_DIR", static_dir)
                         .env("KB_DESKTOP", "1")
                         .env("PLAYWRIGHT_BROWSERS_PATH", browsers_dir);
+                    for (name, value) in SIDECAR_ENVIRONMENT {
+                        command = command.env(name, value);
+                    }
                     match keychain::load_api_key() {
                         Ok(Some(api_key)) => command.env("ZHIYE_LLM_API_KEY", api_key),
                         _ => command.env("ZHIYE_LLM_API_KEY", ""),
@@ -412,10 +479,10 @@ pub fn run() {
                             for line in output.lines() {
                                 if let Some(raw_url) = line.strip_prefix("ZHIYE_READY ") {
                                     match (
-                                        tauri::Url::parse(raw_url.trim()),
+                                        parse_ready_url(raw_url),
                                         handle.get_webview_window("main"),
                                     ) {
-                                        (Ok(url), Some(window)) => {
+                                        (Ok((url, origin)), Some(window)) => {
                                             if handle
                                                 .state::<LocalService>()
                                                 .phase
@@ -427,9 +494,21 @@ pub fn run() {
                                                 )
                                                 .is_ok()
                                             {
+                                                handle
+                                                    .state::<LocalService>()
+                                                    .accepted_origin
+                                                    .lock()
+                                                    .expect("local service state poisoned")
+                                                    .replace(origin);
                                                 #[cfg(debug_assertions)]
                                                 external::write_smoke_stage(&handle, "service-ready");
                                                 if let Err(error) = window.navigate(url) {
+                                                    handle
+                                                        .state::<LocalService>()
+                                                        .accepted_origin
+                                                        .lock()
+                                                        .expect("local service state poisoned")
+                                                        .take();
                                                     fail_service(
                                                         &handle,
                                                         &format!("无法打开本地服务页面：{error}"),
@@ -541,4 +620,65 @@ pub fn run() {
         RunEvent::Exit => stop_service(handle),
         _ => {}
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ready_url_and_navigation_stay_on_the_authenticated_service_origin() {
+        let (ready, origin) =
+            parse_ready_url("http://127.0.0.1:43123/launch?token=single-nonempty-token")
+                .expect("valid READY URL");
+        assert_eq!(origin, "http://127.0.0.1:43123");
+        assert!(navigation_allowed(Some(&origin), &ready));
+        assert!(navigation_allowed(
+            Some(&origin),
+            &tauri::Url::parse("http://127.0.0.1:43123/library?q=local").unwrap()
+        ));
+        assert!(!navigation_allowed(
+            Some(&origin),
+            &tauri::Url::parse("http://127.0.0.1:43124/").unwrap()
+        ));
+        assert!(!navigation_allowed(
+            Some(&origin),
+            &tauri::Url::parse("http://user@127.0.0.1:43123/").unwrap()
+        ));
+        assert!(navigation_allowed(
+            None,
+            &tauri::Url::parse("data:text/html,startup-error").unwrap()
+        ));
+        assert!(!navigation_allowed(
+            Some(&origin),
+            &tauri::Url::parse("data:text/html,untrusted").unwrap()
+        ));
+
+        for invalid in [
+            "https://127.0.0.1:43123/launch?token=x",
+            "http://localhost:43123/launch?token=x",
+            "http://127.0.0.1/launch?token=x",
+            "http://127.0.0.1:0/launch?token=x",
+            "http://127.0.0.1:43123/other?token=x",
+            "http://127.0.0.1:43123/launch?token=",
+            "http://127.0.0.1:43123/launch?token=x&extra=y",
+            "http://user@127.0.0.1:43123/launch?token=x",
+            "http://127.0.0.1:43123/launch?token=x#fragment",
+        ] {
+            assert!(parse_ready_url(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn desktop_sidecar_forces_production_auth_and_random_port() {
+        assert_eq!(
+            SIDECAR_ENVIRONMENT,
+            [
+                ("KB_DEV", "0"),
+                ("KB_PORT", "0"),
+                ("KB_BOOTSTRAP_TOKEN", ""),
+                ("NODE_ENV", "production"),
+            ]
+        );
+    }
 }

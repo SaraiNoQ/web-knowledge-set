@@ -199,14 +199,16 @@ function sendError(
   });
 }
 
-function localHost(header: string | undefined) {
-  if (!header) return false;
-  try {
-    const hostname = new URL(`http://${header}`).hostname;
-    return hostname === "127.0.0.1" || hostname === "localhost";
-  } catch {
-    return false;
+export function hasLocalHost(rawHeaders: readonly string[]) {
+  const hosts: string[] = [];
+  for (let index = 0; index + 1 < rawHeaders.length; index += 2) {
+    if (rawHeaders[index]?.toLowerCase() === "host") hosts.push(rawHeaders[index + 1]!);
   }
+  if (hosts.length !== 1) return false;
+  const match = /^(?:localhost|127\.0\.0\.1)(?::(\d{1,5}))?$/iu.exec(hosts[0]!);
+  if (!match) return false;
+  const port = match[1] === undefined ? null : Number(match[1]);
+  return port === null || (port > 0 && port <= 65_535);
 }
 
 function sameOrigin(request: IncomingMessage) {
@@ -1109,7 +1111,7 @@ export function createApp(options: AppOptions) {
 
   const handler = async (request: IncomingMessage, response: ServerResponse) => {
     try {
-      if (!localHost(request.headers.host)) {
+      if (!hasLocalHost(request.rawHeaders)) {
         sendError(response, 400, "INVALID_HOST", "Only localhost requests are accepted");
         return;
       }
