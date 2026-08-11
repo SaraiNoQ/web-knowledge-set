@@ -63,7 +63,7 @@ after=$(sqlite3 "$DATABASE" 'SELECT count(*) FROM documents')
 [[ "$before" == "$after" ]]
 
 printf '# Finder smoke\n\nThis file must be handled without starting another app.\n' > "$NOTE"
-open -a "$APP" "$NOTE"
+open -b dev.local.zhiye "$NOTE"
 for _ in {1..15}; do
   [[ -f "$FILE_MARKER" ]] && grep -Fx 'finder-smoke.md' "$FILE_MARKER" >/dev/null && break
   sleep 1
