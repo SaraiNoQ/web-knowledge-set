@@ -76,6 +76,25 @@ const javascript = Object.values(jsGroups)
   }))
   .filter((item, index, items) => index === items.findIndex((other) => other.name === item.name && other.version === item.version))
   .sort((a, b) => `${a.name}@${a.version}`.localeCompare(`${b.name}@${b.version}`, "en"));
+const platformJavascript = [{
+  name: "fsevents",
+  version: "2.3.2",
+  license: "MIT",
+  attribution: "Philipp Dunkel, Ben Noordhuis, Elan Shankar, Paul Miller",
+  source: "https://github.com/fsevents/fsevents",
+  licenseFile: "fsevents-LICENSE-MIT.txt",
+  licenseHash: "2a8a5d6197bb97a018b8a190dd3ed853d750ca87c8e80c17aad41d6c6ff448e1",
+}];
+for (const item of platformJavascript) {
+  if (javascript.some((dependency) => dependency.name === item.name && dependency.version === item.version)) continue;
+  const text = readFileSync(resolve(root, "licenses", "overrides", item.licenseFile), "utf8").trim();
+  if (createHash("sha256").update(`${text}\n`).digest("hex") !== item.licenseHash) {
+    throw new Error(`License override changed: ${item.licenseFile}`);
+  }
+  collectText(item, text);
+  javascript.push(item);
+}
+javascript.sort((a, b) => `${a.name}@${a.version}`.localeCompare(`${b.name}@${b.version}`, "en"));
 
 const rustupCargo = join(homedir(), ".cargo", "bin", "cargo");
 const cargo = run(process.env.CARGO || (existsSync(rustupCargo) ? rustupCargo : "cargo"), [

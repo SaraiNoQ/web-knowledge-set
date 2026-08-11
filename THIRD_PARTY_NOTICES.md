@@ -78,6 +78,7 @@ This inventory is generated from the locked production dependency metadata. Bund
 | estree-util-is-identifier-name | 3.0.0 | MIT | Titus Wormer | https://github.com/syntax-tree/estree-util-is-identifier-name#readme |
 | extend | 3.0.2 | MIT | Stefan Thomas | https://github.com/justmoon/node-extend#readme |
 | fflate | 0.8.3 | MIT | Arjun Barrett | https://101arrowz.github.io/fflate |
+| fsevents | 2.3.2 | MIT | Philipp Dunkel, Ben Noordhuis, Elan Shankar, Paul Miller | https://github.com/fsevents/fsevents |
 | hast-util-to-jsx-runtime | 2.3.6 | MIT | Titus Wormer | https://github.com/syntax-tree/hast-util-to-jsx-runtime#readme |
 | hast-util-whitespace | 3.0.0 | MIT | Titus Wormer | https://github.com/syntax-tree/hast-util-whitespace#readme |
 | html-escaper | 3.0.3 | MIT | Andrea Giammarchi | https://github.com/WebReflection/html-escaper |
