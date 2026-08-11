@@ -1100,7 +1100,7 @@ test("global tags are not limited to the first document page", () => {
   }
 });
 
-test("current migrations upgrade v3 and the frozen v7 release schema", () => {
+test("current migrations upgrade every released schema without rewriting history", () => {
   const directory = mkdtempSync(join(tmpdir(), "zhiye-v3-upgrade-"));
   const path = join(directory, "zhiye.sqlite3");
   const documentId = "legacy-document";
@@ -1145,45 +1145,63 @@ test("current migrations upgrade v3 and the frozen v7 release schema", () => {
       repeated.close();
     }
 
-    const currentDirectory = join(directory, "release-v7");
-    mkdirSync(currentDirectory);
-    const currentPath = join(currentDirectory, "zhiye.sqlite3");
-    const fixture = new DatabaseSync(currentPath);
-    fixture.exec(readFileSync(new URL("./fixtures/schema-v7.sql", import.meta.url), "utf8"));
-    const migrationsBefore = fixture
-      .prepare("SELECT version, applied_at FROM schema_migrations ORDER BY version")
-      .all();
-    fixture.close();
+    const releases = [
+      { version: 7, fixtures: ["schema-v7.sql"] },
+      { version: 9, fixtures: ["schema-v7.sql", "schema-v9.sql"] },
+      { version: 11, fixtures: ["schema-v7.sql", "schema-v9.sql", "schema-v11.sql"] },
+      { version: 13, fixtures: ["schema-v7.sql", "schema-v9.sql", "schema-v11.sql", "schema-v13.sql"] },
+      { version: 14, fixtures: ["schema-v7.sql", "schema-v9.sql", "schema-v11.sql", "schema-v13.sql", "schema-v14.sql"] },
+    ];
+    for (const release of releases) {
+      const releaseDirectory = join(directory, `release-v${release.version}`);
+      mkdirSync(releaseDirectory);
+      const fixture = new DatabaseSync(join(releaseDirectory, "zhiye.sqlite3"));
+      for (const name of release.fixtures) {
+        fixture.exec(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
+      }
+      const migrationsBefore = fixture
+        .prepare("SELECT version, applied_at FROM schema_migrations ORDER BY version")
+        .all();
+      fixture.close();
 
-    assert.deepEqual(inspectDatabaseSchema(currentDirectory).pendingVersions, [8, 9, 10, 11, 12, 13, 14]);
-    const current = openDatabase(currentDirectory);
-    try {
-      assert.equal(current.getDocument("release-document")?.markdown, "Frozen release schema body.");
-      assert.deepEqual(current.getDocument("release-document")?.tags, ["Fixture"]);
-      assert.deepEqual(current.getDocument("release-document")?.collections, []);
-      assert.equal(current.getDocument("release-document")?.favorite, false);
-      assert.equal(current.getDocument("release-document")?.archivedAt, null);
-      assert.equal(current.getDocument("release-document")?.sourceNote, "");
-      assert.equal(current.listDocuments({ q: "Frozen" }).total, 1);
-      assert.equal(
-        (current.sql.prepare("SELECT max(version) AS version FROM schema_migrations").get() as { version: number })
-          .version,
-        CURRENT_SCHEMA_VERSION,
-      );
-      assert.equal(
-        (
-          current.sql
-            .prepare("SELECT 1 AS found FROM pragma_table_info('captures') WHERE name = 'extractor_version'")
-            .get() as { found: number }
-        ).found,
-        1,
-      );
       assert.deepEqual(
-        current.sql.prepare("SELECT version, applied_at FROM schema_migrations ORDER BY version LIMIT 7").all(),
-        migrationsBefore,
+        inspectDatabaseSchema(releaseDirectory).pendingVersions,
+        Array.from(
+          { length: CURRENT_SCHEMA_VERSION - release.version },
+          (_, index) => release.version + index + 1,
+        ),
       );
-    } finally {
-      current.close();
+      const current = openDatabase(releaseDirectory);
+      try {
+        assert.equal(current.getDocument("release-document")?.markdown, "Frozen release schema body.");
+        assert.deepEqual(current.getDocument("release-document")?.tags, ["Fixture"]);
+        assert.deepEqual(current.getDocument("release-document")?.collections, []);
+        assert.equal(current.getDocument("release-document")?.favorite, false);
+        assert.equal(current.getDocument("release-document")?.archivedAt, null);
+        assert.equal(current.getDocument("release-document")?.sourceNote, "");
+        assert.equal(current.listDocuments({ q: "Frozen" }).total, 1);
+        assert.equal(
+          (current.sql.prepare("SELECT max(version) AS version FROM schema_migrations").get() as { version: number })
+            .version,
+          CURRENT_SCHEMA_VERSION,
+        );
+        assert.deepEqual(
+          current.sql.prepare("SELECT version, applied_at FROM schema_migrations WHERE version <= ? ORDER BY version")
+            .all(release.version),
+          migrationsBefore,
+        );
+      } finally {
+        current.close();
+      }
+      const repeated = openDatabase(releaseDirectory);
+      try {
+        assert.equal(
+          (repeated.sql.prepare("SELECT count(*) AS total FROM schema_migrations").get() as { total: number }).total,
+          CURRENT_SCHEMA_VERSION,
+        );
+      } finally {
+        repeated.close();
+      }
     }
 
   } finally {
