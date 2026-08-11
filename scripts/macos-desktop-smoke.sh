@@ -64,7 +64,7 @@ quit_app
 launchctl setenv ZHIYE_DESKTOP_SMOKE 1
 launchctl setenv ZHIYE_KEYCHAIN_SMOKE 1
 [[ -x "$APP/Contents/MacOS/zhiye" ]]
-printf '%s\n%s\n' 'zhiye-isolated-smoke-key' 'zhiye-isolated-smoke-key' | security add-generic-password -U -s "$KEYCHAIN_SERVICE" -a "$KEYCHAIN_ACCOUNT" -T "$APP/Contents/MacOS/zhiye" -w >/dev/null
+printf '%s\n%s\n' 'zhiye-isolated-smoke-key' 'zhiye-isolated-smoke-key' | security add-generic-password -U -A -s "$KEYCHAIN_SERVICE" -a "$KEYCHAIN_ACCOUNT" -w >/dev/null
 rm -f -- "$FILE_MARKER" "$INTENT_MARKER" "$ERROR_MARKER" "$LLM_MARKER"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"
 plutil -extract CFBundleURLTypes xml1 -o - "$APP/Contents/Info.plist" | grep -q '<string>zhiye</string>'
