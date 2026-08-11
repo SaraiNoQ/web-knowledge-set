@@ -36,6 +36,17 @@ cpSync(join(root, "dist"), join(runtime, "dist"), { recursive: true });
 cpSync(join(root, "dist-server"), join(runtime, "dist-server"), { recursive: true });
 cpSync(join(root, "package.json"), join(runtime, "package.json"));
 cpSync(join(root, "pnpm-lock.yaml"), join(runtime, "pnpm-lock.yaml"));
+mkdirSync(join(runtime, "legal"));
+cpSync(join(root, "LICENSE"), join(runtime, "legal", "Zhiye-LICENSE"));
+cpSync(join(root, "THIRD_PARTY_NOTICES.md"), join(runtime, "legal", "THIRD_PARTY_NOTICES.md"));
+cpSync(join(root, "THIRD_PARTY_LICENSES.txt"), join(runtime, "legal", "THIRD_PARTY_LICENSES.txt"));
+
+const nodeLicense = [
+  join(dirname(dirname(process.execPath)), "LICENSE"),
+  join(dirname(process.execPath), "..", "node_modules", `node-${process.platform}-${process.arch}`, "LICENSE"),
+].find(existsSync);
+if (!nodeLicense) throw new Error("The bundled Node distribution does not include LICENSE");
+cpSync(nodeLicense, join(runtime, "legal", "Node-LICENSE"));
 
 runPnpm(["install", "--ignore-workspace", "--prod", "--offline", "--frozen-lockfile", "--config.node-linker=hoisted"], { cwd: runtime });
 run(process.execPath, ["--input-type=module", "--eval", "import { lstat } from 'node:fs/promises'; if ((await lstat('node_modules/mdast-util-from-markdown')).isSymbolicLink()) process.exit(1); await import('mdast-util-from-markdown')"], { cwd: runtime });

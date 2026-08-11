@@ -38,9 +38,31 @@ jobs:
           cargo install cargo-audit --version 0.22.2 --locked
           cd src-tauri
           cargo audit
+      - run: pnpm notices:check
+      - name: Install locked SBOM generator
+        run: |
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output /tmp/syft.tar.gz \
+            https://github.com/anchore/syft/releases/download/v1.51.0/syft_1.51.0_darwin_arm64.tar.gz
+          echo "4f37f4c7fefce0a68e4cf71ba3f5f9829a99e65d89b29f7ee41b8c2c10ea8c59  /tmp/syft.tar.gz" | shasum -a 256 --check
+          tar -xzf /tmp/syft.tar.gz -C /tmp syft
+          mkdir release-evidence
+          /tmp/syft scan dir:. --output cyclonedx-json=release-evidence/source.cdx.json
       - name: Build unsigned desktop app
         run: pnpm tauri build --debug --bundles app
+      - name: Record packaged application contents
+        run: |
+          APP="$(find src-tauri/target/debug/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP"
+          /tmp/syft scan "dir:$APP" --output cyclonedx-json=release-evidence/macos-app.cdx.json
+          (cd "$(dirname "$APP")" && find "$(basename "$APP")" -type f -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256) > release-evidence/macos-app.sha256
+          cp THIRD_PARTY_NOTICES.md release-evidence/
       - name: Exercise isolated macOS Keychain entry
         run: cargo test --manifest-path src-tauri/Cargo.toml keychain::tests
       - name: Exercise macOS URL and file entry points
         run: scripts/macos-desktop-smoke.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-supply-chain-evidence-${{ github.sha }}
+          path: release-evidence/
+          if-no-files-found: error

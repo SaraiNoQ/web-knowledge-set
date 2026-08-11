@@ -16,6 +16,8 @@
     "test": "tsx --test tests/*.test.ts",
     "test:e2e": "pnpm build && playwright test",
     "benchmark:library": "tsx scripts/benchmark-library.ts",
+    "notices:generate": "node scripts/generate-notices.mjs",
+    "notices:check": "node scripts/generate-notices.mjs --check",
     "verify": "pnpm check && pnpm test && pnpm test:e2e",
     "desktop:prepare": "node scripts/prepare-desktop.mjs",
     "desktop:dev": "tauri dev",

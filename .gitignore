@@ -4,6 +4,7 @@ dist/
 dist-server/
 playwright-report/
 test-results/
+release-evidence/
 .data/
 src-tauri/target/
 src-tauri/binaries/node-*
