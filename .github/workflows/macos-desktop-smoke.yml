@@ -1,9 +1,10 @@
 name: macOS desktop smoke
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
-    branches: ["agent/v0.5-portability"]
+    branches: ["main", "agent/**"]
 
 permissions:
   contents: read
@@ -28,5 +29,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Build unsigned desktop app
         run: pnpm tauri build --debug --bundles app
+      - name: Exercise isolated macOS Keychain entry
+        run: cargo test --manifest-path src-tauri/Cargo.toml keychain::tests
       - name: Exercise macOS URL and file entry points
         run: scripts/macos-desktop-smoke.sh

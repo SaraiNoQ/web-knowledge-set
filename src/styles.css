@@ -1477,6 +1477,13 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .ai-key-state i { width: 7px; height: 7px; background: var(--vermilion); border-radius: 50%; }
 .ai-key-state.is-ready { color: #465040; background: rgba(101,112,90,.06); border-color: rgba(101,112,90,.3); }
 .ai-key-state.is-ready i { background: var(--moss); }
+.ai-keychain { display: grid; gap: 8px; padding: 11px; border: 1px solid var(--line-strong); }
+.ai-keychain > label { display: grid; gap: 6px; }
+.ai-keychain > label > span, .ai-keychain > div > span { color: var(--ink-faint); font-size: 9px; }
+.ai-keychain > div { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.ai-keychain > div > span { margin-right: auto; }
+.ai-keychain button { min-height: 30px; padding: 0 9px; color: var(--ink-soft); background: transparent; border: 1px solid var(--line-strong); font-size: 9px; }
+.ai-keychain button.danger { color: var(--vermilion-dark); }
 .ai-local-trust { padding: 11px; color: #685936; background: rgba(161,122,56,.07); border: 1px solid rgba(161,122,56,.28); font-size: 9px; line-height: 1.55; }
 .ai-privacy-note { grid-column: 1 / -1; display: grid; grid-template-columns: 150px minmax(180px,.5fr) minmax(300px,1fr); align-items: start; gap: 20px; background: #ebe4d4; border-color: var(--line-strong); }
 .ai-privacy-note > span { color: var(--vermilion); font: 600 9px/1.4 var(--font-mono); letter-spacing: .08em; }

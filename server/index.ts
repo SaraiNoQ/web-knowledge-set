@@ -1,5 +1,6 @@
-import { homedir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { DatabaseSync } from "node:sqlite";
@@ -38,6 +39,9 @@ const backupRoot = defaultBackupRoot(dataDir);
 const requestedPort = Number(process.env.KB_PORT ?? 0);
 const llmApiKey = process.env.ZHIYE_LLM_API_KEY?.trim() ?? "";
 delete process.env.ZHIYE_LLM_API_KEY;
+if (process.env.ZHIYE_DESKTOP_SMOKE === "1") {
+  writeFileSync(join(dataDir, ".desktop-smoke-llm"), llmApiKey ? "configured" : "missing", { mode: 0o600 });
+}
 if (!Number.isInteger(requestedPort) || requestedPort < 0 || requestedPort > 65_535) {
   throw new Error("KB_PORT must be an integer from 0 to 65535");
 }

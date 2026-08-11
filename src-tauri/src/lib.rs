@@ -1,4 +1,5 @@
 mod external;
+mod keychain;
 
 use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
@@ -287,6 +288,9 @@ pub fn run() {
             external::read_external_text,
             external::read_external_binary,
             external::discard_external_tokens,
+            keychain::llm_keychain_status,
+            keychain::set_llm_api_key,
+            keychain::delete_llm_api_key,
         ])
         .manage(external::ExternalState::default())
         .manage(LocalService {
@@ -347,12 +351,18 @@ pub fn run() {
             let browsers_dir = runtime_dir.join("browsers");
 
             let command = match app.shell().sidecar("node") {
-                Ok(command) => command
-                    .arg(server_entry)
-                    .env("KB_DATA_DIR", data_dir)
-                    .env("KB_STATIC_DIR", static_dir)
-                    .env("KB_DESKTOP", "1")
-                    .env("PLAYWRIGHT_BROWSERS_PATH", browsers_dir),
+                Ok(command) => {
+                    let command = command
+                        .arg(server_entry)
+                        .env("KB_DATA_DIR", data_dir)
+                        .env("KB_STATIC_DIR", static_dir)
+                        .env("KB_DESKTOP", "1")
+                        .env("PLAYWRIGHT_BROWSERS_PATH", browsers_dir);
+                    match keychain::load_api_key() {
+                        Ok(Some(api_key)) => command.env("ZHIYE_LLM_API_KEY", api_key),
+                        _ => command.env("ZHIYE_LLM_API_KEY", ""),
+                    }
+                }
                 Err(error) => {
                     show_startup_error(
                         app.handle(),

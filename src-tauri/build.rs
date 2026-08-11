@@ -5,6 +5,9 @@ fn main() {
             "read_external_text",
             "read_external_binary",
             "discard_external_tokens",
+            "llm_keychain_status",
+            "set_llm_api_key",
+            "delete_llm_api_key",
         ])),
     )
     .expect("failed to build Tauri application manifest")

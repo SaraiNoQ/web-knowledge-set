@@ -15,6 +15,9 @@ DATABASE="$DATA_DIR/zhiye.sqlite3"
 FILE_MARKER="$DATA_DIR/.desktop-smoke-files"
 INTENT_MARKER="$DATA_DIR/.desktop-smoke-intent"
 ERROR_MARKER="$DATA_DIR/.desktop-smoke-error"
+LLM_MARKER="$DATA_DIR/.desktop-smoke-llm"
+KEYCHAIN_SERVICE="dev.local.zhiye.llm"
+KEYCHAIN_ACCOUNT="openai-compatible-smoke"
 NOTE_DIR=$(mktemp -d)
 NOTE="$NOTE_DIR/finder-smoke.md"
 COLD_URL="https://example.com/zhiye-cold-smoke"
@@ -34,6 +37,8 @@ quit_app() {
 cleanup() {
   quit_app
   launchctl unsetenv ZHIYE_DESKTOP_SMOKE >/dev/null 2>&1 || true
+  launchctl unsetenv ZHIYE_KEYCHAIN_SMOKE >/dev/null 2>&1 || true
+  security delete-generic-password -s "$KEYCHAIN_SERVICE" -a "$KEYCHAIN_ACCOUNT" >/dev/null 2>&1 || true
   rm -rf -- "$NOTE_DIR"
   rm -rf -- "$APP"
 }
@@ -57,11 +62,15 @@ wait_for_source() {
 
 quit_app
 launchctl setenv ZHIYE_DESKTOP_SMOKE 1
-rm -f -- "$FILE_MARKER" "$INTENT_MARKER" "$ERROR_MARKER"
+launchctl setenv ZHIYE_KEYCHAIN_SMOKE 1
+[[ -x "$APP/Contents/MacOS/zhiye" ]]
+printf '%s\n' 'zhiye-isolated-smoke-key' | security add-generic-password -U -s "$KEYCHAIN_SERVICE" -a "$KEYCHAIN_ACCOUNT" -T "$APP/Contents/MacOS/zhiye" -w >/dev/null
+rm -f -- "$FILE_MARKER" "$INTENT_MARKER" "$ERROR_MARKER" "$LLM_MARKER"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"
 plutil -extract CFBundleURLTypes xml1 -o - "$APP/Contents/Info.plist" | grep -q '<string>zhiye</string>'
 open -b dev.local.zhiye "$COLD_LINK"
 wait_for_source "$COLD_URL"
+grep -Fx 'configured' "$LLM_MARKER" >/dev/null
 
 open -b dev.local.zhiye "$WARM_LINK"
 wait_for_source "$WARM_URL"

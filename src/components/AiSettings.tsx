@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 
 import type { LlmSettings } from "../../shared/types";
 import { api, ApiRequestError } from "../api";
@@ -6,6 +7,12 @@ import { api, ApiRequestError } from "../api";
 interface AiSettingsProps {
   onClose: () => void;
 }
+
+interface KeychainStatus {
+  configured: boolean;
+}
+
+const errorMessage = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 
 export function AiSettings({ onClose }: AiSettingsProps) {
   const [settings, setSettings] = useState<LlmSettings | null>(null);
@@ -20,6 +27,9 @@ export function AiSettings({ onClose }: AiSettingsProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [keychainConfigured, setKeychainConfigured] = useState<boolean | null>(null);
+  const desktop = "__TAURI_INTERNALS__" in window;
 
   const install = (value: LlmSettings) => {
     setSettings(value);
@@ -35,12 +45,53 @@ export function AiSettings({ onClose }: AiSettingsProps) {
   useEffect(() => {
     const controller = new AbortController();
     void api.getLlmSettings(controller.signal).then(install).catch((cause) => {
-      if ((cause as Error).name !== "AbortError") setError((cause as Error).message);
+      if (!(cause instanceof Error && cause.name === "AbortError")) setError(errorMessage(cause));
     }).finally(() => {
       if (!controller.signal.aborted) setLoading(false);
     });
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    if (!desktop) return;
+    void invoke<KeychainStatus>("llm_keychain_status")
+      .then((status) => setKeychainConfigured(status.configured))
+      .catch((cause) => setError(errorMessage(cause)));
+  }, [desktop]);
+
+  const storeApiKey = async () => {
+    if (!apiKey) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const status = await invoke<KeychainStatus>("set_llm_api_key", { apiKey });
+      setKeychainConfigured(status.configured);
+      setApiKey("");
+      setNotice("密钥已保存到 macOS 钥匙串。完全退出并重新打开织页后生效。");
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteApiKey = async () => {
+    if (!window.confirm("从 macOS 钥匙串删除远程模型密钥？当前进程会在完全退出前继续持有已加载的密钥。")) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const status = await invoke<KeychainStatus>("delete_llm_api_key");
+      setKeychainConfigured(status.configured);
+      setApiKey("");
+      setNotice("密钥已从 macOS 钥匙串删除。完全退出织页后，当前进程持有的密钥才会清除。");
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const save = async () => {
     if (!settings || (enabled && target === "local" && !localTrusted)) return;
@@ -58,7 +109,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
       install(updated);
       setNotice(updated.enabled ? "AI 派生已启用。只有逐篇确认后才会发送正文。" : "设置已保存，AI 仍处于关闭状态。");
     } catch (cause) {
-      setError(cause instanceof ApiRequestError && cause.status === 409 ? "设置已在别处更新，请关闭后重新打开。" : (cause as Error).message);
+      setError(cause instanceof ApiRequestError && cause.status === 409 ? "设置已在别处更新，请关闭后重新打开。" : errorMessage(cause));
     } finally {
       setSaving(false);
     }
@@ -74,7 +125,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
       install(response.settings);
       setNotice(`AI 已关闭，并删除 ${response.deletedResults} 条派生结果。`);
     } catch (cause) {
-      setError((cause as Error).message);
+      setError(errorMessage(cause));
     } finally {
       setSaving(false);
     }
@@ -101,7 +152,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
               <button type="button" aria-pressed={target === "remote"} onClick={() => setTarget("remote")}>远程 HTTPS</button>
               <button type="button" aria-pressed={target === "local"} onClick={() => setTarget("local")}>可信本地端点</button>
             </fieldset>
-            {target === "remote" ? <><label><span>OpenAI-compatible HTTPS 地址</span><input aria-label="AI 远程端点地址" type="url" value={remoteUrl} onChange={(event) => setRemoteUrl(event.target.value)} placeholder="https://api.example.com/v1/chat/completions" disabled={saving} /></label><label><span>远程模型</span><input aria-label="AI 远程模型" value={remoteModel} onChange={(event) => setRemoteModel(event.target.value)} placeholder="model-name" disabled={saving} /></label><div className={`ai-key-state ${settings.apiKeyConfigured ? "is-ready" : ""}`}><i />{settings.apiKeyConfigured ? "服务端已配置密钥；密钥不会返回浏览器。" : "服务端未配置密钥。远程生成暂不可用。"}</div></> : <><label><span>OpenAI-compatible 本机地址</span><input aria-label="AI 本地端点地址" type="url" value={localUrl} onChange={(event) => { setLocalUrl(event.target.value); setLocalTrusted(false); }} placeholder="http://127.0.0.1:11434/v1/chat/completions" disabled={saving} /></label><label><span>本地模型</span><input aria-label="AI 本地模型" value={localModel} onChange={(event) => setLocalModel(event.target.value)} placeholder="model-name" disabled={saving} /></label><label className="ai-local-trust"><input type="checkbox" checked={localTrusted} onChange={(event) => setLocalTrusted(event.target.checked)} disabled={saving} /><span>我信任这个本机端点，并理解正文会发送给运行它的进程。</span></label></>}
+            {target === "remote" ? <><label><span>OpenAI-compatible HTTPS 地址</span><input aria-label="AI 远程端点地址" type="url" value={remoteUrl} onChange={(event) => setRemoteUrl(event.target.value)} placeholder="https://api.example.com/v1/chat/completions" disabled={saving} /></label><label><span>远程模型</span><input aria-label="AI 远程模型" value={remoteModel} onChange={(event) => setRemoteModel(event.target.value)} placeholder="model-name" disabled={saving} /></label><div className={`ai-key-state ${settings.apiKeyConfigured ? "is-ready" : ""}`}><i />{settings.apiKeyConfigured ? "当前进程已加载密钥；密钥不会返回浏览器。" : "当前进程未加载密钥。远程生成暂不可用。"}</div>{desktop && <div className="ai-keychain"><label><span>macOS 钥匙串密钥（不会回显）</span><input aria-label="远程模型 API 密钥" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="new-password" spellCheck={false} placeholder={keychainConfigured ? "已保存；输入新值可替换" : "粘贴 API 密钥"} disabled={saving} /></label><div><span>{keychainConfigured === null ? "正在检查钥匙串…" : keychainConfigured ? "下次启动将加载已保存密钥" : "钥匙串中未保存密钥"}</span><button type="button" onClick={() => void storeApiKey()} disabled={saving || !apiKey}>保存密钥</button>{keychainConfigured && <button type="button" className="danger" onClick={() => void deleteApiKey()} disabled={saving}>删除密钥</button>}</div></div>}</> : <><label><span>OpenAI-compatible 本机地址</span><input aria-label="AI 本地端点地址" type="url" value={localUrl} onChange={(event) => { setLocalUrl(event.target.value); setLocalTrusted(false); }} placeholder="http://127.0.0.1:11434/v1/chat/completions" disabled={saving} /></label><label><span>本地模型</span><input aria-label="AI 本地模型" value={localModel} onChange={(event) => setLocalModel(event.target.value)} placeholder="model-name" disabled={saving} /></label><label className="ai-local-trust"><input type="checkbox" checked={localTrusted} onChange={(event) => setLocalTrusted(event.target.checked)} disabled={saving} /><span>我信任这个本机端点，并理解正文会发送给运行它的进程。</span></label></>}
           </section>
 
           <aside className="ai-privacy-note">
