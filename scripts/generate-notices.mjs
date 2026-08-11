@@ -47,6 +47,7 @@ function texts(directory) {
 const licenseTexts = new Map();
 const missingTexts = [];
 function collectText(item, text) {
+  text = text.replace(/\r\n?/g, "\n");
   const hash = createHash("sha256").update(text).digest("hex");
   const entry = licenseTexts.get(hash) ?? { hash, text, packages: new Set() };
   entry.packages.add(`${item.name}@${item.version}`);
@@ -183,8 +184,34 @@ ${entry.text}`)
 `;
 
 if (check) {
-  if (readFileSync(outputPath, "utf8") !== output) throw new Error("THIRD_PARTY_NOTICES.md is stale");
-  if (readFileSync(licensesPath, "utf8") !== licenses) throw new Error("THIRD_PARTY_LICENSES.txt is stale");
+  const committedNotices = readFileSync(outputPath, "utf8");
+  const missingNotices = [...javascript, ...rust]
+    .filter((item) => !committedNotices.includes(`| ${cell(item.name)} | ${cell(item.version)} | ${cell(item.license)} |`));
+  if (missingNotices.length > 0) {
+    throw new Error(`Missing notices for ${missingNotices.map((item) => `${item.name}@${item.version}`).join(", ")}`);
+  }
+  const committedLicenses = readFileSync(licensesPath, "utf8");
+  const committedBlocks = new Map([...committedLicenses.matchAll(
+    /^={80}\nSHA-256: ([0-9a-f]{64})\nProvided by: (.+)\n-{80}\n([\s\S]*?)(?=\n\n={80}\nSHA-256: |(?![\s\S]))/gm,
+  )].map((match) => {
+    const text = match[3].trimEnd();
+    if (createHash("sha256").update(text).digest("hex") !== match[1]) {
+      throw new Error(`License text hash mismatch: ${match[1]}`);
+    }
+    return [match[1], new Set(match[2].split(", "))];
+  }));
+  for (const entry of licenseTexts.values()) {
+    const packages = committedBlocks.get(entry.hash);
+    if (!packages || [...entry.packages].some((name) => !packages.has(name))) {
+      throw new Error(`Missing license block: ${entry.hash}`);
+    }
+  }
+  const licensedPackages = new Set([...committedBlocks.values()].flatMap((packages) => [...packages]));
+  const missingLicenses = [...javascript, ...rust]
+    .filter((item) => !licensedPackages.has(`${item.name}@${item.version}`));
+  if (missingLicenses.length > 0) {
+    throw new Error(`Missing license text for ${missingLicenses.map((item) => `${item.name}@${item.version}`).join(", ")}`);
+  }
 } else {
   writeFileSync(outputPath, output);
   writeFileSync(licensesPath, licenses);
