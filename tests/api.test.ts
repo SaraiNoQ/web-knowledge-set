@@ -132,6 +132,24 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
       await (await fetch(`${base}/api/settings/recent-filters`, { headers: { Cookie: cookie } })).json(),
       { filters: [], revision: 0 },
     );
+    assert.deepEqual(
+      await (await fetch(`${base}/api/settings/onboarding`, { headers: { Cookie: cookie } })).json(),
+      { completed: false, revision: 0 },
+    );
+    const completedOnboarding = await fetch(`${base}/api/settings/onboarding`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({ completed: true, revision: 0 }),
+    });
+    assert.equal(completedOnboarding.status, 200);
+    assert.deepEqual(await completedOnboarding.json(), { completed: true, revision: 1 });
+    const staleOnboarding = await fetch(`${base}/api/settings/onboarding`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({ completed: false, revision: 0 }),
+    });
+    assert.equal(staleOnboarding.status, 409);
+    assert.equal(((await staleOnboarding.json()) as { error: { code: string } }).error.code, "ONBOARDING_CONFLICT");
     const recentFilters: RecentFilter[] = [{
       label: "最近研究",
       query: "knowledge",

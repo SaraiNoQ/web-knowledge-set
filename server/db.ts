@@ -36,6 +36,7 @@ import type {
   ImportStrategy,
   LlmEndpointKind,
   LlmSettings,
+  OnboardingState,
   RecentFilter,
   SaveDerivedResultInput,
   TagMutationResponse,
@@ -1144,6 +1145,35 @@ export class KnowledgeDatabase {
          WHERE key = 'recent-filters' AND revision = ?`,
       ).run(JSON.stringify(filters), timestamp, expectedRevision);
     return result.changes === 1 ? { kind: "updated" as const, state: this.getRecentFilters() } : { kind: "conflict" as const };
+  }
+
+  getOnboarding(): OnboardingState {
+    const row = this.sql
+      .prepare("SELECT value, revision FROM app_settings WHERE key = 'onboarding'")
+      .get() as { value: string; revision: number } | undefined;
+    if (!row) return { completed: false, revision: 0 };
+    const value: unknown = JSON.parse(row.value);
+    if (!value || typeof value !== "object" || typeof (value as { completed?: unknown }).completed !== "boolean") {
+      throw new Error("Stored onboarding state is invalid");
+    }
+    return { completed: (value as { completed: boolean }).completed, revision: row.revision };
+  }
+
+  setOnboarding(completed: boolean, expectedRevision: number) {
+    const timestamp = now();
+    const value = JSON.stringify({ completed });
+    const result = expectedRevision === 0
+      ? this.sql.prepare(
+        `INSERT OR IGNORE INTO app_settings(key, value, revision, updated_at)
+         VALUES ('onboarding', ?, 1, ?)`,
+      ).run(value, timestamp)
+      : this.sql.prepare(
+        `UPDATE app_settings SET value = ?, revision = revision + 1, updated_at = ?
+         WHERE key = 'onboarding' AND revision = ?`,
+      ).run(value, timestamp, expectedRevision);
+    return result.changes === 1
+      ? { kind: "updated" as const, state: this.getOnboarding() }
+      : { kind: "conflict" as const, state: this.getOnboarding() };
   }
 
   getLlmSettings(apiKeyConfigured = false): LlmSettings {

@@ -4,6 +4,29 @@ import { readFile } from "node:fs/promises";
 const readyImageUrl = "https://assets.example.test/ready.png";
 const failedImageUrl = "https://assets.example.test/failed.png";
 
+test("keeps first-run setup local, deferrable, and durable", async ({ page, context }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: /你的知识/u })).toBeVisible();
+  await page.getByRole("button", { name: "稍后设置" }).click();
+  await expect(page.getByLabel("网页地址")).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: /你的知识/u })).toBeVisible();
+  await page.getByRole("button", { name: "继续" }).click();
+  await expect(page.getByRole("heading", { name: /稳定的位置/u })).toBeVisible();
+  await expect(page.getByText("KB_DATA_DIR=/你的/知识库目录 pnpm start")).toBeVisible();
+  await page.getByRole("button", { name: "继续" }).click();
+  await page.getByRole("button", { name: "继续" }).click();
+  await page.getByRole("button", { name: "进入资料库" }).click();
+  await expect(page.getByLabel("网页地址")).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("网页地址")).toBeVisible();
+  await expect(page.getByRole("heading", { name: /你的知识/u })).toBeHidden();
+  await context.setOffline(true);
+  await expect(page.getByText("系统报告当前离线", { exact: false })).toBeVisible();
+  await expect(page.getByLabel("网页地址")).toBeEnabled();
+  await context.setOffline(false);
+});
+
 test("previews a batch before importing it", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "批量导入" }).click();

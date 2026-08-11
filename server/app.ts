@@ -1199,6 +1199,33 @@ export function createApp(options: AppOptions) {
         return;
       }
 
+      if (pathname === "/api/settings/onboarding" && request.method === "GET") {
+        if (requestUrl.searchParams.size) {
+          throw new HttpError(400, "INVALID_ONBOARDING", "Onboarding does not accept query parameters");
+        }
+        sendJson(response, 200, requireDatabase().getOnboarding());
+        return;
+      }
+
+      if (pathname === "/api/settings/onboarding" && request.method === "PUT") {
+        const body = await mutationBody(request);
+        if (
+          typeof body.completed !== "boolean" ||
+          !Number.isSafeInteger(body.revision) ||
+          (body.revision as number) < 0 ||
+          Object.keys(body).some((key) => key !== "completed" && key !== "revision")
+        ) {
+          throw new HttpError(400, "INVALID_ONBOARDING", "completed and a non-negative revision are required");
+        }
+        const result = requireDatabase().setOnboarding(body.completed, body.revision as number);
+        if (result.kind === "conflict") {
+          sendJson(response, 409, { error: { code: "ONBOARDING_CONFLICT", message: "Onboarding changed in another window" }, state: result.state });
+          return;
+        }
+        sendJson(response, 200, result.state);
+        return;
+      }
+
       if (pathname === "/api/settings/recent-filters" && request.method === "PUT") {
         const body = await mutationBody(request);
         const filters = recentFiltersValue(body);

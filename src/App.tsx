@@ -26,6 +26,7 @@ import type {
   KnowledgeCollection,
   KnowledgeDocument,
   KnowledgeTag,
+  OnboardingState,
   RecentFilter,
   ReextractionPreview,
 } from "../shared/types";
@@ -36,6 +37,7 @@ import { DataSafety } from "./components/DataSafety";
 import { Diagnostics } from "./components/Diagnostics";
 import { DerivedKnowledge } from "./components/DerivedKnowledge";
 import { MarkdownEditor } from "./components/MarkdownEditor";
+import { Onboarding } from "./components/Onboarding";
 
 type EditorMode = "edit" | "split" | "preview";
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
@@ -562,6 +564,9 @@ export default function App() {
   const [closing, setClosing] = useState(false);
   const [safetyOpen, setSafetyOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [onboarding, setOnboarding] = useState<OnboardingState | "unavailable" | null>(null);
+  const [onboardingDeferred, setOnboardingDeferred] = useState(false);
+  const [offline, setOffline] = useState(() => !navigator.onLine);
   const [safetyRecovery, setSafetyRecovery] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [derivedOpen, setDerivedOpen] = useState(false);
@@ -621,6 +626,24 @@ export default function App() {
   const updateOrganizationConflict = useCallback((value: OrganizationConflict | null) => {
     organizationConflictRef.current = value;
     setOrganizationConflict(value);
+  }, []);
+
+  useEffect(() => {
+    const update = () => setOffline(!navigator.onLine);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void api.getOnboarding(controller.signal).then(setOnboarding).catch(() => {
+      if (!controller.signal.aborted) setOnboarding("unavailable");
+    });
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
@@ -2864,6 +2887,13 @@ export default function App() {
     }
   }
 
+  if (onboarding === null) {
+    return <main className="onboarding-loading" aria-live="polite"><span className="brand-seal">知</span><p>正在打开本地知识库…</p></main>;
+  }
+  if (onboarding !== "unavailable" && !onboarding.completed && !onboardingDeferred) {
+    return <Onboarding state={onboarding} onComplete={setOnboarding} onLater={() => setOnboardingDeferred(true)} />;
+  }
+
   return (
     <div className="app-shell">
       <a className="skip-link" href="#library-panel">跳到资料库</a>
@@ -2877,6 +2907,8 @@ export default function App() {
           <i />{safetyRecovery ? "恢复模式" : "数据安全"}
         </button></div>
       </header>
+
+      {offline && <div className="offline-banner" role="status">系统报告当前离线；本地阅读、编辑与搜索仍可使用，网页抓取和远程 AI 可能失败。</div>}
 
       {shortcutHelp && <dialog ref={shortcutDialogRef} className="shortcut-backdrop" aria-labelledby="shortcut-title" onClose={() => setShortcutHelp(false)} onMouseDown={(event) => { if (event.target === event.currentTarget) setShortcutHelp(false); }}><section className="shortcut-card"><header><div><span className="eyebrow">KEYBOARD MAP</span><h2 id="shortcut-title">快捷键</h2></div><button type="button" autoFocus onClick={() => setShortcutHelp(false)} aria-label="关闭快捷键">×</button></header><dl><div><dt><kbd>⌘</kbd><kbd>K</kbd></dt><dd>聚焦搜索</dd></div><div><dt><kbd>/</kbd></dt><dd>聚焦搜索</dd></div><div><dt><kbd>J</kbd> / <kbd>K</kbd></dt><dd>在列表中移动</dd></div><div><dt><kbd>X</kbd></dt><dd>选中或取消当前行</dd></div><div><dt><kbd>↵</kbd></dt><dd>打开当前行</dd></div><div><dt><kbd>⌘</kbd><kbd>S</kbd></dt><dd>立即保存</dd></div><div><dt><kbd>Esc</kbd></dt><dd>关闭面板或返回列表</dd></div><div><dt><kbd>?</kbd></dt><dd>显示本帮助</dd></div></dl></section></dialog>}
 

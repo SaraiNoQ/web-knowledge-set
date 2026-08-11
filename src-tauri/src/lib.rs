@@ -1,5 +1,6 @@
 mod external;
 mod keychain;
+mod launcher;
 
 use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
@@ -331,7 +332,7 @@ fn fail_service(app: &tauri::AppHandle, reason: &str) {
 pub fn run() {
     let accepted_origin = Arc::new(Mutex::new(None));
     let navigation_origin = accepted_origin.clone();
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(
             tauri::plugin::Builder::<tauri::Wry, ()>::new("navigation-guard")
                 .on_navigation(move |webview, url| {
@@ -344,7 +345,10 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             external::focus_main(app);
         }))
-        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_deep_link::init());
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_plugin_dialog::init());
+    let app = builder
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             external::take_external_intents,
@@ -354,6 +358,7 @@ pub fn run() {
             keychain::llm_keychain_status,
             keychain::set_llm_api_key,
             keychain::delete_llm_api_key,
+            launcher::choose_data_directory,
         ])
         .manage(external::ExternalState::default())
         .manage(LocalService {
@@ -387,7 +392,7 @@ pub fn run() {
                     return Ok(());
                 }
             };
-            let data_dir = match app.path().app_data_dir() {
+            let default_data_dir = match app.path().app_data_dir() {
                 Ok(path) => path,
                 Err(error) => {
                     show_startup_error(
@@ -395,6 +400,18 @@ pub fn run() {
                         "无法定位数据目录",
                         "织页无法定位本地知识库目录。请重新打开应用。",
                         &error.to_string(),
+                    );
+                    return Ok(());
+                }
+            };
+            let data_dir = match launcher::data_directory(app.handle(), default_data_dir) {
+                Ok(path) => path,
+                Err(error) => {
+                    show_startup_error(
+                        app.handle(),
+                        "无法读取数据目录设置",
+                        "织页无法确认本地知识库位置。请修复桌面启动配置后重试。",
+                        &error,
                     );
                     return Ok(());
                 }

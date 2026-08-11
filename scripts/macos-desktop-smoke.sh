@@ -12,6 +12,10 @@ ditto "$BUILT_APP" "$APP"
 
 DATA_DIR="$HOME/Library/Application Support/dev.local.zhiye"
 DATABASE="$DATA_DIR/zhiye.sqlite3"
+DEFAULT_DATABASE="$DATABASE"
+LAUNCHER_DIR="$HOME/Library/Application Support/dev.local.zhiye-launcher"
+LAUNCHER_CONFIG="$LAUNCHER_DIR/launcher.json"
+CUSTOM_DATA_DIR=$(mktemp -d)
 FILE_MARKER="$DATA_DIR/.desktop-smoke-files"
 INTENT_MARKER="$DATA_DIR/.desktop-smoke-intent"
 ERROR_MARKER="$DATA_DIR/.desktop-smoke-error"
@@ -22,6 +26,8 @@ COLD_URL="https://example.com/zhiye-cold-smoke"
 WARM_URL="https://example.com/zhiye-warm-smoke"
 COLD_LINK="zhiye://capture?url=https%3A%2F%2Fexample.com%2Fzhiye-cold-smoke"
 WARM_LINK="zhiye://capture?url=https%3A%2F%2Fexample.com%2Fzhiye-warm-smoke"
+CUSTOM_URL="https://example.com/zhiye-custom-data-smoke"
+CUSTOM_LINK="zhiye://capture?url=https%3A%2F%2Fexample.com%2Fzhiye-custom-data-smoke"
 
 quit_app() {
   osascript -e 'tell application id "dev.local.zhiye" to quit' >/dev/null 2>&1 || true
@@ -37,6 +43,8 @@ cleanup() {
   launchctl unsetenv ZHIYE_DESKTOP_SMOKE >/dev/null 2>&1 || true
   launchctl unsetenv ZHIYE_KEYCHAIN_SMOKE >/dev/null 2>&1 || true
   rm -rf -- "$NOTE_DIR"
+  rm -rf -- "$CUSTOM_DATA_DIR"
+  rm -rf -- "$LAUNCHER_DIR"
   rm -rf -- "$APP"
 }
 trap cleanup EXIT
@@ -62,6 +70,7 @@ launchctl setenv ZHIYE_DESKTOP_SMOKE 1
 launchctl setenv ZHIYE_KEYCHAIN_SMOKE 1
 [[ -x "$APP/Contents/MacOS/zhiye" ]]
 rm -f -- "$FILE_MARKER" "$INTENT_MARKER" "$ERROR_MARKER" "$LLM_MARKER"
+rm -rf -- "$LAUNCHER_DIR"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"
 plutil -extract CFBundleURLTypes xml1 -o - "$APP/Contents/Info.plist" | grep -q '<string>zhiye</string>'
 open -b dev.local.zhiye "$COLD_LINK"
@@ -85,4 +94,15 @@ for _ in {1..15}; do
   sleep 1
 done
 grep -Fx 'finder-smoke.md' "$FILE_MARKER" >/dev/null
+[[ $(pgrep -x zhiye | wc -l | tr -d ' ') == "1" ]]
+
+quit_app
+mkdir -m 700 "$LAUNCHER_DIR"
+printf '{"version":1,"data_dir":"%s"}' "$CUSTOM_DATA_DIR" > "$LAUNCHER_CONFIG"
+chmod 600 "$LAUNCHER_CONFIG"
+DATA_DIR="$CUSTOM_DATA_DIR"
+DATABASE="$CUSTOM_DATA_DIR/zhiye.sqlite3"
+open -b dev.local.zhiye "$CUSTOM_LINK"
+wait_for_source "$CUSTOM_URL"
+[[ $(sqlite3 "$DEFAULT_DATABASE" "SELECT count(*) FROM documents WHERE source_url = '$CUSTOM_URL'") == "0" ]]
 [[ $(pgrep -x zhiye | wc -l | tr -d ' ') == "1" ]]

@@ -23,6 +23,7 @@ import type {
   DocumentSummary,
   ImportApplyResult,
   ImportPreview,
+  OnboardingState,
   ImportStrategy,
   KnowledgeCollection,
   KnowledgeDocument,
@@ -127,6 +128,17 @@ export interface CleanupDataResult {
 }
 
 export const api = {
+  getOnboarding(signal?: AbortSignal) {
+    return request<OnboardingState>("/api/settings/onboarding", { signal });
+  },
+
+  saveOnboarding(completed: boolean, revision: number) {
+    return request<OnboardingState>("/api/settings/onboarding", {
+      method: "PUT",
+      body: JSON.stringify({ completed, revision }),
+    });
+  },
+
   getDiagnostics(signal?: AbortSignal) {
     return request<DiagnosticReport>("/api/diagnostics", { signal });
   },

@@ -463,6 +463,11 @@ export interface DataSafetyStatus {
   settings: BackupSettings | null;
 }
 
+export interface OnboardingState {
+  completed: boolean;
+  revision: number;
+}
+
 export type DiagnosticLogLevel = "info" | "warning" | "error";
 
 export type DiagnosticLogEvent =
