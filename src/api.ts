@@ -15,6 +15,9 @@ import type {
   DocumentListResponse,
   DocumentRevision,
   DocumentSummary,
+  ImportApplyResult,
+  ImportPreview,
+  ImportStrategy,
   KnowledgeCollection,
   KnowledgeDocument,
   KnowledgeTag,
@@ -110,6 +113,28 @@ export interface CleanupDataResult {
 }
 
 export const api = {
+  previewImport(body: { kind: "urls" | "bookmarks"; content: string } | { kind: "markdown"; files: Array<{ path: string; content: string }> }) {
+    return request<ImportPreview>("/api/imports/preview", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  applyImport(id: string, strategy: ImportStrategy) {
+    return request<ImportApplyResult>(`/api/imports/${encodeURIComponent(id)}/apply`, {
+      method: "POST",
+      body: JSON.stringify({ strategy }),
+    });
+  },
+
+  cancelImport(id: string, signal?: AbortSignal) {
+    return request<void>(`/api/imports/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      body: JSON.stringify({}),
+      signal,
+    });
+  },
+
   getRecentFilters(signal?: AbortSignal) {
     return request<RecentFiltersState>("/api/settings/recent-filters", { signal });
   },

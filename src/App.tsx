@@ -5,7 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { FormEvent, KeyboardEvent, ReactNode } from "react";
+import type { ChangeEvent, FormEvent, KeyboardEvent, ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type {
@@ -18,6 +18,10 @@ import type {
   DocumentDraft,
   DocumentRevision,
   DocumentSummary,
+  ImportApplyResult,
+  ImportKind,
+  ImportPreview,
+  ImportStrategy,
   KnowledgeCollection,
   KnowledgeDocument,
   KnowledgeTag,
@@ -87,6 +91,17 @@ const STATUS_LABEL: Record<CaptureStatus, string> = {
   ready: "已就绪",
   failed: "抓取失败",
 };
+
+const IMPORT_PREVIEW_LABEL = { valid: "可导入", duplicate: "重复", invalid: "无效" } as const;
+const IMPORT_RESULT_LABEL = { created: "已新增", updated: "已更新", skipped: "已跳过", conflict: "有冲突", failed: "失败" } as const;
+const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
+const MAX_MARKDOWN_FILES = 100;
+
+function importFileLimitError(kind: ImportKind, files: File[]) {
+  if (kind === "markdown" && files.length > MAX_MARKDOWN_FILES) return `最多选择 ${MAX_MARKDOWN_FILES} 个 Markdown 文件。`;
+  if (kind !== "urls" && files.reduce((total, file) => total + file.size, 0) > MAX_IMPORT_BYTES) return "导入文件合计不能超过 10 MiB。";
+  return "";
+}
 
 function draftOf(document: KnowledgeDocument): Draft {
   return { title: document.title, markdown: document.markdown, tags: document.tags };
@@ -470,6 +485,15 @@ export default function App() {
   const [importError, setImportError] = useState("");
   const [importNotice, setImportNotice] = useState("");
   const [importDuplicate, setImportDuplicate] = useState<ImportDuplicatePrompt | null>(null);
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
+  const [bulkImportKind, setBulkImportKind] = useState<ImportKind>("urls");
+  const [bulkImportText, setBulkImportText] = useState("");
+  const [bulkImportFiles, setBulkImportFiles] = useState<File[]>([]);
+  const [bulkImportPreview, setBulkImportPreview] = useState<ImportPreview | null>(null);
+  const [bulkImportResult, setBulkImportResult] = useState<ImportApplyResult | null>(null);
+  const [bulkImportStrategy, setBulkImportStrategy] = useState<ImportStrategy>("skip");
+  const [bulkImportBusy, setBulkImportBusy] = useState(false);
+  const [bulkImportError, setBulkImportError] = useState("");
   const [captureQueue, setCaptureQueue] = useState<CaptureQueueStatus | null>(null);
   const [queueError, setQueueError] = useState("");
   const [queueUpdating, setQueueUpdating] = useState(false);
@@ -528,6 +552,7 @@ export default function App() {
   const recentFiltersStateRef = useRef<{ filters: SavedFilter[]; revision: number }>({ filters: [], revision: 0 });
   const recentFilterSaveChainRef = useRef<Promise<unknown>>(Promise.resolve());
   const shortcutDialogRef = useRef<HTMLDialogElement>(null);
+  const bulkImportDialogRef = useRef<HTMLDialogElement>(null);
   const collectionsRequestRef = useRef<{ sequence: number; controller: AbortController } | null>(null);
   const collectionsRequestSequenceRef = useRef(0);
   const keptDuplicateIdsRef = useRef(new Set<string>());
@@ -584,6 +609,17 @@ export default function App() {
     };
   }, [shortcutHelp]);
 
+  useEffect(() => {
+    const dialog = bulkImportDialogRef.current;
+    if (!dialog || !bulkImportOpen) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    dialog.showModal();
+    return () => {
+      if (dialog.open) dialog.close();
+      previousFocus?.focus();
+    };
+  }, [bulkImportOpen]);
+
   const persistedDraft = currentDoc ? draftOf(currentDoc) : null;
   const dirty = Boolean(draft && persistedDraft && !draftsEqual(draft, persistedDraft));
   const metadataDirty = Boolean(sourceMetadata && currentDoc && !sourceMetadataEqual(sourceMetadata, currentDoc));
@@ -597,6 +633,12 @@ export default function App() {
   );
   const navigationMutationLocked = Boolean(lifecycleAction) || restoringRevision !== null;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const bulkImportReady = bulkImportKind === "urls" ? Boolean(bulkImportText.trim()) : bulkImportFiles.length > 0;
+  const bulkResultById = useMemo(() => new Map(bulkImportResult?.items.map((item) => [item.id, item]) || []), [bulkImportResult]);
+  const bulkImportTouchesDirtyDocument = Boolean(
+    bulkImportStrategy === "update" && hasUnsavedChanges && currentDoc &&
+    bulkImportPreview?.items.some((item) => item.existingDocumentId === currentDoc.id),
+  );
 
   const loadCaptureQueue = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -1337,6 +1379,15 @@ export default function App() {
               await persistDraft(document, value);
             }
           }
+          const stagedImportId = bulkImportPreview?.id ?? null;
+          if (stagedImportId) {
+            try {
+              await api.cancelImport(stagedImportId, AbortSignal.timeout(400));
+              setBulkImportPreview((preview) => preview?.id === stagedImportId ? null : preview);
+            } catch {
+              // Closing must never fail because temporary import cleanup failed.
+            }
+          }
           if (closeAttemptRef.current !== attemptId) return;
           await api.desktopCloseReady(attemptId);
         } catch (error) {
@@ -1360,7 +1411,7 @@ export default function App() {
       window.removeEventListener("zhiye:close-requested", prepareClose);
       window.removeEventListener("zhiye:close-timeout", closeTimedOut);
     };
-  }, [installCurrentDocument, persistDraft, safetyOpen, safetyRecovery, sendOrganizationPatch, tombstoneDraft, trackOrganizationTask, updateListItem]);
+  }, [bulkImportPreview, installCurrentDocument, persistDraft, safetyOpen, safetyRecovery, sendOrganizationPatch, tombstoneDraft, trackOrganizationTask, updateListItem]);
 
   const revealDocument = async (document: DocumentSummary, guard: NavigationGuard) => {
     const inTargetTrash = Boolean(document.deletedAt);
@@ -1463,6 +1514,113 @@ export default function App() {
     ) return;
     if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，仍要保留为另一篇知识吗？")) return;
     await importDocument(importDuplicate.url, true, beginNavigation());
+  };
+
+  const clearBulkImport = () => {
+    setBulkImportText("");
+    setBulkImportFiles([]);
+    setBulkImportPreview(null);
+    setBulkImportResult(null);
+    setBulkImportStrategy("skip");
+    setBulkImportError("");
+  };
+
+  const cancelBulkPreview = async () => {
+    if (!bulkImportPreview) return true;
+    setBulkImportBusy(true);
+    setBulkImportError("");
+    try {
+      await api.cancelImport(bulkImportPreview.id);
+      return true;
+    } catch (error) {
+      if (bulkImportResult) {
+        setImportNotice(`批量导入已完成（新增 ${bulkImportResult.counts.created}，更新 ${bulkImportResult.counts.updated}）；临时导入记录将在稍后清理。`);
+        return true;
+      }
+      setBulkImportError((error as Error).message);
+      return false;
+    } finally {
+      setBulkImportBusy(false);
+    }
+  };
+
+  const closeBulkImport = async () => {
+    if (bulkImportBusy || !await cancelBulkPreview()) return;
+    setBulkImportOpen(false);
+    clearBulkImport();
+  };
+
+  const restartBulkImport = async () => {
+    if (!await cancelBulkPreview()) return;
+    if (bulkImportKind !== "urls") setBulkImportFiles([]);
+    setBulkImportPreview(null);
+    setBulkImportResult(null);
+    setBulkImportError("");
+  };
+
+  const selectBulkFiles = (event: ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(event.target.files || []);
+    const files = bulkImportKind === "markdown"
+      ? selected.filter((file) => /\.(?:md|markdown)$/iu.test(file.name))
+      : selected.slice(0, 1);
+    const error = selected.length && !files.length ? "没有找到 Markdown 文件。" : importFileLimitError(bulkImportKind, files);
+    setBulkImportFiles(error ? [] : files);
+    setBulkImportError(error);
+  };
+
+  const previewBulkImport = async () => {
+    setBulkImportBusy(true);
+    setBulkImportError("");
+    setBulkImportResult(null);
+    try {
+      const fileError = importFileLimitError(bulkImportKind, bulkImportFiles);
+      if (fileError) throw new Error(fileError);
+      const markdownFiles: Array<{ path: string; content: string }> = [];
+      if (bulkImportKind === "markdown") {
+        for (const file of bulkImportFiles) {
+          markdownFiles.push({ path: file.webkitRelativePath || file.name, content: await file.text() });
+        }
+      }
+      const payload = bulkImportKind === "urls"
+        ? { kind: "urls" as const, content: bulkImportText }
+        : bulkImportKind === "bookmarks"
+          ? { kind: "bookmarks" as const, content: await bulkImportFiles[0]?.text() || "" }
+          : { kind: "markdown" as const, files: markdownFiles };
+      setBulkImportPreview(await api.previewImport(payload));
+    } catch (error) {
+      setBulkImportError((error as Error).message);
+    } finally {
+      setBulkImportBusy(false);
+    }
+  };
+
+  const applyBulkImport = async () => {
+    if (!bulkImportPreview) return;
+    setBulkImportBusy(true);
+    setBulkImportError("");
+    try {
+      const result = await api.applyImport(bulkImportPreview.id, bulkImportStrategy);
+      setBulkImportResult(result);
+      setListRefresh((value) => value + 1);
+      void loadCaptureQueue();
+      void loadCollections();
+      refreshKnownTags();
+      setImportNotice(`批量导入完成：新增 ${result.counts.created}，更新 ${result.counts.updated}，跳过 ${result.counts.skipped}。`);
+      const currentId = selectedIdRef.current;
+      if (currentId && result.items.some((item) => item.status === "updated" && item.documentId === currentId)) {
+        const updated = await api.getDocument(currentId);
+        if (selectedIdRef.current === currentId) {
+          installCurrentDocument(updated);
+          setDraft(draftOf(updated));
+          setTagText(updated.tags.join(", "));
+          updateListItem(updated);
+        }
+      }
+    } catch (error) {
+      setBulkImportError((error as Error).message);
+    } finally {
+      setBulkImportBusy(false);
+    }
   };
 
   const toggleCaptureQueue = async () => {
@@ -1956,6 +2114,7 @@ export default function App() {
 
   useEffect(() => {
     const handleShortcuts = (event: globalThis.KeyboardEvent) => {
+      if (bulkImportOpen) return;
       if (shortcutHelp) {
         if (event.key === "Escape") setShortcutHelp(false);
         return;
@@ -1989,7 +2148,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handleShortcuts);
     return () => window.removeEventListener("keydown", handleShortcuts);
-  }, [captureHistoryOpen, closeDocument, collectionsOpen, historyOpen, qualityOpen, shortcutHelp]);
+  }, [bulkImportOpen, captureHistoryOpen, closeDocument, collectionsOpen, historyOpen, qualityOpen, shortcutHelp]);
 
   const retryCapture = async () => {
     if (!currentDoc) return;
@@ -2475,6 +2634,73 @@ export default function App() {
 
       {shortcutHelp && <dialog ref={shortcutDialogRef} className="shortcut-backdrop" aria-labelledby="shortcut-title" onClose={() => setShortcutHelp(false)} onMouseDown={(event) => { if (event.target === event.currentTarget) setShortcutHelp(false); }}><section className="shortcut-card"><header><div><span className="eyebrow">KEYBOARD MAP</span><h2 id="shortcut-title">快捷键</h2></div><button type="button" autoFocus onClick={() => setShortcutHelp(false)} aria-label="关闭快捷键">×</button></header><dl><div><dt><kbd>⌘</kbd><kbd>K</kbd></dt><dd>聚焦搜索</dd></div><div><dt><kbd>/</kbd></dt><dd>聚焦搜索</dd></div><div><dt><kbd>J</kbd> / <kbd>K</kbd></dt><dd>在列表中移动</dd></div><div><dt><kbd>X</kbd></dt><dd>选中或取消当前行</dd></div><div><dt><kbd>↵</kbd></dt><dd>打开当前行</dd></div><div><dt><kbd>⌘</kbd><kbd>S</kbd></dt><dd>立即保存</dd></div><div><dt><kbd>Esc</kbd></dt><dd>关闭面板或返回列表</dd></div><div><dt><kbd>?</kbd></dt><dd>显示本帮助</dd></div></dl></section></dialog>}
 
+      {bulkImportOpen && (
+        <dialog
+          ref={bulkImportDialogRef}
+          className="shortcut-backdrop bulk-import-backdrop"
+          aria-labelledby="bulk-import-title"
+          onCancel={(event) => { event.preventDefault(); void closeBulkImport(); }}
+          onMouseDown={(event) => { if (event.target === event.currentTarget) void closeBulkImport(); }}
+        >
+          <section className="bulk-import-card">
+            <header>
+              <div><span className="eyebrow">BATCH INTAKE</span><h2 id="bulk-import-title">批量导入</h2><p>先检查，再一次写入资料库。</p></div>
+              <button type="button" autoFocus onClick={() => void closeBulkImport()} disabled={bulkImportBusy} aria-label="关闭批量导入">×</button>
+            </header>
+
+            {!bulkImportPreview ? <>
+              <fieldset className="bulk-kind" disabled={bulkImportBusy}>
+                <legend className="sr-only">导入格式</legend>
+                {([['urls', '网址列表'], ['bookmarks', '浏览器书签'], ['markdown', 'Markdown']] as Array<[ImportKind, string]>).map(([kind, label]) => (
+                  <button key={kind} type="button" aria-pressed={bulkImportKind === kind} onClick={() => { setBulkImportKind(kind); setBulkImportFiles([]); setBulkImportText(""); setBulkImportError(""); }}>{label}</button>
+                ))}
+              </fieldset>
+
+              {bulkImportKind === "urls" ? (
+                <label className="bulk-text"><span>每行一个公开网页地址</span><textarea value={bulkImportText} onChange={(event) => { setBulkImportText(event.target.value); setBulkImportError(""); }} rows={10} placeholder={'https://example.com/article-one\nhttps://example.com/article-two'} disabled={bulkImportBusy} /></label>
+              ) : bulkImportKind === "bookmarks" ? (
+                <label className="bulk-file"><span>选择浏览器导出的 bookmarks.html</span><input key={bulkImportKind} type="file" accept=".html,text/html" onChange={selectBulkFiles} disabled={bulkImportBusy} /><small>{bulkImportFiles[0]?.name || "尚未选择文件"}</small></label>
+              ) : (
+                <div className="bulk-markdown-files">
+                  <label className="bulk-file"><span>选择多个 .md 文件</span><input key={`${bulkImportKind}-files`} type="file" accept=".md,.markdown,text/markdown,text/plain" multiple onChange={selectBulkFiles} disabled={bulkImportBusy} /></label>
+                  <span>或</span>
+                  <label className="bulk-file"><span>选择整个目录</span><input key={`${bulkImportKind}-directory`} type="file" multiple {...{ webkitdirectory: "", directory: "" }} onChange={selectBulkFiles} disabled={bulkImportBusy} /></label>
+                  <small>{bulkImportFiles.length ? `已选择 ${bulkImportFiles.length} 个文件` : "尚未选择文件"}</small>
+                </div>
+              )}
+
+              <div className="bulk-dialog-actions"><button className="primary-button" type="button" onClick={() => void previewBulkImport()} disabled={bulkImportBusy || !bulkImportReady}>{bulkImportBusy ? <><Spinner />检查中</> : "检查导入内容"}</button></div>
+            </> : <>
+              <div className="bulk-counts" aria-label="导入检查统计">
+                <span><strong>{bulkImportPreview.counts.total}</strong>总计</span>
+                <span className="is-valid"><strong>{bulkImportPreview.counts.valid}</strong>有效</span>
+                <span className="is-duplicate"><strong>{bulkImportPreview.counts.duplicate}</strong>重复</span>
+                <span className="is-invalid"><strong>{bulkImportPreview.counts.invalid}</strong>无效</span>
+              </div>
+
+              {bulkImportResult && <div className="bulk-result-summary" role="status">新增 {bulkImportResult.counts.created} · 更新 {bulkImportResult.counts.updated} · 跳过 {bulkImportResult.counts.skipped} · 冲突 {bulkImportResult.counts.conflicts} · 失败 {bulkImportResult.counts.failed}</div>}
+
+              <ol className="bulk-preview-list">
+                {bulkImportPreview.items.slice(0, 100).map((item) => {
+                  const result = bulkResultById.get(item.id);
+                  const status = result ? IMPORT_RESULT_LABEL[result.status] : IMPORT_PREVIEW_LABEL[item.status];
+                  return <li key={item.id} className={`is-${result?.status || item.status}`}><span className="bulk-item-index">{item.index + 1}</span><div><strong>{item.label}</strong><small>{result?.error || item.error || item.warnings.join(" · ") || item.sourceUrl || "准备就绪"}</small></div><em>{status}</em></li>;
+                })}
+              </ol>
+              {bulkImportPreview.items.length > 100 && <p className="bulk-list-limit">仅展示前 100 项；其余 {bulkImportPreview.items.length - 100} 项仍会按同一策略处理。</p>}
+
+              <footer className="bulk-dialog-footer">
+                {!bulkImportResult ? <>
+                  <label><span>遇到重复项</span><select value={bulkImportStrategy} onChange={(event) => setBulkImportStrategy(event.target.value as ImportStrategy)} disabled={bulkImportBusy}><option value="skip">跳过已有（推荐）</option><option value="copy">保留副本</option><option value="update">更新已有（替换内容）</option></select>{bulkImportStrategy === "update" && <small>{bulkImportTouchesDirtyDocument ? "当前打开的重复条目有未保存修改，请先保存或改用其他策略。" : "会用导入内容替换已有正文与组织信息；预检后发生变化的条目会报告冲突。"}</small>}</label>
+                  <div><button type="button" onClick={() => void restartBulkImport()} disabled={bulkImportBusy}>重新选择</button><button className="primary-button" type="button" onClick={() => void applyBulkImport()} disabled={bulkImportBusy || bulkImportTouchesDirtyDocument || bulkImportPreview.counts.valid + bulkImportPreview.counts.duplicate === 0}>{bulkImportBusy ? <><Spinner />导入中</> : "确认导入"}</button></div>
+                </> : <button className="primary-button" type="button" onClick={() => void closeBulkImport()}>完成</button>}
+              </footer>
+            </>}
+            {bulkImportError && <p className="bulk-import-error" role="alert">{bulkImportError}</p>}
+          </section>
+        </dialog>
+      )}
+
       {safetyOpen ? (
         <DataSafety
           beforeOperation={prepareDataSafetyOperation}
@@ -2492,6 +2718,7 @@ export default function App() {
             <button type="button" aria-pressed={captureQueue?.paused || false} onClick={() => void toggleCaptureQueue()} disabled={!captureQueue || queueUpdating || closing}>
               {queueUpdating ? "调整中…" : captureQueue?.paused ? "继续采集" : "暂停采集"}
             </button>
+            <button type="button" onClick={() => setBulkImportOpen(true)} disabled={closing || importing}>批量导入</button>
           </div>
           {queueError && <span className="queue-error" role="alert">队列状态不可用：{queueError}</span>}
         </div>

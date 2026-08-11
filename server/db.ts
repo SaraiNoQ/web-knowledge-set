@@ -26,6 +26,10 @@ import type {
   KnowledgeDocument,
   KnowledgeCollection,
   KnowledgeTag,
+  ImportApplyResult,
+  ImportKind,
+  ImportPreview,
+  ImportStrategy,
   RecentFilter,
   TagMutationResponse,
 } from "../shared/types.js";
@@ -322,6 +326,35 @@ const migrations = [
     updated_at TEXT NOT NULL
   );
   `,
+  `
+  CREATE TABLE import_batches (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('urls', 'bookmarks', 'markdown')),
+    status TEXT NOT NULL DEFAULT 'preview' CHECK (status IN ('preview', 'applied')),
+    strategy TEXT CHECK (strategy IS NULL OR strategy IN ('skip', 'copy', 'update')),
+    created_at TEXT NOT NULL,
+    applied_at TEXT
+  );
+
+  CREATE TABLE import_items (
+    id TEXT PRIMARY KEY,
+    batch_id TEXT NOT NULL REFERENCES import_batches(id) ON DELETE CASCADE,
+    item_index INTEGER NOT NULL,
+    label TEXT NOT NULL,
+    source_url TEXT,
+    preview_status TEXT NOT NULL CHECK (preview_status IN ('valid', 'duplicate', 'invalid')),
+    existing_document_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+    expected_revision INTEGER,
+    warnings_json TEXT NOT NULL DEFAULT '[]',
+    error TEXT,
+    payload_json TEXT NOT NULL,
+    result_status TEXT CHECK (result_status IS NULL OR result_status IN ('created', 'updated', 'skipped', 'conflict', 'failed')),
+    result_document_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+    result_error TEXT,
+    UNIQUE(batch_id, item_index)
+  );
+  CREATE INDEX import_items_batch ON import_items(batch_id, item_index);
+  `,
 ];
 
 export const CURRENT_SCHEMA_VERSION = migrations.length;
@@ -470,6 +503,57 @@ export interface DocumentPatch {
   favorite?: boolean;
   archived?: boolean;
   collectionIds?: string[];
+}
+
+export type ImportPayload =
+  | { type: "url"; url: string | null }
+  | {
+    type: "markdown";
+    title: string;
+    sourceUrl: string | null;
+    finalUrl: string | null;
+    canonicalUrl: string | null;
+    author: string | null;
+    publishedAt: string | null;
+    capturedAt: string | null;
+    tags: string[];
+    collections: string[];
+    favorite: boolean;
+    archivedAt: string | null;
+    sourceNote: string;
+    markdown: string;
+  };
+
+export interface PreparedImportItem {
+  label: string;
+  sourceUrl: string | null;
+  warnings: string[];
+  error: string | null;
+  payload: ImportPayload;
+}
+
+interface ImportBatchRow {
+  id: string;
+  kind: ImportKind;
+  status: "preview" | "applied";
+  strategy: ImportStrategy | null;
+  created_at: string;
+}
+
+interface ImportItemRow {
+  id: string;
+  item_index: number;
+  label: string;
+  source_url: string | null;
+  preview_status: "valid" | "duplicate" | "invalid";
+  existing_document_id: string | null;
+  expected_revision: number | null;
+  warnings_json: string;
+  error: string | null;
+  payload_json: string;
+  result_status: "created" | "updated" | "skipped" | "conflict" | "failed" | null;
+  result_document_id: string | null;
+  result_error: string | null;
 }
 
 export type ListFilters = DocumentFilters;
@@ -731,6 +815,7 @@ export class KnowledgeDatabase {
       secureDatabaseFiles(databasePath);
       this.processPendingFileDeletions();
       this.recoverInterruptedJobs();
+      this.cleanupExpiredImports();
     } catch (error) {
       this.sql.close();
       throw error;
@@ -775,6 +860,11 @@ export class KnowledgeDatabase {
 
   close() {
     this.sql.close();
+  }
+
+  private cleanupExpiredImports() {
+    this.sql.prepare("DELETE FROM import_batches WHERE created_at < ?")
+      .run(new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString());
   }
 
   getRecentFilters(): { filters: RecentFilter[]; revision: number } {
@@ -1423,6 +1513,238 @@ export class KnowledgeDatabase {
         duplicateKind: resolved ? "resolved" as const : null,
       };
     });
+  }
+
+  createImportBatch(kind: ImportKind, items: PreparedImportItem[]): ImportPreview {
+    this.cleanupExpiredImports();
+    return transaction(this.sql, () => {
+      const id = randomUUID();
+      const createdAt = now();
+      this.sql.prepare("INSERT INTO import_batches(id, kind, created_at) VALUES (?, ?, ?)").run(id, kind, createdAt);
+      const insert = this.sql.prepare(
+        `INSERT INTO import_items(
+           id, batch_id, item_index, label, source_url, preview_status, existing_document_id,
+           expected_revision, warnings_json, error, payload_json
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      const seen = new Set<string>();
+      items.forEach((item, index) => {
+        const existing = item.sourceUrl
+          ? this.sql.prepare(
+            `SELECT id, revision FROM documents
+             WHERE source_url = ? OR final_url = ? OR canonical_url = ?
+             ORDER BY source_url = ? DESC, deleted_at IS NOT NULL, updated_at DESC LIMIT 1`,
+          ).get(item.sourceUrl, item.sourceUrl, item.sourceUrl, item.sourceUrl) as { id: string; revision: number } | undefined
+          : undefined;
+        const repeated = item.sourceUrl ? seen.has(item.sourceUrl) : false;
+        if (item.sourceUrl) seen.add(item.sourceUrl);
+        const previewStatus = item.error ? "invalid" : existing || repeated ? "duplicate" : "valid";
+        insert.run(
+          randomUUID(), id, index, item.label, item.sourceUrl, previewStatus, existing?.id ?? null,
+          existing?.revision ?? null, JSON.stringify(item.warnings), item.error, JSON.stringify(item.payload),
+        );
+      });
+      return this.getImportPreview(id)!;
+    });
+  }
+
+  getImportPreview(id: string): ImportPreview | null {
+    const batch = this.sql.prepare("SELECT * FROM import_batches WHERE id = ?").get(id) as ImportBatchRow | undefined;
+    if (!batch) return null;
+    const rows = this.sql.prepare("SELECT * FROM import_items WHERE batch_id = ? ORDER BY item_index").all(id) as unknown as ImportItemRow[];
+    const items = rows.map((row) => ({
+      id: row.id,
+      index: row.item_index,
+      label: row.label,
+      sourceUrl: row.source_url,
+      status: row.preview_status,
+      existingDocumentId: row.existing_document_id,
+      warnings: JSON.parse(row.warnings_json) as string[],
+      error: row.error,
+    }));
+    return {
+      id: batch.id,
+      kind: batch.kind,
+      status: "preview",
+      createdAt: batch.created_at,
+      counts: {
+        total: items.length,
+        valid: items.filter(({ status }) => status === "valid").length,
+        duplicate: items.filter(({ status }) => status === "duplicate").length,
+        invalid: items.filter(({ status }) => status === "invalid").length,
+      },
+      items,
+    };
+  }
+
+  private importCollections(names: string[], timestamp: string) {
+    const ids: string[] = [];
+    for (const name of names) {
+      let row = this.sql.prepare("SELECT id FROM collections WHERE name = ? COLLATE NOCASE").get(name) as { id: string } | undefined;
+      if (!row) {
+        row = { id: randomUUID() };
+        this.sql.prepare("INSERT INTO collections(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)")
+          .run(row.id, name, timestamp, timestamp);
+      }
+      ids.push(row.id);
+    }
+    return ids;
+  }
+
+  private insertImportedMarkdown(itemId: string, payload: Extract<ImportPayload, { type: "markdown" }>, copy: boolean) {
+    const id = randomUUID();
+    const timestamp = now();
+    const sourceUrl = payload.sourceUrl
+      ? copy ? `${payload.sourceUrl}#zhiye-copy-${id.slice(0, 8)}` : payload.sourceUrl
+      : `zhiye://import/${itemId}`;
+    const createdAt = payload.capturedAt ? new Date(payload.capturedAt).toISOString() : timestamp;
+    this.sql.prepare(
+      `INSERT INTO documents(
+         id, source_url, final_url, canonical_url, title, author, published_at, markdown, status,
+         title_edited, markdown_edited, author_edited, published_at_edited, favorite, archived_at,
+         source_note, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', 1, 1, 1, 1, ?, ?, ?, ?, ?)`,
+    ).run(
+      id, sourceUrl, payload.finalUrl, payload.canonicalUrl, payload.title, payload.author,
+      payload.publishedAt, payload.markdown, Number(payload.favorite), payload.archivedAt,
+      payload.sourceNote, createdAt, timestamp,
+    );
+    this.replaceTags(id, payload.tags);
+    this.replaceCollections(id, this.importCollections(payload.collections, timestamp));
+    this.recordRevision(this.getDocument(id)!);
+    return id;
+  }
+
+  private insertImportedUrl(itemId: string, url: string, copy: boolean) {
+    const id = randomUUID();
+    const timestamp = now();
+    const sourceUrl = copy ? `${url}#zhiye-copy-${id.slice(0, 8)}` : url;
+    this.sql.prepare(
+      "INSERT INTO documents(id, source_url, title, status, created_at, updated_at) VALUES (?, ?, ?, 'queued', ?, ?)",
+    ).run(id, sourceUrl, new URL(url).hostname, timestamp, timestamp);
+    this.sql.prepare(
+      "INSERT INTO capture_jobs(document_id, status, available_at, created_at, updated_at) VALUES (?, 'queued', ?, ?, ?)",
+    ).run(id, timestamp, timestamp, timestamp);
+    return id;
+  }
+
+  applyImportBatch(id: string, strategy: ImportStrategy): ImportApplyResult | null {
+    return transaction(this.sql, () => {
+      const batch = this.sql.prepare("SELECT * FROM import_batches WHERE id = ?").get(id) as ImportBatchRow | undefined;
+      if (!batch) return null;
+      const rows = this.sql.prepare("SELECT * FROM import_items WHERE batch_id = ? ORDER BY item_index").all(id) as unknown as ImportItemRow[];
+      if (batch.status === "applied") return this.importApplyResult(batch, rows);
+      const updateResult = this.sql.prepare(
+        "UPDATE import_items SET result_status = ?, result_document_id = ?, result_error = ? WHERE id = ?",
+      );
+      for (const row of rows) {
+        this.sql.exec("SAVEPOINT import_item");
+        try {
+        const payload = JSON.parse(row.payload_json) as ImportPayload;
+        let status: NonNullable<ImportItemRow["result_status"]>;
+        let documentId: string | null = null;
+        let error: string | null = null;
+        if (row.preview_status === "invalid") {
+          status = "failed";
+          error = row.error ?? "Invalid import item";
+        } else if (row.preview_status === "duplicate" && strategy === "skip") {
+          status = "skipped";
+          documentId = row.existing_document_id;
+        } else if (row.preview_status === "duplicate" && strategy === "update") {
+          const current = row.existing_document_id ? this.getDocument(row.existing_document_id) : null;
+          if (!current || current.revision !== row.expected_revision || current.deletedAt) {
+            status = "conflict";
+            documentId = current?.id ?? null;
+            error = "The source document changed after preview";
+          } else if (
+            this.sql.prepare(
+              "SELECT 1 AS found FROM capture_jobs WHERE document_id = ? AND status IN ('queued', 'running')",
+            ).get(current.id)
+          ) {
+            status = "conflict";
+            documentId = current.id;
+            error = "The source document already has an active capture";
+          } else if (payload.type === "url") {
+            const timestamp = now();
+            this.sql.prepare(
+              `UPDATE documents SET status = 'queued', warning = NULL, error_code = NULL, error_message = NULL,
+                 revision = revision + 1, updated_at = ? WHERE id = ?`,
+            ).run(timestamp, current.id);
+            this.sql.prepare(
+              "INSERT INTO capture_jobs(document_id, status, available_at, created_at, updated_at) VALUES (?, 'queued', ?, ?, ?)",
+            ).run(current.id, timestamp, timestamp, timestamp);
+            status = "updated";
+            documentId = current.id;
+          } else {
+            const timestamp = now();
+            this.sql.prepare(
+              `UPDATE documents SET final_url = ?, canonical_url = ?, title = ?, author = ?, published_at = ?,
+                 markdown = ?, status = 'ready', warning = NULL, error_code = NULL, error_message = NULL,
+                 title_edited = 1, markdown_edited = 1, author_edited = 1, published_at_edited = 1,
+                 favorite = ?, archived_at = ?, source_note = ?, revision = revision + 1, updated_at = ? WHERE id = ?`,
+            ).run(
+              payload.finalUrl, payload.canonicalUrl, payload.title, payload.author, payload.publishedAt,
+              payload.markdown, Number(payload.favorite), payload.archivedAt, payload.sourceNote, timestamp, current.id,
+            );
+            this.replaceTags(current.id, payload.tags);
+            this.replaceCollections(current.id, this.importCollections(payload.collections, timestamp));
+            this.recordRevision(this.getDocument(current.id)!);
+            status = "updated";
+            documentId = current.id;
+          }
+        } else {
+          const copy = row.preview_status === "duplicate" && strategy === "copy";
+          documentId = payload.type === "url"
+            ? this.insertImportedUrl(row.id, payload.url!, copy)
+            : this.insertImportedMarkdown(row.id, payload, copy);
+          status = "created";
+        }
+        updateResult.run(status, documentId, error, row.id);
+          this.sql.exec("RELEASE import_item");
+        } catch (cause) {
+          this.sql.exec("ROLLBACK TO import_item");
+          this.sql.exec("RELEASE import_item");
+          updateResult.run(
+            "failed",
+            null,
+            cause instanceof Error ? cause.message.slice(0, 1_000) : "Import item failed",
+            row.id,
+          );
+        }
+      }
+      this.sql.prepare("UPDATE import_batches SET status = 'applied', strategy = ?, applied_at = ? WHERE id = ?")
+        .run(strategy, now(), id);
+      const applied = this.sql.prepare("SELECT * FROM import_batches WHERE id = ?").get(id) as unknown as ImportBatchRow;
+      const appliedRows = this.sql.prepare("SELECT * FROM import_items WHERE batch_id = ? ORDER BY item_index").all(id) as unknown as ImportItemRow[];
+      return this.importApplyResult(applied, appliedRows);
+    });
+  }
+
+  private importApplyResult(batch: ImportBatchRow, rows: ImportItemRow[]): ImportApplyResult {
+    const items = rows.map((row) => ({
+      id: row.id,
+      index: row.item_index,
+      status: row.result_status!,
+      documentId: row.result_document_id,
+      error: row.result_error,
+    }));
+    return {
+      id: batch.id,
+      status: "applied",
+      strategy: batch.strategy!,
+      counts: {
+        created: items.filter(({ status }) => status === "created").length,
+        updated: items.filter(({ status }) => status === "updated").length,
+        skipped: items.filter(({ status }) => status === "skipped").length,
+        conflicts: items.filter(({ status }) => status === "conflict").length,
+        failed: items.filter(({ status }) => status === "failed").length,
+      },
+      items,
+    };
+  }
+
+  deleteImportBatch(id: string) {
+    return this.sql.prepare("DELETE FROM import_batches WHERE id = ?").run(id).changes === 1;
   }
 
   findDuplicateDocument(id: string): DocumentSummary | null {

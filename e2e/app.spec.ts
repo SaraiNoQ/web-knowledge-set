@@ -3,6 +3,45 @@ import { expect, test } from "@playwright/test";
 const readyImageUrl = "https://assets.example.test/ready.png";
 const failedImageUrl = "https://assets.example.test/failed.png";
 
+test("previews a batch before importing it", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "批量导入" }).click();
+  const dialog = page.getByRole("dialog", { name: "批量导入" });
+  await dialog.getByRole("button", { name: "Markdown" }).click();
+  await dialog.getByLabel("选择多个 .md 文件").setInputFiles(Array.from({ length: 101 }, (_, index) => ({
+    name: `note-${index}.md`, mimeType: "text/markdown", buffer: Buffer.from("# note"),
+  })));
+  await expect(dialog.getByText("最多选择 100 个 Markdown 文件。")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "检查导入内容" })).toBeDisabled();
+  await dialog.getByRole("button", { name: "浏览器书签" }).click();
+  await dialog.getByLabel("选择浏览器导出的 bookmarks.html").setInputFiles({
+    name: "bookmarks.html", mimeType: "text/html", buffer: Buffer.alloc(10 * 1024 * 1024 + 1),
+  });
+  await expect(dialog.getByText("导入文件合计不能超过 10 MiB。")).toBeVisible();
+  await dialog.getByRole("button", { name: "网址列表" }).click();
+  await dialog.getByLabel("每行一个公开网页地址").fill("not-a-url");
+  await dialog.getByRole("button", { name: "检查导入内容" }).click();
+  await expect(dialog.locator(".bulk-preview-list li")).toContainText("not-a-url");
+  await expect(dialog.locator(".bulk-preview-list li")).toContainText("无效");
+  await expect(dialog.getByRole("button", { name: "确认导入" })).toBeDisabled();
+  await dialog.getByRole("button", { name: "重新选择" }).click();
+  await dialog.getByRole("button", { name: "Markdown" }).click();
+  await dialog.getByLabel("选择多个 .md 文件").setInputFiles({
+    name: "batch-close.md", mimeType: "text/markdown", buffer: Buffer.from("# 批量关闭测试"),
+  });
+  await dialog.getByRole("button", { name: "检查导入内容" }).click();
+  await dialog.getByRole("button", { name: "确认导入" }).click();
+  await expect(dialog.getByText(/新增 1/u)).toBeVisible();
+  const cleanup = page.waitForRequest((request) => request.method() === "DELETE" && /\/api\/imports\//u.test(new URL(request.url()).pathname));
+  const closeReady = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/desktop/close-ready");
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("zhiye:close-requested", { detail: { attemptId: "9100" } })));
+  await cleanup;
+  await closeReady;
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("zhiye:close-timeout", { detail: { attemptId: "9100" } })));
+  await dialog.getByRole("button", { name: "关闭批量导入" }).click();
+  await expect(dialog).toBeHidden();
+});
+
 test("imports, restores history, trashes, restores, searches, exports, and blocks raw scripts", async ({ page }) => {
   const remoteImageRequests: string[] = [];
   await page.route("https://assets.example.test/**", async (route) => {

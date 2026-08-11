@@ -17,6 +17,8 @@ import type {
   DocumentSearchScope,
   DocumentSort,
   KnowledgeDocument,
+  ImportKind,
+  ImportStrategy,
   RecentFilter,
 } from "../shared/types.js";
 import { cacheDocumentAssets, type AssetFetchFunction } from "./assets.js";
@@ -44,6 +46,7 @@ import {
   type DocumentPatch,
 } from "./db.js";
 import { extractHtml } from "./extract.js";
+import { ImportParseError, parseImportRequest } from "./import.js";
 
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
@@ -67,6 +70,8 @@ const statuses = new Set<CaptureStatus>(["queued", "fetching", "extracting", "re
 const captureModes = new Set<CaptureMode>(["http", "browser"]);
 const searchScopes = new Set<DocumentSearchScope>(["all", "title", "body", "source"]);
 const documentSorts = new Set<DocumentSort>(["updated", "created", "title"]);
+const importKinds = new Set<ImportKind>(["urls", "bookmarks", "markdown"]);
+const importStrategies = new Set<ImportStrategy>(["skip", "copy", "update"]);
 const documentFilterKeys = new Set([
   "q", "scope", "tag", "collectionId", "status", "favorite", "archived", "unorganized",
   "from", "to", "captureMode", "sort", "page", "trash",
@@ -1073,6 +1078,53 @@ export function createApp(options: AppOptions) {
         }
         worker.setPaused(body.paused);
         sendJson(response, 200, queueStatus());
+        return;
+      }
+
+      if (pathname === "/api/imports/preview" && request.method === "POST") {
+        const body = await mutationBody(request);
+        if (!importKinds.has(body.kind as ImportKind)) {
+          throw new HttpError(400, "INVALID_IMPORT_KIND", "kind must be urls, bookmarks, or markdown");
+        }
+        const kind = body.kind as ImportKind;
+        const allowed = kind === "markdown" ? new Set(["kind", "files"]) : new Set(["kind", "content"]);
+        if (Object.keys(body).some((key) => !allowed.has(key))) {
+          throw new HttpError(400, "INVALID_IMPORT", "Import request contains an unknown field");
+        }
+        try {
+          sendJson(response, 201, requireDatabase().createImportBatch(kind, parseImportRequest(kind, body)));
+        } catch (error) {
+          if (error instanceof ImportParseError) throw new HttpError(400, error.code, error.message);
+          throw error;
+        }
+        return;
+      }
+
+      const applyImportMatch = pathname.match(/^\/api\/imports\/([^/]+)\/apply$/u);
+      if (applyImportMatch && request.method === "POST") {
+        const body = await mutationBody(request);
+        if (!importStrategies.has(body.strategy as ImportStrategy) || Object.keys(body).some((key) => key !== "strategy")) {
+          throw new HttpError(400, "INVALID_IMPORT_STRATEGY", "strategy must be skip, copy, or update");
+        }
+        const result = requireDatabase().applyImportBatch(
+          decodeId(applyImportMatch[1]),
+          body.strategy as ImportStrategy,
+        );
+        if (!result) throw new HttpError(404, "IMPORT_NOT_FOUND", "Import preview not found");
+        worker.wake();
+        sendJson(response, 200, result);
+        return;
+      }
+
+      const importMatch = pathname.match(/^\/api\/imports\/([^/]+)$/u);
+      if (importMatch && request.method === "DELETE") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length) throw new HttpError(400, "INVALID_IMPORT_DELETE", "Import deletion accepts no options");
+        if (!requireDatabase().deleteImportBatch(decodeId(importMatch[1]))) {
+          throw new HttpError(404, "IMPORT_NOT_FOUND", "Import preview not found");
+        }
+        response.writeHead(204, { "Cache-Control": "no-store", ...securityHeaders() });
+        response.end();
         return;
       }
 

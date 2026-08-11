@@ -22,6 +22,8 @@ import type {
   KnowledgeDocument,
   KnowledgeCollection,
   KnowledgeTag,
+  ImportApplyResult,
+  ImportPreview,
   RecentFilter,
   ReextractionPreview,
 } from "../shared/types.js";
@@ -170,6 +172,84 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
       })
     ).json()) as CaptureQueueStatus;
     assert.equal(paused.paused, true);
+    const urlPreviewResponse = await fetch(`${base}/api/imports/preview`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        kind: "urls",
+        content: "https://batch-one.example/article\nnot-a-url\nhttps://batch-one.example/article",
+      }),
+    });
+    assert.equal(urlPreviewResponse.status, 201);
+    const urlPreview = (await urlPreviewResponse.json()) as ImportPreview;
+    assert.deepEqual(urlPreview.counts, { total: 3, valid: 1, duplicate: 1, invalid: 1 });
+    const urlApplied = (await (
+      await fetch(`${base}/api/imports/${urlPreview.id}/apply`, {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ strategy: "skip" }),
+      })
+    ).json()) as ImportApplyResult;
+    assert.deepEqual(urlApplied.counts, { created: 1, updated: 0, skipped: 1, conflicts: 0, failed: 1 });
+    assert.deepEqual(
+      await (
+        await fetch(`${base}/api/imports/${urlPreview.id}/apply`, {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify({ strategy: "copy" }),
+        })
+      ).json(),
+      urlApplied,
+    );
+
+    const bookmarkPreview = (await (
+      await fetch(`${base}/api/imports/preview`, {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({
+          kind: "bookmarks",
+          content: '<!DOCTYPE NETSCAPE-Bookmark-file-1><DL><DT><A HREF="https://book.example/?a=1&amp;b=2">Book</A></DL>',
+        }),
+      })
+    ).json()) as ImportPreview;
+    assert.equal(bookmarkPreview.items[0]?.sourceUrl, "https://book.example/?a=1&b=2");
+    assert.equal(
+      (await fetch(`${base}/api/imports/${bookmarkPreview.id}`, {
+        method: "DELETE", headers: jsonHeaders, body: "{}",
+      })).status,
+      204,
+    );
+
+    const markdownPreview = (await (
+      await fetch(`${base}/api/imports/preview`, {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({
+          kind: "markdown",
+          files: [
+            { path: "notes/imported.md", content: '---\ntitle: "Imported note"\ntags: []\ncollections: []\nfavorite: true\nsource_note: "From disk"\ncustom: "kept"\n---\n\n# Body' },
+            { path: "broken.md", content: "---\ntitle: nope\nBody" },
+          ],
+        }),
+      })
+    ).json()) as ImportPreview;
+    assert.deepEqual(markdownPreview.counts, { total: 2, valid: 1, duplicate: 0, invalid: 1 });
+    assert.match(markdownPreview.items[0]?.warnings[0] ?? "", /custom/u);
+    const markdownApplied = (await (
+      await fetch(`${base}/api/imports/${markdownPreview.id}/apply`, {
+        method: "POST", headers: jsonHeaders, body: JSON.stringify({ strategy: "skip" }),
+      })
+    ).json()) as ImportApplyResult;
+    assert.deepEqual(markdownApplied.counts, { created: 1, updated: 0, skipped: 0, conflicts: 0, failed: 1 });
+    const importedMarkdown = (await (
+      await fetch(`${base}/api/documents/${markdownApplied.items[0]?.documentId}`, { headers: { Cookie: cookie } })
+    ).json()) as KnowledgeDocument;
+    assert.equal(importedMarkdown.status, "ready");
+    assert.equal(importedMarkdown.favorite, true);
+    assert.deepEqual(importedMarkdown.tags, []);
+    assert.deepEqual(importedMarkdown.collections, []);
+    assert.match(importedMarkdown.markdown, /custom: "kept"/u);
+
     const cancellable = ((await (
       await fetch(`${base}/api/documents`, {
         method: "POST",

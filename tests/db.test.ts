@@ -37,7 +37,7 @@ function database() {
   };
 }
 
-test("v11 recent filters persist in the local database", () => {
+test("v12 recent filters persist in the local database", () => {
   const fixture = database();
   const filters: RecentFilter[] = [{
     label: "最近研究",
@@ -54,7 +54,7 @@ test("v11 recent filters persist in the local database", () => {
     sort: "updated",
   }];
   try {
-    assert.equal(CURRENT_SCHEMA_VERSION, 11);
+    assert.equal(CURRENT_SCHEMA_VERSION, 12);
     assert.deepEqual(fixture.db.getRecentFilters(), { filters: [], revision: 0 });
     assert.deepEqual(fixture.db.setRecentFilters(filters, 0), { kind: "updated", state: { filters, revision: 1 } });
     assert.deepEqual(fixture.db.setRecentFilters([], 0), { kind: "conflict" });
@@ -65,6 +65,55 @@ test("v11 recent filters persist in the local database", () => {
     fixture.db.close();
     fixture.db = openDatabase(fixture.directory);
     assert.deepEqual(fixture.db.getRecentFilters(), { filters, revision: 1 });
+  } finally {
+    fixture.close();
+  }
+});
+
+test("staged imports are repeatable and revision guarded", () => {
+  const fixture = database();
+  try {
+    const active = fixture.db.createOrGetDocument("https://example.com/active").document;
+    const activeMarkdown = fixture.db.createImportBatch("markdown", [{
+      label: "Active",
+      sourceUrl: active.sourceUrl,
+      warnings: [],
+      error: null,
+      payload: {
+        type: "markdown", title: "Imported", sourceUrl: active.sourceUrl, finalUrl: null,
+        canonicalUrl: null, author: null, publishedAt: null, capturedAt: null, tags: [],
+        collections: [], favorite: false, archivedAt: null, sourceNote: "", markdown: "Imported body",
+      },
+    }]);
+    assert.equal(fixture.db.applyImportBatch(activeMarkdown.id, "update")?.items[0]?.status, "conflict");
+    assert.equal(fixture.db.getDocument(active.id)?.markdown, "");
+
+    const existing = fixture.db.createOrGetDocument("https://example.com/existing").document;
+    const preview = fixture.db.createImportBatch("urls", [{
+      label: "Existing",
+      sourceUrl: existing.sourceUrl,
+      warnings: [],
+      error: null,
+      payload: { type: "url", url: existing.sourceUrl },
+    }]);
+    assert.equal(preview.items[0]?.status, "duplicate");
+    fixture.db.updateDocument(existing.id, existing.revision, { title: "Changed after preview" });
+    const applied = fixture.db.applyImportBatch(preview.id, "update");
+    assert.equal(applied?.items[0]?.status, "conflict");
+    assert.deepEqual(fixture.db.applyImportBatch(preview.id, "copy"), applied);
+    assert.equal(fixture.db.deleteImportBatch(preview.id), true);
+    assert.equal(fixture.db.getDocument(existing.id)?.title, "Changed after preview");
+    const stale = fixture.db.createImportBatch("urls", []);
+    fixture.db.sql.prepare("UPDATE import_batches SET created_at = ? WHERE id = ?")
+      .run("2000-01-01T00:00:00.000Z", stale.id);
+    fixture.db.createImportBatch("urls", []);
+    assert.equal(fixture.db.getImportPreview(stale.id), null);
+    const startupStale = fixture.db.createImportBatch("urls", []);
+    fixture.db.sql.prepare("UPDATE import_batches SET created_at = ? WHERE id = ?")
+      .run("2000-01-01T00:00:00.000Z", startupStale.id);
+    fixture.db.close();
+    fixture.db = openDatabase(fixture.directory);
+    assert.equal(fixture.db.getImportPreview(startupStale.id), null);
   } finally {
     fixture.close();
   }
@@ -987,7 +1036,7 @@ test("current migrations upgrade v3 and the frozen v7 release schema", () => {
       .all();
     fixture.close();
 
-    assert.deepEqual(inspectDatabaseSchema(currentDirectory).pendingVersions, [8, 9, 10, 11]);
+    assert.deepEqual(inspectDatabaseSchema(currentDirectory).pendingVersions, [8, 9, 10, 11, 12]);
     const current = openDatabase(currentDirectory);
     try {
       assert.equal(current.getDocument("release-document")?.markdown, "Frozen release schema body.");
@@ -1067,7 +1116,8 @@ test("schema inspection is read-only and rejects future or incomplete histories"
 
     const raw = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));
     raw.exec(`
-      DROP TABLE app_settings;
+      DROP TABLE import_items;
+      DROP TABLE import_batches;
       DELETE FROM schema_migrations WHERE version = ${CURRENT_SCHEMA_VERSION};
     `);
     raw.close();
@@ -1114,7 +1164,7 @@ test("all pending migrations roll back together on failure", () => {
       currentVersion: 3,
       supportedVersion: CURRENT_SCHEMA_VERSION,
       appliedVersions: [1, 2, 3],
-      pendingVersions: [4, 5, 6, 7, 8, 9, 10, 11],
+      pendingVersions: [4, 5, 6, 7, 8, 9, 10, 11, 12],
     });
     const unchanged = new DatabaseSync(path, { readOnly: true });
     try {

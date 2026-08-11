@@ -122,6 +122,46 @@ export interface RecentFiltersState {
   revision: number;
 }
 
+export type ImportKind = "urls" | "bookmarks" | "markdown";
+
+export type ImportStrategy = "skip" | "copy" | "update";
+
+export interface ImportPreviewItem {
+  id: string;
+  index: number;
+  label: string;
+  sourceUrl: string | null;
+  status: "valid" | "duplicate" | "invalid";
+  existingDocumentId: string | null;
+  warnings: string[];
+  error: string | null;
+}
+
+export interface ImportPreview {
+  id: string;
+  kind: ImportKind;
+  status: "preview";
+  createdAt: string;
+  counts: { total: number; valid: number; duplicate: number; invalid: number };
+  items: ImportPreviewItem[];
+}
+
+export interface ImportApplyItem {
+  id: string;
+  index: number;
+  status: "created" | "updated" | "skipped" | "conflict" | "failed";
+  documentId: string | null;
+  error: string | null;
+}
+
+export interface ImportApplyResult {
+  id: string;
+  status: "applied";
+  strategy: ImportStrategy;
+  counts: { created: number; updated: number; skipped: number; conflicts: number; failed: number };
+  items: ImportApplyItem[];
+}
+
 export type BatchDocumentAction =
   | "add-tag"
   | "remove-tag"
