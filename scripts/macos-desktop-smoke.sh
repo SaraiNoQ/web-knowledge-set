@@ -1,11 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
-APP=$(find src-tauri/target/debug/bundle/macos -maxdepth 1 -name '*.app' -print -quit)
-if [[ -z "$APP" ]]; then
+BUILT_APP=$(find src-tauri/target/debug/bundle/macos -maxdepth 1 -name '*.app' -print -quit)
+if [[ -z "$BUILT_APP" ]]; then
   echo "Desktop app bundle was not produced" >&2
   exit 1
 fi
+APP="/Applications/Zhiye Smoke.app"
+[[ ! -e "$APP" ]]
+ditto "$BUILT_APP" "$APP"
 
 DATA_DIR="$HOME/Library/Application Support/dev.local.zhiye"
 DATABASE="$DATA_DIR/zhiye.sqlite3"
@@ -30,6 +33,7 @@ cleanup() {
   quit_app
   launchctl unsetenv ZHIYE_DESKTOP_SMOKE >/dev/null 2>&1 || true
   rm -rf -- "$NOTE_DIR"
+  rm -rf -- "$APP"
 }
 trap cleanup EXIT
 
@@ -49,15 +53,16 @@ quit_app
 launchctl setenv ZHIYE_DESKTOP_SMOKE 1
 rm -f -- "$FILE_MARKER"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"
-open "$COLD_LINK"
+plutil -extract CFBundleURLTypes xml1 -o - "$APP/Contents/Info.plist" | grep -q '<string>zhiye</string>'
+open -b dev.local.zhiye "$COLD_LINK"
 wait_for_source "$COLD_URL"
 
-open "$WARM_LINK"
+open -b dev.local.zhiye "$WARM_LINK"
 wait_for_source "$WARM_URL"
 [[ $(pgrep -x zhiye | wc -l | tr -d ' ') == "1" ]]
 
 before=$(sqlite3 "$DATABASE" 'SELECT count(*) FROM documents')
-open 'zhiye://delete?url=https%3A%2F%2Fexample.com%2Fmust-not-run'
+open -b dev.local.zhiye 'zhiye://delete?url=https%3A%2F%2Fexample.com%2Fmust-not-run'
 sleep 2
 after=$(sqlite3 "$DATABASE" 'SELECT count(*) FROM documents')
 [[ "$before" == "$after" ]]
