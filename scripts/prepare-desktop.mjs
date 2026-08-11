@@ -37,7 +37,8 @@ cpSync(join(root, "dist-server"), join(runtime, "dist-server"), { recursive: tru
 cpSync(join(root, "package.json"), join(runtime, "package.json"));
 cpSync(join(root, "pnpm-lock.yaml"), join(runtime, "pnpm-lock.yaml"));
 
-runPnpm(["install", "--ignore-workspace", "--prod", "--offline", "--frozen-lockfile"], { cwd: runtime });
+runPnpm(["install", "--ignore-workspace", "--prod", "--offline", "--frozen-lockfile", "--config.node-linker=hoisted"], { cwd: runtime });
+run(process.execPath, ["--input-type=module", "--eval", "import { lstat } from 'node:fs/promises'; if ((await lstat('node_modules/mdast-util-from-markdown')).isSymbolicLink()) process.exit(1); await import('mdast-util-from-markdown')"], { cwd: runtime });
 
 const browserPath = join(runtime, "browsers");
 runPnpm(["exec", "playwright", "install", "chromium", "--only-shell"], {
