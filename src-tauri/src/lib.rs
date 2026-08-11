@@ -404,6 +404,8 @@ pub fn run() {
                                                 )
                                                 .is_ok()
                                             {
+                                                #[cfg(debug_assertions)]
+                                                external::write_smoke_stage(&handle, "service-ready");
                                                 if let Err(error) = window.navigate(url) {
                                                     fail_service(
                                                         &handle,

@@ -2,6 +2,8 @@ use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::Read;
+#[cfg(debug_assertions)]
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -187,7 +189,7 @@ pub(crate) fn enqueue_deep_links(app: &tauri::AppHandle, urls: &[tauri::Url]) {
         .fold(false, |added, url| state.push_capture(url) || added);
     if added {
         #[cfg(debug_assertions)]
-        write_intent_marker(app, "received");
+        write_smoke_stage(app, "received");
         notify(app);
     }
 }
@@ -243,11 +245,17 @@ fn write_smoke_marker(app: &tauri::AppHandle, names: Option<Vec<String>>) {
 }
 
 #[cfg(debug_assertions)]
-fn write_intent_marker(app: &tauri::AppHandle, stage: &str) {
+pub(crate) fn write_smoke_stage(app: &tauri::AppHandle, stage: &str) {
     if std::env::var("ZHIYE_DESKTOP_SMOKE").as_deref() == Ok("1") {
         if let Ok(data_dir) = app.path().app_data_dir() {
             let _ = fs::create_dir_all(&data_dir);
-            let _ = fs::write(data_dir.join(".desktop-smoke-intent"), stage);
+            if let Ok(mut marker) = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(data_dir.join(".desktop-smoke-intent"))
+            {
+                let _ = writeln!(marker, "{stage}");
+            }
         }
     }
 }
@@ -415,7 +423,7 @@ pub(crate) fn take_external_intents(
         .iter()
         .any(|intent| matches!(intent, ExternalIntent::Capture { .. }))
     {
-        write_intent_marker(&app, "drained");
+        write_smoke_stage(&app, "drained");
     }
     intents
 }

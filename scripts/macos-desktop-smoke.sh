@@ -47,8 +47,9 @@ wait_for_source() {
     sleep 1
   done
   echo "Timed out waiting for capture: $source_url" >&2
-  [[ -f "$INTENT_MARKER" ]] && printf 'Desktop intent stage: %s\n' "$(cat "$INTENT_MARKER")" >&2
-  pgrep -fl zhiye >&2 || true
+  [[ -f "$INTENT_MARKER" ]] && { echo 'Desktop intent stages:' >&2; cat "$INTENT_MARKER" >&2; }
+  ps -axo pid,ppid,command | grep -E 'zhiye|Zhiye Smoke|Contents/MacOS/node' >&2 || true
+  find "$DATA_DIR" -maxdepth 1 -type f -print >&2 || true
   return 1
 }
 
