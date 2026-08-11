@@ -518,7 +518,10 @@ pub fn run() {
                                                     .expect("local service state poisoned")
                                                     .replace(origin);
                                                 #[cfg(debug_assertions)]
-                                                external::write_smoke_stage(&handle, "service-ready");
+                                                external::write_smoke_stage(
+                                                    &handle,
+                                                    "service-ready",
+                                                );
                                                 if let Err(error) = window.navigate(url) {
                                                     handle
                                                         .state::<LocalService>()

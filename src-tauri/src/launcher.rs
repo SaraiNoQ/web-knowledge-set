@@ -38,7 +38,9 @@ fn launcher_path(app: &AppHandle) -> Result<PathBuf, String> {
         .file_name()
         .ok_or_else(|| "桌面启动配置路径无效。".to_string())?
         .to_string_lossy();
-    Ok(app_config.with_file_name(format!("{name}-launcher")).join("launcher.json"))
+    Ok(app_config
+        .with_file_name(format!("{name}-launcher"))
+        .join("launcher.json"))
 }
 
 fn validate_directory(path: &Path, must_be_empty: bool) -> Result<PathBuf, String> {
@@ -91,10 +93,9 @@ fn read_launcher(path: &Path) -> Result<Option<PathBuf>, String> {
     if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 16 * 1024 {
         return Err("桌面启动配置不安全或已损坏。".to_string());
     }
-    let value: LauncherConfig = serde_json::from_slice(
-        &fs::read(path).map_err(|_| "桌面启动配置无法读取。".to_string())?,
-    )
-    .map_err(|_| "桌面启动配置已损坏。".to_string())?;
+    let value: LauncherConfig =
+        serde_json::from_slice(&fs::read(path).map_err(|_| "桌面启动配置无法读取。".to_string())?)
+            .map_err(|_| "桌面启动配置已损坏。".to_string())?;
     if value.version != 1 || !value.data_dir.is_absolute() {
         return Err("桌面启动配置版本或路径无效。".to_string());
     }
@@ -110,7 +111,8 @@ fn write_launcher(path: &Path, data_dir: &Path) -> Result<(), String> {
         .parent()
         .ok_or_else(|| "桌面启动配置路径无效。".to_string())?;
     if parent.exists() {
-        let metadata = fs::symlink_metadata(parent).map_err(|_| "桌面启动配置目录无法访问。".to_string())?;
+        let metadata =
+            fs::symlink_metadata(parent).map_err(|_| "桌面启动配置目录无法访问。".to_string())?;
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             return Err("桌面启动配置目录不安全。".to_string());
         }
@@ -232,7 +234,9 @@ mod tests {
         let old_data = root.join("archive-backups");
         assert!(related_paths(&candidate)
             .iter()
-            .any(|left| related_paths(&old_data).iter().any(|right| overlaps(left, right))));
+            .any(|left| related_paths(&old_data)
+                .iter()
+                .any(|right| overlaps(left, right))));
         fs::write(&config, br#"{"version":2,"data_dir":"relative"}"#).unwrap();
         assert!(read_launcher(&config).is_err());
         fs::remove_dir_all(root).unwrap();

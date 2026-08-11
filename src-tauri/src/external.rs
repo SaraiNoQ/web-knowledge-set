@@ -183,10 +183,10 @@ pub(crate) fn parse_capture_deep_link(url: &tauri::Url) -> Option<String> {
 
 pub(crate) fn enqueue_deep_links(app: &tauri::AppHandle, urls: &[tauri::Url]) {
     let state = app.state::<ExternalState>();
-    let added = urls
-        .iter()
-        .filter_map(parse_capture_deep_link)
-        .fold(false, |added, url| state.push_capture(url) || added);
+    let mut added = false;
+    for url in urls.iter().filter_map(parse_capture_deep_link) {
+        added = state.push_capture(url) || added;
+    }
     if added {
         #[cfg(debug_assertions)]
         write_smoke_stage(app, "received");
@@ -221,10 +221,12 @@ pub(crate) fn enqueue_paths(app: &tauri::AppHandle, paths: Vec<PathBuf>) {
         }
         let result = load_paths(&paths);
         #[cfg(debug_assertions)]
-        let smoke_names = result
-            .as_ref()
-            .ok()
-            .map(|files| files.iter().map(|file| file.name.clone()).collect::<Vec<_>>());
+        let smoke_names = result.as_ref().ok().map(|files| {
+            files
+                .iter()
+                .map(|file| file.name.clone())
+                .collect::<Vec<_>>()
+        });
         if state.finish_file_batch(generation, result) {
             #[cfg(debug_assertions)]
             write_smoke_marker(&handle, smoke_names);
@@ -358,7 +360,10 @@ fn load_paths(roots: &[PathBuf]) -> Result<Vec<ExternalFile>, String> {
         return Err("没有可导入的文件".to_owned());
     }
     let expected = kind(&candidates[0].0).expect("filtered candidate has a kind");
-    if candidates.iter().any(|(path, _)| kind(path) != Some(expected)) {
+    if candidates
+        .iter()
+        .any(|(path, _)| kind(path) != Some(expected))
+    {
         return Err("一次只能导入一种文件类型".to_owned());
     }
     if (expected == FileKind::Markdown && candidates.len() > MAX_MARKDOWN_FILES)
@@ -382,8 +387,7 @@ fn load_paths(roots: &[PathBuf]) -> Result<Vec<ExternalFile>, String> {
         let remaining = limit
             .checked_sub(total)
             .ok_or_else(|| "导入文件超过大小限制".to_owned())?;
-        let metadata = fs::symlink_metadata(&path)
-            .map_err(|_| "无法读取导入文件".to_owned())?;
+        let metadata = fs::symlink_metadata(&path).map_err(|_| "无法读取导入文件".to_owned())?;
         if metadata.file_type().is_symlink() {
             return Err("不支持符号链接".to_owned());
         }
@@ -490,10 +494,9 @@ mod tests {
 
     #[test]
     fn capture_links_are_strict_and_queue_is_atomic() {
-        let valid = tauri::Url::parse(
-            "zhiye://capture?url=https%3A%2F%2Fexample.com%2Farticle%3Fa%3D1",
-        )
-        .unwrap();
+        let valid =
+            tauri::Url::parse("zhiye://capture?url=https%3A%2F%2Fexample.com%2Farticle%3Fa%3D1")
+                .unwrap();
         assert_eq!(
             parse_capture_deep_link(&valid).as_deref(),
             Some("https://example.com/article?a=1")

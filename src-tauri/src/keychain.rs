@@ -39,8 +39,8 @@ fn account() -> &'static str {
 fn read_for_account(account: &str) -> Result<Option<String>, String> {
     match security_framework::passwords::get_generic_password(SERVICE, account) {
         Ok(bytes) => {
-            let value = String::from_utf8(bytes)
-                .map_err(|_| "钥匙串中的密钥格式无效".to_owned())?;
+            let value =
+                String::from_utf8(bytes).map_err(|_| "钥匙串中的密钥格式无效".to_owned())?;
             validate_api_key(&value).map_err(|_| "钥匙串中的密钥格式无效".to_owned())?;
             Ok(Some(value))
         }
