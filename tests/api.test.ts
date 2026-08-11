@@ -250,6 +250,32 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     assert.deepEqual(importedMarkdown.collections, []);
     assert.match(importedMarkdown.markdown, /custom: "kept"/u);
 
+    const portableExport = await fetch(`${base}/api/exports/portable`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ scope: "selected", documentIds: [importedMarkdown.id] }),
+    });
+    assert.equal(portableExport.status, 200);
+    assert.equal(portableExport.headers.get("content-type"), "application/zip");
+    assert.match(portableExport.headers.get("content-disposition") ?? "", /zhiye-export-\d{4}-\d{2}-\d{2}\.zip/u);
+    const portableArchive = Buffer.from(await portableExport.arrayBuffer());
+    const bundlePreviewResponse = await fetch(`${base}/api/imports/bundle/preview`, {
+      method: "POST",
+      headers: {
+        Cookie: cookie,
+        Origin: base,
+        "Content-Type": "application/zip",
+        "X-Zhiye-Data-Epoch": initialDataEpoch,
+      },
+      body: portableArchive,
+    });
+    assert.equal(bundlePreviewResponse.status, 201);
+    const bundlePreview = (await bundlePreviewResponse.json()) as ImportPreview;
+    assert.deepEqual(bundlePreview.counts, { total: 1, valid: 0, duplicate: 1, invalid: 0, assets: 0 });
+    assert.equal((await fetch(`${base}/api/imports/${bundlePreview.id}`, {
+      method: "DELETE", headers: jsonHeaders, body: "{}",
+    })).status, 204);
+
     const cancellable = ((await (
       await fetch(`${base}/api/documents`, {
         method: "POST",

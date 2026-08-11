@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 
 const readyImageUrl = "https://assets.example.test/ready.png";
 const failedImageUrl = "https://assets.example.test/failed.png";
@@ -38,6 +39,25 @@ test("previews a batch before importing it", async ({ page }) => {
   await cleanup;
   await closeReady;
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("zhiye:close-timeout", { detail: { attemptId: "9100" } })));
+  await dialog.getByRole("button", { name: "关闭批量导入" }).click();
+  await expect(dialog).toBeHidden();
+
+  const downloadStarted = page.waitForEvent("download");
+  await page.getByRole("button", { name: "导出全部" }).click();
+  const download = await downloadStarted;
+  expect(download.suggestedFilename()).toMatch(/^zhiye-export-\d{4}-\d{2}-\d{2}\.zip$/u);
+  await expect(page.getByText("知识包已生成：", { exact: false })).toBeVisible();
+  const bundlePath = await download.path();
+  if (!bundlePath) throw new Error("Portable bundle download has no local path");
+  await page.getByRole("button", { name: "批量导入" }).click();
+  await dialog.getByRole("button", { name: "织页知识包" }).click();
+  await dialog.getByLabel("选择织页导出的 .zip 知识包").setInputFiles({
+    name: download.suggestedFilename(), mimeType: "application/zip", buffer: await readFile(bundlePath),
+  });
+  await dialog.getByRole("button", { name: "检查导入内容" }).click();
+  await expect(dialog.locator(".bulk-counts")).toContainText("文档");
+  await expect(dialog.locator(".bulk-counts")).toContainText("资源");
+  await expect(dialog.locator(".bulk-counts .is-assets strong")).toHaveText("0");
   await dialog.getByRole("button", { name: "关闭批量导入" }).click();
   await expect(dialog).toBeHidden();
 });

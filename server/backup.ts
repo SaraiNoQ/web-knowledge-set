@@ -301,6 +301,7 @@ function ensureSupportedDataLayout(dataDir: string) {
     ".zhiye.lock",
     "snapshots",
     "assets",
+    "import-staging",
     LIVE_DATABASE_FILE,
     `${LIVE_DATABASE_FILE}-shm`,
     `${LIVE_DATABASE_FILE}-wal`,
@@ -309,7 +310,7 @@ function ensureSupportedDataLayout(dataDir: string) {
     if (!allowed.has(entry.name)) {
       fail("UNSUPPORTED_DATA", `Data directory contains an unsupported entry: ${entry.name}`);
     }
-    if ((entry.name === "snapshots" || entry.name === "assets") ? !entry.isDirectory() : !entry.isFile()) {
+    if (["snapshots", "assets", "import-staging"].includes(entry.name) ? !entry.isDirectory() : !entry.isFile()) {
       fail("UNSAFE_PATH", `Data directory entry has the wrong type: ${entry.name}`);
     }
   }
@@ -429,6 +430,14 @@ function inspectDatabase(path: string) {
 function normalizeDatabaseCopy(path: string) {
   const database = new DatabaseSync(path);
   try {
+    database.exec("PRAGMA secure_delete = ON");
+    const hasImports = database
+      .prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'import_batches'")
+      .get();
+    if (hasImports) {
+      database.exec("BEGIN; DELETE FROM import_items; DELETE FROM import_batches; COMMIT");
+      database.exec("VACUUM");
+    }
     database.exec("PRAGMA journal_mode = DELETE");
   } finally {
     database.close();

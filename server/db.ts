@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, unlinkSync } from "node:fs";
+import { chmodSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, rmSync, unlinkSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -355,6 +355,48 @@ const migrations = [
   );
   CREATE INDEX import_items_batch ON import_items(batch_id, item_index);
   `,
+  `
+  ALTER TABLE import_items RENAME TO import_items_v12;
+  ALTER TABLE import_batches RENAME TO import_batches_v12;
+  DROP INDEX import_items_batch;
+
+  CREATE TABLE import_batches (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('urls', 'bookmarks', 'markdown', 'bundle')),
+    status TEXT NOT NULL DEFAULT 'preview' CHECK (status IN ('preview', 'applied')),
+    strategy TEXT CHECK (strategy IS NULL OR strategy IN ('skip', 'copy', 'update')),
+    staging_path TEXT,
+    asset_count INTEGER NOT NULL DEFAULT 0 CHECK (asset_count >= 0),
+    created_at TEXT NOT NULL,
+    applied_at TEXT
+  );
+
+  CREATE TABLE import_items (
+    id TEXT PRIMARY KEY,
+    batch_id TEXT NOT NULL REFERENCES import_batches(id) ON DELETE CASCADE,
+    item_index INTEGER NOT NULL,
+    label TEXT NOT NULL,
+    source_url TEXT,
+    preview_status TEXT NOT NULL CHECK (preview_status IN ('valid', 'duplicate', 'invalid')),
+    existing_document_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+    expected_revision INTEGER,
+    warnings_json TEXT NOT NULL DEFAULT '[]',
+    error TEXT,
+    payload_json TEXT NOT NULL,
+    result_status TEXT CHECK (result_status IS NULL OR result_status IN ('created', 'updated', 'skipped', 'conflict', 'failed')),
+    result_document_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+    result_error TEXT,
+    UNIQUE(batch_id, item_index)
+  );
+
+  INSERT INTO import_batches(id, kind, status, strategy, created_at, applied_at)
+    SELECT id, kind, status, strategy, created_at, applied_at FROM import_batches_v12;
+  INSERT INTO import_items
+    SELECT * FROM import_items_v12;
+  DROP TABLE import_items_v12;
+  DROP TABLE import_batches_v12;
+  CREATE INDEX import_items_batch ON import_items(batch_id, item_index);
+  `,
 ];
 
 export const CURRENT_SCHEMA_VERSION = migrations.length;
@@ -522,6 +564,13 @@ export type ImportPayload =
     archivedAt: string | null;
     sourceNote: string;
     markdown: string;
+    assets?: Array<{
+      path: string;
+      sha256: string;
+      mimeType: AssetMimeType;
+      sourceUrl: string;
+      byteSize: number;
+    }>;
   };
 
 export interface PreparedImportItem {
@@ -537,6 +586,8 @@ interface ImportBatchRow {
   kind: ImportKind;
   status: "preview" | "applied";
   strategy: ImportStrategy | null;
+  staging_path: string | null;
+  asset_count: number;
   created_at: string;
 }
 
@@ -795,14 +846,17 @@ export class KnowledgeDatabase {
   readonly dataDir: string;
   readonly snapshotsDir: string;
   readonly assetsDir: string;
+  readonly importStagingDir: string;
   readonly sql: DatabaseSync;
 
   constructor(dataDir: string) {
     this.dataDir = dataDir;
     this.snapshotsDir = join(dataDir, "snapshots");
     this.assetsDir = join(dataDir, "assets");
+    this.importStagingDir = join(dataDir, "import-staging");
     secureStorageDirectory(this.snapshotsDir);
     secureStorageDirectory(this.assetsDir);
+    secureStorageDirectory(this.importStagingDir);
     cleanupAssetTemporaries(this.assetsDir);
     const databasePath = databaseFile(dataDir);
     assertMigratable(inspectDatabaseSchema(dataDir));
@@ -814,8 +868,10 @@ export class KnowledgeDatabase {
       applyMigrations(this.sql);
       secureDatabaseFiles(databasePath);
       this.processPendingFileDeletions();
+      this.cleanupUnreferencedAssets();
       this.recoverInterruptedJobs();
       this.cleanupExpiredImports();
+      this.cleanupOrphanImportStaging();
     } catch (error) {
       this.sql.close();
       throw error;
@@ -863,8 +919,51 @@ export class KnowledgeDatabase {
   }
 
   private cleanupExpiredImports() {
-    this.sql.prepare("DELETE FROM import_batches WHERE created_at < ?")
-      .run(new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString());
+    const rows = this.sql.prepare("SELECT id, staging_path FROM import_batches WHERE created_at < ?")
+      .all(new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString()) as Array<{ id: string; staging_path: string | null }>;
+    for (const row of rows) {
+      if (row.staging_path) this.removeImportStaging(row.staging_path);
+      this.sql.prepare("DELETE FROM import_batches WHERE id = ?").run(row.id);
+    }
+  }
+
+  private cleanupOrphanImportStaging() {
+    const referenced = new Set(
+      (this.sql.prepare("SELECT staging_path FROM import_batches WHERE staging_path IS NOT NULL").all() as Array<{ staging_path: string }>)
+        .map(({ staging_path }) => staging_path),
+    );
+    for (const entry of readdirSync(this.importStagingDir, { withFileTypes: true })) {
+      if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(entry.name) || !entry.isDirectory()) {
+        throw new Error(`Unsafe import staging entry: ${entry.name}`);
+      }
+      if (!referenced.has(entry.name)) rmSync(join(this.importStagingDir, entry.name), { recursive: true });
+    }
+    syncDirectory(this.importStagingDir);
+  }
+
+  createImportStaging() {
+    const name = randomUUID();
+    mkdirSync(join(this.importStagingDir, name), { mode: 0o700 });
+    syncDirectory(this.importStagingDir);
+    return name;
+  }
+
+  importStagingPath(name: string) {
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(name) || name !== basename(name)) throw new Error("Invalid import staging path");
+    const root = resolve(this.importStagingDir);
+    if (!lstatSync(root).isDirectory()) throw new Error("Import staging root is unsafe");
+    return join(root, name);
+  }
+
+  private removeImportStaging(name: string) {
+    const path = this.importStagingPath(name);
+    try {
+      if (!lstatSync(path).isDirectory()) throw new Error("Import staging path is unsafe");
+      rmSync(path, { recursive: true });
+      syncDirectory(this.importStagingDir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
   }
 
   getRecentFilters(): { filters: RecentFilter[]; revision: number } {
@@ -1228,6 +1327,21 @@ export class KnowledgeDatabase {
     return row ? this.toDocument(row) : null;
   }
 
+  *documentsForPortableExport(documentIds?: string[]) {
+    if (!documentIds) {
+      const rows = this.sql.prepare("SELECT * FROM documents WHERE deleted_at IS NULL ORDER BY created_at, id")
+        .iterate() as unknown as Iterable<DocumentRow>;
+      for (const row of rows) yield this.toDocument(row);
+      return;
+    }
+    if (!documentIds.length) return;
+    const select = this.sql.prepare("SELECT * FROM documents WHERE id = ? AND deleted_at IS NULL");
+    for (const id of documentIds) {
+      const row = select.get(id) as unknown as DocumentRow | undefined;
+      if (row) yield this.toDocument(row);
+    }
+  }
+
   private toDocumentAsset(row: DocumentAssetRow): DocumentAsset {
     return {
       documentId: row.document_id,
@@ -1515,12 +1629,19 @@ export class KnowledgeDatabase {
     });
   }
 
-  createImportBatch(kind: ImportKind, items: PreparedImportItem[]): ImportPreview {
+  createImportBatch(
+    kind: ImportKind,
+    items: PreparedImportItem[],
+    options: { stagingPath?: string; assetCount?: number } = {},
+  ): ImportPreview {
     this.cleanupExpiredImports();
     return transaction(this.sql, () => {
       const id = randomUUID();
       const createdAt = now();
-      this.sql.prepare("INSERT INTO import_batches(id, kind, created_at) VALUES (?, ?, ?)").run(id, kind, createdAt);
+      if (options.stagingPath) this.importStagingPath(options.stagingPath);
+      this.sql.prepare(
+        "INSERT INTO import_batches(id, kind, staging_path, asset_count, created_at) VALUES (?, ?, ?, ?, ?)",
+      ).run(id, kind, options.stagingPath ?? null, options.assetCount ?? 0, createdAt);
       const insert = this.sql.prepare(
         `INSERT INTO import_items(
            id, batch_id, item_index, label, source_url, preview_status, existing_document_id,
@@ -1572,6 +1693,7 @@ export class KnowledgeDatabase {
         valid: items.filter(({ status }) => status === "valid").length,
         duplicate: items.filter(({ status }) => status === "duplicate").length,
         invalid: items.filter(({ status }) => status === "invalid").length,
+        ...(batch.kind === "bundle" ? { assets: batch.asset_count } : {}),
       },
       items,
     };
@@ -1589,6 +1711,28 @@ export class KnowledgeDatabase {
       ids.push(row.id);
     }
     return ids;
+  }
+
+  private replaceImportedAssets(
+    documentId: string,
+    assets: NonNullable<Extract<ImportPayload, { type: "markdown" }>["assets"]>,
+    timestamp: string,
+  ) {
+    this.sql.prepare("DELETE FROM document_assets WHERE document_id = ?").run(documentId);
+    for (const asset of assets) {
+      this.sql.prepare(
+        "INSERT INTO assets(hash, mime, bytes, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(hash) DO NOTHING",
+      ).run(asset.sha256, asset.mimeType, asset.byteSize, timestamp);
+      const stored = this.sql.prepare("SELECT mime, bytes FROM assets WHERE hash = ?").get(asset.sha256) as {
+        mime: string; bytes: number;
+      };
+      if (stored.mime !== asset.mimeType || stored.bytes !== asset.byteSize) throw new Error("Imported asset metadata conflicts");
+      this.sql.prepare(
+        `INSERT INTO document_assets(
+           document_id, source_url, status, asset_hash, created_at, updated_at
+         ) VALUES (?, ?, 'ready', ?, ?, ?)`,
+      ).run(documentId, asset.sourceUrl, asset.sha256, timestamp, timestamp);
+    }
   }
 
   private insertImportedMarkdown(itemId: string, payload: Extract<ImportPayload, { type: "markdown" }>, copy: boolean) {
@@ -1611,6 +1755,7 @@ export class KnowledgeDatabase {
     );
     this.replaceTags(id, payload.tags);
     this.replaceCollections(id, this.importCollections(payload.collections, timestamp));
+    if (payload.assets) this.replaceImportedAssets(id, payload.assets, timestamp);
     this.recordRevision(this.getDocument(id)!);
     return id;
   }
@@ -1688,6 +1833,7 @@ export class KnowledgeDatabase {
             );
             this.replaceTags(current.id, payload.tags);
             this.replaceCollections(current.id, this.importCollections(payload.collections, timestamp));
+            if (payload.assets) this.replaceImportedAssets(current.id, payload.assets, timestamp);
             this.recordRevision(this.getDocument(current.id)!);
             status = "updated";
             documentId = current.id;
@@ -1744,7 +1890,18 @@ export class KnowledgeDatabase {
   }
 
   deleteImportBatch(id: string) {
+    const row = this.sql.prepare("SELECT staging_path FROM import_batches WHERE id = ?")
+      .get(id) as { staging_path: string | null } | undefined;
+    if (!row) return false;
+    if (row.staging_path) this.removeImportStaging(row.staging_path);
     return this.sql.prepare("DELETE FROM import_batches WHERE id = ?").run(id).changes === 1;
+  }
+
+  getImportBundleStaging(id: string) {
+    const row = this.sql.prepare(
+      "SELECT staging_path FROM import_batches WHERE id = ? AND kind = 'bundle'",
+    ).get(id) as { staging_path: string | null } | undefined;
+    return row?.staging_path ? this.importStagingPath(row.staging_path) : null;
   }
 
   findDuplicateDocument(id: string): DocumentSummary | null {
@@ -2542,6 +2699,15 @@ export class KnowledgeDatabase {
       }
       return { queued, referenced };
     });
+  }
+
+  cleanupUnreferencedAssets() {
+    const paths = readdirSync(this.assetsDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && /^[a-f0-9]{64}$/u.test(entry.name))
+      .map((entry) => `assets/${entry.name}`);
+    const result = this.queueFileDeletions(paths);
+    this.processPendingFileDeletions();
+    return result;
   }
 
   processPendingFileDeletions() {

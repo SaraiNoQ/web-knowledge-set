@@ -145,6 +145,14 @@ test("creates a consistent, owner-only backup and verifies every file", async ()
   const fixture = workspace();
   try {
     const saved = capturedDocument(fixture.db, fixture.dataDir);
+    const importSentinel = "TEMPORARY-IMPORT-SECRET-DO-NOT-BACK-UP-7c94e3f6";
+    fixture.db.createImportBatch("urls", [{
+      label: importSentinel,
+      sourceUrl: "https://example.com/temporary-preview",
+      warnings: [],
+      error: null,
+      payload: { type: "url", url: "https://example.com/temporary-preview" },
+    }]);
     writeFileSync(join(fixture.dataDir, "assets/.asset-00000000-0000-4000-8000-000000000000.tmp"), "interrupted");
     mkdirSync(fixture.backupRoot, { mode: 0o777 });
     const result = await createBackup({
@@ -171,6 +179,7 @@ test("creates a consistent, owner-only backup and verifies every file", async ()
     assert.equal(statSync(join(result.path, "database.sqlite3")).mode & 0o777, 0o600);
     assert.equal(statSync(join(result.path, saved.snapshotPath)).mode & 0o777, 0o600);
     assert.equal(statSync(join(result.path, saved.assetPath)).mode & 0o777, 0o600);
+    assert.equal(readFileSync(join(result.path, "database.sqlite3")).includes(Buffer.from(importSentinel)), false);
     assert.equal(existsSync(join(result.path, "database.sqlite3-wal")), false);
     assert.equal(existsSync(join(result.path, "database.sqlite3-shm")), false);
     assert.equal(readdirSync(fixture.backupRoot).some((name) => name.startsWith(".zhiye-backup-")), false);
@@ -186,9 +195,12 @@ test("creates a consistent, owner-only backup and verifies every file", async ()
         markdown: saved.document.markdown,
         revision: saved.document.revision,
       });
+      assert.equal((copy.prepare("SELECT count(*) AS total FROM import_batches").get() as { total: number }).total, 0);
+      assert.equal((copy.prepare("SELECT count(*) AS total FROM import_items").get() as { total: number }).total, 0);
     } finally {
       copy.close();
     }
+    assert.equal((fixture.db.sql.prepare("SELECT count(*) AS total FROM import_batches").get() as { total: number }).total, 1);
   } finally {
     cleanup(fixture.root, fixture.db);
   }

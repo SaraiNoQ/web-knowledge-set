@@ -47,6 +47,12 @@ import {
 } from "./db.js";
 import { extractHtml } from "./extract.js";
 import { ImportParseError, parseImportRequest } from "./import.js";
+import {
+  createPortableBundle,
+  PortableError,
+  promotePortableAssets,
+  stagePortableBundle,
+} from "./portable.js";
 
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
@@ -241,6 +247,37 @@ async function readJson(request: IncomingMessage) {
   } catch {
     throw new HttpError(400, "INVALID_JSON", "Request body must be a JSON object");
   }
+}
+
+async function readBinary(request: IncomingMessage, limit: number) {
+  const declared = Number(request.headers["content-length"] ?? 0);
+  if (Number.isFinite(declared) && declared > limit) throw new HttpError(413, "REQUEST_TOO_LARGE", "Request body is too large");
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > limit) throw new HttpError(413, "REQUEST_TOO_LARGE", "Request body is too large");
+    chunks.push(buffer);
+  }
+  if (!size) throw new HttpError(400, "EMPTY_ZIP", "ZIP request body is empty");
+  return Buffer.concat(chunks);
+}
+
+function operationAbort(request: IncomingMessage, response: ServerResponse) {
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  const close = () => { if (!response.writableEnded) cancel(); };
+  if (request.aborted || response.destroyed) cancel();
+  request.once("aborted", cancel);
+  response.once("close", close);
+  return {
+    signal: controller.signal,
+    dispose() {
+      request.off("aborted", cancel);
+      response.off("close", close);
+    },
+  };
 }
 
 function normalizeUrl(value: unknown) {
@@ -955,6 +992,16 @@ export function createApp(options: AppOptions) {
     return enteringEpoch;
   };
 
+  const guardBundleMutation = (request: IncomingMessage) => {
+    if (!sameOrigin(request)) throw new HttpError(403, "ORIGIN_REJECTED", "Cross-origin mutations are not allowed");
+    if (request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() !== "application/zip") {
+      throw new HttpError(415, "ZIP_REQUIRED", "Content-Type must be application/zip");
+    }
+    const enteringEpoch = request.headers[DATA_EPOCH_HEADER.toLowerCase()];
+    assertDataEpoch(enteringEpoch);
+    return enteringEpoch;
+  };
+
   const mutationBody = async (request: IncomingMessage) => {
     const enteringEpoch = request.headers[DATA_EPOCH_HEADER.toLowerCase()];
     const body = await readJson(request);
@@ -1034,8 +1081,9 @@ export function createApp(options: AppOptions) {
         sendError(response, 401, "UNAUTHORIZED", "Authentication required");
         return;
       }
+      const bundlePreview = pathname === "/api/imports/bundle/preview" && request.method === "POST";
       const enteringDataEpoch = pathname.startsWith("/api/") && JSON_MUTATION_METHODS.has(request.method ?? "")
-        ? guardDataMutation(request)
+        ? bundlePreview ? guardBundleMutation(request) : guardDataMutation(request)
         : null;
 
       if (pathname === "/api/data-safety" && request.method === "GET") {
@@ -1100,16 +1148,70 @@ export function createApp(options: AppOptions) {
         return;
       }
 
+      if (pathname === "/api/imports/bundle/preview" && request.method === "POST") {
+        const archive = await readBinary(request, 100 * 1024 * 1024);
+        assertDataEpoch(enteringDataEpoch);
+        const operation = operationAbort(request, response);
+        try {
+          sendJson(response, 201, await stagePortableBundle(requireDatabase(), archive, operation.signal));
+        } finally {
+          operation.dispose();
+        }
+        return;
+      }
+
+      if (pathname === "/api/exports/portable" && request.method === "POST") {
+        const body = await mutationBody(request);
+        if (body.scope !== "all" && body.scope !== "selected") {
+          throw new HttpError(400, "INVALID_EXPORT_SCOPE", "scope must be all or selected");
+        }
+        const allowed = body.scope === "all" ? new Set(["scope"]) : new Set(["scope", "documentIds"]);
+        if (Object.keys(body).some((key) => !allowed.has(key))) {
+          throw new HttpError(400, "INVALID_EXPORT", "Portable export request contains an unknown field");
+        }
+        let documentIds: string[] | undefined;
+        if (body.scope === "selected") {
+          if (
+            !Array.isArray(body.documentIds) || !body.documentIds.length || body.documentIds.length > 1_000 ||
+            body.documentIds.some((id) => typeof id !== "string" || !id || id.length > 200) ||
+            new Set(body.documentIds as string[]).size !== body.documentIds.length
+          ) throw new HttpError(400, "INVALID_EXPORT_IDS", "documentIds must contain 1 to 1000 unique document IDs");
+          documentIds = body.documentIds as string[];
+        }
+        const operation = operationAbort(request, response);
+        let archive: Buffer;
+        try {
+          archive = await createPortableBundle(requireDatabase(), documentIds, operation.signal);
+        } finally {
+          operation.dispose();
+        }
+        const filename = `zhiye-export-${new Date().toISOString().slice(0, 10)}.zip`;
+        response.writeHead(200, {
+          "Content-Type": "application/zip",
+          "Content-Disposition": `attachment; filename="${filename}"`,
+          "Content-Length": String(archive.length),
+          "Cache-Control": "no-store",
+          ...securityHeaders(),
+        });
+        response.end(archive);
+        return;
+      }
+
       const applyImportMatch = pathname.match(/^\/api\/imports\/([^/]+)\/apply$/u);
       if (applyImportMatch && request.method === "POST") {
         const body = await mutationBody(request);
         if (!importStrategies.has(body.strategy as ImportStrategy) || Object.keys(body).some((key) => key !== "strategy")) {
           throw new HttpError(400, "INVALID_IMPORT_STRATEGY", "strategy must be skip, copy, or update");
         }
-        const result = requireDatabase().applyImportBatch(
-          decodeId(applyImportMatch[1]),
-          body.strategy as ImportStrategy,
-        );
+        const database = requireDatabase();
+        const importId = decodeId(applyImportMatch[1]);
+        promotePortableAssets(database, importId);
+        let result: ReturnType<KnowledgeDatabase["applyImportBatch"]>;
+        try {
+          result = database.applyImportBatch(importId, body.strategy as ImportStrategy);
+        } finally {
+          database.cleanupUnreferencedAssets();
+        }
         if (!result) throw new HttpError(404, "IMPORT_NOT_FOUND", "Import preview not found");
         worker.wake();
         sendJson(response, 200, result);
@@ -1781,6 +1883,7 @@ export function createApp(options: AppOptions) {
       if (serveStatic(request, response, pathname, options.staticDir)) return;
       throw new HttpError(404, "NOT_FOUND", "Not found");
     } catch (error) {
+      if (response.destroyed) return;
       if (response.headersSent) {
         response.destroy(error instanceof Error ? error : undefined);
         return;
@@ -1796,6 +1899,7 @@ export function createApp(options: AppOptions) {
           error.message,
         );
       }
+      else if (error instanceof PortableError) sendError(response, error.status, error.code, error.message);
       else {
         console.error(error);
         sendError(response, 500, "INTERNAL_ERROR", "Internal server error");

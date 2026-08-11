@@ -46,10 +46,10 @@ export class ApiRequestError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}, replaceDataEpoch = false): Promise<T> {
+async function requestResponse(path: string, init: RequestInit = {}, replaceDataEpoch = false) {
   const headers = new Headers(init.headers);
-  headers.set("Accept", "application/json");
-  if (init.body) headers.set("Content-Type", "application/json");
+  if (!headers.has("Accept")) headers.set("Accept", "application/json");
+  if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (init.body && dataEpoch) headers.set(DATA_EPOCH_HEADER, dataEpoch);
 
   const response = await fetch(path, {
@@ -81,6 +81,11 @@ async function request<T>(path: string, init: RequestInit = {}, replaceDataEpoch
     );
   }
 
+  return response;
+}
+
+async function request<T>(path: string, init: RequestInit = {}, replaceDataEpoch = false): Promise<T> {
+  const response = await requestResponse(path, init, replaceDataEpoch);
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
@@ -113,17 +118,40 @@ export interface CleanupDataResult {
 }
 
 export const api = {
-  previewImport(body: { kind: "urls" | "bookmarks"; content: string } | { kind: "markdown"; files: Array<{ path: string; content: string }> }) {
-    return request<ImportPreview>("/api/imports/preview", {
+  async exportPortable(scope: "all" | "selected", documentIds: string[], signal?: AbortSignal) {
+    const response = await requestResponse("/api/exports/portable", {
       method: "POST",
-      body: JSON.stringify(body),
+      headers: { Accept: "application/zip" },
+      body: JSON.stringify(scope === "all" ? { scope } : { scope, documentIds }),
+      signal,
+    });
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const fileName = /filename="?([^";]+)"?/iu.exec(disposition)?.[1]?.replace(/[\\/]/gu, "-") || "zhiye-export.zip";
+    return { blob: await response.blob(), fileName };
+  },
+
+  previewBundle(file: File, signal?: AbortSignal) {
+    return request<ImportPreview>("/api/imports/bundle/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/zip" },
+      body: file,
+      signal,
     });
   },
 
-  applyImport(id: string, strategy: ImportStrategy) {
+  previewImport(body: { kind: "urls" | "bookmarks"; content: string } | { kind: "markdown"; files: Array<{ path: string; content: string }> }, signal?: AbortSignal) {
+    return request<ImportPreview>("/api/imports/preview", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    });
+  },
+
+  applyImport(id: string, strategy: ImportStrategy, signal?: AbortSignal) {
     return request<ImportApplyResult>(`/api/imports/${encodeURIComponent(id)}/apply`, {
       method: "POST",
       body: JSON.stringify({ strategy }),
+      signal,
     });
   },
 

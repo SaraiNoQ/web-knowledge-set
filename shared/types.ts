@@ -122,7 +122,7 @@ export interface RecentFiltersState {
   revision: number;
 }
 
-export type ImportKind = "urls" | "bookmarks" | "markdown";
+export type ImportKind = "urls" | "bookmarks" | "markdown" | "bundle";
 
 export type ImportStrategy = "skip" | "copy" | "update";
 
@@ -142,7 +142,7 @@ export interface ImportPreview {
   kind: ImportKind;
   status: "preview";
   createdAt: string;
-  counts: { total: number; valid: number; duplicate: number; invalid: number };
+  counts: { total: number; valid: number; duplicate: number; invalid: number; assets?: number };
   items: ImportPreviewItem[];
 }
 

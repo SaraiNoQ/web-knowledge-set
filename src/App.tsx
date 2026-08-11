@@ -95,11 +95,15 @@ const STATUS_LABEL: Record<CaptureStatus, string> = {
 const IMPORT_PREVIEW_LABEL = { valid: "可导入", duplicate: "重复", invalid: "无效" } as const;
 const IMPORT_RESULT_LABEL = { created: "已新增", updated: "已更新", skipped: "已跳过", conflict: "有冲突", failed: "失败" } as const;
 const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
+const MAX_BUNDLE_BYTES = 100 * 1024 * 1024;
 const MAX_MARKDOWN_FILES = 100;
 
 function importFileLimitError(kind: ImportKind, files: File[]) {
   if (kind === "markdown" && files.length > MAX_MARKDOWN_FILES) return `最多选择 ${MAX_MARKDOWN_FILES} 个 Markdown 文件。`;
-  if (kind !== "urls" && files.reduce((total, file) => total + file.size, 0) > MAX_IMPORT_BYTES) return "导入文件合计不能超过 10 MiB。";
+  const maxBytes = kind === "bundle" ? MAX_BUNDLE_BYTES : MAX_IMPORT_BYTES;
+  if (kind !== "urls" && files.reduce((total, file) => total + file.size, 0) > maxBytes) {
+    return kind === "bundle" ? "织页知识包不能超过 100 MiB。" : "导入文件合计不能超过 10 MiB。";
+  }
   return "";
 }
 
@@ -461,6 +465,9 @@ export default function App() {
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchNotice, setBatchNotice] = useState("");
   const [batchError, setBatchError] = useState("");
+  const [portableExporting, setPortableExporting] = useState<"selected" | "all" | null>(null);
+  const [portableNotice, setPortableNotice] = useState("");
+  const [portableError, setPortableError] = useState("");
   const [listRefresh, setListRefresh] = useState(0);
   const [shortcutHelp, setShortcutHelp] = useState(false);
   const [inTrash, setInTrash] = useState(false);
@@ -494,6 +501,8 @@ export default function App() {
   const [bulkImportStrategy, setBulkImportStrategy] = useState<ImportStrategy>("skip");
   const [bulkImportBusy, setBulkImportBusy] = useState(false);
   const [bulkImportError, setBulkImportError] = useState("");
+  const [bulkImportNotice, setBulkImportNotice] = useState("");
+  const [bulkImportTask, setBulkImportTask] = useState<"validating" | "importing" | null>(null);
   const [captureQueue, setCaptureQueue] = useState<CaptureQueueStatus | null>(null);
   const [queueError, setQueueError] = useState("");
   const [queueUpdating, setQueueUpdating] = useState(false);
@@ -553,6 +562,8 @@ export default function App() {
   const recentFilterSaveChainRef = useRef<Promise<unknown>>(Promise.resolve());
   const shortcutDialogRef = useRef<HTMLDialogElement>(null);
   const bulkImportDialogRef = useRef<HTMLDialogElement>(null);
+  const bulkImportAbortRef = useRef<AbortController | null>(null);
+  const portableExportAbortRef = useRef<AbortController | null>(null);
   const collectionsRequestRef = useRef<{ sequence: number; controller: AbortController } | null>(null);
   const collectionsRequestSequenceRef = useRef(0);
   const keptDuplicateIdsRef = useRef(new Set<string>());
@@ -619,6 +630,11 @@ export default function App() {
       previousFocus?.focus();
     };
   }, [bulkImportOpen]);
+
+  useEffect(() => () => {
+    bulkImportAbortRef.current?.abort();
+    portableExportAbortRef.current?.abort();
+  }, []);
 
   const persistedDraft = currentDoc ? draftOf(currentDoc) : null;
   const dirty = Boolean(draft && persistedDraft && !draftsEqual(draft, persistedDraft));
@@ -1523,6 +1539,11 @@ export default function App() {
     setBulkImportResult(null);
     setBulkImportStrategy("skip");
     setBulkImportError("");
+    setBulkImportNotice("");
+  };
+
+  const cancelBulkImportTask = () => {
+    bulkImportAbortRef.current?.abort();
   };
 
   const cancelBulkPreview = async () => {
@@ -1562,15 +1583,25 @@ export default function App() {
     const selected = Array.from(event.target.files || []);
     const files = bulkImportKind === "markdown"
       ? selected.filter((file) => /\.(?:md|markdown)$/iu.test(file.name))
-      : selected.slice(0, 1);
-    const error = selected.length && !files.length ? "没有找到 Markdown 文件。" : importFileLimitError(bulkImportKind, files);
+      : bulkImportKind === "bundle"
+        ? selected.filter((file) => /\.zip$/iu.test(file.name)).slice(0, 1)
+        : selected.slice(0, 1);
+    const error = selected.length && !files.length
+      ? bulkImportKind === "bundle" ? "请选择 .zip 格式的织页知识包。" : "没有找到 Markdown 文件。"
+      : importFileLimitError(bulkImportKind, files);
+    if (error) event.currentTarget.value = "";
     setBulkImportFiles(error ? [] : files);
     setBulkImportError(error);
+    setBulkImportNotice("");
   };
 
   const previewBulkImport = async () => {
+    const controller = new AbortController();
+    bulkImportAbortRef.current = controller;
     setBulkImportBusy(true);
+    setBulkImportTask("validating");
     setBulkImportError("");
+    setBulkImportNotice("正在校验导入内容…");
     setBulkImportResult(null);
     try {
       const fileError = importFileLimitError(bulkImportKind, bulkImportFiles);
@@ -1578,34 +1609,49 @@ export default function App() {
       const markdownFiles: Array<{ path: string; content: string }> = [];
       if (bulkImportKind === "markdown") {
         for (const file of bulkImportFiles) {
+          controller.signal.throwIfAborted();
           markdownFiles.push({ path: file.webkitRelativePath || file.name, content: await file.text() });
         }
       }
-      const payload = bulkImportKind === "urls"
-        ? { kind: "urls" as const, content: bulkImportText }
-        : bulkImportKind === "bookmarks"
-          ? { kind: "bookmarks" as const, content: await bulkImportFiles[0]?.text() || "" }
-          : { kind: "markdown" as const, files: markdownFiles };
-      setBulkImportPreview(await api.previewImport(payload));
+      if (bulkImportKind === "bundle") {
+        setBulkImportPreview(await api.previewBundle(bulkImportFiles[0]!, controller.signal));
+      } else {
+        const payload = bulkImportKind === "urls"
+          ? { kind: "urls" as const, content: bulkImportText }
+          : bulkImportKind === "bookmarks"
+            ? { kind: "bookmarks" as const, content: await bulkImportFiles[0]?.text() || "" }
+            : { kind: "markdown" as const, files: markdownFiles };
+        controller.signal.throwIfAborted();
+        setBulkImportPreview(await api.previewImport(payload, controller.signal));
+      }
+      setBulkImportNotice("校验完成，请确认逐项结果与冲突策略。");
     } catch (error) {
-      setBulkImportError((error as Error).message);
+      if ((error as Error).name === "AbortError") setBulkImportNotice("已取消校验。");
+      else setBulkImportError((error as Error).message);
     } finally {
+      if (bulkImportAbortRef.current === controller) bulkImportAbortRef.current = null;
+      setBulkImportTask(null);
       setBulkImportBusy(false);
     }
   };
 
   const applyBulkImport = async () => {
     if (!bulkImportPreview) return;
+    const controller = new AbortController();
+    bulkImportAbortRef.current = controller;
     setBulkImportBusy(true);
+    setBulkImportTask("importing");
     setBulkImportError("");
+    setBulkImportNotice("正在导入知识…");
     try {
-      const result = await api.applyImport(bulkImportPreview.id, bulkImportStrategy);
+      const result = await api.applyImport(bulkImportPreview.id, bulkImportStrategy, controller.signal);
       setBulkImportResult(result);
       setListRefresh((value) => value + 1);
       void loadCaptureQueue();
       void loadCollections();
       refreshKnownTags();
       setImportNotice(`批量导入完成：新增 ${result.counts.created}，更新 ${result.counts.updated}，跳过 ${result.counts.skipped}。`);
+      setBulkImportNotice(bulkImportPreview.kind === "bundle" ? "知识包已导入，资料库已刷新。" : "导入完成，资料库已刷新。");
       const currentId = selectedIdRef.current;
       if (currentId && result.items.some((item) => item.status === "updated" && item.documentId === currentId)) {
         const updated = await api.getDocument(currentId);
@@ -1617,8 +1663,13 @@ export default function App() {
         }
       }
     } catch (error) {
-      setBulkImportError((error as Error).message);
+      if ((error as Error).name === "AbortError") {
+        setBulkImportNotice("已停止等待导入结果；服务端可能已完成，可再次确认导入以同步结果。");
+        setListRefresh((value) => value + 1);
+      } else setBulkImportError((error as Error).message);
     } finally {
+      if (bulkImportAbortRef.current === controller) bulkImportAbortRef.current = null;
+      setBulkImportTask(null);
       setBulkImportBusy(false);
     }
   };
@@ -2079,6 +2130,45 @@ export default function App() {
       setBatchError((error as Error).message);
     } finally {
       setBatchBusy(false);
+    }
+  };
+
+  const exportPortable = async (scope: "selected" | "all") => {
+    if (portableExporting) {
+      portableExportAbortRef.current?.abort();
+      return;
+    }
+    if (closeAttemptRef.current || listLoading) return;
+    const documentIds = scope === "selected"
+      ? items.filter((item) => selectedIds.has(item.id)).map((item) => item.id)
+      : [];
+    if (
+      inTrash || (scope === "selected" && (
+        !documentIds.length || itemsContextRef.current !== listContextKey || selectionContextRef.current !== listContextKey
+      ))
+    ) return;
+    const controller = new AbortController();
+    portableExportAbortRef.current = controller;
+    setPortableExporting(scope);
+    setPortableNotice(scope === "all" ? "正在导出全部知识包…" : `正在导出所选 ${documentIds.length} 篇知识…`);
+    setPortableError("");
+    try {
+      const { blob, fileName } = await api.exportPortable(scope, documentIds, controller.signal);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setPortableNotice(`知识包已生成：${fileName}`);
+    } catch (error) {
+      if ((error as Error).name === "AbortError") setPortableNotice("已取消知识包导出。");
+      else setPortableError((error as Error).message);
+    } finally {
+      if (portableExportAbortRef.current === controller) portableExportAbortRef.current = null;
+      setPortableExporting(null);
     }
   };
 
@@ -2639,20 +2729,22 @@ export default function App() {
           ref={bulkImportDialogRef}
           className="shortcut-backdrop bulk-import-backdrop"
           aria-labelledby="bulk-import-title"
-          onCancel={(event) => { event.preventDefault(); void closeBulkImport(); }}
+          onCancel={(event) => { event.preventDefault(); if (bulkImportTask) cancelBulkImportTask(); else void closeBulkImport(); }}
           onMouseDown={(event) => { if (event.target === event.currentTarget) void closeBulkImport(); }}
         >
           <section className="bulk-import-card">
             <header>
-              <div><span className="eyebrow">BATCH INTAKE</span><h2 id="bulk-import-title">批量导入</h2><p>先检查，再一次写入资料库。</p></div>
-              <button type="button" autoFocus onClick={() => void closeBulkImport()} disabled={bulkImportBusy} aria-label="关闭批量导入">×</button>
+              <div><span className="eyebrow">BATCH INTAKE</span><h2 id="bulk-import-title">批量导入</h2><p>{bulkImportKind === "bundle" ? "恢复便携知识包；完整留档仍在“数据安全”中管理。" : "先检查，再一次写入资料库。"}</p></div>
+              {bulkImportTask
+                ? <button className="bulk-cancel-task" type="button" autoFocus onClick={cancelBulkImportTask}>{bulkImportTask === "validating" ? "取消校验" : "取消导入"}</button>
+                : <button type="button" autoFocus onClick={() => void closeBulkImport()} disabled={bulkImportBusy} aria-label="关闭批量导入">×</button>}
             </header>
 
             {!bulkImportPreview ? <>
               <fieldset className="bulk-kind" disabled={bulkImportBusy}>
                 <legend className="sr-only">导入格式</legend>
-                {([['urls', '网址列表'], ['bookmarks', '浏览器书签'], ['markdown', 'Markdown']] as Array<[ImportKind, string]>).map(([kind, label]) => (
-                  <button key={kind} type="button" aria-pressed={bulkImportKind === kind} onClick={() => { setBulkImportKind(kind); setBulkImportFiles([]); setBulkImportText(""); setBulkImportError(""); }}>{label}</button>
+                {([['urls', '网址列表'], ['bookmarks', '浏览器书签'], ['markdown', 'Markdown'], ['bundle', '织页知识包']] as Array<[ImportKind, string]>).map(([kind, label]) => (
+                  <button key={kind} type="button" aria-pressed={bulkImportKind === kind} onClick={() => { setBulkImportKind(kind); setBulkImportFiles([]); setBulkImportText(""); setBulkImportStrategy("skip"); setBulkImportError(""); setBulkImportNotice(""); }}>{label}</button>
                 ))}
               </fieldset>
 
@@ -2660,22 +2752,25 @@ export default function App() {
                 <label className="bulk-text"><span>每行一个公开网页地址</span><textarea value={bulkImportText} onChange={(event) => { setBulkImportText(event.target.value); setBulkImportError(""); }} rows={10} placeholder={'https://example.com/article-one\nhttps://example.com/article-two'} disabled={bulkImportBusy} /></label>
               ) : bulkImportKind === "bookmarks" ? (
                 <label className="bulk-file"><span>选择浏览器导出的 bookmarks.html</span><input key={bulkImportKind} type="file" accept=".html,text/html" onChange={selectBulkFiles} disabled={bulkImportBusy} /><small>{bulkImportFiles[0]?.name || "尚未选择文件"}</small></label>
-              ) : (
+              ) : bulkImportKind === "markdown" ? (
                 <div className="bulk-markdown-files">
                   <label className="bulk-file"><span>选择多个 .md 文件</span><input key={`${bulkImportKind}-files`} type="file" accept=".md,.markdown,text/markdown,text/plain" multiple onChange={selectBulkFiles} disabled={bulkImportBusy} /></label>
                   <span>或</span>
                   <label className="bulk-file"><span>选择整个目录</span><input key={`${bulkImportKind}-directory`} type="file" multiple {...{ webkitdirectory: "", directory: "" }} onChange={selectBulkFiles} disabled={bulkImportBusy} /></label>
                   <small>{bulkImportFiles.length ? `已选择 ${bulkImportFiles.length} 个文件` : "尚未选择文件"}</small>
                 </div>
+              ) : (
+                <label className="bulk-file bulk-bundle-file"><span>选择织页导出的 .zip 知识包</span><input key={bulkImportKind} type="file" accept=".zip,application/zip" onChange={selectBulkFiles} disabled={bulkImportBusy} /><small>{bulkImportFiles[0] ? `${bulkImportFiles[0].name} · ${(bulkImportFiles[0].size / 1024 / 1024).toFixed(1)} MiB` : "上限 100 MiB；文件保持二进制传输"}</small></label>
               )}
 
               <div className="bulk-dialog-actions"><button className="primary-button" type="button" onClick={() => void previewBulkImport()} disabled={bulkImportBusy || !bulkImportReady}>{bulkImportBusy ? <><Spinner />检查中</> : "检查导入内容"}</button></div>
             </> : <>
-              <div className="bulk-counts" aria-label="导入检查统计">
-                <span><strong>{bulkImportPreview.counts.total}</strong>总计</span>
+              <div className={`bulk-counts ${bulkImportPreview.kind === "bundle" ? "has-assets" : ""}`} aria-label="导入检查统计">
+                <span><strong>{bulkImportPreview.counts.total}</strong>{bulkImportPreview.kind === "bundle" ? "文档" : "总计"}</span>
                 <span className="is-valid"><strong>{bulkImportPreview.counts.valid}</strong>有效</span>
                 <span className="is-duplicate"><strong>{bulkImportPreview.counts.duplicate}</strong>重复</span>
-                <span className="is-invalid"><strong>{bulkImportPreview.counts.invalid}</strong>无效</span>
+                <span className="is-invalid"><strong>{bulkImportPreview.counts.invalid}</strong>{bulkImportPreview.kind === "bundle" ? "错误" : "无效"}</span>
+                {bulkImportPreview.kind === "bundle" && <span className="is-assets"><strong>{bulkImportPreview.counts.assets || 0}</strong>资源</span>}
               </div>
 
               {bulkImportResult && <div className="bulk-result-summary" role="status">新增 {bulkImportResult.counts.created} · 更新 {bulkImportResult.counts.updated} · 跳过 {bulkImportResult.counts.skipped} · 冲突 {bulkImportResult.counts.conflicts} · 失败 {bulkImportResult.counts.failed}</div>}
@@ -2696,6 +2791,7 @@ export default function App() {
                 </> : <button className="primary-button" type="button" onClick={() => void closeBulkImport()}>完成</button>}
               </footer>
             </>}
+            {bulkImportNotice && <p className="bulk-import-notice" role="status">{bulkImportNotice}</p>}
             {bulkImportError && <p className="bulk-import-error" role="alert">{bulkImportError}</p>}
           </section>
         </dialog>
@@ -2794,6 +2890,15 @@ export default function App() {
             <label><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={items.length > 0 && items.every((item) => selectedIds.has(item.id))} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds(event.target.checked ? new Set(items.map((item) => item.id)) : new Set()); }} />选中当前页 <strong>{selectedIds.size}</strong> 篇</label>
             {!!selectedIds.size && <><select aria-label="批量操作" disabled={listLoading || batchBusy} value={batchAction} onChange={(event) => setBatchAction(event.target.value as BatchDocumentAction | "")}><option value="">选择操作</option><option value="add-tag">添加标签</option><option value="remove-tag">移除标签</option><option value="add-collection">加入集合</option><option value="remove-collection">移出集合</option>{inTrash ? <option value="restore">恢复</option> : <><option value="archive">归档</option><option value="unarchive">取消归档</option><option value="trash">删除（移入回收站）</option></>}</select>{(batchAction === "add-collection" || batchAction === "remove-collection") && <select aria-label="批量操作集合" disabled={listLoading || batchBusy} value={batchCollectionId} onChange={(event) => setBatchCollectionId(event.target.value)}><option value="">选择集合</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</select>}<button type="button" onClick={() => void runBatchAction()} disabled={listLoading || batchBusy || !batchAction}>{batchBusy ? "处理中…" : "应用"}</button></>}
           </div>}
+          {(!inTrash || portableExporting) && <div className="portable-toolbar" aria-label="便携知识包导出">
+            <div><strong>便携知识包</strong><span>用于迁移与分享，不等同于可恢复数据库的完整留档。</span><button type="button" onClick={() => setSafetyOpen(true)} disabled={Boolean(portableExporting)}>前往完整留档</button></div>
+            <div>
+              <button type="button" onClick={() => void exportPortable("selected")} disabled={((listLoading || closing) && portableExporting !== "selected") || (portableExporting !== null && portableExporting !== "selected") || ((!selectedIds.size || inTrash) && portableExporting !== "selected")}>{portableExporting === "selected" ? "取消所选导出" : `导出所选${selectedIds.size ? ` ${selectedIds.size} 篇` : ""}`}</button>
+              <button type="button" onClick={() => void exportPortable("all")} disabled={((listLoading || closing) && portableExporting !== "all") || (inTrash && portableExporting !== "all") || (portableExporting !== null && portableExporting !== "all")}>{portableExporting === "all" ? "取消全部导出" : "导出全部"}</button>
+            </div>
+          </div>}
+          {portableNotice && <p className="batch-message" role="status">{portableNotice}</p>}
+          {portableError && <p className="batch-message error-text" role="alert">{portableError}</p>}
           {batchNotice && <p className="batch-message" role="status">{batchNotice}</p>}
           {batchError && <p className="batch-message error-text" role="alert">{batchError}</p>}
 

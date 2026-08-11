@@ -37,7 +37,7 @@ function database() {
   };
 }
 
-test("v12 recent filters persist in the local database", () => {
+test("v13 recent filters persist in the local database", () => {
   const fixture = database();
   const filters: RecentFilter[] = [{
     label: "最近研究",
@@ -54,7 +54,7 @@ test("v12 recent filters persist in the local database", () => {
     sort: "updated",
   }];
   try {
-    assert.equal(CURRENT_SCHEMA_VERSION, 12);
+    assert.equal(CURRENT_SCHEMA_VERSION, 13);
     assert.deepEqual(fixture.db.getRecentFilters(), { filters: [], revision: 0 });
     assert.deepEqual(fixture.db.setRecentFilters(filters, 0), { kind: "updated", state: { filters, revision: 1 } });
     assert.deepEqual(fixture.db.setRecentFilters([], 0), { kind: "conflict" });
@@ -111,9 +111,14 @@ test("staged imports are repeatable and revision guarded", () => {
     const startupStale = fixture.db.createImportBatch("urls", []);
     fixture.db.sql.prepare("UPDATE import_batches SET created_at = ? WHERE id = ?")
       .run("2000-01-01T00:00:00.000Z", startupStale.id);
+    const orphanStaging = fixture.db.createImportStaging();
+    const referencedStaging = fixture.db.createImportStaging();
+    fixture.db.createImportBatch("bundle", [], { stagingPath: referencedStaging });
     fixture.db.close();
     fixture.db = openDatabase(fixture.directory);
     assert.equal(fixture.db.getImportPreview(startupStale.id), null);
+    assert.equal(existsSync(join(fixture.db.importStagingDir, orphanStaging)), false);
+    assert.equal(existsSync(join(fixture.db.importStagingDir, referencedStaging)), true);
   } finally {
     fixture.close();
   }
@@ -1036,7 +1041,7 @@ test("current migrations upgrade v3 and the frozen v7 release schema", () => {
       .all();
     fixture.close();
 
-    assert.deepEqual(inspectDatabaseSchema(currentDirectory).pendingVersions, [8, 9, 10, 11, 12]);
+    assert.deepEqual(inspectDatabaseSchema(currentDirectory).pendingVersions, [8, 9, 10, 11, 12, 13]);
     const current = openDatabase(currentDirectory);
     try {
       assert.equal(current.getDocument("release-document")?.markdown, "Frozen release schema body.");
@@ -1066,6 +1071,7 @@ test("current migrations upgrade v3 and the frozen v7 release schema", () => {
     } finally {
       current.close();
     }
+
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -1116,8 +1122,35 @@ test("schema inspection is read-only and rejects future or incomplete histories"
 
     const raw = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));
     raw.exec(`
+      PRAGMA foreign_keys = OFF;
       DROP TABLE import_items;
       DROP TABLE import_batches;
+      CREATE TABLE import_batches (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('urls', 'bookmarks', 'markdown')),
+        status TEXT NOT NULL DEFAULT 'preview' CHECK (status IN ('preview', 'applied')),
+        strategy TEXT CHECK (strategy IS NULL OR strategy IN ('skip', 'copy', 'update')),
+        created_at TEXT NOT NULL,
+        applied_at TEXT
+      );
+      CREATE TABLE import_items (
+        id TEXT PRIMARY KEY,
+        batch_id TEXT NOT NULL REFERENCES import_batches(id) ON DELETE CASCADE,
+        item_index INTEGER NOT NULL,
+        label TEXT NOT NULL,
+        source_url TEXT,
+        preview_status TEXT NOT NULL CHECK (preview_status IN ('valid', 'duplicate', 'invalid')),
+        existing_document_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+        expected_revision INTEGER,
+        warnings_json TEXT NOT NULL DEFAULT '[]',
+        error TEXT,
+        payload_json TEXT NOT NULL,
+        result_status TEXT CHECK (result_status IS NULL OR result_status IN ('created', 'updated', 'skipped', 'conflict', 'failed')),
+        result_document_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+        result_error TEXT,
+        UNIQUE(batch_id, item_index)
+      );
+      CREATE INDEX import_items_batch ON import_items(batch_id, item_index);
       DELETE FROM schema_migrations WHERE version = ${CURRENT_SCHEMA_VERSION};
     `);
     raw.close();
@@ -1164,7 +1197,7 @@ test("all pending migrations roll back together on failure", () => {
       currentVersion: 3,
       supportedVersion: CURRENT_SCHEMA_VERSION,
       appliedVersions: [1, 2, 3],
-      pendingVersions: [4, 5, 6, 7, 8, 9, 10, 11, 12],
+      pendingVersions: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
     });
     const unchanged = new DatabaseSync(path, { readOnly: true });
     try {
