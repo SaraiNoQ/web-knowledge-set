@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import dgram from "node:dgram";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
@@ -24,10 +25,12 @@ async function probeWebRtc(launchOptions, verifyCommandLine = false) {
     browser = await chromium.launch(launchOptions);
     const page = await browser.newPage();
     if (verifyCommandLine) {
-      await page.goto("chrome://version");
-      const version = await page.locator("body").innerText();
-      assert.doesNotMatch(version, /--no-sandbox/u);
-      assert.match(version, /--force-webrtc-ip-handling-policy=disable_non_proxied_udp/u);
+      const commands = execFileSync("ps", ["-ww", "-axo", "command="], { encoding: "utf8" })
+        .split("\n")
+        .filter((line) => line.includes(chromium.executablePath()));
+      assert.ok(commands.length > 0, "packaged Chromium process was not found");
+      assert.ok(commands.every((command) => !command.includes("--no-sandbox")));
+      assert.ok(commands.some((command) => command.includes("--force-webrtc-ip-handling-policy=disable_non_proxied_udp")));
     }
     await page.goto("about:blank");
     const packet = new Promise((resolveReceived) => {
