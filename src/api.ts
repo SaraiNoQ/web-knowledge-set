@@ -47,6 +47,7 @@ export class ApiRequestError extends Error {
 }
 
 async function requestResponse(path: string, init: RequestInit = {}, replaceDataEpoch = false) {
+  if (init.body && dataEpoch === null) await requestResponse("/api/capture-queue");
   const headers = new Headers(init.headers);
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
