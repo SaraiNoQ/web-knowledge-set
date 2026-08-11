@@ -27,6 +27,35 @@ test("keeps first-run setup local, deferrable, and durable", async ({ page, cont
   await context.setOffline(false);
 });
 
+test("keeps the primary workspace keyboard and screen-reader reachable", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  if (await deferSetup.isVisible()) await deferSetup.click();
+  await expect(page.getByLabel("网页地址")).toBeVisible();
+  const issues = await page.evaluate(() => {
+    const visible = (element: Element) => element.getClientRects().length > 0;
+    const named = (element: Element) => Boolean(
+      element.getAttribute("aria-label") ||
+      element.getAttribute("aria-labelledby") ||
+      element.getAttribute("title") ||
+      element.textContent?.trim(),
+    );
+    const ids = [...document.querySelectorAll<HTMLElement>("[id]")].map(({ id }) => id);
+    return [
+      ...(document.querySelectorAll("main").length === 1 ? [] : ["页面必须有且只有一个 main"]),
+      ...(document.querySelectorAll("h1").length === 1 ? [] : ["页面必须有且只有一个 h1"]),
+      ...[...document.querySelectorAll("button, a[href]")].filter(visible).filter((element) => !named(element)).map(() => "可操作元素缺少名称"),
+      ...[...document.querySelectorAll("img")].filter(visible).filter((element) => !element.hasAttribute("alt")).map(() => "图片缺少 alt"),
+      ...[...document.querySelectorAll<HTMLElement>("[tabindex]")].filter((element) => element.tabIndex > 0).map(() => "禁止正数 tabindex"),
+      ...(new Set(ids).size === ids.length ? [] : ["页面存在重复 id"]),
+    ];
+  });
+  expect(issues).toEqual([]);
+  await page.getByLabel("网页地址").focus();
+  await expect(page.getByLabel("网页地址")).toBeFocused();
+});
+
 test("previews a batch before importing it", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "批量导入" }).click();

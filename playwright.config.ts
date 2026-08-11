@@ -16,4 +16,13 @@ export default defineConfig({
     reuseExistingServer: false,
     timeout: 30_000,
   },
+  projects: [
+    { name: "auth", testMatch: "**/auth.setup.ts" },
+    {
+      name: "chromium",
+      testIgnore: "**/auth.setup.ts",
+      dependencies: ["auth"],
+      use: { storageState: "test-results/e2e-auth.json" },
+    },
+  ],
 });

@@ -56,9 +56,10 @@ const app = createApp({
   dataDir,
   database: openDatabase(dataDir),
   staticDir: resolve("dist"),
+  bootstrapToken: "e2e-bootstrap-token",
   capture,
   fetchAsset,
-  dev: true,
+  dev: false,
   onDesktopCloseReady: () => undefined,
 });
 const server = createServer((request, response) => void app.handler(request, response));
