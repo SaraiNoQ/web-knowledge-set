@@ -1566,6 +1566,18 @@ export function createApp(options: AppOptions) {
         return;
       }
 
+      if (pathname === "/api/derived-results" && request.method === "DELETE") {
+        const body = await mutationBody(request);
+        if (body.confirm !== true || Object.keys(body).some((key) => key !== "confirm")) {
+          throw new HttpError(400, "CONFIRMATION_REQUIRED", "confirm must be the only field and must be true");
+        }
+        sendJson(response, 200, {
+          deleted: true,
+          deletedResults: requireDatabase().deleteAllDerivedResults(),
+        });
+        return;
+      }
+
       const assetFileMatch = pathname.match(/^\/api\/assets\/([^/]+)$/u);
       if (assetFileMatch && (request.method === "GET" || request.method === "HEAD")) {
         await serveAsset(request, response, requireDatabase(), decodeId(assetFileMatch[1]));
@@ -1577,6 +1589,64 @@ export function createApp(options: AppOptions) {
         const assets = requireDatabase().listDocumentAssets(decodeId(documentAssetsMatch[1]));
         if (!assets) throw new HttpError(404, "NOT_FOUND", "Document not found");
         sendJson(response, 200, assets);
+        return;
+      }
+
+      const derivedResultsMatch = pathname.match(/^\/api\/documents\/([^/]+)\/derived-results$/u);
+      if (derivedResultsMatch && request.method === "GET") {
+        if ([...requestUrl.searchParams.keys()].some((key) => key !== "page") || requestUrl.searchParams.getAll("page").length > 1) {
+          throw new HttpError(400, "INVALID_DERIVED_RESULTS_QUERY", "Derived results only accept one page parameter");
+        }
+        const pageText = requestUrl.searchParams.get("page");
+        const page = pageText === null ? 1 : Number(pageText);
+        if (
+          !Number.isSafeInteger(page) || page < 1 || page > 1_000_000 ||
+          (pageText !== null && String(page) !== pageText)
+        ) {
+          throw new HttpError(400, "INVALID_DERIVED_RESULTS_PAGE", "page must be an integer from 1 to 1000000");
+        }
+        const results = requireDatabase().listDerivedResults(decodeId(derivedResultsMatch[1]), page);
+        if (!results) throw new HttpError(404, "NOT_FOUND", "Document not found");
+        sendJson(response, 200, results);
+        return;
+      }
+
+      const derivedResultMatch = pathname.match(/^\/api\/documents\/([^/]+)\/derived-results\/([^/]+)$/u);
+      if (derivedResultMatch && request.method === "PATCH") {
+        const body = await mutationBody(request);
+        if (typeof body.pinned !== "boolean" || Object.keys(body).some((key) => key !== "pinned")) {
+          throw new HttpError(400, "INVALID_DERIVED_RESULT_PIN", "pinned must be the only field and must be boolean");
+        }
+        const result = requireDatabase().pinDerivedResult(
+          decodeId(derivedResultMatch[1]),
+          decodeId(derivedResultMatch[2]),
+          body.pinned,
+        );
+        if (result.kind === "missing") throw new HttpError(404, "NOT_FOUND", "Document not found");
+        if (result.kind === "result_missing") {
+          throw new HttpError(404, "DERIVED_RESULT_NOT_FOUND", "Derived result not found");
+        }
+        if (result.kind === "not_summary") {
+          throw new HttpError(400, "DERIVED_RESULT_NOT_SUMMARY", "Only summaries can be pinned");
+        }
+        sendJson(response, 200, result.result);
+        return;
+      }
+      if (derivedResultMatch && request.method === "DELETE") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length) {
+          throw new HttpError(400, "INVALID_DERIVED_RESULT_DELETE", "Derived result deletion accepts no options");
+        }
+        const result = requireDatabase().deleteDerivedResult(
+          decodeId(derivedResultMatch[1]),
+          decodeId(derivedResultMatch[2]),
+        );
+        if (result.kind === "missing") throw new HttpError(404, "NOT_FOUND", "Document not found");
+        if (result.kind === "result_missing") {
+          throw new HttpError(404, "DERIVED_RESULT_NOT_FOUND", "Derived result not found");
+        }
+        response.writeHead(204, { "Cache-Control": "no-store", ...securityHeaders() });
+        response.end();
         return;
       }
 

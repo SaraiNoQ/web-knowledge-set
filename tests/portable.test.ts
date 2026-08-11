@@ -7,7 +7,7 @@ import test from "node:test";
 
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 
-import { openDatabase, type KnowledgeDatabase } from "../server/db.js";
+import { derivedInputHash, openDatabase, type KnowledgeDatabase } from "../server/db.js";
 import {
   createPortableBundle,
   inspectPortableZip,
@@ -63,6 +63,19 @@ test("portable bundle round-trips documents and images without rewriting links o
   ].join("\n\n");
   try {
     const original = readyDocument(source, markdown);
+    assert.equal(source.saveDerivedResult({
+      documentId: original.id,
+      type: "summary",
+      model: "portable-test",
+      endpointId: "local-test",
+      promptVersion: "summary-v1",
+      inputHash: derivedInputHash(original.title, original.markdown),
+      output: "DERIVED_RESULTS_ARE_NOT_PORTABLE_V1",
+      durationMs: 1,
+      sourceChars: original.title.length + original.markdown.length,
+      sentChars: original.title.length + original.markdown.length,
+      truncated: false,
+    }).kind, "saved");
     const hash = createHash("sha256").update(png).digest("hex");
     assert.equal(source.prepareDocumentAssets(original.id, [assetUrl, secondAssetUrl, relativeAssetUrl]), true);
     writeFileSync(source.assetFilePath(hash), png, { mode: 0o600 });
@@ -77,6 +90,7 @@ test("portable bundle round-trips documents and images without rewriting links o
       documents: Array<{ path: string; assets: Array<{ path: string; sourceUrl: string; originalUrl: string; sha256: string; mimeType: string; byteSize: number }> }>;
     };
     const exported = strFromU8(files[manifest.documents[0]!.path]!);
+    assert.doesNotMatch(exported, /DERIVED_RESULTS_ARE_NOT_PORTABLE_V1/u);
     assert.match(exported, /!\[cached\]\(\.\.\/assets\/[a-f0-9-]+\.png\)/u);
     assert.match(exported, new RegExp(`!\\[${assetUrl.replaceAll(".", "\\.")}\\]\\(\\.\\.\\/assets\\/[a-f0-9-]+\\.png\\)`, "u"));
     assert.match(exported, /!\[same bytes\]\(\.\.\/assets\/[a-f0-9-]+\.png\)/u);
@@ -128,6 +142,7 @@ test("portable bundle round-trips documents and images without rewriting links o
     assert.equal(restored.archivedAt, original.archivedAt);
     assert.equal(restored.sourceNote, original.sourceNote);
     assert.equal(restored.createdAt, original.createdAt);
+    assert.deepEqual(target.listDerivedResults(restored.id), { items: [], page: 1, pageSize: 30, total: 0 });
     assert.equal(readFileSync(target.assetFilePath(hash)).equals(png), true);
     assert.deepEqual(target.listDocumentAssets(restored.id)?.map(({ sourceUrl }) => sourceUrl), [assetUrl, relativeAssetUrl, secondAssetUrl]);
 

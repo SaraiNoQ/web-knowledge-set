@@ -30,7 +30,7 @@ import {
   verifyBackup,
   type BackupManifest,
 } from "../server/backup.js";
-import { openDatabase, type KnowledgeDatabase } from "../server/db.js";
+import { derivedInputHash, openDatabase, type KnowledgeDatabase } from "../server/db.js";
 import { acquireDataLock } from "../server/lock.js";
 
 const mutableFs = createRequire(import.meta.url)("node:fs") as {
@@ -308,6 +308,19 @@ test("restore round-trips data and keeps a verified pre-restore backup", async (
   let releaseLock: (() => void) | undefined;
   try {
     const saved = capturedDocument(fixture.db, fixture.dataDir);
+    assert.equal(fixture.db.saveDerivedResult({
+      documentId: saved.document.id,
+      type: "summary",
+      model: "backup-test",
+      endpointId: "local-test",
+      promptVersion: "summary-v1",
+      inputHash: derivedInputHash(saved.document.title, saved.document.markdown),
+      output: "Summary retained only by full backup",
+      durationMs: 1,
+      sourceChars: saved.document.title.length + saved.document.markdown.length,
+      sentChars: saved.document.title.length + saved.document.markdown.length,
+      truncated: false,
+    }).kind, "saved");
     writeFileSync(join(fixture.dataDir, "snapshots/orphan.html.gz"), "recoverable orphan", { mode: 0o600 });
     const original = await createBackup({
       dataDir: fixture.dataDir,
@@ -354,6 +367,7 @@ test("restore round-trips data and keeps a verified pre-restore backup", async (
       assert.equal(document.markdown, saved.document.markdown);
       assert.equal(document.revision, saved.document.revision);
       assert.deepEqual(document.tags, saved.document.tags);
+      assert.equal(current.listDerivedResults(document.id)?.items[0]?.output, "Summary retained only by full backup");
       assert.equal(current.listDocuments().total, 1);
       assert.equal(readFileSync(join(fixture.dataDir, saved.snapshotPath), "utf8"), "compressed-html");
       assert.deepEqual(readFileSync(join(fixture.dataDir, saved.assetPath)), readFileSync(join(original.path, saved.assetPath)));

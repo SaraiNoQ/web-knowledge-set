@@ -18,6 +18,7 @@ import test from "node:test";
 import {
   CURRENT_SCHEMA_VERSION,
   DatabaseSchemaError,
+  derivedInputHash,
   inspectDatabaseSchema,
   migrateDatabase,
   openDatabase,
@@ -37,7 +38,7 @@ function database() {
   };
 }
 
-test("v13 recent filters persist in the local database", () => {
+test("v14 recent filters persist in the local database", () => {
   const fixture = database();
   const filters: RecentFilter[] = [{
     label: "最近研究",
@@ -54,7 +55,7 @@ test("v13 recent filters persist in the local database", () => {
     sort: "updated",
   }];
   try {
-    assert.equal(CURRENT_SCHEMA_VERSION, 13);
+    assert.equal(CURRENT_SCHEMA_VERSION, 14);
     assert.deepEqual(fixture.db.getRecentFilters(), { filters: [], revision: 0 });
     assert.deepEqual(fixture.db.setRecentFilters(filters, 0), { kind: "updated", state: { filters, revision: 1 } });
     assert.deepEqual(fixture.db.setRecentFilters([], 0), { kind: "conflict" });
@@ -65,6 +66,109 @@ test("v13 recent filters persist in the local database", () => {
     fixture.db.close();
     fixture.db = openDatabase(fixture.directory);
     assert.deepEqual(fixture.db.getRecentFilters(), { filters, revision: 1 });
+  } finally {
+    fixture.close();
+  }
+});
+
+test("derived results are immutable, deduplicated, stale-aware, pinnable, and document-owned", () => {
+  const fixture = database();
+  try {
+    const created = fixture.db.createOrGetDocument("https://example.com/derived").document;
+    const edited = fixture.db.updateDocument(created.id, created.revision, { markdown: "Source body" });
+    assert.equal(edited.kind, "updated");
+    if (edited.kind !== "updated") return;
+    const sourceChars = edited.document.title.length + edited.document.markdown.length;
+    const inputHash = derivedInputHash(edited.document.title, edited.document.markdown);
+    const save = (type: "summary" | "outline", promptVersion: string, output: string) => fixture.db.saveDerivedResult({
+      documentId: created.id,
+      type,
+      model: "test-model",
+      endpointId: "local-test",
+      promptVersion,
+      inputHash,
+      output,
+      durationMs: 12,
+      usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+      sourceChars,
+      sentChars: sourceChars,
+      truncated: false,
+    });
+    const first = save("summary", "summary-v1", "First summary");
+    assert.equal(first.kind, "saved");
+    if (first.kind !== "saved") return;
+    assert.equal(first.created, true);
+    const duplicate = save("summary", "summary-v1", "Ignored replacement");
+    assert.equal(duplicate.kind, "saved");
+    if (duplicate.kind !== "saved") return;
+    assert.equal(duplicate.created, false);
+    assert.equal(duplicate.result.id, first.result.id);
+    assert.equal(duplicate.result.output, "First summary");
+
+    const second = save("summary", "summary-v2", "Second summary");
+    const outline = save("outline", "outline-v1", "# Outline");
+    assert.equal(second.kind, "saved");
+    assert.equal(outline.kind, "saved");
+    if (second.kind !== "saved" || outline.kind !== "saved") return;
+    assert.equal(fixture.db.pinDerivedResult(created.id, first.result.id, true).kind, "updated");
+    assert.equal(fixture.db.pinDerivedResult(created.id, second.result.id, true).kind, "updated");
+    assert.deepEqual(
+      fixture.db.listDerivedResults(created.id)?.items.filter(({ pinned }) => pinned).map(({ id }) => id),
+      [second.result.id],
+    );
+    assert.equal(fixture.db.pinDerivedResult(created.id, outline.result.id, true).kind, "not_summary");
+    assert.deepEqual(fixture.db.listDerivedResults(created.id, 2), {
+      items: [], page: 2, pageSize: 30, total: 3,
+    });
+    assert.throws(
+      () => fixture.db.sql.prepare("UPDATE derived_results SET output = 'changed' WHERE id = ?").run(first.result.id),
+      /immutable/u,
+    );
+    assert.equal(fixture.db.deleteDerivedResult(created.id, outline.result.id).kind, "deleted");
+
+    const changed = fixture.db.updateDocument(created.id, edited.document.revision, { markdown: "Changed body" });
+    assert.equal(changed.kind, "updated");
+    assert.ok(fixture.db.listDerivedResults(created.id)?.items.every(({ stale }) => stale));
+    assert.equal(save("outline", "outline-v2", "Late result").kind, "source_changed");
+    assert.throws(() => fixture.db.saveDerivedResult({
+      documentId: created.id, type: "summary", model: "test", endpointId: "test",
+      promptVersion: "v1", inputHash: "invalid", output: "output", durationMs: 0,
+      sourceChars: 1, sentChars: 1, truncated: false,
+    }), /SHA-256/u);
+    assert.throws(() => fixture.db.saveDerivedResult({
+      documentId: created.id, type: "summary", model: "test", endpointId: "https://secret.example/?key=x",
+      promptVersion: "v1", inputHash, output: "output", durationMs: 0,
+      sourceChars, sentChars: sourceChars, truncated: false,
+    }), /not a URL/u);
+    assert.throws(() => fixture.db.saveDerivedResult({
+      documentId: created.id, type: "summary", model: "test", endpointId: "test",
+      promptVersion: "v1", inputHash, output: "output", durationMs: 0,
+      sourceChars, sentChars: sourceChars - 1, truncated: false,
+    }), /truncation/u);
+
+    assert.equal(fixture.db.deleteAllDerivedResults(), 2);
+    const current = fixture.db.getDocument(created.id)!;
+    const savedAgain = fixture.db.saveDerivedResult({
+      documentId: created.id, type: "summary", model: "test", endpointId: "test",
+      promptVersion: "v3", inputHash: derivedInputHash(current.title, current.markdown), output: "Cascades", durationMs: 0,
+      sourceChars: current.title.length + current.markdown.length,
+      sentChars: current.title.length + current.markdown.length,
+      truncated: false,
+    });
+    assert.equal(savedAgain.kind, "saved");
+    assert.equal(fixture.db.updateDocument(created.id, current.revision, { title: "Changed title" }).kind, "updated");
+    assert.equal(fixture.db.listDerivedResults(created.id)?.items[0]?.stale, true);
+    const titled = fixture.db.getDocument(created.id)!;
+    fixture.db.sql.prepare("UPDATE documents SET deleted_at = ? WHERE id = ?").run(new Date().toISOString(), created.id);
+    assert.equal(fixture.db.saveDerivedResult({
+      documentId: created.id, type: "summary", model: "test", endpointId: "test",
+      promptVersion: "v4", inputHash: derivedInputHash(titled.title, titled.markdown), output: "Rejected", durationMs: 0,
+      sourceChars: titled.title.length + titled.markdown.length,
+      sentChars: titled.title.length + titled.markdown.length,
+      truncated: false,
+    }).kind, "deleted");
+    fixture.db.sql.prepare("DELETE FROM documents WHERE id = ?").run(created.id);
+    assert.equal((fixture.db.sql.prepare("SELECT count(*) AS count FROM derived_results").get() as { count: number }).count, 0);
   } finally {
     fixture.close();
   }
@@ -1041,7 +1145,7 @@ test("current migrations upgrade v3 and the frozen v7 release schema", () => {
       .all();
     fixture.close();
 
-    assert.deepEqual(inspectDatabaseSchema(currentDirectory).pendingVersions, [8, 9, 10, 11, 12, 13]);
+    assert.deepEqual(inspectDatabaseSchema(currentDirectory).pendingVersions, [8, 9, 10, 11, 12, 13, 14]);
     const current = openDatabase(currentDirectory);
     try {
       assert.equal(current.getDocument("release-document")?.markdown, "Frozen release schema body.");
@@ -1123,6 +1227,10 @@ test("schema inspection is read-only and rejects future or incomplete histories"
     const raw = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));
     raw.exec(`
       PRAGMA foreign_keys = OFF;
+      DROP TRIGGER derived_results_immutable;
+      DROP INDEX derived_results_one_pinned_summary;
+      DROP INDEX derived_results_document_created;
+      DROP TABLE derived_results;
       DROP TABLE import_items;
       DROP TABLE import_batches;
       CREATE TABLE import_batches (
@@ -1197,7 +1305,7 @@ test("all pending migrations roll back together on failure", () => {
       currentVersion: 3,
       supportedVersion: CURRENT_SCHEMA_VERSION,
       appliedVersions: [1, 2, 3],
-      pendingVersions: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+      pendingVersions: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
     });
     const unchanged = new DatabaseSync(path, { readOnly: true });
     try {

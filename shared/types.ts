@@ -73,6 +73,61 @@ export interface KnowledgeDocument extends DocumentSummary {
   sourceNote: string;
 }
 
+export type DerivedResultType = "summary" | "outline" | "keywords" | "tag-suggestions";
+
+export interface DerivedResultUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}
+
+export interface DerivedResult {
+  id: string;
+  documentId: string;
+  type: DerivedResultType;
+  model: string;
+  endpointId: string;
+  promptVersion: string;
+  inputHash: string;
+  output: string;
+  durationMs: number;
+  usage: DerivedResultUsage | null;
+  sourceChars: number;
+  sentChars: number;
+  truncated: boolean;
+  pinned: boolean;
+  stale: boolean;
+  createdAt: string;
+}
+
+export interface SaveDerivedResultInput {
+  documentId: string;
+  type: DerivedResultType;
+  model: string;
+  /** Opaque, non-secret identifier. It must not contain an endpoint URL or credential. */
+  endpointId: string;
+  promptVersion: string;
+  inputHash: string;
+  output: string;
+  durationMs: number;
+  usage?: DerivedResultUsage | null;
+  sourceChars: number;
+  sentChars: number;
+  truncated: boolean;
+}
+
+export interface DerivedResultListResponse {
+  items: DerivedResult[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface DeleteDerivedResultsResponse {
+  deleted: true;
+  deletedResults: number;
+}
+
 export interface DocumentListResponse {
   items: DocumentSummary[];
   page: number;

@@ -21,6 +21,8 @@ assets/<sha256>-<original-markdown-url-sha256>.<ext>
 
 每个资源替换记录包含 `path`、`sha256`、`mimeType`、规范化后的缓存键 `sourceUrl`、Markdown 中的精确原值 `originalUrl` 和 `byteSize`。v1 只允许 JPEG、PNG、GIF、WebP 和 AVIF。导出的 Markdown 仅把已缓存的图片 URL 改写为相对资源路径；普通链接、代码和正文保持不变。重新导入时，正文用 `originalUrl` 恢复，资源映射按 `sourceUrl` 去重，并用 `originalSha256` 验证正文无损往返。
 
+便携格式 v1 明确不包含 LLM 派生结果；它们只属于完整 SQLite 备份。单篇 Markdown 导出同样只包含人工正文和文档元数据，不附加派生结果。
+
 ## 校验与兼容
 
 - 导入器必须先完整校验 ZIP 结构、路径、条目/解压大小、压缩比、声明文件和 SHA-256，再写入正式文档数据。

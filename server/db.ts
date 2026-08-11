@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, rmSync, unlinkSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -23,6 +23,10 @@ import type {
   DocumentRevision,
   DocumentSummary,
   DocumentAsset,
+  DerivedResult,
+  DerivedResultListResponse,
+  DerivedResultType,
+  DerivedResultUsage,
   KnowledgeDocument,
   KnowledgeCollection,
   KnowledgeTag,
@@ -31,6 +35,7 @@ import type {
   ImportPreview,
   ImportStrategy,
   RecentFilter,
+  SaveDerivedResultInput,
   TagMutationResponse,
 } from "../shared/types.js";
 
@@ -397,6 +402,46 @@ const migrations = [
   DROP TABLE import_batches_v12;
   CREATE INDEX import_items_batch ON import_items(batch_id, item_index);
   `,
+  `
+  CREATE TABLE derived_results (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    type TEXT NOT NULL CHECK (type IN ('summary', 'outline', 'keywords', 'tag-suggestions')),
+    model TEXT NOT NULL CHECK (length(model) BETWEEN 1 AND 200),
+    endpoint_id TEXT NOT NULL CHECK (length(endpoint_id) BETWEEN 1 AND 100),
+    prompt_version TEXT NOT NULL CHECK (length(prompt_version) BETWEEN 1 AND 100),
+    input_hash TEXT NOT NULL
+      CHECK (length(input_hash) = 64 AND input_hash NOT GLOB '*[^0-9a-f]*'),
+    output TEXT NOT NULL CHECK (length(output) BETWEEN 1 AND 2097152),
+    duration_ms INTEGER NOT NULL CHECK (duration_ms BETWEEN 0 AND 86400000),
+    usage_json TEXT CHECK (
+      usage_json IS NULL OR (json_valid(usage_json) AND json_type(usage_json) = 'object')
+    ),
+    source_chars INTEGER NOT NULL CHECK (source_chars BETWEEN 1 AND 10485760),
+    sent_chars INTEGER NOT NULL CHECK (sent_chars BETWEEN 1 AND source_chars),
+    truncated INTEGER NOT NULL CHECK (
+      (truncated = 0 AND sent_chars = source_chars) OR
+      (truncated = 1 AND sent_chars < source_chars)
+    ),
+    pinned INTEGER NOT NULL DEFAULT 0 CHECK (
+      pinned IN (0, 1) AND (pinned = 0 OR type = 'summary')
+    ),
+    created_at TEXT NOT NULL,
+    UNIQUE(document_id, type, model, endpoint_id, prompt_version, input_hash)
+  );
+  CREATE INDEX derived_results_document_created
+    ON derived_results(document_id, created_at DESC, id DESC);
+  CREATE UNIQUE INDEX derived_results_one_pinned_summary
+    ON derived_results(document_id) WHERE type = 'summary' AND pinned = 1;
+
+  CREATE TRIGGER derived_results_immutable
+  BEFORE UPDATE OF id, document_id, type, model, endpoint_id, prompt_version,
+                   input_hash, output, duration_ms, usage_json, source_chars,
+                   sent_chars, truncated, created_at
+  ON derived_results BEGIN
+    SELECT RAISE(ABORT, 'derived results are immutable');
+  END;
+  `,
 ];
 
 export const CURRENT_SCHEMA_VERSION = migrations.length;
@@ -515,6 +560,24 @@ interface DocumentAssetRow {
   updated_at: string;
 }
 
+interface DerivedResultRow {
+  id: string;
+  document_id: string;
+  type: DerivedResultType;
+  model: string;
+  endpoint_id: string;
+  prompt_version: string;
+  input_hash: string;
+  output: string;
+  duration_ms: number;
+  usage_json: string | null;
+  source_chars: number;
+  sent_chars: number;
+  truncated: number;
+  pinned: number;
+  created_at: string;
+}
+
 export interface CaptureJob {
   id: number;
   captureId: string;
@@ -609,8 +672,76 @@ interface ImportItemRow {
 
 export type ListFilters = DocumentFilters;
 
+const derivedResultTypes = new Set<DerivedResultType>([
+  "summary",
+  "outline",
+  "keywords",
+  "tag-suggestions",
+]);
+
 function now() {
   return new Date().toISOString();
+}
+
+export function derivedInputHash(title: string, markdown: string) {
+  return createHash("sha256")
+    .update("zhiye-derived-input-v1\0", "utf8")
+    .update(JSON.stringify([title, markdown]), "utf8")
+    .digest("hex");
+}
+
+function validDerivedUsage(value: unknown): value is DerivedResultUsage {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const keys = Object.keys(value);
+  const allowed = new Set(["inputTokens", "outputTokens", "totalTokens"]);
+  return keys.length > 0 && keys.every((key) => allowed.has(key)) &&
+    Object.values(value).every((item) => Number.isSafeInteger(item) && (item as number) >= 0);
+}
+
+function parseDerivedUsage(value: string | null) {
+  if (!value) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return validDerivedUsage(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizedDerivedResult(input: SaveDerivedResultInput) {
+  if (!derivedResultTypes.has(input.type)) throw new RangeError("Derived result type is invalid");
+  const model = input.model.trim();
+  const endpointId = input.endpointId.trim();
+  const promptVersion = input.promptVersion.trim();
+  if (!model || model.length > 200) throw new RangeError("Derived result model must be 1 to 200 characters");
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/u.test(endpointId)) {
+    throw new RangeError("Derived result endpoint ID must be a non-secret identifier, not a URL");
+  }
+  if (!promptVersion || promptVersion.length > 100) throw new RangeError("Derived result prompt version must be 1 to 100 characters");
+  if (!/^[a-f0-9]{64}$/u.test(input.inputHash)) throw new RangeError("Derived result input hash must be lowercase SHA-256");
+  if (!input.output.trim() || Buffer.byteLength(input.output, "utf8") > 2 * 1024 * 1024) {
+    throw new RangeError("Derived result output must be non-empty and no larger than 2 MiB");
+  }
+  if (!Number.isSafeInteger(input.durationMs) || input.durationMs < 0 || input.durationMs > 86_400_000) {
+    throw new RangeError("Derived result duration must be an integer from 0 to 86400000 milliseconds");
+  }
+  if (!Number.isSafeInteger(input.sourceChars) || input.sourceChars < 1 || input.sourceChars > 10_485_760) {
+    throw new RangeError("Derived result source character count is invalid");
+  }
+  if (!Number.isSafeInteger(input.sentChars) || input.sentChars < 1 || input.sentChars > input.sourceChars) {
+    throw new RangeError("Derived result sent character count is invalid");
+  }
+  if (typeof input.truncated !== "boolean" || input.truncated !== (input.sentChars < input.sourceChars)) {
+    throw new RangeError("Derived result truncation flag must match its coverage");
+  }
+  let usageJson: string | null = null;
+  if (input.usage !== undefined && input.usage !== null) {
+    if (!validDerivedUsage(input.usage)) {
+      throw new RangeError("Derived result usage contains unknown or no fields");
+    }
+    usageJson = JSON.stringify(input.usage);
+  }
+  return { ...input, model, endpointId, promptVersion, usageJson };
 }
 
 function durationMs(startedAt: string, finishedAt: string | null) {
@@ -1325,6 +1456,145 @@ export class KnowledgeDatabase {
       | DocumentRow
       | undefined;
     return row ? this.toDocument(row) : null;
+  }
+
+  private toDerivedResult(row: DerivedResultRow, currentInputHash: string): DerivedResult {
+    return {
+      id: row.id,
+      documentId: row.document_id,
+      type: row.type,
+      model: row.model,
+      endpointId: row.endpoint_id,
+      promptVersion: row.prompt_version,
+      inputHash: row.input_hash,
+      output: row.output,
+      durationMs: row.duration_ms,
+      usage: parseDerivedUsage(row.usage_json),
+      sourceChars: row.source_chars,
+      sentChars: row.sent_chars,
+      truncated: Boolean(row.truncated),
+      pinned: Boolean(row.pinned),
+      stale: row.input_hash !== currentInputHash,
+      createdAt: row.created_at,
+    };
+  }
+
+  saveDerivedResult(input: SaveDerivedResultInput) {
+    const value = normalizedDerivedResult(input);
+    return transaction(this.sql, () => {
+      const document = this.sql.prepare("SELECT title, markdown, deleted_at FROM documents WHERE id = ?").get(value.documentId) as
+        | { title: string; markdown: string; deleted_at: string | null }
+        | undefined;
+      if (!document) return { kind: "missing" as const };
+      if (document.deleted_at) return { kind: "deleted" as const };
+      const currentInputHash = derivedInputHash(document.title, document.markdown);
+      if (value.inputHash !== currentInputHash) {
+        return { kind: "source_changed" as const, currentInputHash };
+      }
+      const id = randomUUID();
+      const createdAt = now();
+      const inserted = this.sql.prepare(
+        `INSERT OR IGNORE INTO derived_results(
+           id, document_id, type, model, endpoint_id, prompt_version, input_hash,
+           output, duration_ms, usage_json, source_chars, sent_chars, truncated, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        id,
+        value.documentId,
+        value.type,
+        value.model,
+        value.endpointId,
+        value.promptVersion,
+        value.inputHash,
+        value.output,
+        value.durationMs,
+        value.usageJson,
+        value.sourceChars,
+        value.sentChars,
+        Number(value.truncated),
+        createdAt,
+      );
+      const row = (inserted.changes
+        ? this.sql.prepare("SELECT * FROM derived_results WHERE id = ?").get(id)
+        : this.sql.prepare(
+          `SELECT * FROM derived_results
+           WHERE document_id = ? AND type = ? AND model = ? AND endpoint_id = ?
+             AND prompt_version = ? AND input_hash = ?`,
+        ).get(
+          value.documentId,
+          value.type,
+          value.model,
+          value.endpointId,
+          value.promptVersion,
+          value.inputHash,
+        )) as unknown as DerivedResultRow;
+      return {
+        kind: "saved" as const,
+        created: inserted.changes === 1,
+        result: this.toDerivedResult(row, currentInputHash),
+      };
+    });
+  }
+
+  listDerivedResults(documentId: string, page = 1) {
+    if (!Number.isSafeInteger(page) || page < 1 || page > 1_000_000) {
+      throw new RangeError("Derived result page must be an integer from 1 to 1000000");
+    }
+    const document = this.sql.prepare("SELECT title, markdown FROM documents WHERE id = ?").get(documentId) as
+      | { title: string; markdown: string }
+      | undefined;
+    if (!document) return null;
+    const currentInputHash = derivedInputHash(document.title, document.markdown);
+    const total = Number((
+      this.sql.prepare("SELECT count(*) AS total FROM derived_results WHERE document_id = ?").get(documentId) as
+        { total: number }
+    ).total);
+    const items = (
+      this.sql.prepare(
+        `SELECT * FROM derived_results WHERE document_id = ?
+         ORDER BY pinned DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`,
+      ).all(documentId, PAGE_SIZE, (page - 1) * PAGE_SIZE) as unknown as DerivedResultRow[]
+    ).map((row) => this.toDerivedResult(row, currentInputHash));
+    return { items, page, pageSize: PAGE_SIZE, total } satisfies DerivedResultListResponse;
+  }
+
+  pinDerivedResult(documentId: string, resultId: string, pinned: boolean) {
+    return transaction(this.sql, () => {
+      const document = this.sql.prepare("SELECT title, markdown FROM documents WHERE id = ?").get(documentId) as
+        | { title: string; markdown: string }
+        | undefined;
+      if (!document) return { kind: "missing" as const };
+      const target = this.sql.prepare(
+        "SELECT * FROM derived_results WHERE id = ? AND document_id = ?",
+      ).get(resultId, documentId) as unknown as DerivedResultRow | undefined;
+      if (!target) return { kind: "result_missing" as const };
+      if (pinned && target.type !== "summary") return { kind: "not_summary" as const };
+      if (pinned) {
+        this.sql.prepare(
+          "UPDATE derived_results SET pinned = 0 WHERE document_id = ? AND type = 'summary' AND pinned = 1",
+        ).run(documentId);
+      }
+      this.sql.prepare("UPDATE derived_results SET pinned = ? WHERE id = ?").run(Number(pinned), resultId);
+      const result = this.sql.prepare("SELECT * FROM derived_results WHERE id = ?").get(resultId) as unknown as DerivedResultRow;
+      return {
+        kind: "updated" as const,
+        result: this.toDerivedResult(result, derivedInputHash(document.title, document.markdown)),
+      };
+    });
+  }
+
+  deleteDerivedResult(documentId: string, resultId: string) {
+    if (!this.sql.prepare("SELECT 1 FROM documents WHERE id = ?").get(documentId)) {
+      return { kind: "missing" as const };
+    }
+    const deleted = this.sql.prepare(
+      "DELETE FROM derived_results WHERE id = ? AND document_id = ?",
+    ).run(resultId, documentId);
+    return deleted.changes === 1 ? { kind: "deleted" as const } : { kind: "result_missing" as const };
+  }
+
+  deleteAllDerivedResults() {
+    return Number(this.sql.prepare("DELETE FROM derived_results").run().changes);
   }
 
   *documentsForPortableExport(documentIds?: string[]) {

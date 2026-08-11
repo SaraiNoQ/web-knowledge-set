@@ -7,7 +7,7 @@ import { basename, join } from "node:path";
 import test from "node:test";
 
 import { createApp, type CaptureFunction } from "../server/app.js";
-import { openDatabase } from "../server/db.js";
+import { derivedInputHash, openDatabase } from "../server/db.js";
 import type {
   BackupRecord,
   CaptureHistoryItem,
@@ -19,6 +19,8 @@ import type {
   DocumentDraft,
   DocumentListResponse,
   DocumentRevision,
+  DerivedResult,
+  DerivedResultListResponse,
   KnowledgeDocument,
   KnowledgeCollection,
   KnowledgeTag,
@@ -75,9 +77,10 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     };
   };
   const desktopCloseAttempts: string[] = [];
+  const database = openDatabase(directory);
   const app = createApp({
     dataDir: directory,
-    database: openDatabase(directory),
+    database,
     bootstrapToken: "bootstrap-test-token",
     sessionToken: "session-test-token",
     capture,
@@ -733,6 +736,57 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
       restoredRevision.revision,
     );
 
+    const storedSummary = database.saveDerivedResult({
+      documentId: ready.id,
+      type: "summary",
+      model: "fake-model",
+      endpointId: "fake-local",
+      promptVersion: "summary-v1",
+      inputHash: derivedInputHash(restoredRevision.title, restoredRevision.markdown),
+      output: "DERIVED_ONLY_SUMMARY",
+      durationMs: 5,
+      sourceChars: restoredRevision.title.length + restoredRevision.markdown.length,
+      sentChars: restoredRevision.title.length + restoredRevision.markdown.length,
+      truncated: false,
+    });
+    const storedOutline = database.saveDerivedResult({
+      documentId: ready.id,
+      type: "outline",
+      model: "fake-model",
+      endpointId: "fake-local",
+      promptVersion: "outline-v1",
+      inputHash: derivedInputHash(restoredRevision.title, restoredRevision.markdown),
+      output: "DERIVED_ONLY_OUTLINE",
+      durationMs: 6,
+      sourceChars: restoredRevision.title.length + restoredRevision.markdown.length,
+      sentChars: restoredRevision.title.length + restoredRevision.markdown.length,
+      truncated: false,
+    });
+    assert.equal(storedSummary.kind, "saved");
+    assert.equal(storedOutline.kind, "saved");
+    if (storedSummary.kind !== "saved" || storedOutline.kind !== "saved") {
+      throw new Error("Derived results were not saved");
+    }
+    const derivedResponse = await fetch(`${base}/api/documents/${ready.id}/derived-results`, {
+      headers: { Cookie: cookie },
+    });
+    assert.equal(derivedResponse.status, 200);
+    assert.deepEqual(
+      ((await derivedResponse.json()) as DerivedResultListResponse),
+      { items: database.listDerivedResults(ready.id)!.items, page: 1, pageSize: 30, total: 2 },
+    );
+    assert.equal((await fetch(`${base}/api/documents/${ready.id}/derived-results`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ output: "must not be accepted" }),
+    })).status, 404);
+    const pinned = await fetch(
+      `${base}/api/documents/${ready.id}/derived-results/${storedSummary.result.id}`,
+      { method: "PATCH", headers: jsonHeaders, body: JSON.stringify({ pinned: true }) },
+    );
+    assert.equal(pinned.status, 200);
+    assert.equal(((await pinned.json()) as DerivedResult).pinned, true);
+
     const exported = await fetch(`${base}/api/documents/${ready.id}/export.md`, {
       headers: { Cookie: cookie },
     });
@@ -742,6 +796,30 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     assert.match(
       exportedText,
       /tags: \["Inbox"\]\ncollections: \[\]\nfavorite: false\narchived_at: null\nsource_note: ""\n---\n\n# Human edit\n$/u,
+    );
+    assert.doesNotMatch(exportedText, /DERIVED_ONLY/u);
+
+    const deletedOne = await fetch(
+      `${base}/api/documents/${ready.id}/derived-results/${storedOutline.result.id}`,
+      { method: "DELETE", headers: jsonHeaders, body: "{}" },
+    );
+    assert.equal(deletedOne.status, 204);
+    const unconfirmedDelete = await fetch(`${base}/api/derived-results`, {
+      method: "DELETE",
+      headers: jsonHeaders,
+      body: JSON.stringify({ confirm: false }),
+    });
+    assert.equal(unconfirmedDelete.status, 400);
+    const deletedAll = await fetch(`${base}/api/derived-results`, {
+      method: "DELETE",
+      headers: jsonHeaders,
+      body: JSON.stringify({ confirm: true }),
+    });
+    assert.equal(deletedAll.status, 200);
+    assert.deepEqual(await deletedAll.json(), { deleted: true, deletedResults: 1 });
+    assert.deepEqual(
+      await (await fetch(`${base}/api/documents/${ready.id}/derived-results`, { headers: { Cookie: cookie } })).json(),
+      { items: [], page: 1, pageSize: 30, total: 0 },
     );
 
     const failedCreate = await fetch(`${base}/api/documents`, {
