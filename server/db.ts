@@ -26,6 +26,7 @@ import type {
   KnowledgeDocument,
   KnowledgeCollection,
   KnowledgeTag,
+  RecentFilter,
   TagMutationResponse,
 } from "../shared/types.js";
 
@@ -312,6 +313,14 @@ const migrations = [
   );
   CREATE INDEX document_collections_collection
     ON document_collections(collection_id, document_id);
+  `,
+  `
+  CREATE TABLE app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+    updated_at TEXT NOT NULL
+  );
   `,
 ];
 
@@ -766,6 +775,27 @@ export class KnowledgeDatabase {
 
   close() {
     this.sql.close();
+  }
+
+  getRecentFilters(): { filters: RecentFilter[]; revision: number } {
+    const row = this.sql
+      .prepare("SELECT value, revision FROM app_settings WHERE key = 'recent-filters'")
+      .get() as { value: string; revision: number } | undefined;
+    return row ? { filters: JSON.parse(row.value) as RecentFilter[], revision: row.revision } : { filters: [], revision: 0 };
+  }
+
+  setRecentFilters(filters: RecentFilter[], expectedRevision: number) {
+    const timestamp = now();
+    const result = expectedRevision === 0
+      ? this.sql.prepare(
+        `INSERT OR IGNORE INTO app_settings(key, value, revision, updated_at)
+         VALUES ('recent-filters', ?, 1, ?)`,
+      ).run(JSON.stringify(filters), timestamp)
+      : this.sql.prepare(
+        `UPDATE app_settings SET value = ?, revision = revision + 1, updated_at = ?
+         WHERE key = 'recent-filters' AND revision = ?`,
+      ).run(JSON.stringify(filters), timestamp, expectedRevision);
+    return result.changes === 1 ? { kind: "updated" as const, state: this.getRecentFilters() } : { kind: "conflict" as const };
   }
 
   private toBackupRecord(row: BackupRecordRow): BackupRecord {

@@ -502,8 +502,14 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await page.getByRole("button", { name: "关闭分类管理" }).click();
   const libraryViews = page.getByRole("navigation", { name: "资料库视图" });
   await libraryViews.getByRole("button", { name: "收藏", exact: true }).click();
-  await expect(page.getByRole("button", { name: /人工整理标题/ })).toBeVisible();
-  await page.getByLabel("选择 人工整理标题").check();
+  const keyboardRow = page.getByRole("button", { name: /人工整理标题/ });
+  await expect(keyboardRow).toBeVisible();
+  await page.keyboard.press("?");
+  await expect(page.getByRole("dialog", { name: "快捷键" })).toBeVisible();
+  await page.getByRole("button", { name: "关闭快捷键" }).click();
+  await keyboardRow.focus();
+  await page.keyboard.press("x");
+  await expect(page.getByLabel("选择 人工整理标题")).toBeChecked();
   await page.getByLabel("批量操作", { exact: true }).selectOption("unarchive");
   await page.getByRole("button", { name: "应用", exact: true }).click();
   await expect(page.getByText("已处理当前页选中的 1 篇知识。")).toBeVisible();

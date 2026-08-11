@@ -22,7 +22,7 @@ import {
   migrateDatabase,
   openDatabase,
 } from "../server/db.js";
-import type { BackupRecord } from "../shared/types.js";
+import type { BackupRecord, RecentFilter } from "../shared/types.js";
 import { acquireDataLock } from "../server/lock.js";
 
 function database() {
@@ -36,6 +36,39 @@ function database() {
     },
   };
 }
+
+test("v11 recent filters persist in the local database", () => {
+  const fixture = database();
+  const filters: RecentFilter[] = [{
+    label: "最近研究",
+    query: "knowledge",
+    scope: "body",
+    tag: "Research",
+    collectionId: "",
+    status: "ready",
+    favorite: true,
+    unorganized: false,
+    captureMode: "http",
+    from: "2026-08-01",
+    to: "2026-08-11",
+    sort: "updated",
+  }];
+  try {
+    assert.equal(CURRENT_SCHEMA_VERSION, 11);
+    assert.deepEqual(fixture.db.getRecentFilters(), { filters: [], revision: 0 });
+    assert.deepEqual(fixture.db.setRecentFilters(filters, 0), { kind: "updated", state: { filters, revision: 1 } });
+    assert.deepEqual(fixture.db.setRecentFilters([], 0), { kind: "conflict" });
+    assert.equal(
+      (fixture.db.sql.prepare("SELECT value FROM app_settings WHERE key = 'recent-filters'").get() as { value: string }).value,
+      JSON.stringify(filters),
+    );
+    fixture.db.close();
+    fixture.db = openDatabase(fixture.directory);
+    assert.deepEqual(fixture.db.getRecentFilters(), { filters, revision: 1 });
+  } finally {
+    fixture.close();
+  }
+});
 
 test("documents are queued once, indexed, tagged, and revision guarded", () => {
   const fixture = database();
@@ -954,7 +987,7 @@ test("current migrations upgrade v3 and the frozen v7 release schema", () => {
       .all();
     fixture.close();
 
-    assert.deepEqual(inspectDatabaseSchema(currentDirectory).pendingVersions, [8, 9, 10]);
+    assert.deepEqual(inspectDatabaseSchema(currentDirectory).pendingVersions, [8, 9, 10, 11]);
     const current = openDatabase(currentDirectory);
     try {
       assert.equal(current.getDocument("release-document")?.markdown, "Frozen release schema body.");
@@ -1034,14 +1067,7 @@ test("schema inspection is read-only and rejects future or incomplete histories"
 
     const raw = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));
     raw.exec(`
-      DROP INDEX documents_archive_favorite_updated;
-      DROP TABLE document_collections;
-      DROP TABLE collections;
-      ALTER TABLE documents DROP COLUMN published_at_edited;
-      ALTER TABLE documents DROP COLUMN author_edited;
-      ALTER TABLE documents DROP COLUMN source_note;
-      ALTER TABLE documents DROP COLUMN archived_at;
-      ALTER TABLE documents DROP COLUMN favorite;
+      DROP TABLE app_settings;
       DELETE FROM schema_migrations WHERE version = ${CURRENT_SCHEMA_VERSION};
     `);
     raw.close();
@@ -1088,7 +1114,7 @@ test("all pending migrations roll back together on failure", () => {
       currentVersion: 3,
       supportedVersion: CURRENT_SCHEMA_VERSION,
       appliedVersions: [1, 2, 3],
-      pendingVersions: [4, 5, 6, 7, 8, 9, 10],
+      pendingVersions: [4, 5, 6, 7, 8, 9, 10, 11],
     });
     const unchanged = new DatabaseSync(path, { readOnly: true });
     try {
@@ -1098,6 +1124,10 @@ test("all pending migrations roll back together on failure", () => {
         unchanged
           .prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'document_revisions'")
           .get(),
+        undefined,
+      );
+      assert.equal(
+        unchanged.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'app_settings'").get(),
         undefined,
       );
     } finally {

@@ -17,6 +17,7 @@ import type {
   DocumentSearchScope,
   DocumentSort,
   KnowledgeDocument,
+  RecentFilter,
 } from "../shared/types.js";
 import { cacheDocumentAssets, type AssetFetchFunction } from "./assets.js";
 import { createAuth } from "./auth.js";
@@ -66,6 +67,10 @@ const statuses = new Set<CaptureStatus>(["queued", "fetching", "extracting", "re
 const captureModes = new Set<CaptureMode>(["http", "browser"]);
 const searchScopes = new Set<DocumentSearchScope>(["all", "title", "body", "source"]);
 const documentSorts = new Set<DocumentSort>(["updated", "created", "title"]);
+const documentFilterKeys = new Set([
+  "q", "scope", "tag", "collectionId", "status", "favorite", "archived", "unorganized",
+  "from", "to", "captureMode", "sort", "page", "trash",
+]);
 const batchActions = new Set<BatchDocumentAction>([
   "add-tag",
   "remove-tag",
@@ -483,12 +488,8 @@ function filterDate(value: string | null, field: "from" | "to") {
 }
 
 function documentFilters(requestUrl: URL): DocumentFilters {
-  const allowed = new Set([
-    "q", "scope", "tag", "collectionId", "status", "favorite", "archived", "unorganized",
-    "from", "to", "captureMode", "sort", "page", "trash",
-  ]);
   for (const key of requestUrl.searchParams.keys()) {
-    if (!allowed.has(key)) throw new HttpError(400, "INVALID_FILTER", `Unknown document filter: ${key}`);
+    if (!documentFilterKeys.has(key)) throw new HttpError(400, "INVALID_FILTER", `Unknown document filter: ${key}`);
     if (requestUrl.searchParams.getAll(key).length !== 1) {
       throw new HttpError(400, "INVALID_FILTER", `Document filter may only appear once: ${key}`);
     }
@@ -540,6 +541,91 @@ function documentFilters(requestUrl: URL): DocumentFilters {
     page,
     trash: trashFilter(requestUrl),
   };
+}
+
+function recentFiltersValue(body: Record<string, unknown>) {
+  if (Object.keys(body).some((key) => key !== "filters" && key !== "revision") || !Array.isArray(body.filters) || body.filters.length > 5) {
+    throw new HttpError(400, "INVALID_RECENT_FILTERS", "filters must be an array with at most 5 items");
+  }
+  return body.filters.map((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new HttpError(400, "INVALID_RECENT_FILTERS", "each recent filter must be an object");
+    }
+    const input = value as Record<string, unknown>;
+    const required = [
+      "label", "query", "scope", "tag", "collectionId", "status", "unorganized", "captureMode", "from", "to", "sort",
+    ];
+    const allowed = new Set([...required, "favorite", "archived"]);
+    if (required.some((key) => !(key in input)) || Object.keys(input).some((key) => !allowed.has(key))) {
+      throw new HttpError(400, "INVALID_RECENT_FILTERS", "recent filter contains an unknown field");
+    }
+    if (typeof input.label !== "string") {
+      throw new HttpError(400, "INVALID_RECENT_FILTERS", "label must contain 1 to 100 characters");
+    }
+    const label = input.label.normalize("NFKC").trim();
+    if (!label || label.length > 100) {
+      throw new HttpError(400, "INVALID_RECENT_FILTERS", "label must contain 1 to 100 characters");
+    }
+    if (typeof input.query !== "string" || input.query.length > 500) {
+      throw new HttpError(400, "INVALID_RECENT_FILTERS", "query must be a string under 500 characters");
+    }
+    if (typeof input.scope !== "string" || !searchScopes.has(input.scope as DocumentSearchScope)) {
+      throw new HttpError(400, "INVALID_RECENT_FILTERS", "Unknown search scope");
+    }
+    if (typeof input.tag !== "string" || input.tag.length > 100) {
+      throw new HttpError(400, "INVALID_RECENT_FILTERS", "tag must be empty or contain at most 100 characters");
+    }
+    const tag = input.tag ? tagNameValue(input.tag) : "";
+    if (typeof input.collectionId !== "string" || input.collectionId.length > 200) {
+      throw new HttpError(400, "INVALID_RECENT_FILTERS", "collectionId must be empty or contain at most 200 characters");
+    }
+    const collectionId = input.collectionId ? collectionIdsValue([input.collectionId])[0]! : "";
+    if (typeof input.status !== "string" || (input.status !== "" && !statuses.has(input.status as CaptureStatus))) {
+      throw new HttpError(400, "INVALID_RECENT_FILTERS", "Unknown capture status");
+    }
+    if (typeof input.unorganized !== "boolean") {
+      throw new HttpError(400, "INVALID_RECENT_FILTERS", "unorganized must be boolean");
+    }
+    const optional: Pick<RecentFilter, "favorite" | "archived"> = {};
+    for (const field of ["favorite", "archived"] as const) {
+      if (input[field] === undefined) continue;
+      if (typeof input[field] !== "boolean") {
+        throw new HttpError(400, "INVALID_RECENT_FILTERS", `${field} must be boolean`);
+      }
+      optional[field] = input[field];
+    }
+    if (
+      typeof input.captureMode !== "string" ||
+      (input.captureMode !== "" && !captureModes.has(input.captureMode as CaptureMode))
+    ) {
+      throw new HttpError(400, "INVALID_RECENT_FILTERS", "Unknown capture mode");
+    }
+    if (typeof input.from !== "string" || typeof input.to !== "string") {
+      throw new HttpError(400, "INVALID_RECENT_FILTERS", "from and to must be dates or empty strings");
+    }
+    const normalizedFrom = input.from ? filterDate(input.from, "from") : undefined;
+    const normalizedTo = input.to ? filterDate(input.to, "to") : undefined;
+    if (normalizedFrom && normalizedTo && normalizedFrom > normalizedTo) {
+      throw new HttpError(400, "INVALID_RECENT_FILTERS", "from must not be after to");
+    }
+    if (typeof input.sort !== "string" || !documentSorts.has(input.sort as DocumentSort)) {
+      throw new HttpError(400, "INVALID_RECENT_FILTERS", "Unknown document sort");
+    }
+    return {
+      label,
+      query: input.query.trim(),
+      scope: input.scope as DocumentSearchScope,
+      tag,
+      collectionId,
+      status: input.status as CaptureStatus | "",
+      ...optional,
+      unorganized: input.unorganized,
+      captureMode: input.captureMode as CaptureMode | "",
+      from: input.from.trim(),
+      to: input.to.trim(),
+      sort: input.sort as DocumentSort,
+    } satisfies RecentFilter;
+  });
 }
 
 function batchDocumentsRequest(body: Record<string, unknown>): BatchDocumentsRequest {
@@ -949,6 +1035,29 @@ export function createApp(options: AppOptions) {
 
       if (pathname === "/api/data-safety" && request.method === "GET") {
         sendJson(response, 200, await status());
+        return;
+      }
+
+      if (pathname === "/api/settings/recent-filters" && request.method === "GET") {
+        if (requestUrl.searchParams.size) {
+          throw new HttpError(400, "INVALID_RECENT_FILTERS", "Recent filters do not accept query parameters");
+        }
+        sendJson(response, 200, requireDatabase().getRecentFilters());
+        return;
+      }
+
+      if (pathname === "/api/settings/recent-filters" && request.method === "PUT") {
+        const body = await mutationBody(request);
+        const filters = recentFiltersValue(body);
+        if (!Number.isSafeInteger(body.revision) || (body.revision as number) < 0) {
+          throw new HttpError(400, "INVALID_RECENT_FILTERS", "revision must be a non-negative integer");
+        }
+        const result = requireDatabase().setRecentFilters(filters, body.revision as number);
+        if (result.kind === "conflict") {
+          sendError(response, 409, "RECENT_FILTERS_CONFLICT", "Recent filters changed in another window");
+          return;
+        }
+        sendJson(response, 200, result.state);
         return;
       }
 

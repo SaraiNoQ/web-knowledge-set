@@ -72,6 +72,9 @@ a { color: inherit; }
   outline-offset: 3px;
 }
 
+.skip-link { position: fixed; z-index: 1000; top: 8px; left: 8px; padding: 8px 12px; color: #fff; background: var(--ink); transform: translateY(-160%); }
+.skip-link:focus { transform: translateY(0); }
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -99,6 +102,22 @@ a { color: inherit; }
   padding: 20px clamp(24px, 4vw, 68px);
   border-bottom: 1px solid var(--line-strong);
 }
+
+.masthead-actions { display: flex; align-items: center; gap: 8px; }
+.shortcut-help-button { display: grid; place-items: center; width: 30px; height: 30px; color: var(--ink-soft); background: transparent; border: 1px solid var(--line); border-radius: 50%; font: 500 13px/1 var(--font-mono); }
+
+.shortcut-backdrop { width: 100%; max-width: none; height: 100%; max-height: none; padding: 20px; background: transparent; border: 0; }
+.shortcut-backdrop[open] { display: grid; place-items: center; }
+.shortcut-backdrop::backdrop { background: rgba(31,29,25,.42); backdrop-filter: blur(3px); }
+.shortcut-card { width: min(480px, 100%); padding: 24px; background: var(--paper); border: 1px solid var(--ink); box-shadow: 12px 12px 0 rgba(31,29,25,.16); }
+.shortcut-card > header { display: flex; justify-content: space-between; align-items: start; }
+.shortcut-card h2 { margin: 4px 0 0; font: 500 26px/1.2 var(--font-serif); }
+.shortcut-card header button { color: var(--ink-faint); background: transparent; border: 0; font-size: 24px; }
+.shortcut-card dl { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; margin: 22px 0 0; }
+.shortcut-card dl > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.shortcut-card dt { display: flex; gap: 4px; }
+.shortcut-card dd { margin: 0; color: var(--ink-soft); font-size: 11px; }
+.shortcut-card kbd { min-width: 24px; padding: 4px 6px; text-align: center; background: rgba(250,247,239,.8); border: 1px solid var(--line); font: 500 10px/1 var(--font-mono); }
 
 .brand {
   display: inline-flex;

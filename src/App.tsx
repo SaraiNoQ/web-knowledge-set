@@ -21,6 +21,7 @@ import type {
   KnowledgeCollection,
   KnowledgeDocument,
   KnowledgeTag,
+  RecentFilter,
   ReextractionPreview,
 } from "../shared/types";
 import { api, ApiRequestError } from "./api";
@@ -35,20 +36,11 @@ type LibraryView = "all" | "recent" | "favorites" | "unorganized" | "archived" |
 type SearchScope = "all" | "title" | "body" | "source";
 type SortOrder = "updated" | "created" | "title";
 
-interface SavedFilter {
-  label: string;
-  query: string;
-  scope: SearchScope;
-  tag: string;
-  collectionId: string;
-  status: StatusFilter;
-  favorite: boolean | undefined;
-  archived: boolean | undefined;
-  unorganized: boolean;
-  captureMode: CaptureMode | "";
-  from: string;
-  to: string;
-  sort: SortOrder;
+type SavedFilter = RecentFilter;
+
+function addRecentFilter(filters: SavedFilter[], saved: SavedFilter) {
+  const signature = JSON.stringify({ ...saved, label: undefined });
+  return [saved, ...filters.filter((value) => JSON.stringify({ ...value, label: undefined }) !== signature)].slice(0, 5);
 }
 
 interface Draft {
@@ -166,15 +158,6 @@ function sourceName(url: string) {
 
 function parseTags(value: string) {
   return [...new Set(value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean))];
-}
-
-function recentFilters(): SavedFilter[] {
-  try {
-    const value = JSON.parse(localStorage.getItem("zhiye.recentFilters") || "[]");
-    return Array.isArray(value) ? value.slice(0, 5) : [];
-  } catch {
-    return [];
-  }
 }
 
 function revisionPreview(markdown: string) {
@@ -455,7 +438,8 @@ export default function App() {
   const [sortOrder, setSortOrder] = useState<SortOrder>("updated");
   const [unorganizedFilter, setUnorganizedFilter] = useState(false);
   const [libraryView, setLibraryView] = useState<LibraryView>("all");
-  const [savedFilters, setSavedFilters] = useState<SavedFilter[]>(recentFilters);
+  const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([]);
+  const [recentFilterNotice, setRecentFilterNotice] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [batchAction, setBatchAction] = useState<BatchDocumentAction | "">("");
   const [batchCollectionId, setBatchCollectionId] = useState("");
@@ -463,6 +447,7 @@ export default function App() {
   const [batchNotice, setBatchNotice] = useState("");
   const [batchError, setBatchError] = useState("");
   const [listRefresh, setListRefresh] = useState(0);
+  const [shortcutHelp, setShortcutHelp] = useState(false);
   const [inTrash, setInTrash] = useState(false);
   const [knownTags, setKnownTags] = useState<string[]>([]);
   const [listLoading, setListLoading] = useState(true);
@@ -478,6 +463,7 @@ export default function App() {
   const [assets, setAssets] = useState<DocumentAsset[]>([]);
   const [assetError, setAssetError] = useState("");
   const [mode, setMode] = useState<EditorMode>("split");
+  const [longPreviewDocumentId, setLongPreviewDocumentId] = useState<string | null>(null);
 
   const [importUrl, setImportUrl] = useState("");
   const [importing, setImporting] = useState(false);
@@ -538,11 +524,17 @@ export default function App() {
   const selectionContextRef = useRef<string | null>(null);
   const listContextRef = useRef("");
   const itemsContextRef = useRef("");
+  const savedFiltersEditedRef = useRef(false);
+  const recentFiltersStateRef = useRef<{ filters: SavedFilter[]; revision: number }>({ filters: [], revision: 0 });
+  const recentFilterSaveChainRef = useRef<Promise<unknown>>(Promise.resolve());
+  const shortcutDialogRef = useRef<HTMLDialogElement>(null);
   const collectionsRequestRef = useRef<{ sequence: number; controller: AbortController } | null>(null);
   const collectionsRequestSequenceRef = useRef(0);
   const keptDuplicateIdsRef = useRef(new Set<string>());
   const navigationGenerationRef = useRef(0);
   const readerPanelRef = useRef<HTMLElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const libraryListRef = useRef<HTMLDivElement>(null);
   selectedIdRef.current = selectedId;
   draftRef.current = draft;
   currentDocRef.current = currentDoc;
@@ -566,6 +558,31 @@ export default function App() {
       }
     }).catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    recentFilterSaveChainRef.current = api.getRecentFilters().then((value) => {
+      recentFiltersStateRef.current = value;
+      if (!savedFiltersEditedRef.current) setSavedFilters(value.filters);
+    }).catch(() => undefined);
+  }, []);
+
+  const longArticle = (draft?.markdown.length ?? 0) > 250_000;
+  const longPreviewAllowed = !longArticle || longPreviewDocumentId === currentDoc?.id;
+  useEffect(() => {
+    if (longArticle) setMode("edit");
+    else setLongPreviewDocumentId(null);
+  }, [longArticle]);
+
+  useEffect(() => {
+    const dialog = shortcutDialogRef.current;
+    if (!dialog || !shortcutHelp) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    dialog.showModal();
+    return () => {
+      if (dialog.open) dialog.close();
+      previousFocus?.focus();
+    };
+  }, [shortcutHelp]);
 
   const persistedDraft = currentDoc ? draftOf(currentDoc) : null;
   const dirty = Boolean(draft && persistedDraft && !draftsEqual(draft, persistedDraft));
@@ -965,6 +982,7 @@ export default function App() {
   useEffect(() => {
     if (inTrash || (!query.trim() && searchScope === "all" && !tag && !collectionFilter && !status && favoriteFilter === undefined && archivedFilter === undefined && !captureModeFilter && !dateFrom && !dateTo && sortOrder === "updated")) return;
     const timer = window.setTimeout(() => {
+      savedFiltersEditedRef.current = true;
       const saved: SavedFilter = {
         label: [query.trim() && `“${query.trim()}”`, tag && `#${tag}`, collectionFilter && "集合", status && STATUS_LABEL[status], favoriteFilter && "收藏", archivedFilter && "归档", unorganizedFilter && "未整理"].filter(Boolean).join(" · ") || "组合筛选",
         query: query.trim(),
@@ -981,9 +999,24 @@ export default function App() {
         sort: sortOrder,
       };
       setSavedFilters((previous) => {
-        const signature = JSON.stringify({ ...saved, label: undefined });
-        const next = [saved, ...previous.filter((value) => JSON.stringify({ ...value, label: undefined }) !== signature)].slice(0, 5);
-        localStorage.setItem("zhiye.recentFilters", JSON.stringify(next));
+        const next = addRecentFilter(previous, saved);
+        recentFilterSaveChainRef.current = recentFilterSaveChainRef.current
+          .catch(() => undefined)
+          .then(() => {
+            const current = recentFiltersStateRef.current;
+            return api.saveRecentFilters(addRecentFilter(current.filters, saved), current.revision);
+          })
+          .then((value) => {
+            recentFiltersStateRef.current = value;
+            setSavedFilters(value.filters);
+          })
+          .catch(async (error) => {
+            if (!(error instanceof ApiRequestError) || error.code !== "RECENT_FILTERS_CONFLICT") throw error;
+            const value = await api.getRecentFilters();
+            recentFiltersStateRef.current = value;
+            setSavedFilters(value.filters);
+            setRecentFilterNotice("最近筛选已在另一窗口更新，已载入最新版本。");
+          });
         return next;
       });
     }, 600);
@@ -1034,6 +1067,7 @@ export default function App() {
     ])
       .then(([document, stored]) => {
         installCurrentDocument(document);
+        if (document.markdown.length > 250_000) setMode("edit");
         const serverDraft = draftOf(document);
         const recovered = stored
           ? { title: stored.title, markdown: stored.markdown, tags: [...stored.tags] }
@@ -1903,13 +1937,59 @@ export default function App() {
   };
 
   const handleListKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    if (event.key.toLowerCase() === "x") {
+      const checkbox = (document.activeElement as HTMLElement | null)?.closest(".document-row-wrap")?.querySelector<HTMLInputElement>(".row-select input");
+      if (checkbox && !checkbox.disabled) {
+        event.preventDefault();
+        checkbox.click();
+      }
+      return;
+    }
+    const key = event.key.toLowerCase();
+    if (key !== "arrowdown" && key !== "arrowup" && key !== "j" && key !== "k") return;
     const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>(".document-row")];
     const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
     if (index < 0) return;
     event.preventDefault();
-    buttons[Math.max(0, Math.min(buttons.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))]?.focus();
+    buttons[Math.max(0, Math.min(buttons.length - 1, index + (key === "arrowdown" || key === "j" ? 1 : -1)))]?.focus();
   };
+
+  useEffect(() => {
+    const handleShortcuts = (event: globalThis.KeyboardEvent) => {
+      if (shortcutHelp) {
+        if (event.key === "Escape") setShortcutHelp(false);
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      const editing = Boolean(target?.closest("input, textarea, select, [contenteditable='true']"));
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+      if (!editing && event.key === "/") {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+      } else if (!editing && event.key === "?") {
+        event.preventDefault();
+        setShortcutHelp(true);
+      } else if (!editing && (event.key.toLowerCase() === "j" || event.key.toLowerCase() === "k") && !libraryListRef.current?.contains(document.activeElement)) {
+        event.preventDefault();
+        const rows = [...(libraryListRef.current?.querySelectorAll<HTMLButtonElement>(".document-row") || [])];
+        (rows.find((row) => row.getAttribute("aria-current") === "true") || rows[0])?.focus();
+      } else if (event.key === "Escape") {
+        if (shortcutHelp) setShortcutHelp(false);
+        else if (collectionsOpen || qualityOpen || captureHistoryOpen || historyOpen) {
+          setCollectionsOpen(false);
+          setQualityOpen(false);
+          setCaptureHistoryOpen(false);
+          setHistoryOpen(false);
+        } else if (!editing) closeDocument();
+      }
+    };
+    window.addEventListener("keydown", handleShortcuts);
+    return () => window.removeEventListener("keydown", handleShortcuts);
+  }, [captureHistoryOpen, closeDocument, collectionsOpen, historyOpen, qualityOpen, shortcutHelp]);
 
   const retryCapture = async () => {
     if (!currentDoc) return;
@@ -2381,16 +2461,19 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#library-panel">跳到资料库</a>
       <header className="masthead">
         <div className="brand" aria-label="织页本地知识库">
           <span className="brand-seal">织</span>
           <span><strong>织页</strong><small>ZHIYE · LOCAL KNOWLEDGE</small></span>
         </div>
         <p className="masthead-note">把散落的网页，<br />织成可编辑的知识。</p>
-        <button type="button" className="local-mark" aria-pressed={safetyOpen} onClick={() => setSafetyOpen(true)} disabled={closing}>
+        <div className="masthead-actions"><button type="button" className="shortcut-help-button" onClick={() => setShortcutHelp(true)} aria-label="查看快捷键">?</button><button type="button" className="local-mark" aria-pressed={safetyOpen} onClick={() => setSafetyOpen(true)} disabled={closing}>
           <i />{safetyRecovery ? "恢复模式" : "数据安全"}
-        </button>
+        </button></div>
       </header>
+
+      {shortcutHelp && <dialog ref={shortcutDialogRef} className="shortcut-backdrop" aria-labelledby="shortcut-title" onClose={() => setShortcutHelp(false)} onMouseDown={(event) => { if (event.target === event.currentTarget) setShortcutHelp(false); }}><section className="shortcut-card"><header><div><span className="eyebrow">KEYBOARD MAP</span><h2 id="shortcut-title">快捷键</h2></div><button type="button" autoFocus onClick={() => setShortcutHelp(false)} aria-label="关闭快捷键">×</button></header><dl><div><dt><kbd>⌘</kbd><kbd>K</kbd></dt><dd>聚焦搜索</dd></div><div><dt><kbd>/</kbd></dt><dd>聚焦搜索</dd></div><div><dt><kbd>J</kbd> / <kbd>K</kbd></dt><dd>在列表中移动</dd></div><div><dt><kbd>X</kbd></dt><dd>选中或取消当前行</dd></div><div><dt><kbd>↵</kbd></dt><dd>打开当前行</dd></div><div><dt><kbd>⌘</kbd><kbd>S</kbd></dt><dd>立即保存</dd></div><div><dt><kbd>Esc</kbd></dt><dd>关闭面板或返回列表</dd></div><div><dt><kbd>?</kbd></dt><dd>显示本帮助</dd></div></dl></section></dialog>}
 
       {safetyOpen ? (
         <DataSafety
@@ -2434,7 +2517,7 @@ export default function App() {
       </section>
 
       <main className={`workspace ${selectedId ? "has-selection" : ""}`}>
-        <aside className="library-panel" aria-label="知识列表">
+        <aside id="library-panel" className="library-panel" aria-label="知识列表">
           <div className="panel-heading">
             <div><span className="eyebrow">02 · {inTrash ? "TRASH" : "LIBRARY"}</span><h2>{inTrash ? "回收站" : "知识织片"}</h2></div>
             <span className="total-count">{total}<small>篇</small></span>
@@ -2453,7 +2536,7 @@ export default function App() {
             <label className="search-field">
               <span className="sr-only">搜索知识</span>
               <Icon size={17}><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></Icon>
-              <input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="搜索标题与正文" />
+              <input ref={searchInputRef} aria-keyshortcuts="Meta+K Control+K /" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="搜索标题与正文" />
               {query && <button type="button" className="clear-search" onClick={() => setQuery("")} aria-label="清空搜索">×</button>}
             </label>
             <label className="scope-field"><span>搜索范围</span><select value={searchScope} onChange={(event) => { setSearchScope(event.target.value as SearchScope); setPage(1); }}><option value="all">全部字段</option><option value="title">仅标题</option><option value="body">仅正文</option><option value="source">仅来源</option></select></label>
@@ -2475,6 +2558,7 @@ export default function App() {
               <div className="date-filter-row"><label><span>起始日期</span><input type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPage(1); }} /></label><label><span>结束日期</span><input type="date" value={dateTo} onChange={(event) => { setDateTo(event.target.value); setPage(1); }} /></label></div>
             </details>
             {!!savedFilters.length && <div className="recent-filters" aria-label="最近筛选"><span>最近</span>{savedFilters.map((saved, index) => <button type="button" key={`${saved.label}-${index}`} onClick={() => applySavedFilter(saved)}>{saved.label}</button>)}</div>}
+            {recentFilterNotice && <p className="batch-message" role="status">{recentFilterNotice}</p>}
           </fieldset>
 
           <div className="result-caption"><span>{filteredDescription}</span>{items.some(needsCapturePolling) && <span className="polling-mark"><i />更新中</span>}</div>
@@ -2486,11 +2570,11 @@ export default function App() {
           {batchNotice && <p className="batch-message" role="status">{batchNotice}</p>}
           {batchError && <p className="batch-message error-text" role="alert">{batchError}</p>}
 
-          <div className="document-list" onKeyDown={handleListKeyDown}>
+          <div ref={libraryListRef} className="document-list" onKeyDown={handleListKeyDown}>
             {listLoading && !items.length ? <StatePanel kind="loading" title="正在翻阅知识库" /> : listError ? <StatePanel kind="error" title="无法读取列表">{listError}</StatePanel> : !items.length ? <StatePanel kind="empty" title={inTrash ? "回收站是空的" : "还没有找到织片"}>{query || tag || status ? "试试放宽筛选条件。" : inTrash ? "移除的网页会暂存在这里。" : "从上方收藏第一张网页。"}</StatePanel> : items.map((item, index) => (
               <div key={item.id} className={`document-row-wrap ${selectedId === item.id ? "is-selected" : ""}`}>
                 <label className="row-select"><span className="sr-only">选择 {item.title || "未命名网页"}</span><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={selectedIds.has(item.id)} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds((previous) => { const next = new Set(previous); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; }); }} /></label>
-                <button type="button" className={`document-row ${selectedId === item.id ? "is-selected" : ""}`} onClick={() => selectDocument(item.id)} aria-current={selectedId === item.id ? "true" : undefined}>
+                <button type="button" className={`document-row ${selectedId === item.id ? "is-selected" : ""}`} onClick={() => selectDocument(item.id)} aria-current={selectedId === item.id ? "true" : undefined} aria-keyshortcuts="Enter ArrowUp ArrowDown J K X">
                 <span className="row-number">{String((page - 1) * pageSize + index + 1).padStart(2, "0")}</span>
                 <span className="row-body">
                   <strong>{item.title || "未命名网页"}</strong>
@@ -2512,7 +2596,7 @@ export default function App() {
           {pageCount > 1 && <nav className="pagination" aria-label="知识列表分页"><button type="button" disabled={listLoading || batchBusy || page <= 1} onClick={() => setPage((value) => value - 1)}>上一页</button><span>{page} / {pageCount}</span><button type="button" disabled={listLoading || batchBusy || page >= pageCount} onClick={() => setPage((value) => value + 1)}>下一页</button></nav>}
         </aside>
 
-        <section ref={readerPanelRef} className="reader-panel" aria-label="文档工作台" tabIndex={-1}>
+        <section id="reader-panel" ref={readerPanelRef} className="reader-panel" aria-label="文档工作台" tabIndex={-1}>
           {!selectedId ? (
             <div className="welcome-state">
               <div className="weave-mark" aria-hidden="true"><i /><i /><i /><i /></div>
@@ -2648,7 +2732,7 @@ export default function App() {
                   </div>
                   <section className="trash-preview" aria-label="回收站文档预览">
                     <div className="pane-label">READ ONLY</div>
-                    {draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} /> : <StatePanel kind="empty" title="这张织片没有正文" />}
+                    {!longPreviewAllowed ? <StatePanel kind="empty" title="长文预览已暂停"><button type="button" onClick={() => setLongPreviewDocumentId(currentDoc.id)}>仍然预览</button></StatePanel> : draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} /> : <StatePanel kind="empty" title="这张织片没有正文" />}
                   </section>
                 </div>
               ) : activeCapture ? (
@@ -2668,17 +2752,17 @@ export default function App() {
                   <button type="button" className="primary-button" onClick={retryCapture} disabled={retrying}>{retrying ? <><Spinner />重试中</> : "重新抓取"}</button>
                 </div>
               ) : (
-                <div className="editor-workbench">
+                <>{!longPreviewAllowed && <div className="notice warning" role="status"><strong>长文模式</strong><span>正文较长，已默认暂停预览以保持编辑流畅；需要时可手动切换到预览。</span></div>}<div className="editor-workbench">
                   <div className="editor-toolbar">
                     <div className="mode-switch" aria-label="编辑器显示模式">
-                      {(["edit", "split", "preview"] as EditorMode[]).map((value) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)}>{value === "edit" ? "编辑" : value === "split" ? "对照" : "预览"}</button>)}
+                      {(["edit", "split", "preview"] as EditorMode[]).map((value) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => { if (longArticle && value !== "edit") setLongPreviewDocumentId(currentDoc.id); setMode(value); }}>{value === "edit" ? "编辑" : value === "split" ? "对照" : "预览"}</button>)}
                     </div>
                     <div className="editor-stats">{draft.markdown.length.toLocaleString("zh-CN")} 字符</div>
                     <div className={`save-indicator save-${saveState}`} aria-live="polite">
                       {saveState === "saving" ? <><Spinner />正在保存</> : saveState === "saved" ? "已保存" : saveState === "error" ? "保存失败" : saveState === "conflict" ? "版本冲突" : dirty ? "未保存" : "已同步"}
                     </div>
                     {saveState === "error" && <button type="button" className="text-button danger" onClick={() => void saveNow()} disabled={closing}>重试</button>}
-                    <button type="button" className="text-button save-button" onClick={() => void saveNow()} disabled={closing || !dirty || saveState === "saving" || saveState === "conflict"} title="保存（⌘S）">保存</button>
+                    <button type="button" className="text-button save-button" aria-keyshortcuts="Meta+S Control+S" onClick={() => void saveNow()} disabled={closing || !dirty || saveState === "saving" || saveState === "conflict"} title="保存（⌘S）">保存</button>
                     <button type="button" className="history-button" onClick={() => void toggleHistory()} disabled={closing || organizationSaving || hasUnsavedChanges || saveState === "saving"} aria-expanded={historyOpen} aria-controls="revision-history">修订历史</button>
                     <a className="export-button" href={api.exportUrl(currentDoc.id)} download><Icon size={15}><path d="M12 3v12M7 10l5 5 5-5M5 20h14" /></Icon>导出 .md</a>
                   </div>
@@ -2700,9 +2784,9 @@ export default function App() {
 
                   <div className={`editor-grid mode-${mode}`}>
                     {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><div className="pane-label">MARKDOWN</div><MarkdownEditor value={draft.markdown} onChange={(markdown) => { if (!closeAttemptRef.current) setDraft((value) => value ? { ...value, markdown } : value); }} readOnly={editorLocked} /></section>}
-                    {mode !== "edit" && <section className="preview-pane" aria-label="Markdown 预览"><div className="pane-label">PREVIEW</div>{draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} /> : <StatePanel kind="empty" title="这里还没有文字">在编辑区写下 Markdown，预览会同步出现。</StatePanel>}</section>}
+                    {mode !== "edit" && longPreviewAllowed && <section className="preview-pane" aria-label="Markdown 预览"><div className="pane-label">PREVIEW</div>{draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} /> : <StatePanel kind="empty" title="这里还没有文字">在编辑区写下 Markdown，预览会同步出现。</StatePanel>}</section>}
                   </div>
-                </div>
+                </div></>
               )}
             </>
           ) : null}

@@ -19,11 +19,13 @@ import type {
   KnowledgeDocument,
   KnowledgeTag,
   MergeCollectionResponse,
+  RecentFilter,
+  RecentFiltersState,
   ReextractionPreview,
   TagMutationResponse,
 } from "../shared/types";
 
-export type { DataSafetyStatus, DocumentFilters } from "../shared/types";
+export type { DataSafetyStatus, DocumentFilters, RecentFilter } from "../shared/types";
 
 const DATA_EPOCH_HEADER = "X-Zhiye-Data-Epoch";
 let dataEpoch: string | null = null;
@@ -108,6 +110,17 @@ export interface CleanupDataResult {
 }
 
 export const api = {
+  getRecentFilters(signal?: AbortSignal) {
+    return request<RecentFiltersState>("/api/settings/recent-filters", { signal });
+  },
+
+  saveRecentFilters(filters: RecentFilter[], revision: number) {
+    return request<RecentFiltersState>("/api/settings/recent-filters", {
+      method: "PUT",
+      body: JSON.stringify({ filters, revision }),
+    });
+  },
+
   getDataSafety(signal?: AbortSignal) {
     return request<DataSafetyStatus>("/api/data-safety", { signal });
   },

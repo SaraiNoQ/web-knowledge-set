@@ -22,6 +22,7 @@ import type {
   KnowledgeDocument,
   KnowledgeCollection,
   KnowledgeTag,
+  RecentFilter,
   ReextractionPreview,
 } from "../shared/types.js";
 
@@ -120,6 +121,47 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     assert.equal(missingEpoch.status, 409);
     assert.equal(missingEpoch.headers.get("x-zhiye-data-epoch"), initialDataEpoch);
     assert.equal(((await missingEpoch.json()) as { error: { code: string } }).error.code, "STALE_DATA_EPOCH");
+    assert.deepEqual(
+      await (await fetch(`${base}/api/settings/recent-filters`, { headers: { Cookie: cookie } })).json(),
+      { filters: [], revision: 0 },
+    );
+    const recentFilters: RecentFilter[] = [{
+      label: "最近研究",
+      query: "knowledge",
+      scope: "body",
+      tag: "Research",
+      collectionId: "",
+      status: "ready",
+      favorite: true,
+      unorganized: false,
+      captureMode: "http",
+      from: "2026-08-01",
+      to: "2026-08-11",
+      sort: "updated",
+    }];
+    const savedRecentFilters = await fetch(`${base}/api/settings/recent-filters`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({ filters: recentFilters, revision: 0 }),
+    });
+    assert.equal(savedRecentFilters.status, 200);
+    assert.deepEqual(await savedRecentFilters.json(), { filters: recentFilters, revision: 1 });
+    const staleRecentFilters = await fetch(`${base}/api/settings/recent-filters`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({ filters: [], revision: 0 }),
+    });
+    assert.equal(staleRecentFilters.status, 409);
+    const tooManyRecentFilters = await fetch(`${base}/api/settings/recent-filters`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({ filters: Array.from({ length: 6 }, () => recentFilters[0]), revision: 1 }),
+    });
+    assert.equal(tooManyRecentFilters.status, 400);
+    assert.deepEqual(
+      await (await fetch(`${base}/api/settings/recent-filters`, { headers: { Cookie: cookie } })).json(),
+      { filters: recentFilters, revision: 1 },
+    );
     const paused = (await (
       await fetch(`${base}/api/capture-queue`, {
         method: "PATCH",

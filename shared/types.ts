@@ -101,6 +101,27 @@ export interface DocumentFilters {
   trash?: "only";
 }
 
+export interface RecentFilter {
+  label: string;
+  query: string;
+  scope: DocumentSearchScope;
+  tag: string;
+  collectionId: string;
+  status: CaptureStatus | "";
+  favorite?: boolean;
+  archived?: boolean;
+  unorganized: boolean;
+  captureMode: CaptureMode | "";
+  from: string;
+  to: string;
+  sort: DocumentSort;
+}
+
+export interface RecentFiltersState {
+  filters: RecentFilter[];
+  revision: number;
+}
+
 export type BatchDocumentAction =
   | "add-tag"
   | "remove-tag"
