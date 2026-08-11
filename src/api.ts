@@ -9,6 +9,11 @@ import type {
   CreateDocumentResponse,
   DataSafetyStatus,
   DeleteCollectionResponse,
+  DerivedPreview,
+  DerivedResult,
+  DerivedResultListResponse,
+  DerivedResultType,
+  DerivedTask,
   DocumentAsset,
   DocumentDraft,
   DocumentFilters,
@@ -22,10 +27,12 @@ import type {
   KnowledgeDocument,
   KnowledgeTag,
   MergeCollectionResponse,
+  LlmSettings,
   RecentFilter,
   RecentFiltersState,
   ReextractionPreview,
   TagMutationResponse,
+  UpdateLlmSettingsInput,
 } from "../shared/types";
 
 export type { DataSafetyStatus, DocumentFilters, RecentFilter } from "../shared/types";
@@ -119,6 +126,83 @@ export interface CleanupDataResult {
 }
 
 export const api = {
+  getLlmSettings(signal?: AbortSignal) {
+    return request<LlmSettings>("/api/settings/llm", { signal });
+  },
+
+  updateLlmSettings(settings: UpdateLlmSettingsInput) {
+    return request<LlmSettings>("/api/settings/llm", {
+      method: "PUT",
+      body: JSON.stringify(settings),
+    });
+  },
+
+  disableLlm(revision: number, deleteResults: boolean) {
+    return request<{ settings: LlmSettings; deletedResults: number }>("/api/settings/llm/disable", {
+      method: "POST",
+      body: JSON.stringify({ revision, deleteResults }),
+    });
+  },
+
+  previewDerivedResult(documentId: string, type: DerivedResultType, revision: number) {
+    return request<DerivedPreview>(`/api/documents/${encodeURIComponent(documentId)}/derived-preview`, {
+      method: "POST",
+      body: JSON.stringify({ type, revision }),
+    });
+  },
+
+  startDerivedTask(documentId: string, preview: DerivedPreview) {
+    return request<DerivedTask>(`/api/documents/${encodeURIComponent(documentId)}/derived-task`, {
+      method: "POST",
+      body: JSON.stringify({
+        type: preview.type,
+        revision: preview.revision,
+        inputHash: preview.inputHash,
+        settingsRevision: preview.settingsRevision,
+      }),
+    });
+  },
+
+  getDerivedTask(documentId: string, signal?: AbortSignal) {
+    return request<DerivedTask | null>(`/api/documents/${encodeURIComponent(documentId)}/derived-task`, { signal });
+  },
+
+  getDerivedTaskById(id: string, signal?: AbortSignal) {
+    return request<DerivedTask>(`/api/derived-tasks/${encodeURIComponent(id)}`, { signal });
+  },
+
+  cancelDerivedTask(id: string) {
+    return request<DerivedTask>(`/api/derived-tasks/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      body: JSON.stringify({}),
+    });
+  },
+
+  retryDerivedTask(id: string) {
+    return request<DerivedTask>(`/api/derived-tasks/${encodeURIComponent(id)}/retry`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
+  listDerivedResults(documentId: string, page = 1, signal?: AbortSignal) {
+    return request<DerivedResultListResponse>(`/api/documents/${encodeURIComponent(documentId)}/derived-results?page=${page}`, { signal });
+  },
+
+  pinDerivedResult(documentId: string, resultId: string, pinned: boolean) {
+    return request<DerivedResult>(`/api/documents/${encodeURIComponent(documentId)}/derived-results/${encodeURIComponent(resultId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ pinned }),
+    });
+  },
+
+  deleteDerivedResult(documentId: string, resultId: string) {
+    return request<void>(`/api/documents/${encodeURIComponent(documentId)}/derived-results/${encodeURIComponent(resultId)}`, {
+      method: "DELETE",
+      body: JSON.stringify({}),
+    });
+  },
+
   async exportPortable(scope: "all" | "selected", documentIds: string[], signal?: AbortSignal) {
     const response = await requestResponse("/api/exports/portable", {
       method: "POST",

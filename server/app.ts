@@ -16,10 +16,12 @@ import type {
   DocumentFilters,
   DocumentSearchScope,
   DocumentSort,
+  DerivedResultType,
   KnowledgeDocument,
   ImportKind,
   ImportStrategy,
   RecentFilter,
+  StartDerivedTaskInput,
 } from "../shared/types.js";
 import { cacheDocumentAssets, type AssetFetchFunction } from "./assets.js";
 import { createAuth } from "./auth.js";
@@ -47,6 +49,7 @@ import {
 } from "./db.js";
 import { extractHtml } from "./extract.js";
 import { ImportParseError, parseImportRequest } from "./import.js";
+import { createDerivedTasks, LlmError, llmSettingsInput, type ResolveLlmTarget } from "./llm.js";
 import {
   createPortableBundle,
   PortableError,
@@ -76,6 +79,7 @@ const statuses = new Set<CaptureStatus>(["queued", "fetching", "extracting", "re
 const captureModes = new Set<CaptureMode>(["http", "browser"]);
 const searchScopes = new Set<DocumentSearchScope>(["all", "title", "body", "source"]);
 const documentSorts = new Set<DocumentSort>(["updated", "created", "title"]);
+const derivedResultTypes = new Set<DerivedResultType>(["summary", "outline", "keywords", "tag-suggestions"]);
 const importKinds = new Set<ImportKind>(["urls", "bookmarks", "markdown"]);
 const importStrategies = new Set<ImportStrategy>(["skip", "copy", "update"]);
 const documentFilterKeys = new Set([
@@ -153,6 +157,8 @@ export interface AppOptions {
   fetchAsset?: AssetFetchFunction;
   startWorker?: boolean;
   onDesktopCloseReady?: (attemptId: string) => void;
+  llmApiKey?: string;
+  resolveLlmTarget?: ResolveLlmTarget;
 }
 
 class HttpError extends Error {
@@ -710,6 +716,38 @@ function batchDocumentsRequest(body: Record<string, unknown>): BatchDocumentsReq
   return { documents, action, ...(value === undefined ? {} : { value }) };
 }
 
+function derivedType(value: unknown) {
+  if (typeof value !== "string" || !derivedResultTypes.has(value as DerivedResultType)) {
+    throw new HttpError(400, "INVALID_DERIVED_TYPE", "Unknown derived result type");
+  }
+  return value as DerivedResultType;
+}
+
+function derivedPreviewRequest(body: Record<string, unknown>) {
+  if (Object.keys(body).some((key) => key !== "type" && key !== "revision")) {
+    throw new HttpError(400, "INVALID_DERIVED_PREVIEW", "Preview accepts only type and revision");
+  }
+  return { type: derivedType(body.type), revision: bodyRevision(body) };
+}
+
+function startDerivedTaskRequest(body: Record<string, unknown>): StartDerivedTaskInput {
+  if (Object.keys(body).some((key) => !["type", "revision", "inputHash", "settingsRevision"].includes(key))) {
+    throw new HttpError(400, "INVALID_DERIVED_TASK", "Derived task request contains an unknown field");
+  }
+  if (typeof body.inputHash !== "string" || !/^[a-f0-9]{64}$/u.test(body.inputHash)) {
+    throw new HttpError(400, "INVALID_DERIVED_TASK", "inputHash must be a lowercase SHA-256 value");
+  }
+  if (!Number.isSafeInteger(body.settingsRevision) || (body.settingsRevision as number) < 1) {
+    throw new HttpError(400, "INVALID_DERIVED_TASK", "settingsRevision must be a positive integer");
+  }
+  return {
+    type: derivedType(body.type),
+    revision: bodyRevision(body),
+    inputHash: body.inputHash,
+    settingsRevision: body.settingsRevision as number,
+  };
+}
+
 function captureFailure(error: unknown): { code: CaptureErrorCode; message: string } {
   const candidate = error && typeof error === "object" && "code" in error ? String(error.code) : "";
   const code = captureErrorCodes.has(candidate as CaptureErrorCode)
@@ -965,6 +1003,14 @@ export function createApp(options: AppOptions) {
     options.fetchAsset,
     options.startWorker !== false && db !== null,
   );
+  const derivedTasks = createDerivedTasks({
+    database: () => {
+      if (!db) throw new LlmError(503, "DATA_UNAVAILABLE", "Knowledge-base data needs recovery");
+      return db;
+    },
+    apiKey: options.llmApiKey,
+    resolveTarget: options.resolveLlmTarget,
+  });
   let maintenanceKind: string | null = null;
   let maintenanceDone: Promise<void> | null = null;
   let finishMaintenance: (() => void) | null = null;
@@ -1019,8 +1065,10 @@ export function createApp(options: AppOptions) {
       finishMaintenance = resolveDone;
     });
     try {
+      await derivedTasks.pause();
       return await operation();
     } finally {
+      derivedTasks.resume();
       maintenanceKind = null;
       finishMaintenance?.();
       finishMaintenance = null;
@@ -1111,6 +1159,62 @@ export function createApp(options: AppOptions) {
           return;
         }
         sendJson(response, 200, result.state);
+        return;
+      }
+
+      if (pathname === "/api/settings/llm" && request.method === "GET") {
+        if (requestUrl.searchParams.size) {
+          throw new HttpError(400, "INVALID_LLM_SETTINGS", "LLM settings do not accept query parameters");
+        }
+        sendJson(response, 200, derivedTasks.settings());
+        return;
+      }
+
+      if (pathname === "/api/settings/llm" && request.method === "PUT") {
+        const value = llmSettingsInput(await mutationBody(request));
+        if (value.enabled && value.target === "remote" && !options.llmApiKey?.trim()) {
+          throw new LlmError(409, "LLM_KEY_MISSING", "Remote LLM use requires a configured API key");
+        }
+        await derivedTasks.pause();
+        try {
+          const result = requireDatabase().setLlmSettings({
+            enabled: value.enabled,
+            target: value.target,
+            remote: value.remote,
+            local: value.local,
+          }, value.revision, Boolean(options.llmApiKey?.trim()));
+          if (result.kind === "conflict") {
+            throw new HttpError(409, "LLM_SETTINGS_CONFLICT", "LLM settings changed in another window");
+          }
+          sendJson(response, 200, result.settings);
+        } finally {
+          derivedTasks.resume();
+        }
+        return;
+      }
+
+      if (pathname === "/api/settings/llm/disable" && request.method === "POST") {
+        const body = await mutationBody(request);
+        if (!Number.isSafeInteger(body.revision) || (body.revision as number) < 0 ||
+            typeof body.deleteResults !== "boolean" ||
+            Object.keys(body).some((key) => key !== "revision" && key !== "deleteResults")) {
+          throw new HttpError(400, "INVALID_LLM_DISABLE", "revision and deleteResults are required");
+        }
+        await derivedTasks.pause();
+        try {
+          const result = requireDatabase().disableLlm(
+            body.revision as number,
+            body.deleteResults,
+            Boolean(options.llmApiKey?.trim()),
+          );
+          if (result.kind === "conflict") {
+            throw new HttpError(409, "LLM_SETTINGS_CONFLICT", "LLM settings changed in another window");
+          }
+          if (body.deleteResults) derivedTasks.clearHistory();
+          sendJson(response, 200, { settings: result.settings, deletedResults: result.deletedResults });
+        } finally {
+          derivedTasks.resume();
+        }
         return;
       }
 
@@ -1366,6 +1470,7 @@ export function createApp(options: AppOptions) {
             });
             db = openDatabase(options.dataDir);
             dataEpoch = randomUUID();
+            derivedTasks.clearHistory();
             recoveryError = null;
             try {
               await reconcileBackupRecords(db, backupRoot);
@@ -1571,10 +1676,64 @@ export function createApp(options: AppOptions) {
         if (body.confirm !== true || Object.keys(body).some((key) => key !== "confirm")) {
           throw new HttpError(400, "CONFIRMATION_REQUIRED", "confirm must be the only field and must be true");
         }
-        sendJson(response, 200, {
-          deleted: true,
-          deletedResults: requireDatabase().deleteAllDerivedResults(),
-        });
+        await derivedTasks.pause();
+        try {
+          const deletedResults = requireDatabase().deleteAllDerivedResults();
+          derivedTasks.clearHistory();
+          sendJson(response, 200, {
+            deleted: true,
+            deletedResults,
+          });
+        } finally {
+          derivedTasks.resume();
+        }
+        return;
+      }
+
+      const derivedPreviewMatch = pathname.match(/^\/api\/documents\/([^/]+)\/derived-preview$/u);
+      if (derivedPreviewMatch && request.method === "POST") {
+        const input = derivedPreviewRequest(await mutationBody(request));
+        sendJson(response, 200, derivedTasks.preview(decodeId(derivedPreviewMatch[1]), input.type, input.revision));
+        return;
+      }
+
+      const documentDerivedTaskMatch = pathname.match(/^\/api\/documents\/([^/]+)\/derived-task$/u);
+      if (documentDerivedTaskMatch && request.method === "GET") {
+        const documentId = decodeId(documentDerivedTaskMatch[1]);
+        if (!requireDatabase().getDocument(documentId)) throw new HttpError(404, "NOT_FOUND", "Document not found");
+        sendJson(response, 200, derivedTasks.getForDocument(documentId));
+        return;
+      }
+      if (documentDerivedTaskMatch && request.method === "POST") {
+        const input = startDerivedTaskRequest(await mutationBody(request));
+        const result = derivedTasks.start(decodeId(documentDerivedTaskMatch[1]), input);
+        sendJson(response, result.cached ? 200 : 202, result.task);
+        return;
+      }
+
+      const retryDerivedTaskMatch = pathname.match(/^\/api\/derived-tasks\/([^/]+)\/retry$/u);
+      if (retryDerivedTaskMatch && request.method === "POST") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length) throw new HttpError(400, "INVALID_DERIVED_RETRY", "Retry accepts no options");
+        const result = await derivedTasks.retry(decodeId(retryDerivedTaskMatch[1]));
+        if (!result) throw new HttpError(404, "DERIVED_TASK_NOT_FOUND", "Derived task not found");
+        sendJson(response, result.cached ? 200 : 202, result.task);
+        return;
+      }
+
+      const derivedTaskMatch = pathname.match(/^\/api\/derived-tasks\/([^/]+)$/u);
+      if (derivedTaskMatch && request.method === "GET") {
+        const task = derivedTasks.get(decodeId(derivedTaskMatch[1]));
+        if (!task) throw new HttpError(404, "DERIVED_TASK_NOT_FOUND", "Derived task not found");
+        sendJson(response, 200, task);
+        return;
+      }
+      if (derivedTaskMatch && request.method === "DELETE") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length) throw new HttpError(400, "INVALID_DERIVED_CANCEL", "Cancellation accepts no options");
+        const task = await derivedTasks.cancel(decodeId(derivedTaskMatch[1]));
+        if (!task) throw new HttpError(404, "DERIVED_TASK_NOT_FOUND", "Derived task not found");
+        sendJson(response, 200, task);
         return;
       }
 
@@ -1645,6 +1804,7 @@ export function createApp(options: AppOptions) {
         if (result.kind === "result_missing") {
           throw new HttpError(404, "DERIVED_RESULT_NOT_FOUND", "Derived result not found");
         }
+        derivedTasks.forgetResult(decodeId(derivedResultMatch[2]));
         response.writeHead(204, { "Cache-Control": "no-store", ...securityHeaders() });
         response.end();
         return;
@@ -1836,8 +1996,9 @@ export function createApp(options: AppOptions) {
         const body = await mutationBody(request);
         const revision = bodyRevision(body);
         const confirmedDraftRevision = draftRevision(body.draftRevision, true);
+        const documentId = decodeId(permanentMatch[1]);
         const result = requireDatabase().permanentlyDeleteDocument(
-          decodeId(permanentMatch[1]),
+          documentId,
           revision,
           confirmedDraftRevision,
         );
@@ -1861,6 +2022,7 @@ export function createApp(options: AppOptions) {
         if (result.kind === "snapshot_failed") {
           throw new HttpError(500, "SNAPSHOT_DELETE_FAILED", "Snapshot files could not be deleted");
         }
+        derivedTasks.forgetDocument(documentId);
         response.writeHead(204, { "Cache-Control": "no-store", ...securityHeaders() });
         response.end();
         return;
@@ -1960,6 +2122,7 @@ export function createApp(options: AppOptions) {
       }
       if ((request.url ?? "").startsWith("/api/")) response.setHeader(DATA_EPOCH_HEADER, dataEpoch);
       if (error instanceof HttpError) sendError(response, error.status, error.code, error.message);
+      else if (error instanceof LlmError) sendError(response, error.status, error.code, error.message);
       else if (error instanceof DataSafetyError) sendError(response, error.status, error.code, error.message);
       else if (error instanceof BackupError) {
         sendError(
@@ -1989,6 +2152,7 @@ export function createApp(options: AppOptions) {
       if (closed) return;
       closed = true;
       await maintenanceDone;
+      await derivedTasks.stop();
       await worker.stop();
       db?.close();
       db = null;

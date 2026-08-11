@@ -21,6 +21,8 @@ import type {
   DocumentRevision,
   DerivedResult,
   DerivedResultListResponse,
+  DerivedPreview,
+  DerivedTask,
   KnowledgeDocument,
   KnowledgeCollection,
   KnowledgeTag,
@@ -1037,6 +1039,27 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     const beforeRestore = (await (
       await fetch(`${base}/api/documents/${cancellable.id}`, { headers: { Cookie: cookie } })
     ).json()) as KnowledgeDocument;
+    assert.equal(app.db.setLlmSettings({
+      enabled: true,
+      target: "local",
+      remote: { endpointUrl: "", model: "" },
+      local: { endpointUrl: "http://127.0.0.1:9/v1/chat/completions", model: "restore-test", trusted: true },
+    }, 0).kind, "updated");
+    const restorePreview = (await (await fetch(`${base}/api/documents/${cancellable.id}/derived-preview`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ type: "summary", revision: beforeRestore.revision }),
+    })).json()) as DerivedPreview;
+    const preRestoreTask = (await (await fetch(`${base}/api/documents/${cancellable.id}/derived-task`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        type: restorePreview.type,
+        revision: restorePreview.revision,
+        inputHash: restorePreview.inputHash,
+        settingsRevision: restorePreview.settingsRevision,
+      }),
+    })).json()) as DerivedTask;
     const staleJsonHeaders = { ...jsonHeaders };
     const staleBody = JSON.stringify({ revision: beforeRestore.revision, sourceNote: "stale overwrite" });
     let markStaleBodyFlushed!: () => void;
@@ -1072,6 +1095,8 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     assert.ok(restoredDataEpoch);
     assert.notEqual(restoredDataEpoch, initialDataEpoch);
     jsonHeaders["X-Zhiye-Data-Epoch"] = restoredDataEpoch;
+    assert.equal((await fetch(`${base}/api/derived-tasks/${preRestoreTask.id}`, { headers: { Cookie: cookie } })).status, 404);
+    assert.equal(await (await fetch(`${base}/api/documents/${cancellable.id}/derived-task`, { headers: { Cookie: cookie } })).json(), null);
     const staleEpochWrite = await staleWriteResponse;
     assert.equal(staleEpochWrite.status, 409);
     assert.equal(

@@ -62,6 +62,70 @@ test("previews a batch before importing it", async ({ page }) => {
   await expect(dialog).toBeHidden();
 });
 
+test("keeps optional AI generation explicit, cancellable, inert, and manually adopted", async ({ page }) => {
+  const modelRequests: string[] = [];
+  await page.route("https://model.example.test/**", async (route) => {
+    modelRequests.push(route.request().url());
+    await route.abort();
+  });
+  await page.goto("/");
+  await page.getByLabel("网页地址").fill("https://example.com/ai-lifecycle");
+  await page.getByRole("button", { name: "收取网页" }).click();
+  await expect(page.getByLabel("文档标题")).toHaveValue("AI 生命周期文章", { timeout: 8_000 });
+
+  await page.getByRole("button", { name: "AI 设置", exact: true }).click();
+  await page.getByRole("button", { name: "可信本地端点" }).click();
+  await page.getByLabel("AI 本地端点地址").fill("http://127.0.0.1:4175/v1/chat/completions");
+  await page.getByLabel("AI 本地模型").fill("fake-e2e-model");
+  await page.getByText("我信任这个本机端点", { exact: false }).click();
+  await page.getByText("允许 AI 派生知识", { exact: true }).click();
+  await page.getByRole("button", { name: "保存设置" }).click();
+  await expect(page.getByText("AI 派生已启用。", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "返回资料库" }).click();
+
+  await page.getByRole("button", { name: "AI 派生", exact: true }).click();
+  const panel = page.getByRole("complementary", { name: "AI 派生知识" });
+  await panel.getByRole("button", { name: "预览摘要发送范围" }).click();
+  await expect(panel.getByLabel("将发送给模型的准确文本")).toContainText("AI 生命周期文章");
+  await expect(panel.getByText("http://127.0.0.1:4175/v1/chat/completions")).toBeVisible();
+  await panel.getByText("我已核对上方准确文本", { exact: false }).click();
+  await panel.getByRole("button", { name: "确认发送并生成" }).click();
+  await expect(panel.getByText("摘要正在生成")).toBeVisible();
+  await panel.getByRole("button", { name: "取消任务" }).click();
+  await expect(panel.getByText("摘要已取消")).toBeVisible();
+  await panel.getByRole("button", { name: "重试" }).click();
+  await expect(panel.getByRole("heading", { name: "本地摘要" })).toBeVisible({ timeout: 5_000 });
+  await expect(panel.getByText("不可点击")).toBeVisible();
+  await expect(panel.getByText("不可点击").locator("xpath=ancestor::a")).toHaveCount(0);
+  await expect(panel.getByText("图片请求已阻止", { exact: false })).toBeVisible();
+  expect(await page.evaluate(() => (window as unknown as { __modelXss?: boolean }).__modelXss)).not.toBe(true);
+  expect(modelRequests).toEqual([]);
+  await panel.getByRole("button", { name: "固定摘要" }).click();
+  await panel.getByRole("button", { name: "关闭 AI 派生知识" }).click();
+  await expect(page.getByRole("region", { name: "固定摘要" })).toContainText("本地摘要");
+
+  await page.getByRole("button", { name: "AI 派生", exact: true }).click();
+  await panel.getByRole("button", { name: "标签建议", exact: true }).click();
+  await panel.getByRole("button", { name: "预览标签建议发送范围" }).click();
+  await panel.getByText("我已核对上方准确文本", { exact: false }).click();
+  await panel.getByRole("button", { name: "确认发送并生成" }).click();
+  const suggested = panel.getByLabel("#人工智能");
+  await expect(suggested).toBeVisible({ timeout: 5_000 });
+  await expect(suggested).not.toBeChecked();
+  await suggested.check();
+  await panel.getByRole("button", { name: "采纳所选标签" }).click();
+  await expect(page.getByLabel("文档标题")).toHaveValue("AI 生命周期文章");
+  await expect(page.locator(".tag-field input")).toHaveValue(/人工智能/u);
+
+  await page.getByRole("button", { name: "AI 设置", exact: true }).click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "关闭 AI 并删除全部结果" }).click();
+  await expect(page.getByText(/AI 已关闭，并删除 2 条派生结果/u)).toBeVisible();
+  await page.getByRole("button", { name: "返回资料库" }).click();
+  await page.getByRole("button", { name: "AI 派生", exact: true }).click();
+  await expect(page.getByText("还没有派生结果。", { exact: false })).toBeVisible();
+});
+
 test("imports, restores history, trashes, restores, searches, exports, and blocks raw scripts", async ({ page }) => {
   const remoteImageRequests: string[] = [];
   await page.route("https://assets.example.test/**", async (route) => {

@@ -36,6 +36,8 @@ const dataDir = resolve(
 const staticDir = resolve(process.env.KB_STATIC_DIR ?? join(process.cwd(), "dist"));
 const backupRoot = defaultBackupRoot(dataDir);
 const requestedPort = Number(process.env.KB_PORT ?? 0);
+const llmApiKey = process.env.ZHIYE_LLM_API_KEY?.trim() ?? "";
+delete process.env.ZHIYE_LLM_API_KEY;
 if (!Number.isInteger(requestedPort) || requestedPort < 0 || requestedPort > 65_535) {
   throw new Error("KB_PORT must be an integer from 0 to 65535");
 }
@@ -110,6 +112,7 @@ const app = createApp({
   backupRoot,
   staticDir,
   dev,
+  llmApiKey,
   onDesktopCloseReady: desktop ? (attemptId) => console.log(`ZHIYE_CLOSE_READY ${attemptId}`) : undefined,
 });
 const vite = dev

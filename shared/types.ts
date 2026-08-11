@@ -128,6 +128,64 @@ export interface DeleteDerivedResultsResponse {
   deletedResults: number;
 }
 
+export type LlmEndpointKind = "remote" | "local";
+
+export interface LlmEndpointSettings {
+  endpointUrl: string;
+  model: string;
+}
+
+export interface LlmSettings {
+  enabled: boolean;
+  target: LlmEndpointKind;
+  remote: LlmEndpointSettings;
+  local: LlmEndpointSettings & { trusted: boolean };
+  revision: number;
+  apiKeyConfigured: boolean;
+}
+
+export type UpdateLlmSettingsInput = Omit<LlmSettings, "apiKeyConfigured">;
+
+export interface DerivedCoverage {
+  sourceChars: number;
+  sentChars: number;
+  truncated: boolean;
+}
+
+export interface DerivedPreview {
+  type: DerivedResultType;
+  revision: number;
+  inputHash: string;
+  promptVersion: string;
+  settingsRevision: number;
+  model: string;
+  endpointId: string;
+  target: { kind: LlmEndpointKind; url: string };
+  coverage: DerivedCoverage;
+  sentText: string;
+}
+
+export interface StartDerivedTaskInput {
+  type: DerivedResultType;
+  revision: number;
+  inputHash: string;
+  settingsRevision: number;
+}
+
+export type DerivedTaskStatus = "running" | "succeeded" | "failed" | "cancelled";
+
+export interface DerivedTask {
+  id: string;
+  documentId: string;
+  type: DerivedResultType;
+  status: DerivedTaskStatus;
+  preview: DerivedPreview;
+  result: DerivedResult | null;
+  error: { code: string; message: string } | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
 export interface DocumentListResponse {
   items: DocumentSummary[];
   page: number;

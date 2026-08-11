@@ -34,12 +34,40 @@ import type {
   ImportKind,
   ImportPreview,
   ImportStrategy,
+  LlmEndpointKind,
+  LlmSettings,
   RecentFilter,
   SaveDerivedResultInput,
   TagMutationResponse,
 } from "../shared/types.js";
 
 const PAGE_SIZE = 30;
+
+interface StoredLlmSettings {
+  enabled: boolean;
+  target: LlmEndpointKind;
+  remote: { endpointUrl: string; model: string };
+  local: { endpointUrl: string; model: string; trusted: boolean };
+}
+
+const defaultLlmSettings: StoredLlmSettings = {
+  enabled: false,
+  target: "remote",
+  remote: { endpointUrl: "", model: "" },
+  local: { endpointUrl: "", model: "", trusted: false },
+};
+
+function parseLlmSettings(value: string): StoredLlmSettings {
+  const parsed = JSON.parse(value) as Partial<StoredLlmSettings>;
+  if (
+    typeof parsed.enabled !== "boolean" ||
+    (parsed.target !== "remote" && parsed.target !== "local") ||
+    !parsed.remote || typeof parsed.remote.endpointUrl !== "string" || typeof parsed.remote.model !== "string" ||
+    !parsed.local || typeof parsed.local.endpointUrl !== "string" || typeof parsed.local.model !== "string" ||
+    typeof parsed.local.trusted !== "boolean"
+  ) throw new Error("Stored LLM settings are invalid");
+  return parsed as StoredLlmSettings;
+}
 
 const migrations = [
   `
@@ -1118,6 +1146,49 @@ export class KnowledgeDatabase {
     return result.changes === 1 ? { kind: "updated" as const, state: this.getRecentFilters() } : { kind: "conflict" as const };
   }
 
+  getLlmSettings(apiKeyConfigured = false): LlmSettings {
+    const row = this.sql
+      .prepare("SELECT value, revision FROM app_settings WHERE key = 'llm'")
+      .get() as { value: string; revision: number } | undefined;
+    return {
+      ...(row ? parseLlmSettings(row.value) : defaultLlmSettings),
+      revision: row?.revision ?? 0,
+      apiKeyConfigured,
+    };
+  }
+
+  setLlmSettings(settings: StoredLlmSettings, expectedRevision: number, apiKeyConfigured = false) {
+    const timestamp = now();
+    const value = JSON.stringify(settings);
+    const result = expectedRevision === 0
+      ? this.sql.prepare(
+        `INSERT OR IGNORE INTO app_settings(key, value, revision, updated_at)
+         VALUES ('llm', ?, 1, ?)`,
+      ).run(value, timestamp)
+      : this.sql.prepare(
+        `UPDATE app_settings SET value = ?, revision = revision + 1, updated_at = ?
+         WHERE key = 'llm' AND revision = ?`,
+      ).run(value, timestamp, expectedRevision);
+    return result.changes === 1
+      ? { kind: "updated" as const, settings: this.getLlmSettings(apiKeyConfigured) }
+      : { kind: "conflict" as const, settings: this.getLlmSettings(apiKeyConfigured) };
+  }
+
+  disableLlm(expectedRevision: number, deleteResults: boolean, apiKeyConfigured = false) {
+    return transaction(this.sql, () => {
+      const current = this.getLlmSettings(apiKeyConfigured);
+      const result = this.setLlmSettings({
+        enabled: false,
+        target: current.target,
+        remote: current.remote,
+        local: current.local,
+      }, expectedRevision, apiKeyConfigured);
+      if (result.kind === "conflict") return result;
+      const deletedResults = deleteResults ? this.deleteAllDerivedResults() : 0;
+      return { ...result, deletedResults };
+    });
+  }
+
   private toBackupRecord(row: BackupRecordRow): BackupRecord {
     return {
       id: row.id,
@@ -1534,6 +1605,22 @@ export class KnowledgeDatabase {
         result: this.toDerivedResult(row, currentInputHash),
       };
     });
+  }
+
+  findDerivedResult(
+    documentId: string,
+    type: DerivedResultType,
+    model: string,
+    endpointId: string,
+    promptVersion: string,
+    inputHash: string,
+  ) {
+    const row = this.sql.prepare(
+      `SELECT * FROM derived_results
+       WHERE document_id = ? AND type = ? AND model = ? AND endpoint_id = ?
+         AND prompt_version = ? AND input_hash = ?`,
+    ).get(documentId, type, model, endpointId, promptVersion, inputHash) as unknown as DerivedResultRow | undefined;
+    return row ? this.toDerivedResult(row, inputHash) : null;
   }
 
   listDerivedResults(documentId: string, page = 1) {

@@ -31,7 +31,9 @@ import type {
 } from "../shared/types";
 import { api, ApiRequestError } from "./api";
 import type { DocumentPatch } from "./api";
+import { AiSettings } from "./components/AiSettings";
 import { DataSafety } from "./components/DataSafety";
+import { DerivedKnowledge } from "./components/DerivedKnowledge";
 import { MarkdownEditor } from "./components/MarkdownEditor";
 
 type EditorMode = "edit" | "split" | "preview";
@@ -559,6 +561,8 @@ export default function App() {
   const [closing, setClosing] = useState(false);
   const [safetyOpen, setSafetyOpen] = useState(false);
   const [safetyRecovery, setSafetyRecovery] = useState(false);
+  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
+  const [derivedOpen, setDerivedOpen] = useState(false);
   const [collections, setCollections] = useState<KnowledgeCollection[]>([]);
   const [collectionsOpen, setCollectionsOpen] = useState(false);
   const [collectionsLoading, setCollectionsLoading] = useState(false);
@@ -625,6 +629,8 @@ export default function App() {
       }
     }).catch(() => undefined);
   }, []);
+
+  useEffect(() => setDerivedOpen(false), [selectedId]);
 
   useEffect(() => {
     recentFilterSaveChainRef.current = api.getRecentFilters().then((value) => {
@@ -1917,6 +1923,16 @@ export default function App() {
     );
   };
 
+  const adoptDerivedTags = async (tags: string[]) => {
+    const document = currentDocRef.current;
+    if (!document || organizationLocked || metadataDirty) throw new Error("请先保存或处理当前更改。");
+    const next = [...new Set([...document.tags, ...tags])];
+    if (next.length === document.tags.length) return;
+    if (!await commitOrganization({ tags: next }, `已采纳 ${next.length - document.tags.length} 个 AI 建议标签。`)) {
+      throw new Error("标签尚未采纳，请处理当前更改后重试。");
+    }
+  };
+
   const createCollection = async (event: FormEvent) => {
     event.preventDefault();
     const name = collectionName.trim();
@@ -2343,17 +2359,18 @@ export default function App() {
         (rows.find((row) => row.getAttribute("aria-current") === "true") || rows[0])?.focus();
       } else if (event.key === "Escape") {
         if (shortcutHelp) setShortcutHelp(false);
-        else if (collectionsOpen || qualityOpen || captureHistoryOpen || historyOpen) {
+        else if (collectionsOpen || qualityOpen || captureHistoryOpen || historyOpen || derivedOpen) {
           setCollectionsOpen(false);
           setQualityOpen(false);
           setCaptureHistoryOpen(false);
           setHistoryOpen(false);
+          setDerivedOpen(false);
         } else if (!editing) closeDocument();
       }
     };
     window.addEventListener("keydown", handleShortcuts);
     return () => window.removeEventListener("keydown", handleShortcuts);
-  }, [bulkImportOpen, captureHistoryOpen, closeDocument, collectionsOpen, historyOpen, qualityOpen, shortcutHelp]);
+  }, [bulkImportOpen, captureHistoryOpen, closeDocument, collectionsOpen, derivedOpen, historyOpen, qualityOpen, shortcutHelp]);
 
   const retryCapture = async () => {
     if (!currentDoc) return;
@@ -2517,6 +2534,7 @@ export default function App() {
     setCaptureHistoryOpen(false);
     setQualityOpen(false);
     setCollectionsOpen(false);
+    setDerivedOpen(false);
     setHistoryOpen(true);
     setHistoryLoading(true);
     setHistoryError("");
@@ -2535,6 +2553,7 @@ export default function App() {
     setHistoryOpen(false);
     setQualityOpen(false);
     setCollectionsOpen(false);
+    setDerivedOpen(false);
     setCaptureHistoryOpen((value) => !value);
   };
 
@@ -2543,6 +2562,7 @@ export default function App() {
     setHistoryOpen(false);
     setCaptureHistoryOpen(false);
     setCollectionsOpen(false);
+    setDerivedOpen(false);
     setQualityOpen((value) => !value);
   };
 
@@ -2551,11 +2571,21 @@ export default function App() {
     setHistoryOpen(false);
     setCaptureHistoryOpen(false);
     setQualityOpen(false);
+    setDerivedOpen(false);
     setRenamingCollection(null);
     if (!collectionsOpen) {
       void api.listManagedTags().then(setManagedTags).catch((error) => setOrganizationError((error as Error).message));
     }
     setCollectionsOpen((value) => !value);
+  };
+
+  const toggleDerived = () => {
+    if (closeAttemptRef.current || !currentDoc) return;
+    setHistoryOpen(false);
+    setCaptureHistoryOpen(false);
+    setQualityOpen(false);
+    setCollectionsOpen(false);
+    setDerivedOpen((value) => !value);
   };
 
   const applyReextraction = async (
@@ -2799,6 +2829,15 @@ export default function App() {
         : conflict || remoteDraftConflict || organizationConflict
           ? "请先处理当前的版本或草稿冲突。"
           : null;
+  const derivedBlockedReason = !currentDoc || currentDoc.status !== "ready"
+    ? "只能为已就绪的文档生成派生知识。"
+    : currentDoc.deletedAt
+      ? "请先从回收站恢复文档。"
+      : hasUnsavedChanges || saveState === "saving" || organizationSaving
+        ? "请先保存当前编辑，发送范围才能准确对应正式版本。"
+        : conflict || remoteDraftConflict || organizationConflict
+          ? "请先处理当前版本或草稿冲突。"
+          : null;
   const qualityIssues: Array<{ title: string; detail: string }> = [];
   if (currentDoc?.status === "ready") {
     const bodyLength = currentDoc.markdown.replace(/\s/gu, "").length;
@@ -2832,7 +2871,7 @@ export default function App() {
           <span><strong>织页</strong><small>ZHIYE · LOCAL KNOWLEDGE</small></span>
         </div>
         <p className="masthead-note">把散落的网页，<br />织成可编辑的知识。</p>
-        <div className="masthead-actions"><button type="button" className="shortcut-help-button" onClick={() => setShortcutHelp(true)} aria-label="查看快捷键">?</button><button type="button" className="local-mark" aria-pressed={safetyOpen} onClick={() => setSafetyOpen(true)} disabled={closing}>
+        <div className="masthead-actions"><button type="button" className="shortcut-help-button" onClick={() => setShortcutHelp(true)} aria-label="查看快捷键">?</button><button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(true); }} disabled={closing}>
           <i />{safetyRecovery ? "恢复模式" : "数据安全"}
         </button></div>
       </header>
@@ -2912,7 +2951,9 @@ export default function App() {
         </dialog>
       )}
 
-      {safetyOpen ? (
+      {aiSettingsOpen ? (
+        <AiSettings onClose={() => setAiSettingsOpen(false)} />
+      ) : safetyOpen ? (
         <DataSafety
           beforeOperation={prepareDataSafetyOperation}
           onClose={() => setSafetyOpen(false)}
@@ -3101,6 +3142,7 @@ export default function App() {
                   <button type="button" className="history-button" onClick={toggleCollectionManager} disabled={closing} aria-expanded={collectionsOpen} aria-controls="collection-manager">管理分类</button>
                   <button type="button" className="history-button" onClick={toggleQuality} disabled={closing || currentDoc.status !== "ready"} aria-expanded={qualityOpen} aria-controls="capture-quality">质量检查</button>
                   <button type="button" className="history-button" onClick={toggleCaptureHistory} disabled={closing} aria-expanded={captureHistoryOpen} aria-controls="capture-history">采集历史</button>
+                  <button type="button" className="history-button" onClick={toggleDerived} disabled={closing} aria-expanded={derivedOpen} aria-controls="derived-knowledge">AI 派生</button>
                   {!currentDoc.deletedAt && (
                     <button type="button" className="text-button danger" onClick={() => void moveToTrash()} disabled={closing || organizationSaving || Boolean(organizationConflict) || Boolean(remoteDraftConflict) || Boolean(lifecycleAction) || hasUnsavedChanges || saveState === "saving"} title={hasUnsavedChanges || remoteDraftConflict || organizationConflict ? "请先处理当前更改" : undefined}>
                       {lifecycleAction === "delete" ? "正在移除…" : "移入回收站"}
@@ -3167,6 +3209,13 @@ export default function App() {
                   onApply={applyReextraction}
                 />
               )}
+              <DerivedKnowledge
+                document={currentDoc}
+                open={derivedOpen}
+                onClose={() => setDerivedOpen(false)}
+                generationBlockedReason={derivedBlockedReason}
+                onAdoptTags={adoptDerivedTags}
+              />
 
               {currentDoc.deletedAt ? (
                 <div className="trash-workbench">
