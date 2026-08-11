@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import dgram from "node:dgram";
 import { createRequire } from "node:module";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 assert.ok(process.argv[2], "packaged runtime path is required");
@@ -11,6 +10,8 @@ process.env.PLAYWRIGHT_BROWSERS_PATH = join(runtime, "browsers");
 
 const require = createRequire(join(runtime, "package.json"));
 const { chromium } = require("playwright");
+const executableRelative = relative(join(runtime, "browsers"), chromium.executablePath());
+assert.ok(executableRelative && !executableRelative.startsWith("..") && !isAbsolute(executableRelative));
 const { browserLaunchOptions } = await import(pathToFileURL(join(runtime, "dist-server/server/browser.js")));
 const options = browserLaunchOptions("http://127.0.0.1:9");
 assert.equal(options.chromiumSandbox, true);
@@ -25,12 +26,11 @@ async function probeWebRtc(launchOptions, verifyCommandLine = false) {
     browser = await chromium.launch(launchOptions);
     const page = await browser.newPage();
     if (verifyCommandLine) {
-      const commands = execFileSync("ps", ["-ww", "-axo", "command="], { encoding: "utf8" })
-        .split("\n")
-        .filter((line) => line.includes(chromium.executablePath()));
-      assert.ok(commands.length > 0, "packaged Chromium process was not found");
-      assert.ok(commands.every((command) => !command.includes("--no-sandbox")));
-      assert.ok(commands.some((command) => command.includes("--force-webrtc-ip-handling-policy=disable_non_proxied_udp")));
+      const session = await browser.newBrowserCDPSession();
+      const { arguments: command } = await session.send("Browser.getBrowserCommandLine");
+      assert.ok(command.length > 0, "packaged Chromium command line was empty");
+      assert.ok(!command.includes("--no-sandbox"));
+      assert.ok(command.includes("--force-webrtc-ip-handling-policy=disable_non_proxied_udp"));
     }
     await page.goto("about:blank");
     const packet = new Promise((resolveReceived) => {
