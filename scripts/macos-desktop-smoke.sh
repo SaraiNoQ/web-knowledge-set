@@ -13,6 +13,7 @@ ditto "$BUILT_APP" "$APP"
 DATA_DIR="$HOME/Library/Application Support/dev.local.zhiye"
 DATABASE="$DATA_DIR/zhiye.sqlite3"
 FILE_MARKER="$DATA_DIR/.desktop-smoke-files"
+INTENT_MARKER="$DATA_DIR/.desktop-smoke-intent"
 NOTE_DIR=$(mktemp -d)
 NOTE="$NOTE_DIR/finder-smoke.md"
 COLD_URL="https://example.com/zhiye-cold-smoke"
@@ -46,12 +47,14 @@ wait_for_source() {
     sleep 1
   done
   echo "Timed out waiting for capture: $source_url" >&2
+  [[ -f "$INTENT_MARKER" ]] && printf 'Desktop intent stage: %s\n' "$(cat "$INTENT_MARKER")" >&2
+  pgrep -fl zhiye >&2 || true
   return 1
 }
 
 quit_app
 launchctl setenv ZHIYE_DESKTOP_SMOKE 1
-rm -f -- "$FILE_MARKER"
+rm -f -- "$FILE_MARKER" "$INTENT_MARKER"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"
 plutil -extract CFBundleURLTypes xml1 -o - "$APP/Contents/Info.plist" | grep -q '<string>zhiye</string>'
 open -b dev.local.zhiye "$COLD_LINK"

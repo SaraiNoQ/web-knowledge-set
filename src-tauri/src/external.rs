@@ -186,6 +186,8 @@ pub(crate) fn enqueue_deep_links(app: &tauri::AppHandle, urls: &[tauri::Url]) {
         .filter_map(parse_capture_deep_link)
         .fold(false, |added, url| state.push_capture(url) || added);
     if added {
+        #[cfg(debug_assertions)]
+        write_intent_marker(app, "received");
         notify(app);
     }
 }
@@ -237,6 +239,16 @@ fn write_smoke_marker(app: &tauri::AppHandle, names: Option<Vec<String>>) {
     }
     if let (Ok(data_dir), Some(names)) = (app.path().app_data_dir(), names) {
         let _ = fs::write(data_dir.join(".desktop-smoke-files"), names.join("\n"));
+    }
+}
+
+#[cfg(debug_assertions)]
+fn write_intent_marker(app: &tauri::AppHandle, stage: &str) {
+    if std::env::var("ZHIYE_DESKTOP_SMOKE").as_deref() == Ok("1") {
+        if let Ok(data_dir) = app.path().app_data_dir() {
+            let _ = fs::create_dir_all(&data_dir);
+            let _ = fs::write(data_dir.join(".desktop-smoke-intent"), stage);
+        }
     }
 }
 
@@ -393,8 +405,19 @@ fn load_paths(roots: &[PathBuf]) -> Result<Vec<ExternalFile>, String> {
 }
 
 #[tauri::command]
-pub(crate) fn take_external_intents(state: tauri::State<'_, ExternalState>) -> Vec<ExternalIntent> {
-    state.drain()
+pub(crate) fn take_external_intents(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ExternalState>,
+) -> Vec<ExternalIntent> {
+    let intents = state.drain();
+    #[cfg(debug_assertions)]
+    if intents
+        .iter()
+        .any(|intent| matches!(intent, ExternalIntent::Capture { .. }))
+    {
+        write_intent_marker(&app, "drained");
+    }
+    intents
 }
 
 #[tauri::command]
