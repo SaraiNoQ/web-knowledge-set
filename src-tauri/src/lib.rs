@@ -1,8 +1,11 @@
+mod external;
+
 use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{Manager, RunEvent, WindowEvent};
+use tauri::{DragDropEvent, Manager, RunEvent, WindowEvent};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -273,13 +276,17 @@ fn fail_service(app: &tauri::AppHandle, reason: &str) {
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                if window.is_visible().unwrap_or(false) {
-                    let _ = window.set_focus();
-                }
-            }
+            external::focus_main(app);
         }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_shell::init())
+        .invoke_handler(tauri::generate_handler![
+            external::take_external_intents,
+            external::read_external_text,
+            external::read_external_binary,
+            external::discard_external_tokens,
+        ])
+        .manage(external::ExternalState::default())
         .manage(LocalService {
             child: Mutex::new(None),
             phase: AtomicU8::new(STARTING),
@@ -289,6 +296,15 @@ pub fn run() {
             next_close_attempt: AtomicU64::new(1),
         })
         .setup(|app| {
+            if let Ok(Some(urls)) = app.deep_link().get_current() {
+                external::enqueue_deep_links(app.handle(), &urls);
+            }
+            let deep_link_handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                external::enqueue_deep_links(&deep_link_handle, &event.urls());
+                external::focus_main(&deep_link_handle);
+            });
+
             let resource_dir = match app.path().resource_dir() {
                 Ok(path) => path,
                 Err(error) => {
@@ -476,6 +492,13 @@ pub fn run() {
         .expect("failed to build the Zhiye desktop app");
 
     app.run(|handle, event| match event {
+        #[cfg(target_os = "macos")]
+        RunEvent::Opened { urls } => external::enqueue_file_urls(handle, &urls),
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }),
+            ..
+        } if label == "main" => external::enqueue_paths(handle, paths),
         RunEvent::WindowEvent {
             label,
             event: WindowEvent::CloseRequested { api, .. },

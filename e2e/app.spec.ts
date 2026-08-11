@@ -658,3 +658,49 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   expect(conflictCloseReadyCount).toBe(0);
   await page.unroute("**/api/documents/*");
 });
+
+test("routes desktop capture and file intents through existing imports", async ({ page }) => {
+  await page.addInitScript(() => {
+    const coldIntents = [
+      { kind: "capture", url: "https://example.com/desktop-deep-link" },
+      { kind: "markdown", token: "desktop-markdown", name: "desktop-note.md" },
+    ];
+    let takes = 0;
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      value: {
+        invoke: async (command: string, args?: { token?: string }) => {
+          if (command === "take_external_intents") {
+            takes += 1;
+            if (takes === 1) return coldIntents.splice(0);
+            if (takes === 2) {
+              window.dispatchEvent(new Event("zhiye:external-intents-ready"));
+              return [];
+            }
+            if (takes === 3) return [{ kind: "capture", url: "https://example.com/desktop-warm-link" }];
+            return [];
+          }
+          if (command === "read_external_text" && args?.token === "desktop-markdown") {
+            return { name: "desktop-note.md", content: "# 桌面 Markdown\n\n从 Finder 打开。" };
+          }
+          throw new Error(`Unexpected desktop command: ${command}`);
+        },
+      },
+    });
+  });
+  await page.goto("/");
+  await expect(page.getByLabel("文档标题")).toHaveValue("远端测试文章", { timeout: 8_000 });
+  await expect.poll(() => page.evaluate(async () => {
+    const value = await fetch("/api/documents?page=1").then((response) => response.json()) as {
+      items: Array<{ sourceUrl: string }>;
+    };
+    return value.items.some((item) => item.sourceUrl === "https://example.com/desktop-warm-link");
+  })).toBe(true);
+  const dialog = page.getByRole("dialog", { name: "批量导入" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("已从桌面接收 1 个文件")).toBeVisible();
+  await expect(dialog.getByText("已选择 1 个文件")).toBeVisible();
+  await dialog.getByRole("button", { name: "检查导入内容" }).click();
+  await expect(dialog.locator(".bulk-preview-list")).toContainText("desktop-note");
+  await dialog.getByRole("button", { name: "确认导入" }).click();
+  await expect(dialog.getByText(/新增 1/u)).toBeVisible();
+});

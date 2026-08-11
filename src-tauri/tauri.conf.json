@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "织页",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "identifier": "dev.local.zhiye",
   "build": {
     "beforeDevCommand": "pnpm desktop:prepare",
@@ -23,14 +23,41 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:*; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'",
-      "capabilities": ["main-capability"]
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'",
+      "capabilities": ["main-capability", "external-intents"]
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["zhiye"]
+      }
     }
   },
   "bundle": {
     "active": true,
     "category": "Productivity",
     "shortDescription": "把互联网文章整理为本地可编辑的 Markdown 知识库",
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown"],
+        "name": "Markdown 文档",
+        "rank": "Alternate",
+        "role": "Editor"
+      },
+      {
+        "ext": ["html", "htm"],
+        "name": "浏览器书签",
+        "rank": "Alternate",
+        "role": "Viewer"
+      },
+      {
+        "ext": ["zip"],
+        "name": "织页知识包",
+        "rank": "Alternate",
+        "role": "Viewer"
+      }
+    ],
     "externalBin": ["binaries/node"],
     "resources": {
       "../desktop-resources/runtime/": "runtime/"

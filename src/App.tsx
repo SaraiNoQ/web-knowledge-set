@@ -8,6 +8,7 @@ import {
 import type { ChangeEvent, FormEvent, KeyboardEvent, ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { invoke } from "@tauri-apps/api/core";
 import type {
   BatchDocumentAction,
   CaptureHistoryItem,
@@ -76,6 +77,16 @@ interface ImportDuplicatePrompt {
   url: string;
 }
 
+type ExternalIntent =
+  | { kind: "capture"; url: string }
+  | { kind: "markdown" | "bookmarks" | "bundle"; token: string; name: string }
+  | { kind: "error"; message: string };
+
+interface ExternalTextFile {
+  name: string;
+  content: string;
+}
+
 interface NavigationGuard {
   generation: number;
   selectedId: string | null;
@@ -105,6 +116,25 @@ function importFileLimitError(kind: ImportKind, files: File[]) {
     return kind === "bundle" ? "织页知识包不能超过 100 MiB。" : "导入文件合计不能超过 10 MiB。";
   }
   return "";
+}
+
+function acceptedImportFiles(kind: ImportKind, selected: File[]) {
+  if (kind === "markdown") return selected.filter((file) => /\.(?:md|markdown)$/iu.test(file.name));
+  if (kind === "bundle") return selected.filter((file) => /\.zip$/iu.test(file.name)).slice(0, 1);
+  if (kind === "bookmarks") return selected.filter((file) => /\.html?$/iu.test(file.name)).slice(0, 1);
+  return [];
+}
+
+function unsupportedImportFileMessage(kind: ImportKind) {
+  if (kind === "bundle") return "请选择 .zip 格式的织页知识包。";
+  if (kind === "bookmarks") return "请选择 bookmarks.html。";
+  return "没有找到 Markdown 文件。";
+}
+
+function normalizeCaptureUrl(value: string) {
+  const parsed = new URL(value.trim());
+  if (!/^https?:$/u.test(parsed.protocol)) throw new Error("INVALID_URL");
+  return parsed.href;
 }
 
 function draftOf(document: KnowledgeDocument): Draft {
@@ -563,6 +593,7 @@ export default function App() {
   const shortcutDialogRef = useRef<HTMLDialogElement>(null);
   const bulkImportDialogRef = useRef<HTMLDialogElement>(null);
   const bulkImportAbortRef = useRef<AbortController | null>(null);
+  const externalIntentHandlerRef = useRef<(intents: ExternalIntent[]) => Promise<void>>(async () => undefined);
   const portableExportAbortRef = useRef<AbortController | null>(null);
   const collectionsRequestRef = useRef<{ sequence: number; controller: AbortController } | null>(null);
   const collectionsRequestSequenceRef = useRef(0);
@@ -1485,8 +1516,7 @@ export default function App() {
     }
   };
 
-  const handleImport = async (event: FormEvent) => {
-    event.preventDefault();
+  const captureUrl = async (value: string) => {
     if (closeAttemptRef.current || lifecycleAction || restoringRevision !== null) return;
     setImportError("");
     setImportNotice("");
@@ -1494,14 +1524,17 @@ export default function App() {
     if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，继续收取新网页吗？")) return;
     let normalized: string;
     try {
-      const parsed = new URL(importUrl.trim());
-      if (!/^https?:$/.test(parsed.protocol)) throw new Error();
-      normalized = parsed.href;
+      normalized = normalizeCaptureUrl(value);
     } catch {
       setImportError("请输入完整的 http(s) 网页地址。");
       return;
     }
     await importDocument(normalized, false, beginNavigation());
+  };
+
+  const handleImport = async (event: FormEvent) => {
+    event.preventDefault();
+    await captureUrl(importUrl);
   };
 
   const openImportedDuplicate = async () => {
@@ -1581,19 +1614,101 @@ export default function App() {
 
   const selectBulkFiles = (event: ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(event.target.files || []);
-    const files = bulkImportKind === "markdown"
-      ? selected.filter((file) => /\.(?:md|markdown)$/iu.test(file.name))
-      : bulkImportKind === "bundle"
-        ? selected.filter((file) => /\.zip$/iu.test(file.name)).slice(0, 1)
-        : selected.slice(0, 1);
+    const files = acceptedImportFiles(bulkImportKind, selected);
     const error = selected.length && !files.length
-      ? bulkImportKind === "bundle" ? "请选择 .zip 格式的织页知识包。" : "没有找到 Markdown 文件。"
+      ? unsupportedImportFileMessage(bulkImportKind)
       : importFileLimitError(bulkImportKind, files);
     if (error) event.currentTarget.value = "";
     setBulkImportFiles(error ? [] : files);
     setBulkImportError(error);
     setBulkImportNotice("");
   };
+
+  externalIntentHandlerRef.current = async (intents) => {
+    const externalError = intents.find((intent): intent is Extract<ExternalIntent, { kind: "error" }> => intent.kind === "error");
+    if (externalError) {
+      setBulkImportError(externalError.message);
+      setBulkImportOpen(true);
+    }
+    for (const intent of intents) {
+      if (intent.kind !== "capture") continue;
+      setImportUrl(intent.url);
+      if (safetyOpen || bulkImportBusy) {
+        setImportError("请先完成当前操作，网址已保留在收取栏。");
+        continue;
+      }
+      await captureUrl(intent.url);
+    }
+
+    const fileIntents = intents.filter((intent): intent is Extract<ExternalIntent, { token: string }> => "token" in intent);
+    if (!fileIntents.length) return;
+    const pendingTokens = new Set(fileIntents.map((intent) => intent.token));
+    try {
+      const kind = fileIntents[0]!.kind;
+      if (fileIntents.some((intent) => intent.kind !== kind)) throw new Error("一次只能打开一种导入文件。");
+      if (safetyOpen) throw new Error("请先退出数据安全界面，再重新打开或拖入文件。");
+      if (bulkImportBusy) throw new Error("当前导入完成后，请重新打开或拖入文件。");
+      const files: File[] = [];
+      for (const intent of fileIntents) {
+        if (kind === "bundle") {
+          const raw = await invoke<ArrayBuffer | Uint8Array<ArrayBuffer>>("read_external_binary", { token: intent.token });
+          pendingTokens.delete(intent.token);
+          const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+          files.push(new File([bytes], intent.name, { type: "application/zip" }));
+        } else {
+          const value = await invoke<ExternalTextFile>("read_external_text", { token: intent.token });
+          pendingTokens.delete(intent.token);
+          files.push(new File([value.content], value.name, { type: kind === "bookmarks" ? "text/html" : "text/markdown" }));
+        }
+      }
+      const accepted = acceptedImportFiles(kind, files);
+      const error = accepted.length !== files.length
+        ? unsupportedImportFileMessage(kind)
+        : importFileLimitError(kind, accepted);
+      if (error) throw new Error(error);
+      if (bulkImportPreview && !await cancelBulkPreview()) return;
+      clearBulkImport();
+      setBulkImportKind(kind);
+      setBulkImportFiles(accepted);
+      setBulkImportOpen(true);
+      setBulkImportNotice(`已从桌面接收 ${accepted.length} 个文件，请检查后导入。`);
+    } catch (error) {
+      setBulkImportError((error as Error).message);
+      setBulkImportOpen(true);
+    } finally {
+      if (pendingTokens.size) {
+        try {
+          await invoke("discard_external_tokens", { tokens: [...pendingTokens] });
+        } catch (error) {
+          setBulkImportError(`无法清理未读取的桌面文件：${(error as Error).message}`);
+        }
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let stopped = false;
+    const drain = async () => {
+      while (!stopped) {
+        const intents = await invoke<ExternalIntent[]>("take_external_intents");
+        if (!intents.length) break;
+        await externalIntentHandlerRef.current(intents);
+      }
+    };
+    let chain = Promise.resolve();
+    const onReady = () => {
+      chain = chain.then(drain).catch((error) => {
+        if (!stopped) setImportError(`无法处理桌面导入：${(error as Error).message}`);
+      });
+    };
+    window.addEventListener("zhiye:external-intents-ready", onReady);
+    onReady();
+    return () => {
+      stopped = true;
+      window.removeEventListener("zhiye:external-intents-ready", onReady);
+    };
+  }, []);
 
   const previewBulkImport = async () => {
     const controller = new AbortController();

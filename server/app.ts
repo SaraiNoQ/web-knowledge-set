@@ -104,7 +104,7 @@ const contentTypes: Record<string, string> = {
 };
 const contentSecurityPolicy = [
   "default-src 'self'",
-  "connect-src 'self'",
+  "connect-src 'self' ipc: http://ipc.localhost",
   "img-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self' data:",
