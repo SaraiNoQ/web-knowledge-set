@@ -50,6 +50,13 @@ jobs:
           /tmp/syft scan dir:. --output cyclonedx-json=release-evidence/source.cdx.json
       - name: Build unsigned desktop app
         run: pnpm tauri build --debug --bundles app
+      - name: Exercise packaged Chromium security boundary
+        run: |
+          APP="$(find src-tauri/target/debug/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          BROWSER_MODULE="$(find "$APP/Contents/Resources" -path '*/runtime/dist-server/server/browser.js' -print -quit)"
+          test -n "$BROWSER_MODULE"
+          RUNTIME="$(cd "$(dirname "$BROWSER_MODULE")/../.." && pwd)"
+          node scripts/macos-browser-security-smoke.mjs "$RUNTIME"
       - name: Record packaged application contents
         run: |
           APP="$(find src-tauri/target/debug/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"

@@ -7,6 +7,18 @@ export interface BrowserResult {
   status: number | null;
 }
 
+export function browserLaunchOptions(proxyServer: string) {
+  return {
+    headless: true,
+    chromiumSandbox: true,
+    proxy: { server: proxyServer, bypass: "<-loopback>" },
+    args: [
+      "--proxy-bypass-list=<-loopback>",
+      "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+    ],
+  };
+}
+
 async function loadInBrowser(input: string, signal: AbortSignal): Promise<BrowserResult> {
   await resolvePublicTarget(input);
   if (signal.aborted) throw new CapturePipelineError("BROWSER_FAILED", "浏览器抓取超时");
@@ -15,11 +27,7 @@ async function loadInBrowser(input: string, signal: AbortSignal): Promise<Browse
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   const closeOnAbort = () => void browser?.close();
   try {
-    browser = await chromium.launch({
-      headless: true,
-      proxy: { server: proxy.url, bypass: "<-loopback>" },
-      args: ["--proxy-bypass-list=<-loopback>"],
-    });
+    browser = await chromium.launch(browserLaunchOptions(proxy.url));
     signal.addEventListener("abort", closeOnAbort, { once: true });
     const context = await browser.newContext({
       acceptDownloads: false,
