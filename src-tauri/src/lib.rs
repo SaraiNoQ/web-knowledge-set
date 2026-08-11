@@ -350,6 +350,17 @@ pub fn run() {
             let static_dir = runtime_dir.join("dist");
             let browsers_dir = runtime_dir.join("browsers");
 
+            #[cfg(debug_assertions)]
+            if let Err(error) = keychain::seed_smoke_api_key() {
+                show_startup_error(
+                    app.handle(),
+                    "无法准备钥匙串测试",
+                    "织页无法准备隔离的测试密钥。",
+                    &error,
+                );
+                return Ok(());
+            }
+
             let command = match app.shell().sidecar("node") {
                 Ok(command) => {
                     let command = command

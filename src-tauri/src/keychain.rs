@@ -75,6 +75,15 @@ pub(crate) fn load_api_key() -> Result<Option<String>, String> {
     Ok(None)
 }
 
+#[cfg(debug_assertions)]
+pub(crate) fn seed_smoke_api_key() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if std::env::var("ZHIYE_KEYCHAIN_SMOKE").as_deref() == Ok("1") {
+        return write_for_account(account(), "zhiye-isolated-smoke-key");
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) fn llm_keychain_status() -> Result<KeychainStatus, String> {
     #[cfg(target_os = "macos")]
