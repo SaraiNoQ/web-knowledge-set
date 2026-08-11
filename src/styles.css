@@ -1192,6 +1192,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .safety-head h1 { margin: 7px 0 5px; font: 500 clamp(35px, 4vw, 58px)/1.05 var(--font-serif); letter-spacing: .04em; }
 .safety-head p { margin: 0; color: var(--ink-soft); font-size: 12px; }
 .safety-close { padding: 9px 0; color: var(--ink-soft); background: transparent; border: 0; border-bottom: 1px solid var(--line-strong); font-size: 11px; }
+.safety-head-actions { display: flex; gap: 22px; }
 
 .recovery-banner,
 .safety-message {
@@ -1267,6 +1268,25 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .safety-controls form button { justify-self: start; }
 .safety-controls hr { margin: 30px 0 25px; border: 0; border-top: 1px solid var(--line); }
 .safety-controls h3 { margin: 0; font: 500 17px/1.3 var(--font-serif); }
+
+.diagnostics-page { background: linear-gradient(135deg, rgba(250,247,239,.42), rgba(226,222,211,.2)); }
+.diagnostics-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(290px, .75fr); gap: 22px; max-width: 1420px; margin: 0 auto; }
+.diagnostics-ledger > header { display: flex; justify-content: space-between; align-items: end; gap: 20px; padding: 22px 25px; border-bottom: 1px solid var(--line); }
+.diagnostics-ledger > header small { color: var(--ink-faint); font: 9px/1.4 var(--font-mono); }
+.diagnostics-list { margin: 0; padding: 0; list-style: none; }
+.diagnostics-list li { display: grid; grid-template-columns: 125px minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 14px 25px; border-bottom: 1px solid var(--line); }
+.diagnostics-list li:last-child { border-bottom: 0; }
+.diagnostics-list time, .diagnostics-list span { color: var(--ink-faint); font: 9px/1.4 var(--font-mono); }
+.diagnostics-list strong { overflow: hidden; font: 600 11px/1.4 var(--font-mono); letter-spacing: .03em; text-overflow: ellipsis; }
+.diagnostics-export { grid-row: span 2; padding: 27px; }
+.diagnostics-export h2 { max-width: 260px; margin-top: 8px; }
+.diagnostics-export > p { margin: 19px 0 25px; color: var(--ink-soft); font-size: 11px; line-height: 1.85; }
+.diagnostics-export dl { margin: 0 0 26px; border-top: 1px solid var(--line); }
+.diagnostics-export dl > div { display: flex; justify-content: space-between; gap: 18px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.diagnostics-export dt { color: var(--ink-faint); font-size: 10px; }
+.diagnostics-export dd { margin: 0; font: 500 12px/1.2 var(--font-mono); }
+.diagnostics-export .primary-button { width: 100%; min-height: 42px; }
+.diagnostics-export > small { display: block; margin-top: 15px; color: var(--ink-faint); font-size: 9px; line-height: 1.7; }
 
 .spinner {
   display: inline-block;
@@ -1375,6 +1395,8 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   .safety-page { min-height: calc(100vh - 76px); padding: 32px 20px 60px; }
   .safety-head { align-items: start; }
   .safety-columns { grid-template-columns: 1fr; }
+  .diagnostics-grid { grid-template-columns: 1fr; }
+  .diagnostics-export { grid-row: auto; }
   .recovery-banner { grid-template-columns: 1fr; }
 }
 
@@ -1421,6 +1443,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   .reextract-preview fieldset { align-items: stretch; flex-direction: column; }
   .reextract-preview .primary-button, .capture-ledger li > button { width: 100%; margin-left: 0; }
   .safety-head { display: grid; }
+  .safety-head-actions { flex-wrap: wrap; }
   .safety-overview { grid-template-columns: 1fr; }
   .safety-overview article { border-right: 0; border-bottom: 1px solid var(--line); }
   .safety-overview article:nth-child(3) { border-bottom: 1px solid var(--line); }
@@ -1428,6 +1451,8 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   .backup-row { grid-template-columns: 1fr; }
   .backup-facts { justify-content: start; }
   .backup-actions { justify-content: start; }
+  .diagnostics-list li { grid-template-columns: 1fr auto; gap: 4px 12px; }
+  .diagnostics-list time { grid-column: 1 / -1; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -47,6 +47,13 @@ import {
   type CaptureResult,
   type DocumentPatch,
 } from "./db.js";
+import {
+  createDiagnosticBundle,
+  createDiagnosticReport,
+  diagnosticCode,
+  type DiagnosticLogInput,
+  type DiagnosticsLogger,
+} from "./diagnostics.js";
 import { extractHtml } from "./extract.js";
 import { ImportParseError, parseImportRequest } from "./import.js";
 import { createDerivedTasks, LlmError, llmSettingsInput, type ResolveLlmTarget } from "./llm.js";
@@ -159,6 +166,8 @@ export interface AppOptions {
   onDesktopCloseReady?: (attemptId: string) => void;
   llmApiKey?: string;
   resolveLlmTarget?: ResolveLlmTarget;
+  appVersion?: string;
+  diagnostics?: DiagnosticsLogger;
 }
 
 class HttpError extends Error {
@@ -863,6 +872,7 @@ function createWorker(
   capture: CaptureFunction,
   fetchAsset: AssetFetchFunction | undefined,
   enabled: boolean,
+  diagnosticLog?: (entry: DiagnosticLogInput) => unknown,
 ) {
   let userPaused = !enabled;
   let maintenancePaused = false;
@@ -919,11 +929,12 @@ function createWorker(
             fetchAsset,
           );
         } catch (error) {
-          console.error("Image caching failed after capture completed", error);
+          diagnosticLog?.({ level: "error", event: "asset_cache_failed", code: diagnosticCode(error) });
         }
       } catch (error) {
         const failure = captureFailure(error);
         db.failCapture(job, failure.code, failure.message);
+        diagnosticLog?.({ level: "warning", event: "capture_failed", code: failure.code });
       }
     }
   };
@@ -1004,6 +1015,7 @@ export function createApp(options: AppOptions) {
     capture,
     options.fetchAsset,
     options.startWorker !== false && db !== null,
+    (entry) => options.diagnostics?.log(entry),
   );
   const derivedTasks = createDerivedTasks({
     database: () => {
@@ -1109,6 +1121,20 @@ export function createApp(options: AppOptions) {
     };
   };
 
+  const diagnosticReport = () => {
+    const database = maintenanceKind === null ? db : null;
+    return createDiagnosticReport({
+      appVersion: options.appVersion ?? "development",
+      desktop: Boolean(options.onDesktopCloseReady),
+      supportedSchema: CURRENT_SCHEMA_VERSION,
+      currentSchema: database?.getSchemaVersion() ?? null,
+      queue: database ? { paused: worker.isPaused(), ...database.getCaptureQueueCounts() } : null,
+      health: database ? dataSafetyHealth(database) : null,
+      recoveryCode: recoveryError ? diagnosticCode(recoveryError) : null,
+      logs: options.diagnostics?.entries() ?? [],
+    });
+  };
+
   const handler = async (request: IncomingMessage, response: ServerResponse) => {
     try {
       if (!hasLocalHost(request.rawHeaders)) {
@@ -1129,6 +1155,30 @@ export function createApp(options: AppOptions) {
       }
       if (pathname.startsWith("/api/") && !auth.isAuthenticated(request)) {
         sendError(response, 401, "UNAUTHORIZED", "Authentication required");
+        return;
+      }
+      if (
+        request.method === "GET" &&
+        (pathname === "/api/diagnostics" || pathname === "/api/diagnostics/export.zip")
+      ) {
+        if (requestUrl.search) {
+          throw new HttpError(400, "INVALID_DIAGNOSTICS_QUERY", "Diagnostics do not accept query parameters");
+        }
+        const report = diagnosticReport();
+        if (pathname === "/api/diagnostics") {
+          sendJson(response, 200, report);
+        } else {
+          const archive = createDiagnosticBundle(report);
+          const filename = `zhiye-diagnostics-${new Date().toISOString().slice(0, 10)}.zip`;
+          response.writeHead(200, {
+            "Content-Type": "application/zip",
+            "Content-Disposition": `attachment; filename="${filename}"`,
+            "Content-Length": String(archive.length),
+            "Cache-Control": "no-store",
+            ...securityHeaders(),
+          });
+          response.end(archive);
+        }
         return;
       }
       const bundlePreview = pathname === "/api/imports/bundle/preview" && request.method === "POST";
@@ -1477,7 +1527,11 @@ export function createApp(options: AppOptions) {
             try {
               await reconcileBackupRecords(db, backupRoot);
             } catch (error) {
-              console.error("Backup reconciliation after restore failed", error);
+              options.diagnostics?.log({
+                level: "error",
+                event: "restore_reconciliation_failed",
+                code: diagnosticCode(error),
+              });
             }
             return {
               backupId: selected.record.id,
@@ -1498,7 +1552,12 @@ export function createApp(options: AppOptions) {
                   try {
                     await reconcileBackupRecords(db, backupRoot);
                   } catch (reconcileError) {
-                    console.error("Backup reconciliation after failed restore failed", reconcileError);
+                    options.diagnostics?.log({
+                      level: "error",
+                      event: "restore_reconciliation_failed",
+                      code: diagnosticCode(reconcileError),
+                      mode: "recovery",
+                    });
                   }
                 } catch (reopenError) {
                   recoveryError = new AggregateError([error, reopenError], "Restore failed and data could not reopen");
@@ -1514,6 +1573,7 @@ export function createApp(options: AppOptions) {
               capture,
               options.fetchAsset,
               options.startWorker !== false && db !== null,
+              (entry) => options.diagnostics?.log(entry),
             );
             worker.setPaused(queueWasPaused);
           }
@@ -2136,7 +2196,11 @@ export function createApp(options: AppOptions) {
       }
       else if (error instanceof PortableError) sendError(response, error.status, error.code, error.message);
       else {
-        console.error(error);
+        options.diagnostics?.log({
+          level: "error",
+          event: "unexpected_api_error",
+          code: diagnosticCode(error),
+        });
         sendError(response, 500, "INTERNAL_ERROR", "Internal server error");
       }
     }

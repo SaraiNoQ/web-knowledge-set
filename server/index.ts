@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -26,6 +26,7 @@ import {
   openDatabase,
   type KnowledgeDatabase,
 } from "./db.js";
+import { diagnosticCode, DiagnosticsLogger } from "./diagnostics.js";
 import { runStartup } from "./startup.js";
 
 const dataDir = resolve(
@@ -37,6 +38,19 @@ const dataDir = resolve(
 const staticDir = resolve(process.env.KB_STATIC_DIR ?? join(process.cwd(), "dist"));
 const backupRoot = defaultBackupRoot(dataDir);
 const requestedPort = Number(process.env.KB_PORT ?? 0);
+function packageVersion() {
+  for (const path of [new URL("../package.json", import.meta.url), new URL("../../package.json", import.meta.url)]) {
+    try {
+      const value = JSON.parse(readFileSync(path, "utf8")) as { version?: unknown };
+      if (typeof value.version === "string" && value.version.length <= 100) return value.version;
+    } catch {
+      // Source and compiled entry points have different package-relative locations.
+    }
+  }
+  throw new Error("Application package version is unavailable");
+}
+const appVersion = packageVersion();
+const diagnostics = new DiagnosticsLogger(dataDir);
 const llmApiKey = process.env.ZHIYE_LLM_API_KEY?.trim() ?? "";
 delete process.env.ZHIYE_LLM_API_KEY;
 if (process.env.ZHIYE_DESKTOP_SMOKE === "1") {
@@ -45,6 +59,7 @@ if (process.env.ZHIYE_DESKTOP_SMOKE === "1") {
 if (!Number.isInteger(requestedPort) || requestedPort < 0 || requestedPort > 65_535) {
   throw new Error("KB_PORT must be an integer from 0 to 65535");
 }
+diagnostics.log({ level: "info", event: "service_starting", mode: process.env.KB_DESKTOP === "1" ? "desktop" : "web" });
 
 interface StartupValue {
   database: KnowledgeDatabase | null;
@@ -59,7 +74,7 @@ const startup = await runStartup<StartupValue, VerifiedBackup>({
     try {
       return cleanupIncompleteBackups(backupRoot, dataDir);
     } catch (error) {
-      console.error("Incomplete backup cleanup failed", error);
+      diagnostics.log({ level: "error", event: "backup_cleanup_failed", code: diagnosticCode(error) });
       return 0;
     }
   },
@@ -95,12 +110,12 @@ const startup = await runStartup<StartupValue, VerifiedBackup>({
     try {
       await reconcileBackupRecords(value.database, backupRoot);
     } catch (error) {
-      console.error("Backup reconciliation failed", error);
+      diagnostics.log({ level: "error", event: "backup_reconciliation_failed", code: diagnosticCode(error) });
     }
     try {
       await ensureDailyAutomaticBackup(value.database, dataDir, backupRoot);
     } catch (error) {
-      console.error("Automatic backup failed", error);
+      diagnostics.log({ level: "error", event: "automatic_backup_failed", code: diagnosticCode(error) });
     }
   },
   closeOnError: (value) => value.database?.close(),
@@ -117,6 +132,8 @@ const app = createApp({
   staticDir,
   dev,
   llmApiKey,
+  appVersion,
+  diagnostics,
   onDesktopCloseReady: desktop ? (attemptId) => console.log(`ZHIYE_CLOSE_READY ${attemptId}`) : undefined,
 });
 const vite = dev
@@ -136,6 +153,7 @@ const desktopInput = desktop ? createInterface({ input: process.stdin }) : null;
 async function close(exitCode = 0) {
   if (closing) return;
   closing = true;
+  diagnostics.log({ level: "info", event: "service_stopping", count: exitCode });
   await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
   await vite?.close();
   await app.close();
@@ -152,7 +170,7 @@ desktopInput?.once("close", () => void close());
 process.once("SIGINT", () => void close());
 process.once("SIGTERM", () => void close());
 server.once("error", (error) => {
-  console.error(error);
+  diagnostics.log({ level: "error", event: "server_error", code: diagnosticCode(error) });
   void close(1);
 });
 
@@ -160,5 +178,6 @@ server.listen(requestedPort, "127.0.0.1", () => {
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Server did not bind a TCP port");
   const launchUrl = `http://127.0.0.1:${address.port}/launch?token=${encodeURIComponent(app.bootstrapToken)}`;
+  diagnostics.log({ level: "info", event: "service_ready", mode: desktop ? "desktop" : "web" });
   console.log(`ZHIYE_READY ${launchUrl}`);
 });

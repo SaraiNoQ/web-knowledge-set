@@ -33,6 +33,7 @@ import { api, ApiRequestError } from "./api";
 import type { DocumentPatch } from "./api";
 import { AiSettings } from "./components/AiSettings";
 import { DataSafety } from "./components/DataSafety";
+import { Diagnostics } from "./components/Diagnostics";
 import { DerivedKnowledge } from "./components/DerivedKnowledge";
 import { MarkdownEditor } from "./components/MarkdownEditor";
 
@@ -560,6 +561,7 @@ export default function App() {
   const [captureApplying, setCaptureApplying] = useState(false);
   const [closing, setClosing] = useState(false);
   const [safetyOpen, setSafetyOpen] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [safetyRecovery, setSafetyRecovery] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [derivedOpen, setDerivedOpen] = useState(false);
@@ -2871,7 +2873,7 @@ export default function App() {
           <span><strong>织页</strong><small>ZHIYE · LOCAL KNOWLEDGE</small></span>
         </div>
         <p className="masthead-note">把散落的网页，<br />织成可编辑的知识。</p>
-        <div className="masthead-actions"><button type="button" className="shortcut-help-button" onClick={() => setShortcutHelp(true)} aria-label="查看快捷键">?</button><button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(true); }} disabled={closing}>
+        <div className="masthead-actions"><button type="button" className="shortcut-help-button" onClick={() => setShortcutHelp(true)} aria-label="查看快捷键">?</button><button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
           <i />{safetyRecovery ? "恢复模式" : "数据安全"}
         </button></div>
       </header>
@@ -2951,13 +2953,16 @@ export default function App() {
         </dialog>
       )}
 
-      {aiSettingsOpen ? (
+      {diagnosticsOpen ? (
+        <Diagnostics onClose={() => { setDiagnosticsOpen(false); setSafetyOpen(true); }} />
+      ) : aiSettingsOpen ? (
         <AiSettings onClose={() => setAiSettingsOpen(false)} />
       ) : safetyOpen ? (
         <DataSafety
           beforeOperation={prepareDataSafetyOperation}
           onClose={() => setSafetyOpen(false)}
           onModeChange={setSafetyRecovery}
+          onDiagnostics={() => { setSafetyOpen(false); setDiagnosticsOpen(true); }}
         />
       ) : <>
       <section className="capture-band" aria-labelledby="capture-title">

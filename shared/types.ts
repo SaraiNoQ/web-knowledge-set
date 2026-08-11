@@ -463,6 +463,72 @@ export interface DataSafetyStatus {
   settings: BackupSettings | null;
 }
 
+export type DiagnosticLogLevel = "info" | "warning" | "error";
+
+export type DiagnosticLogEvent =
+  | "service_starting"
+  | "service_ready"
+  | "service_stopping"
+  | "backup_cleanup_failed"
+  | "backup_reconciliation_failed"
+  | "automatic_backup_failed"
+  | "asset_cache_failed"
+  | "capture_failed"
+  | "restore_reconciliation_failed"
+  | "unexpected_api_error"
+  | "server_error";
+
+export interface DiagnosticLogEntry {
+  timestamp: string;
+  level: DiagnosticLogLevel;
+  event: DiagnosticLogEvent;
+  code?: string;
+  durationMs?: number;
+  count?: number;
+  mode?: "web" | "desktop" | CaptureMode | "recovery";
+}
+
+export interface DiagnosticReport {
+  format: "zhiye-diagnostics";
+  formatVersion: 1;
+  generatedAt: string;
+  application: {
+    version: string;
+    nodeVersion: string;
+    platform: string;
+    architecture: string;
+    desktop: boolean;
+  };
+  schema: {
+    current: number | null;
+    supported: number;
+    status: "current" | "unavailable";
+  };
+  queue: CaptureQueueStatus | null;
+  health: null | {
+    databaseIntegrity: "ok" | "failed";
+    foreignKeyViolations: number;
+    missingSnapshots: number;
+    orphanSnapshots: number;
+    unsafeSnapshotEntries: number;
+    missingAssets: number;
+    orphanAssets: number;
+    unsafeAssetEntries: number;
+    pendingFileDeletions: number;
+    storageBytes: number;
+    recentBackup: null | Pick<
+      BackupRecord,
+      "reason" | "status" | "createdAt" | "schemaVersion" | "totalBytes"
+    >;
+  };
+  recentErrors: Array<{
+    source: DatabaseHealth["recentErrors"][number]["source"] | "startup";
+    code: string;
+    occurredAt: string;
+  }>;
+  logs: DiagnosticLogEntry[];
+}
+
 export interface ApiError {
   error: {
     code: string;

@@ -8,6 +8,7 @@ import type {
   CaptureQueueStatus,
   CreateDocumentResponse,
   DataSafetyStatus,
+  DiagnosticReport,
   DeleteCollectionResponse,
   DerivedPreview,
   DerivedResult,
@@ -126,6 +127,20 @@ export interface CleanupDataResult {
 }
 
 export const api = {
+  getDiagnostics(signal?: AbortSignal) {
+    return request<DiagnosticReport>("/api/diagnostics", { signal });
+  },
+
+  async exportDiagnostics(signal?: AbortSignal) {
+    const response = await requestResponse("/api/diagnostics/export.zip", {
+      headers: { Accept: "application/zip" },
+      signal,
+    });
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const fileName = /filename="?([^";]+)"?/iu.exec(disposition)?.[1]?.replace(/[\\/]/gu, "-") || "zhiye-diagnostics.zip";
+    return { blob: await response.blob(), fileName };
+  },
+
   getLlmSettings(signal?: AbortSignal) {
     return request<LlmSettings>("/api/settings/llm", { signal });
   },

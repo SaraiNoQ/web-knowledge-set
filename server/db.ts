@@ -1422,6 +1422,13 @@ export class KnowledgeDatabase {
     };
   }
 
+  getSchemaVersion() {
+    const row = this.sql.prepare("SELECT max(version) AS version FROM schema_migrations").get() as {
+      version: number | null;
+    };
+    return row.version;
+  }
+
   private tagsFor(documentId: string) {
     return (
       this.sql

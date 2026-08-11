@@ -79,10 +79,12 @@ export function DataSafety({
   beforeOperation,
   onClose,
   onModeChange,
+  onDiagnostics,
 }: {
   beforeOperation: () => Promise<void>;
   onClose: () => void;
   onModeChange: (recovery: boolean) => void;
+  onDiagnostics: () => void;
 }) {
   const [status, setStatus] = useState<DataSafetyStatus | null>(null);
   const [retention, setRetention] = useState(7);
@@ -226,7 +228,7 @@ export function DataSafety({
           <h1>数据安全</h1>
           <p>校验数据库与网页快照，创建可恢复的完整留档。</p>
         </div>
-        {!recovery && <button type="button" className="safety-close" onClick={onClose} disabled={Boolean(busy)}>返回资料库</button>}
+        <div className="safety-head-actions"><button type="button" className="safety-close" onClick={onDiagnostics} disabled={Boolean(busy)}>诊断台</button>{!recovery && <button type="button" className="safety-close" onClick={onClose} disabled={Boolean(busy)}>返回资料库</button>}</div>
       </header>
 
       {recovery && (
