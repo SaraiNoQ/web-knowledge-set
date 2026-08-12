@@ -66,8 +66,8 @@ if (!/^[0-9a-f]{40}$/.test(sha) || approvedSha !== sha) {
   throw new Error("macos-production APPROVED_RC_SHA must exactly approve this release commit");
 }
 if (tag.slice(1) !== versions[0]) throw new Error(`Tag ${tag} does not match application version ${versions[0]}`);
-if (tauri.identifier === "dev.local.zhiye" || !/^[a-z0-9]+(?:[.-][a-z0-9]+){2,}$/.test(tauri.identifier)) {
-  throw new Error(`A confirmed production reverse-DNS identifier is required: ${tauri.identifier}`);
+if (tauri.identifier !== "io.github.sarainoq.zhiye") {
+  throw new Error(`The confirmed production identifier is required: ${tauri.identifier}`);
 }
 
 const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();

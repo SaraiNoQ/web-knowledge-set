@@ -1,7 +1,7 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { DatabaseSync } from "node:sqlite";
 
@@ -29,11 +29,61 @@ import {
 import { diagnosticCode, DiagnosticsLogger } from "./diagnostics.js";
 import { runStartup } from "./startup.js";
 
+const IDENTIFIER = "io.github.sarainoq.zhiye";
+const LEGACY_IDENTIFIER = "dev.local.zhiye";
+
+function directoryHasEntries(path: string) {
+  try {
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`Unsafe knowledge-base path: ${path}`);
+    return readdirSync(path).length > 0;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function regularFileExists(path: string) {
+  try {
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink() || !stat.isFile()) throw new Error(`Unsafe knowledge-base lock path: ${path}`);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function defaultState(path: string) {
+  const parent = dirname(path);
+  const name = basename(path);
+  const data = directoryHasEntries(path);
+  const backups = directoryHasEntries(join(parent, `${name}-backups`));
+  const diagnostics = directoryHasEntries(join(parent, `${name}-diagnostics`));
+  const lock = regularFileExists(join(parent, `.${name}.zhiye.lock`));
+  const companions = backups || diagnostics || lock;
+  if (!data && companions) {
+    throw new Error("Knowledge-base backups, diagnostics, or lock exist without their data directory; set KB_DATA_DIR explicitly");
+  }
+  return data;
+}
+
+function defaultDataDirectory(home = homedir(), platform = process.platform) {
+  const parent = platform === "darwin"
+    ? join(home, "Library", "Application Support")
+    : join(home, ".local", "share");
+  const current = join(parent, IDENTIFIER);
+  const legacy = join(parent, LEGACY_IDENTIFIER);
+  const currentExists = defaultState(current);
+  const legacyExists = defaultState(legacy);
+  if (currentExists && legacyExists) {
+    throw new Error("Both legacy and formal knowledge bases exist; set KB_DATA_DIR explicitly");
+  }
+  return legacyExists ? legacy : current;
+}
+
 const dataDir = resolve(
-  process.env.KB_DATA_DIR ??
-    (process.platform === "darwin"
-      ? join(homedir(), "Library", "Application Support", "dev.local.zhiye")
-      : join(homedir(), ".local", "share", "dev.local.zhiye")),
+  process.env.KB_DATA_DIR || defaultDataDirectory(),
 );
 const staticDir = resolve(process.env.KB_STATIC_DIR ?? join(process.cwd(), "dist"));
 const backupRoot = defaultBackupRoot(dataDir);

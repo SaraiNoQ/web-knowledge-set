@@ -1,21 +1,24 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { openDatabase } from "../server/db.js";
 
-function startService(dataDir: string) {
+function startService(dataDir?: string, home?: string) {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    KB_DESKTOP: "1",
+    KB_STATIC_DIR: resolve("dist"),
+  };
+  if (dataDir) env.KB_DATA_DIR = dataDir;
+  else delete env.KB_DATA_DIR;
+  if (home) env.HOME = home;
   const child = spawn(process.execPath, ["--import", "tsx", "server/index.ts"], {
     cwd: resolve("."),
-    env: {
-      ...process.env,
-      KB_DATA_DIR: dataDir,
-      KB_DESKTOP: "1",
-      KB_STATIC_DIR: resolve("dist"),
-    },
+    env,
     stdio: ["pipe", "pipe", "pipe"],
   });
   let stderr = "";
@@ -51,6 +54,39 @@ function startService(dataDir: string) {
   });
   return { child, ready, stderr: () => stderr };
 }
+
+test("formal default identity reuses one legacy Web library and rejects two", async () => {
+  const home = mkdtempSync(join(tmpdir(), "zhiye-default-identity-"));
+  const parent = process.platform === "darwin"
+    ? join(home, "Library", "Application Support")
+    : join(home, ".local", "share");
+  const legacy = join(parent, "dev.local.zhiye");
+  const current = join(parent, "io.github.sarainoq.zhiye");
+  mkdirSync(legacy, { recursive: true });
+  writeFileSync(join(legacy, "legacy-marker"), "legacy");
+  const first = startService(undefined, home);
+  const timeout = setTimeout(() => first.child.kill("SIGKILL"), 15_000);
+  let conflict: ReturnType<typeof startService> | undefined;
+  try {
+    await first.ready;
+    assert.equal(existsSync(join(legacy, "zhiye.sqlite3")), true);
+    assert.equal(existsSync(current), false);
+    const exited = new Promise<number | null>((resolveExit) => first.child.once("exit", resolveExit));
+    first.child.stdin.write("ZHIYE_SHUTDOWN\n");
+    assert.equal(await exited, 0, first.stderr());
+
+    mkdirSync(current);
+    writeFileSync(join(current, "formal-marker"), "formal");
+    conflict = startService(undefined, home);
+    await assert.rejects(conflict.ready, /Both legacy and formal knowledge bases exist/u);
+    if (conflict.child.exitCode === null) conflict.child.kill("SIGKILL");
+  } finally {
+    clearTimeout(timeout);
+    if (first.child.exitCode === null) first.child.kill("SIGKILL");
+    if (conflict && conflict.child.exitCode === null) conflict.child.kill("SIGKILL");
+    rmSync(home, { recursive: true, force: true });
+  }
+});
 
 test("desktop stdin shutdown closes SQLite and releases the data lock", async () => {
   const parent = mkdtempSync(join(tmpdir(), "zhiye-desktop-close-"));

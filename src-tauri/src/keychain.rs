@@ -1,7 +1,9 @@
 use serde::Serialize;
 
 #[cfg(target_os = "macos")]
-const SERVICE: &str = "dev.local.zhiye.llm";
+const SERVICE: &str = "io.github.sarainoq.zhiye.llm";
+#[cfg(target_os = "macos")]
+const LEGACY_SERVICE: &str = "dev.local.zhiye.llm";
 #[cfg(target_os = "macos")]
 const ACCOUNT: &str = "openai-compatible";
 #[cfg(any(target_os = "macos", test))]
@@ -36,8 +38,8 @@ fn account() -> &'static str {
 }
 
 #[cfg(target_os = "macos")]
-fn read_for_account(account: &str) -> Result<Option<String>, String> {
-    match security_framework::passwords::get_generic_password(SERVICE, account) {
+fn read_for_account(service: &str, account: &str) -> Result<Option<String>, String> {
+    match security_framework::passwords::get_generic_password(service, account) {
         Ok(bytes) => {
             let value =
                 String::from_utf8(bytes).map_err(|_| "钥匙串中的密钥格式无效".to_owned())?;
@@ -50,15 +52,15 @@ fn read_for_account(account: &str) -> Result<Option<String>, String> {
 }
 
 #[cfg(target_os = "macos")]
-fn write_for_account(account: &str, value: &str) -> Result<(), String> {
+fn write_for_account(service: &str, account: &str, value: &str) -> Result<(), String> {
     validate_api_key(value)?;
-    security_framework::passwords::set_generic_password(SERVICE, account, value.as_bytes())
+    security_framework::passwords::set_generic_password(service, account, value.as_bytes())
         .map_err(|_| "无法写入 macOS 钥匙串".to_owned())
 }
 
 #[cfg(target_os = "macos")]
-fn delete_for_account(account: &str) -> Result<(), String> {
-    match security_framework::passwords::delete_generic_password(SERVICE, account) {
+fn delete_for_account(service: &str, account: &str) -> Result<(), String> {
+    match security_framework::passwords::delete_generic_password(service, account) {
         Ok(()) => Ok(()),
         Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
         Err(_) => Err("无法从 macOS 钥匙串删除密钥".to_owned()),
@@ -66,8 +68,23 @@ fn delete_for_account(account: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
+fn read_compatible(account: &str) -> Result<Option<String>, String> {
+    match read_for_account(SERVICE, account)? {
+        Some(value) => Ok(Some(value)),
+        None => read_for_account(LEGACY_SERVICE, account),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn delete_compatible(account: &str) -> Result<(), String> {
+    let current = delete_for_account(SERVICE, account);
+    let legacy = delete_for_account(LEGACY_SERVICE, account);
+    current.and(legacy)
+}
+
+#[cfg(target_os = "macos")]
 pub(crate) fn load_api_key() -> Result<Option<String>, String> {
-    read_for_account(account())
+    read_compatible(account())
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -79,7 +96,7 @@ pub(crate) fn load_api_key() -> Result<Option<String>, String> {
 pub(crate) fn seed_smoke_api_key() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     if std::env::var("ZHIYE_KEYCHAIN_SMOKE").as_deref() == Ok("1") {
-        return write_for_account(account(), "zhiye-isolated-smoke-key");
+        return write_for_account(SERVICE, account(), "zhiye-isolated-smoke-key");
     }
     Ok(())
 }
@@ -88,7 +105,7 @@ pub(crate) fn seed_smoke_api_key() -> Result<(), String> {
 pub(crate) fn llm_keychain_status() -> Result<KeychainStatus, String> {
     #[cfg(target_os = "macos")]
     {
-        return read_for_account(account()).map(|value| KeychainStatus {
+        return read_compatible(account()).map(|value| KeychainStatus {
             configured: value.is_some(),
         });
     }
@@ -100,7 +117,7 @@ pub(crate) fn llm_keychain_status() -> Result<KeychainStatus, String> {
 pub(crate) fn set_llm_api_key(api_key: String) -> Result<KeychainStatus, String> {
     #[cfg(target_os = "macos")]
     {
-        write_for_account(account(), &api_key)?;
+        write_for_account(SERVICE, account(), &api_key)?;
         return Ok(KeychainStatus { configured: true });
     }
     #[cfg(not(target_os = "macos"))]
@@ -114,7 +131,7 @@ pub(crate) fn set_llm_api_key(api_key: String) -> Result<KeychainStatus, String>
 pub(crate) fn delete_llm_api_key() -> Result<KeychainStatus, String> {
     #[cfg(target_os = "macos")]
     {
-        delete_for_account(account())?;
+        delete_compatible(account())?;
         return Ok(KeychainStatus { configured: false });
     }
     #[cfg(not(target_os = "macos"))]
@@ -148,18 +165,25 @@ mod tests {
         struct Cleanup(String);
         impl Drop for Cleanup {
             fn drop(&mut self) {
-                let _ = delete_for_account(&self.0);
+                let _ = delete_compatible(&self.0);
             }
         }
         let _cleanup = Cleanup(account.clone());
 
-        assert_eq!(read_for_account(&account).expect("read missing key"), None);
-        write_for_account(&account, "sk-isolated-test").expect("write key");
+        assert_eq!(read_compatible(&account).expect("read missing key"), None);
+        write_for_account(LEGACY_SERVICE, &account, "sk-legacy-test").expect("write legacy key");
         assert_eq!(
-            read_for_account(&account).expect("read key").as_deref(),
+            read_compatible(&account)
+                .expect("read legacy key")
+                .as_deref(),
+            Some("sk-legacy-test")
+        );
+        write_for_account(SERVICE, &account, "sk-isolated-test").expect("write key");
+        assert_eq!(
+            read_compatible(&account).expect("read key").as_deref(),
             Some("sk-isolated-test")
         );
-        delete_for_account(&account).expect("delete key");
-        assert_eq!(read_for_account(&account).expect("read deleted key"), None);
+        delete_compatible(&account).expect("delete keys");
+        assert_eq!(read_compatible(&account).expect("read deleted key"), None);
     }
 }

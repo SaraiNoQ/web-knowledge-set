@@ -58,6 +58,7 @@ v1.0 坚持以下边界：
 - `v0.1.x`：冻结与修正现有 MVP 基线。
 - `v0.2` 至 `v0.6`：按下面阶段逐步完成正式能力。
 - `v0.9.0`：功能冻结的候选版，只接受缺陷、文档和发布工程修改。
+- `v0.9.1`：锁定正式应用身份并安全承接早期开发数据的无签名候选版；不宣称已上线。
 - `v1.0.0`：满足本文 Definition of Done 后发布；数据库迁移只能前向追加，不修改已经发布的迁移。
 
 ## 4. 分阶段路线图
@@ -403,6 +404,7 @@ v1.0 坚持以下边界：
 **依赖**
 
 - M6 的 `v0.9.0` RC；Apple Developer 身份、macOS CI runner、GitHub Releases 和更新签名凭据。
+- 正式 bundle identifier 已锁定为 `io.github.sarainoq.zhiye`。当前没有 Apple 签名与公证凭据，因此继续完成和验证不依赖签名的主要功能，但不创建 `v1.0.0` 正式标签、不声称已上线。
 
 **提交 / Review 边界**
 
@@ -456,7 +458,7 @@ v1.0 坚持以下边界：
 |---|---:|---|---|
 | GitHub 仓库 SSH 推送权限 | M0 | 推送分支、提交和标签 | 执行 Git 提交/推送的受控工作区可访问 `git@github.com:SaraiNoQ/web-knowledge-set.git`；不得共享私钥内容，构建镜像无需 `.git` 或 GitHub 凭据 |
 | GitHub 仓库 Actions/Release 权限 | M6 | 自托管 runner 编排、发布资产、受保护 tag | 构建 job 只在 campus-server 自托管 runner 运行；发布 job 使用 GitHub 自动令牌和最小 `contents: write` 权限 |
-| 正式 bundle identifier 与支持链接 | M7 | macOS 身份和 About/发布页 | 发布后保持稳定；默认建议 `io.github.sarainoq.zhiye`，需用户确认 |
+| 正式 bundle identifier 与支持链接 | M7 | macOS 身份和 About/发布页 | 已确认并锁定 `io.github.sarainoq.zhiye`；发布后保持稳定 |
 | Apple Developer Program 团队 | M7 | Developer ID 签名与公证 | 有效 Team ID 与 Developer ID Application 证书 |
 | Apple 签名证书及密码 | M7 | CI 导入临时 keychain 并签名 | Base64 `.p12` 与独立密码，作为 CI secrets；任务结束删除 keychain |
 | App Store Connect API Key（推荐）或 Apple ID 公证凭据 | M7 | 提交 notarization | Key ID、Issuer ID、私钥；若用 Apple ID 则使用 app-specific password |
@@ -464,7 +466,7 @@ v1.0 坚持以下边界：
 | Tauri updater 私钥与密码 | M7 | 签名更新 | 在受控环境生成；私钥只存 CI secret，公钥进入应用；保留离线恢复副本 |
 | 可选 LLM 供应商 API key | M5 可选 | 真实远程模型手工冒烟 | 不影响自动测试和无 AI 发布；用户不启用则无需提供 |
 
-用户还需在 M7 前确认：是否首发仅 Apple Silicon、正式应用名称是否保持“织页”、GitHub Releases 是否作为唯一下载/更新源。未确认时默认采用“织页 + Apple Silicon 首发 + GitHub Releases”，不阻塞 M0–M6 开发。
+用户已确认正式 bundle identifier 为 `io.github.sarainoq.zhiye`。首发架构、应用名称和下载源未另行指定时，继续采用“织页 + Apple Silicon 首发 + GitHub Releases”，不阻塞无签名的主要功能开发。
 
 ## 7. v1.1 候选池（不阻塞 v1.0）
 
