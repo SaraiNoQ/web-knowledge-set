@@ -216,6 +216,11 @@ fn shutdown_sidecar(app: &tauri::AppHandle, attempt_id: u64) {
 }
 
 #[tauri::command]
+fn updater_configured(configured: tauri::State<'_, bool>) -> bool {
+    *configured
+}
+
+#[tauri::command]
 fn restart_after_update(app: tauri::AppHandle) -> Result<(), String> {
     let service = app.state::<LocalService>();
     if service
@@ -368,7 +373,7 @@ fn fail_service(app: &tauri::AppHandle, reason: &str) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let context = tauri::generate_context!();
-    let updater_configured = context.config().plugins.0.contains_key("updater");
+    let updater_enabled = context.config().plugins.0.contains_key("updater");
     let accepted_origin = Arc::new(Mutex::new(None));
     let navigation_origin = accepted_origin.clone();
     let builder = tauri::Builder::default()
@@ -385,7 +390,7 @@ pub fn run() {
             external::focus_main(app);
         }))
         .plugin(tauri_plugin_deep_link::init());
-    let builder = if updater_configured {
+    let builder = if updater_enabled {
         builder.plugin(tauri_plugin_updater::Builder::new().build())
     } else {
         builder
@@ -403,6 +408,7 @@ pub fn run() {
             keychain::set_llm_api_key,
             keychain::delete_llm_api_key,
             launcher::choose_data_directory,
+            updater_configured,
             restart_after_update,
         ])
         .manage(external::ExternalState::default())
@@ -416,6 +422,7 @@ pub fn run() {
             next_close_attempt: AtomicU64::new(1),
             accepted_origin,
         })
+        .manage(updater_enabled)
         .setup(|app| {
             if let Ok(Some(urls)) = app.deep_link().get_current() {
                 external::enqueue_deep_links(app.handle(), &urls);

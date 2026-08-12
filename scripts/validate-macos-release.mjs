@@ -30,6 +30,7 @@ if (tauri.plugins?.updater || tauri.bundle?.createUpdaterArtifacts) {
 if (JSON.stringify(updateCapability.permissions) !== JSON.stringify([
   "updater:allow-check",
   "updater:allow-download-and-install",
+  "allow-updater-configured",
   "allow-restart-after-update",
 ])) throw new Error("Updater capability must expose only the approved update and safe restart commands");
 for (const required of [

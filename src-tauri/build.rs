@@ -9,6 +9,7 @@ fn main() {
             "set_llm_api_key",
             "delete_llm_api_key",
             "choose_data_directory",
+            "updater_configured",
             "restart_after_update",
         ]),
     ))

@@ -10,6 +10,7 @@
   "permissions": [
     "updater:allow-check",
     "updater:allow-download-and-install",
+    "allow-updater-configured",
     "allow-restart-after-update"
   ]
 }

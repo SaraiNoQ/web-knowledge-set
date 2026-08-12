@@ -838,6 +838,7 @@ test("desktop updater confirms, verifies a backup, reports progress, and keeps f
         invoke: async (command: string, args?: { onEvent?: { onmessage: (event: unknown) => void } }) => {
           harness.calls.push(command);
           if (command === "take_external_intents") return [];
+          if (command === "updater_configured") return new URL(location.href).searchParams.get("updater") !== "0";
           if (command === "plugin:resources|close") return undefined;
           if (command === "plugin:updater|check") {
             return harness.check === "none" ? null : {
@@ -864,8 +865,12 @@ test("desktop updater confirms, verifies a backup, reports progress, and keeps f
       },
     });
   });
-  await page.goto("/");
+  await page.goto("/?updater=0");
   const deferOnboarding = page.getByRole("button", { name: "稍后设置" });
+  if (await deferOnboarding.isVisible()) await deferOnboarding.click();
+  await expect(page.locator(".masthead")).toBeVisible();
+  await expect(page.getByRole("button", { name: "检查更新" })).toHaveCount(0);
+  await page.goto("/");
   if (await deferOnboarding.isVisible()) await deferOnboarding.click();
   const updateButton = page.getByRole("button", { name: "检查更新" });
   await expect(updateButton).toBeVisible();

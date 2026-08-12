@@ -18,6 +18,11 @@ export function AppUpdater({ beforeOperation, disabled }: { beforeOperation: () 
   const [downloaded, setDownloaded] = useState(0);
   const [total, setTotal] = useState<number | null>(null);
   const [metadata, setMetadata] = useState<{ currentVersion: string; version: string; date?: string; body?: string } | null>(null);
+  const [configured, setConfigured] = useState(false);
+
+  useEffect(() => {
+    void invoke<boolean>("updater_configured").then(setConfigured).catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -113,6 +118,8 @@ export function AppUpdater({ beforeOperation, disabled }: { beforeOperation: () 
 
   const progress = total && total > 0 ? Math.min(100, Math.round(downloaded / total * 100)) : null;
   const busy = phase === "checking" || phase === "backing-up" || phase === "installing" || phase === "restarting";
+
+  if (!configured) return null;
 
   return <>
     <button type="button" className="local-mark update-link" onClick={() => void checkNow()} disabled={disabled}>检查更新</button>
