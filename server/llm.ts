@@ -14,6 +14,8 @@ import type {
   DerivedTask,
   DerivedTaskPreview,
   LlmApiKeyStatus,
+  LlmConnectionTestInput,
+  LlmConnectionTestResult,
   LlmEndpointKind,
   LlmSettings,
   StartDerivedTaskInput,
@@ -236,6 +238,25 @@ export function llmApiKeyInput(body: Record<string, unknown>) {
     apiKey: normalizedApiKey(body.apiKey),
     endpointUrl: normalizedEndpoint("remote", body.endpointUrl.trim()).href,
   };
+}
+
+export function llmConnectionTestInput(body: Record<string, unknown>): LlmConnectionTestInput {
+  const remote = body.target === "remote";
+  const local = body.target === "local";
+  const allowed = remote ? ["target", "endpointUrl", "model"] : ["target", "endpointUrl", "model", "trusted"];
+  if ((!remote && !local) || Object.keys(body).some((key) => !allowed.includes(key)) ||
+      typeof body.endpointUrl !== "string" || typeof body.model !== "string" ||
+      (local && body.trusted !== true)) {
+    throw new LlmError(400, "INVALID_LLM_TEST", "Connection test target, endpoint URL, model, and local trust are invalid");
+  }
+  const endpointUrl = normalizedEndpoint(body.target as LlmEndpointKind, body.endpointUrl.trim()).href;
+  const model = body.model.trim();
+  if (!model || model.length > 200 || /\p{Cc}/u.test(model)) {
+    throw new LlmError(400, "INVALID_LLM_TEST", "Connection test model must be 1–200 characters without controls");
+  }
+  return remote
+    ? { target: "remote", endpointUrl, model }
+    : { target: "local", endpointUrl, model, trusted: true };
 }
 
 function endpointId(url: string) {
@@ -579,14 +600,19 @@ function usage(value: unknown): DerivedResultUsage | null {
   return Object.keys(result).length ? result : null;
 }
 
+type CompletionRequest =
+  | { kind: "derived"; preview: DerivedTaskPreview; sentText: string }
+  | { kind: "probe"; target: { kind: LlmEndpointKind; url: string }; model: string };
+
 async function requestCompletion(
-  preview: DerivedTaskPreview,
-  sentText: string,
+  input: CompletionRequest,
   apiKey: string,
   signal: AbortSignal,
   resolver: ResolveLlmTarget,
   timeoutMs: number,
 ) {
+  const targetInput = input.kind === "derived" ? input.preview.target : input.target;
+  const model = input.kind === "derived" ? input.preview.model : input.model;
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const requestSignal = AbortSignal.any([signal, timeoutSignal]);
   const abortError = () => signal.aborted
@@ -600,7 +626,7 @@ async function requestCompletion(
     requestSignal.addEventListener("abort", abort, { once: true });
     void Promise.resolve().then(() => {
       if (requestSignal.aborted) throw abortError();
-      return resolver(preview.target.kind, preview.target.url);
+      return resolver(targetInput.kind, targetInput.url);
     }).then(
       (value) => {
         requestSignal.removeEventListener("abort", abort);
@@ -613,12 +639,18 @@ async function requestCompletion(
     );
   });
   const body = Buffer.from(JSON.stringify({
-    model: preview.model,
+    model,
     temperature: 0,
-    messages: [
-      { role: "system", content: systemPrompt(preview) },
-      { role: "user", content: sentText },
-    ],
+    ...(input.kind === "probe" ? { max_tokens: 16 } : {}),
+    messages: input.kind === "probe"
+      ? [
+        { role: "system", content: "This is a connection test. Reply with exactly ZHIYE_OK and nothing else." },
+        { role: "user", content: "Reply with exactly ZHIYE_OK." },
+      ]
+      : [
+        { role: "system", content: systemPrompt(input.preview) },
+        { role: "user", content: input.sentText },
+      ],
   }));
   const started = Date.now();
   const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
@@ -634,7 +666,7 @@ async function requestCompletion(
         "Accept-Encoding": "identity",
         "Content-Type": "application/json",
         "Content-Length": String(body.length),
-        ...(apiKey && preview.target.kind === "remote" ? { Authorization: `Bearer ${apiKey}` } : {}),
+        ...(apiKey && targetInput.kind === "remote" ? { Authorization: `Bearer ${apiKey}` } : {}),
       },
     }, resolve);
     request.once("error", reject);
@@ -650,6 +682,16 @@ async function requestCompletion(
     response.destroy();
     throw new LlmError(502, "LLM_REDIRECT_REJECTED", "LLM endpoint redirects are not allowed");
   }
+  const requestRejected = input.kind === "probe" && (status === 400 || status === 404 || status === 422);
+  if ((status < 200 || status >= 300) && !requestRejected) {
+    response.destroy();
+    const auth = status === 401 || status === 403;
+    throw new LlmError(
+      status === 429 ? 429 : 502,
+      status === 429 ? "LLM_RATE_LIMITED" : auth ? "LLM_AUTH_FAILED" : "LLM_HTTP_ERROR",
+      auth ? "LLM endpoint rejected its credential" : `LLM endpoint returned HTTP ${status}`,
+    );
+  }
   const encoding = response.headers["content-encoding"]?.toLowerCase().trim();
   if (encoding && encoding !== "identity") {
     response.destroy();
@@ -657,7 +699,7 @@ async function requestCompletion(
   }
   if (!(response.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
     response.destroy();
-    throw new LlmError(502, "LLM_INVALID_RESPONSE", "LLM endpoint did not return JSON");
+    throw new LlmError(502, requestRejected ? "LLM_REQUEST_REJECTED" : "LLM_INVALID_RESPONSE", requestRejected ? "LLM endpoint rejected the connection-test request" : "LLM endpoint did not return JSON");
   }
   const declared = Number(response.headers["content-length"] ?? 0);
   if (declared > MAX_RESPONSE_BYTES) {
@@ -682,25 +724,37 @@ async function requestCompletion(
     if (timeoutSignal.aborted) throw new LlmError(504, "LLM_TIMEOUT", "LLM request timed out");
     throw new LlmError(502, "LLM_NETWORK_ERROR", "LLM endpoint response was interrupted");
   }
-  if (status < 200 || status >= 300) {
-    const auth = status === 401 || status === 403;
-    throw new LlmError(
-      status === 429 ? 429 : 502,
-      status === 429 ? "LLM_RATE_LIMITED" : auth ? "LLM_AUTH_FAILED" : "LLM_HTTP_ERROR",
-      auth ? "LLM endpoint rejected its credential" : `LLM endpoint returned HTTP ${status}`,
-    );
-  }
   let payload: unknown;
   try {
     payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch {
-    throw new LlmError(502, "LLM_INVALID_RESPONSE", "LLM endpoint returned invalid JSON");
+    throw new LlmError(502, requestRejected ? "LLM_REQUEST_REJECTED" : "LLM_INVALID_RESPONSE", requestRejected ? "LLM endpoint rejected the connection-test request" : "LLM endpoint returned invalid JSON");
   }
   const record = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, unknown> : {};
+  if (requestRejected) {
+    const providerError = record.error && typeof record.error === "object" && !Array.isArray(record.error)
+      ? record.error as Record<string, unknown>
+      : {};
+    const code = typeof providerError.code === "string" ? providerError.code : "";
+    const modelRejected = providerError.param === "model" || ["model_not_found", "invalid_model", "unsupported_model"].includes(code);
+    throw new LlmError(
+      502,
+      modelRejected ? "LLM_MODEL_REJECTED" : "LLM_REQUEST_REJECTED",
+      modelRejected ? "LLM endpoint rejected the requested model" : "LLM endpoint rejected the connection-test request",
+    );
+  }
   const choices = Array.isArray(record.choices) ? record.choices : [];
   const first = choices[0] && typeof choices[0] === "object" ? choices[0] as Record<string, unknown> : {};
   const message = first.message && typeof first.message === "object" ? first.message as Record<string, unknown> : {};
-  const output = normalizedOutput(preview, message.content, sentText);
+  const output = input.kind === "probe"
+    ? message.content
+    : normalizedOutput(input.preview, message.content, input.sentText);
+  if (input.kind === "probe" && output !== "ZHIYE_OK") {
+    throw new LlmError(502, "LLM_INVALID_PROBE", "LLM endpoint did not return the exact connection-test response");
+  }
+  if (typeof output !== "string") {
+    throw new LlmError(502, "LLM_INVALID_RESPONSE", "Model response did not contain text");
+  }
   if (apiKey && output.includes(apiKey)) {
     throw new LlmError(502, "LLM_SECRET_ECHO", "Model response contained a credential and was discarded");
   }
@@ -751,7 +805,7 @@ export function createDerivedTasks(options: {
 }) {
   const tasks = new Map<string, RuntimeTask>();
   const latest = new Map<string, string>();
-  let active: { task: RuntimeTask; controller: AbortController; done: Promise<void> } | null = null;
+  let active: { task?: RuntimeTask; controller: AbortController; done: Promise<unknown> } | null = null;
   let pauseDepth = 0;
   let stopped = false;
   let credential: { value: string; endpointUrl: string } | null = null;
@@ -873,7 +927,13 @@ export function createDerivedTasks(options: {
         for (const sentText of task.sentTexts) {
           assertDocumentUnchanged();
           if (controller.signal.aborted) throw new LlmError(409, "LLM_CANCELLED", "LLM task was cancelled");
-          const value = await requestCompletion(task.preview, sentText, apiKey, controller.signal, resolver, timeoutMs);
+          const value = await requestCompletion(
+            { kind: "derived", preview: task.preview, sentText },
+            apiKey,
+            controller.signal,
+            resolver,
+            timeoutMs,
+          );
           if (controller.signal.aborted) throw new LlmError(409, "LLM_CANCELLED", "LLM task was cancelled");
           assertDocumentUnchanged();
           outputs.push(value.output);
@@ -911,7 +971,7 @@ export function createDerivedTasks(options: {
         task.error = controller.signal.aborted ? { code: "LLM_CANCELLED", message: "LLM task was cancelled" } : errorValue(error);
       } finally {
         task.finishedAt = new Date().toISOString();
-        if (active?.task.id === task.id) active = null;
+        if (active?.task?.id === task.id) active = null;
       }
     })();
     active = { task, controller, done };
@@ -954,20 +1014,55 @@ export function createDerivedTasks(options: {
     if (!active) return;
     const current = active;
     current.controller.abort();
-    await current.done;
+    await current.done.catch(() => undefined);
   };
 
   return {
     settings,
     apiKeyStatus,
     preview,
+    async testConnection(input: LlmConnectionTestInput, signal: AbortSignal): Promise<LlmConnectionTestResult> {
+      if (stopped || pauseDepth > 0) throw new LlmError(503, "LLM_STOPPING", "LLM tasks are temporarily unavailable");
+      if (active) throw new LlmError(409, "LLM_BUSY", "Another LLM operation is already running");
+      const endpointUrl = normalizedEndpoint(input.target, input.endpointUrl).href;
+      if (!input.model.trim() || input.model.trim().length > 200 ||
+          (input.target === "local" && input.trusted !== true)) {
+        throw new LlmError(400, "INVALID_LLM_TEST", "Connection test settings are invalid");
+      }
+      const apiKey = input.target === "remote" ? apiKeyFor(endpointUrl) : "";
+      if (input.target === "remote" && !apiKey) {
+        throw new LlmError(409, "LLM_KEY_MISSING", "Remote LLM test requires a key bound to this exact endpoint");
+      }
+      const controller = new AbortController();
+      const requestSignal = AbortSignal.any([controller.signal, signal]);
+      const started = Date.now();
+      const done = requestCompletion(
+        { kind: "probe", target: { kind: input.target, url: endpointUrl }, model: input.model.trim() },
+        apiKey,
+        requestSignal,
+        resolver,
+        Math.min(timeoutMs, 30_000),
+      ).then(() => ({
+        ok: true as const,
+        target: input.target,
+        model: input.model.trim(),
+        endpointId: endpointId(endpointUrl),
+        durationMs: Math.min(Date.now() - started, 86_400_000),
+      }));
+      active = { controller, done };
+      try {
+        return await done;
+      } finally {
+        if (active?.done === done) active = null;
+      }
+    },
     start,
     get(id: string) { const task = tasks.get(id); return task ? publicTask(task) : null; },
     getForDocument(id: string) { const task = tasks.get(latest.get(id) ?? ""); return task ? publicTask(task) : null; },
     async cancel(id: string) {
       const task = tasks.get(id);
       if (!task) return null;
-      if (active?.task.id === id) {
+      if (active?.task?.id === id) {
         active.controller.abort();
         await active.done;
       }

@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-import type { LlmApiKeyStatus, LlmSettings } from "../../shared/types";
+import type { LlmApiKeyStatus, LlmConnectionTestResult, LlmSettings } from "../../shared/types";
 import { api, ApiRequestError } from "../api";
 
 interface AiSettingsProps {
@@ -43,15 +43,23 @@ export function AiSettings({ onClose }: AiSettingsProps) {
   const [enabled, setEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<LlmConnectionTestResult | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [keychainEndpoint, setKeychainEndpoint] = useState<string | null | undefined>(undefined);
   const [processKeyEndpoint, setProcessKeyEndpoint] = useState<string | null>(null);
+  const testController = useRef<AbortController | null>(null);
   const desktop = "__TAURI_INTERNALS__" in window;
   const remoteProvider = REMOTE_PROVIDERS.find((provider) => provider[2] === remoteUrl)?.[0] ?? "other";
   const currentRemoteEndpoint = endpointValue(remoteUrl);
   const processKeyConfigured = Boolean(currentRemoteEndpoint && processKeyEndpoint === currentRemoteEndpoint);
+  const locked = saving || testing;
+  const clearTestResult = () => {
+    setTestResult(null);
+    setError("");
+  };
 
   const install = (value: LlmSettings) => {
     setSettings(value);
@@ -78,6 +86,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
     setApiKey("");
     setNotice("");
     setError("");
+    clearTestResult();
   };
 
   useEffect(() => {
@@ -93,7 +102,11 @@ export function AiSettings({ onClose }: AiSettingsProps) {
     }).finally(() => {
       if (!controller.signal.aborted) setLoading(false);
     });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      testController.current?.abort();
+      testController.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -110,6 +123,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
     setSaving(true);
     setError("");
     setNotice("");
+    clearTestResult();
     try {
       const processStatus = await api.setLlmApiKey(value, endpointUrl);
       const boundEndpoint = processStatus.endpointUrl;
@@ -143,6 +157,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
     setSaving(true);
     setError("");
     setNotice("");
+    clearTestResult();
     try {
       const processStatus = await api.deleteLlmApiKey();
       markProcessKey(processStatus.endpointUrl);
@@ -169,6 +184,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
     setSaving(true);
     setError("");
     setNotice("");
+    setTestResult(null);
     try {
       const updated = await api.updateLlmSettings({
         enabled,
@@ -186,11 +202,38 @@ export function AiSettings({ onClose }: AiSettingsProps) {
     }
   };
 
+  const testConnection = async () => {
+    const endpointUrl = (target === "remote" ? remoteUrl : localUrl).trim();
+    const model = (target === "remote" ? remoteModel : localModel).trim();
+    if (!endpointUrl || !model || (target === "remote" ? !processKeyConfigured : !localTrusted)) return;
+    const controller = new AbortController();
+    testController.current?.abort();
+    testController.current = controller;
+    setTesting(true);
+    setError("");
+    setNotice("");
+    setTestResult(null);
+    try {
+      setTestResult(await api.testLlmConnection(
+        target === "remote" ? { target, endpointUrl, model } : { target, endpointUrl, model, trusted: true },
+        controller.signal,
+      ));
+    } catch (cause) {
+      if (!(cause instanceof Error && cause.name === "AbortError")) setError(errorMessage(cause));
+    } finally {
+      if (testController.current === controller) {
+        testController.current = null;
+        setTesting(false);
+      }
+    }
+  };
+
   const disableAndDelete = async () => {
     if (!settings || !window.confirm("关闭 AI，并删除所有文档的派生结果？此操作无法撤销。")) return;
     setSaving(true);
     setError("");
     setNotice("");
+    setTestResult(null);
     try {
       const response = await api.disableLlm(settings.revision, true);
       install(response.settings);
@@ -213,15 +256,15 @@ export function AiSettings({ onClose }: AiSettingsProps) {
         <div className="ai-settings-grid">
           <section className="ai-settings-card">
             <div className="ai-setting-lead"><span>01</span><div><h2>明确开启</h2><p>开启设置本身不会发送正文；生成前仍需逐篇确认。</p></div></div>
-            <label className="ai-enable"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} disabled={saving} /><span><strong>允许 AI 派生知识</strong><small>{enabled ? "已准备：仍需逐篇确认" : "关闭：不会发生模型网络请求"}</small></span></label>
+            <label className="ai-enable"><input type="checkbox" checked={enabled} onChange={(event) => { setEnabled(event.target.checked); clearTestResult(); }} disabled={locked} /><span><strong>允许 AI 派生知识</strong><small>{enabled ? "已准备：仍需逐篇确认" : "关闭：不会自动发生模型网络请求"}</small></span></label>
           </section>
 
           <section className="ai-settings-card">
             <div className="ai-setting-lead"><span>02</span><div><h2>网络目标</h2><p>远程端点必须使用 HTTPS；本地端点仅允许本机地址。</p></div></div>
-            <fieldset className="ai-endpoint-kind" disabled={saving}>
+            <fieldset className="ai-endpoint-kind" disabled={locked}>
               <legend className="sr-only">端点类型</legend>
-              <button type="button" aria-pressed={target === "remote"} onClick={() => setTarget("remote")}>远程 HTTPS</button>
-              <button type="button" aria-pressed={target === "local"} onClick={() => setTarget("local")}>可信本地端点</button>
+              <button type="button" aria-pressed={target === "remote"} onClick={() => { setTarget("remote"); clearTestResult(); }}>远程 HTTPS</button>
+              <button type="button" aria-pressed={target === "local"} onClick={() => { setTarget("local"); clearTestResult(); }}>可信本地端点</button>
             </fieldset>
             {target === "remote" ? <>
               <label>
@@ -230,7 +273,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
                   aria-label="AI 远程平台"
                   value={remoteProvider}
                   onChange={(event) => changeRemoteUrl(REMOTE_PROVIDERS.find((provider) => provider[0] === event.target.value)?.[2] ?? "")}
-                  disabled={saving}
+                  disabled={locked}
                 >
                   {REMOTE_PROVIDERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   <option value="other">其他（手动输入）</option>
@@ -238,26 +281,31 @@ export function AiSettings({ onClose }: AiSettingsProps) {
               </label>
               {remoteProvider === "other" && <label>
                 <span>OpenAI-compatible HTTPS 地址</span>
-                <input aria-label="AI 远程端点地址" type="url" value={remoteUrl} onChange={(event) => changeRemoteUrl(event.target.value)} placeholder="https://api.example.com/v1/chat/completions" disabled={saving} />
+                <input aria-label="AI 远程端点地址" type="url" value={remoteUrl} onChange={(event) => changeRemoteUrl(event.target.value)} placeholder="https://api.example.com/v1/chat/completions" disabled={locked} />
               </label>}
               <div className="ai-keychain">
                 <label>
                   <span>API Key（不会回显）</span>
-                  <input aria-label="远程模型 API 密钥" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="new-password" spellCheck={false} placeholder={processKeyConfigured ? "当前平台已配置；输入新值可替换" : "粘贴当前平台的 API Key"} disabled={saving} />
+                  <input aria-label="远程模型 API 密钥" type="password" value={apiKey} onChange={(event) => { setApiKey(event.target.value); clearTestResult(); }} autoComplete="new-password" spellCheck={false} placeholder={processKeyConfigured ? "当前平台已配置；输入新值可替换" : "粘贴当前平台的 API Key"} disabled={locked} />
                 </label>
                 <div>
                   <span>{desktop ? (keychainEndpoint === undefined ? "正在检查 macOS 钥匙串…" : keychainEndpoint ? (endpointValue(keychainEndpoint) === currentRemoteEndpoint ? "当前平台密钥已保存到 macOS 钥匙串" : "钥匙串内有其他平台密钥；当前平台需重新输入") : "将保存到 macOS 钥匙串") : "仅保存于当前本地服务进程"}</span>
-                  <button type="button" onClick={() => void storeApiKey()} disabled={saving || !apiKey.trim() || !remoteUrl.trim()}>保存密钥</button>
-                  {(processKeyEndpoint || keychainEndpoint) && <button type="button" className="danger" onClick={() => void deleteApiKey()} disabled={saving}>删除密钥</button>}
+                  <button type="button" onClick={() => void storeApiKey()} disabled={locked || !apiKey.trim() || !remoteUrl.trim()}>保存密钥</button>
+                  {(processKeyEndpoint || keychainEndpoint) && <button type="button" className="danger" onClick={() => void deleteApiKey()} disabled={locked}>删除密钥</button>}
                 </div>
               </div>
               <div className={`ai-key-state ${processKeyConfigured ? "is-ready" : ""}`}><i />{processKeyConfigured ? "当前进程已加载当前平台密钥；密钥不会返回浏览器。" : "当前平台未加载密钥。切换平台后需重新输入。"}</div>
-              <label><span>远程模型</span><input aria-label="AI 远程模型" value={remoteModel} onChange={(event) => setRemoteModel(event.target.value)} placeholder="model-name" disabled={saving} /></label>
+              <label><span>远程模型</span><input aria-label="AI 远程模型" value={remoteModel} onChange={(event) => { setRemoteModel(event.target.value); clearTestResult(); }} placeholder="model-name" disabled={locked} /></label>
             </> : <>
-              <label><span>OpenAI-compatible 本机地址</span><input aria-label="AI 本地端点地址" type="url" value={localUrl} onChange={(event) => { setLocalUrl(event.target.value); setLocalTrusted(false); }} placeholder="http://127.0.0.1:11434/v1/chat/completions" disabled={saving} /></label>
-              <label><span>本地模型</span><input aria-label="AI 本地模型" value={localModel} onChange={(event) => setLocalModel(event.target.value)} placeholder="model-name" disabled={saving} /></label>
-              <label className="ai-local-trust"><input type="checkbox" checked={localTrusted} onChange={(event) => setLocalTrusted(event.target.checked)} disabled={saving} /><span>我信任这个本机端点，并理解正文会发送给运行它的进程。</span></label>
+              <label><span>OpenAI-compatible 本机地址</span><input aria-label="AI 本地端点地址" type="url" value={localUrl} onChange={(event) => { setLocalUrl(event.target.value); setLocalTrusted(false); clearTestResult(); }} placeholder="http://127.0.0.1:11434/v1/chat/completions" disabled={locked} /></label>
+              <label><span>本地模型</span><input aria-label="AI 本地模型" value={localModel} onChange={(event) => { setLocalModel(event.target.value); clearTestResult(); }} placeholder="model-name" disabled={locked} /></label>
+              <label className="ai-local-trust"><input type="checkbox" checked={localTrusted} onChange={(event) => { setLocalTrusted(event.target.checked); clearTestResult(); }} disabled={locked} /><span>我信任这个本机端点，并理解正文会发送给运行它的进程。</span></label>
             </>}
+            <div className="ai-connection-test">
+              <button type="button" onClick={() => void testConnection()} disabled={locked || (target === "remote" ? !remoteUrl.trim() || !remoteModel.trim() || !processKeyConfigured || Boolean(apiKey.trim()) : !localUrl.trim() || !localModel.trim() || !localTrusted)}>{testing ? "测试中…" : "测试连接"}</button>
+              <small>{target === "remote" && apiKey.trim() ? "先保存密钥，再测试该密钥与当前端点。" : "只发送固定探针，不发送文档；远程供应商可能收取小额费用。"}</small>
+              {testResult && <p role="status">固定探针连接成功 · {testResult.target === "remote" ? "远程" : "本机"} · {testResult.model} · {testResult.durationMs} ms。未发送正文，也未保存或启用当前设置；远程测试可能产生小额费用。</p>}
+            </div>
           </section>
 
           <aside className="ai-privacy-note">
@@ -268,8 +316,8 @@ export function AiSettings({ onClose }: AiSettingsProps) {
           </aside>
 
           <footer>
-            <button type="button" className="text-button danger" onClick={() => void disableAndDelete()} disabled={saving}>关闭 AI 并删除全部结果</button>
-            <button type="button" className="primary-button" onClick={() => void save()} disabled={saving || (target === "remote" ? !remoteUrl.trim() || !remoteModel.trim() || (enabled && !processKeyConfigured) : !localUrl.trim() || !localModel.trim() || (enabled && !localTrusted))}>{saving ? "保存中…" : "保存设置"}</button>
+            <button type="button" className="text-button danger" onClick={() => void disableAndDelete()} disabled={locked}>关闭 AI 并删除全部结果</button>
+            <button type="button" className="primary-button" onClick={() => void save()} disabled={locked || (target === "remote" ? !remoteUrl.trim() || !remoteModel.trim() || (enabled && !processKeyConfigured) : !localUrl.trim() || !localModel.trim() || (enabled && !localTrusted))}>{saving ? "保存中…" : "保存设置"}</button>
           </footer>
           {notice && <p className="ai-settings-message" role="status">{notice}</p>}
           {error && <p className="ai-settings-message is-error" role="alert">{error}</p>}

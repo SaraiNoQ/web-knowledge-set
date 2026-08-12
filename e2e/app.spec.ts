@@ -164,11 +164,14 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await page.getByLabel("AI 远程模型").fill("remote-e2e-model");
   const remoteProviderAfterReload = page.getByLabel("AI 远程平台");
   await page.getByLabel("远程模型 API 密钥").fill("must-not-cross-platforms");
+  await expect(page.getByRole("button", { name: "测试连接" })).toBeDisabled();
+  await expect(page.getByText("先保存密钥，再测试", { exact: false })).toBeVisible();
   await remoteProviderAfterReload.selectOption("deepseek");
   await expect(page.getByText("https://api.deepseek.com/chat/completions", { exact: true })).toBeVisible();
   await expect(page.getByLabel("AI 远程端点地址")).toHaveCount(0);
   await expect(page.getByLabel("远程模型 API 密钥")).toHaveValue("");
   await expect(page.getByText("当前平台未加载密钥", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: "测试连接" })).toBeDisabled();
   await page.getByText("允许 AI 派生知识", { exact: true }).click();
   await expect(page.getByRole("button", { name: "保存设置" })).toBeDisabled();
   await page.getByText("允许 AI 派生知识", { exact: true }).click();
@@ -186,6 +189,36 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await page.getByRole("button", { name: "可信本地端点" }).click();
   await page.getByLabel("AI 本地端点地址").fill("http://127.0.0.1:4175/v1/chat/completions");
   await page.getByLabel("AI 本地模型").fill("fake-e2e-model");
+  await page.getByText("我信任这个本机端点", { exact: false }).click();
+  await expect(page.locator(".ai-enable input")).not.toBeChecked();
+  const probeRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/settings/llm/test");
+  await page.getByRole("button", { name: "测试连接" }).click();
+  await expect(page.getByLabel("AI 本地模型")).toBeDisabled();
+  expect((await probeRequest).postDataJSON()).toEqual({
+    target: "local",
+    endpointUrl: "http://127.0.0.1:4175/v1/chat/completions",
+    model: "fake-e2e-model",
+    trusted: true,
+  });
+  await expect(page.getByText("固定探针连接成功", { exact: false })).toBeVisible({ timeout: 8_000 });
+  await expect(page.getByText("未发送正文，也未保存或启用当前设置", { exact: false })).toBeVisible();
+  const persistedBeforeSave = await page.evaluate(() => fetch("/api/settings/llm").then((response) => response.json())) as {
+    enabled: boolean;
+    local: { model: string };
+  };
+  expect(persistedBeforeSave.enabled).toBe(false);
+  expect(persistedBeforeSave.local.model).not.toBe("fake-e2e-model");
+
+  await page.getByLabel("AI 本地端点地址").fill("http://127.0.0.1:4176/v1/chat/completions");
+  await expect(page.getByText("固定探针连接成功", { exact: false })).toHaveCount(0);
+  await page.getByText("我信任这个本机端点", { exact: false }).click();
+  const failedProbe = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/settings/llm/test");
+  await page.getByRole("button", { name: "测试连接" }).click();
+  const failedProbeBody = (await failedProbe).postData() || "";
+  expect(failedProbeBody).not.toContain("AI 生命周期文章");
+  expect(failedProbeBody).not.toContain("这是可搜索的本地知识正文");
+  await expect(page.getByRole("alert")).toBeVisible({ timeout: 8_000 });
+  await page.getByLabel("AI 本地端点地址").fill("http://127.0.0.1:4175/v1/chat/completions");
   await page.getByText("我信任这个本机端点", { exact: false }).click();
   await page.getByText("允许 AI 派生知识", { exact: true }).click();
   await page.getByRole("button", { name: "保存设置" }).click();

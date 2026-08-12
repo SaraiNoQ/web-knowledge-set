@@ -58,7 +58,14 @@ import {
 } from "./diagnostics.js";
 import { extractHtml } from "./extract.js";
 import { ImportParseError, parseImportRequest } from "./import.js";
-import { createDerivedTasks, LlmError, llmApiKeyInput, llmSettingsInput, type ResolveLlmTarget } from "./llm.js";
+import {
+  createDerivedTasks,
+  LlmError,
+  llmApiKeyInput,
+  llmConnectionTestInput,
+  llmSettingsInput,
+  type ResolveLlmTarget,
+} from "./llm.js";
 import {
   createPortableBundle,
   PortableError,
@@ -1278,6 +1285,20 @@ export function createApp(options: AppOptions) {
           throw new LlmError(400, "INVALID_LLM_API_KEY", "API key status does not accept query parameters");
         }
         sendJson(response, 200, derivedTasks.apiKeyStatus());
+        return;
+      }
+
+      if (pathname === "/api/settings/llm/test" && request.method === "POST") {
+        if (requestUrl.searchParams.size) {
+          throw new LlmError(400, "INVALID_LLM_TEST", "Connection tests do not accept query parameters");
+        }
+        const input = llmConnectionTestInput(await mutationBody(request));
+        const operation = operationAbort(request, response);
+        try {
+          sendJson(response, 200, await derivedTasks.testConnection(input, operation.signal));
+        } finally {
+          operation.dispose();
+        }
         return;
       }
 

@@ -168,6 +168,18 @@ export interface LlmApiKeyStatus {
   endpointUrl: string | null;
 }
 
+export type LlmConnectionTestInput =
+  | { target: "remote"; endpointUrl: string; model: string }
+  | { target: "local"; endpointUrl: string; model: string; trusted: true };
+
+export interface LlmConnectionTestResult {
+  ok: true;
+  target: LlmEndpointKind;
+  model: string;
+  endpointId: string;
+  durationMs: number;
+}
+
 export interface DerivedCoverage {
   sourceChars: number;
   sentChars: number;

@@ -10,15 +10,314 @@ import { openDatabase } from "../server/db.js";
 import {
   applyMarkdownTranslation,
   createDerivedTasks,
+  llmConnectionTestInput,
   llmNetworkError,
   markdownTranslationInput,
   resolveLlmTarget,
 } from "../server/llm.js";
-import type { DerivedPreview, DerivedResultType, DerivedTask, LlmSettings } from "../shared/types.js";
+import type {
+  DerivedPreview,
+  DerivedResultType,
+  DerivedTask,
+  LlmConnectionTestResult,
+  LlmSettings,
+} from "../shared/types.js";
 
 test("LLM network failures distinguish rejected TLS certificates", () => {
   assert.equal(llmNetworkError(Object.assign(new Error("certificate"), { code: "SELF_SIGNED_CERT_IN_CHAIN" })).code, "LLM_TLS_ERROR");
   assert.equal(llmNetworkError(Object.assign(new Error("socket"), { code: "ECONNRESET" })).code, "LLM_NETWORK_ERROR");
+});
+
+test("LLM connection probe is strict, document-free, endpoint-bound, and redacted", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zhiye-llm-probe-"));
+  const db = openDatabase(join(root, "data"));
+  const secret = "probe-api-secret";
+  const documentSecret = "DOCUMENT-CONTENT-MUST-NOT-BE-SENT";
+  const remoteEndpoint = "https://probe.example/v1/chat/completions";
+  const otherRemoteEndpoint = "https://other.example/v1/chat/completions";
+  const requests: Array<{ authorization: string | undefined; body: string }> = [];
+  let reply = "ZHIYE_OK";
+  let providerStatus = 200;
+  let providerError: Record<string, unknown> | null = null;
+  const provider = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    requests.push({ authorization: request.headers.authorization, body: Buffer.concat(chunks).toString("utf8") });
+    response.writeHead(providerStatus, providerStatus === 200 || providerError ? { "Content-Type": "application/json" } : {});
+    response.end(JSON.stringify(providerError ?? { choices: [{ message: { content: reply } }] }));
+  });
+  await new Promise<void>((resolve) => provider.listen(0, "127.0.0.1", resolve));
+  const providerAddress = provider.address();
+  assert.ok(providerAddress && typeof providerAddress !== "string");
+  const document = db.createOrGetDocument("https://example.com/probe-document").document;
+  assert.equal(db.updateDocument(document.id, document.revision, { markdown: documentSecret }).kind, "updated");
+  const app = createApp({
+    dataDir: join(root, "data"),
+    database: db,
+    bootstrapToken: "probe-bootstrap",
+    sessionToken: "probe-session",
+    startWorker: false,
+    resolveLlmTarget: async () => ({
+      url: new URL(`http://127.0.0.1:${providerAddress.port}/v1/chat/completions`),
+      address: "127.0.0.1",
+      family: 4,
+    }),
+  });
+  const server = createServer((request, response) => void app.handler(request, response));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const base = `http://127.0.0.1:${address.port}`;
+  try {
+    assert.throws(
+      () => llmConnectionTestInput({ target: "remote", endpointUrl: remoteEndpoint, model: "fake", trusted: true }),
+      /invalid/u,
+    );
+    assert.throws(
+      () => llmConnectionTestInput({ target: "local", endpointUrl: "http://127.0.0.1:9/v1", model: "fake", trusted: false }),
+      /invalid/u,
+    );
+    const launch = await fetch(`${base}/launch?token=probe-bootstrap`, { redirect: "manual" });
+    const cookie = (launch.headers.get("set-cookie") ?? "").split(";", 1)[0];
+    const settings = await fetch(`${base}/api/settings/llm`, { headers: { Cookie: cookie } });
+    const epoch = settings.headers.get("x-zhiye-data-epoch");
+    assert.ok(epoch);
+    const headers = {
+      Cookie: cookie,
+      Origin: base,
+      "Content-Type": "application/json",
+      "X-Zhiye-Data-Epoch": epoch,
+    };
+    const localEndpoint = `http://127.0.0.1:${providerAddress.port}/v1/chat/completions`;
+    const queryResponse = await fetch(`${base}/api/settings/llm/test?unexpected=1`, {
+      method: "POST", headers,
+      body: JSON.stringify({ target: "local", endpointUrl: localEndpoint, model: "probe-model", trusted: true }),
+    });
+    assert.equal(queryResponse.status, 400);
+    assert.equal(requests.length, 0);
+    const localResponse = await fetch(`${base}/api/settings/llm/test`, {
+      method: "POST", headers,
+      body: JSON.stringify({ target: "local", endpointUrl: localEndpoint, model: "probe-model", trusted: true }),
+    });
+    assert.equal(localResponse.status, 200);
+    const localResult = await localResponse.json() as LlmConnectionTestResult;
+    assert.deepEqual(Object.keys(localResult).sort(), ["durationMs", "endpointId", "model", "ok", "target"]);
+    assert.equal(localResult.ok, true);
+    assert.equal(localResult.target, "local");
+    assert.equal(localResult.model, "probe-model");
+    assert.equal(JSON.stringify(localResult).includes(localEndpoint), false);
+    assert.equal(requests[0]?.authorization, undefined);
+    assert.equal(requests[0]?.body.includes(documentSecret), false);
+    assert.deepEqual(JSON.parse(requests[0]!.body), {
+      model: "probe-model",
+      temperature: 0,
+      max_tokens: 16,
+      messages: [
+        { role: "system", content: "This is a connection test. Reply with exactly ZHIYE_OK and nothing else." },
+        { role: "user", content: "Reply with exactly ZHIYE_OK." },
+      ],
+    });
+
+    assert.equal((await fetch(`${base}/api/settings/llm/key`, {
+      method: "PUT", headers,
+      body: JSON.stringify({ apiKey: secret, endpointUrl: remoteEndpoint }),
+    })).status, 200);
+    const wrongEndpoint = await fetch(`${base}/api/settings/llm/test`, {
+      method: "POST", headers,
+      body: JSON.stringify({ target: "remote", endpointUrl: otherRemoteEndpoint, model: "remote-model" }),
+    });
+    assert.equal(wrongEndpoint.status, 409);
+    assert.equal(requests.length, 1);
+    const remoteResponse = await fetch(`${base}/api/settings/llm/test`, {
+      method: "POST", headers,
+      body: JSON.stringify({ target: "remote", endpointUrl: remoteEndpoint, model: "remote-model" }),
+    });
+    assert.equal(remoteResponse.status, 200);
+    const remoteText = await remoteResponse.text();
+    assert.equal(remoteText.includes(secret), false);
+    assert.equal(remoteText.includes(remoteEndpoint), false);
+    assert.equal(requests[1]?.authorization, `Bearer ${secret}`);
+
+    reply = "ZHIYE_OK\n";
+    const inexact = await fetch(`${base}/api/settings/llm/test`, {
+      method: "POST", headers,
+      body: JSON.stringify({ target: "local", endpointUrl: localEndpoint, model: "probe-model", trusted: true }),
+    });
+    assert.equal(inexact.status, 502);
+    assert.equal((await inexact.json() as { error: { code: string } }).error.code, "LLM_INVALID_PROBE");
+
+    reply = "ZHIYE_OK";
+    for (const [status, code] of [[401, "LLM_AUTH_FAILED"], [429, "LLM_RATE_LIMITED"], [404, "LLM_REQUEST_REJECTED"]] as const) {
+      providerStatus = status;
+      const rejected = await fetch(`${base}/api/settings/llm/test`, {
+        method: "POST", headers,
+        body: JSON.stringify({ target: "local", endpointUrl: localEndpoint, model: "missing-model", trusted: true }),
+      });
+      assert.equal(rejected.status, status === 429 ? 429 : 502);
+      assert.equal((await rejected.json() as { error: { code: string } }).error.code, code);
+    }
+    providerError = { error: { message: "unknown model", param: "model", code: "model_not_found" } };
+    const rejectedModel = await fetch(`${base}/api/settings/llm/test`, {
+      method: "POST", headers,
+      body: JSON.stringify({ target: "local", endpointUrl: localEndpoint, model: "missing-model", trusted: true }),
+    });
+    assert.equal(rejectedModel.status, 502);
+    assert.equal((await rejectedModel.json() as { error: { code: string } }).error.code, "LLM_MODEL_REJECTED");
+    assert.equal(db.getDocument(document.id)?.markdown, documentSecret);
+    assert.equal(db.listDerivedResults(document.id)?.total, 0);
+  } finally {
+    await app.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) => provider.close(() => resolve()));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("LLM connection probe is rejected while the knowledge base is in recovery mode", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zhiye-llm-probe-recovery-"));
+  let resolutions = 0;
+  const app = createApp({
+    dataDir: join(root, "data"),
+    database: null,
+    recoveryError: new Error("recovery required"),
+    bootstrapToken: "recovery-bootstrap",
+    sessionToken: "recovery-session",
+    resolveLlmTarget: async () => {
+      resolutions += 1;
+      throw new Error("must not resolve");
+    },
+    startWorker: false,
+  });
+  const server = createServer((request, response) => void app.handler(request, response));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const base = `http://127.0.0.1:${address.port}`;
+  try {
+    const launch = await fetch(`${base}/launch?token=recovery-bootstrap`, { redirect: "manual" });
+    const cookie = (launch.headers.get("set-cookie") ?? "").split(";", 1)[0];
+    const unavailable = await fetch(`${base}/api/settings/llm`, { headers: { Cookie: cookie } });
+    const epoch = unavailable.headers.get("x-zhiye-data-epoch");
+    assert.ok(epoch);
+    const response = await fetch(`${base}/api/settings/llm/test`, {
+      method: "POST",
+      headers: {
+        Cookie: cookie,
+        Origin: base,
+        "Content-Type": "application/json",
+        "X-Zhiye-Data-Epoch": epoch,
+      },
+      body: JSON.stringify({
+        target: "local",
+        endpointUrl: "http://127.0.0.1:9/v1/chat/completions",
+        model: "fake",
+        trusted: true,
+      }),
+    });
+    assert.equal(response.status, 503);
+    assert.equal(((await response.json()) as { error: { code: string } }).error.code, "DATA_UNAVAILABLE");
+    assert.equal(resolutions, 0);
+  } finally {
+    await app.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("LLM probe HTTP route aborts disconnected clients and pauses before key updates", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zhiye-llm-probe-route-"));
+  const db = openDatabase(join(root, "data"));
+  const deferred = () => {
+    let resolve!: () => void;
+    return { promise: new Promise<void>((done) => { resolve = done; }), resolve };
+  };
+  const first = { arrived: deferred(), closed: deferred() };
+  const second = { arrived: deferred(), closed: deferred() };
+  let providerCalls = 0;
+  const provider = createServer(async (request, response) => {
+    for await (const _chunk of request) { /* drain request */ }
+    providerCalls += 1;
+    const hanging = providerCalls === 1 ? first : providerCalls === 3 ? second : null;
+    if (hanging) {
+      response.once("close", hanging.closed.resolve);
+      hanging.arrived.resolve();
+      return;
+    }
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ choices: [{ message: { content: "ZHIYE_OK" } }] }));
+  });
+  await new Promise<void>((resolve) => provider.listen(0, "127.0.0.1", resolve));
+  const providerAddress = provider.address();
+  assert.ok(providerAddress && typeof providerAddress !== "string");
+  const app = createApp({
+    dataDir: join(root, "data"),
+    database: db,
+    bootstrapToken: "probe-route-bootstrap",
+    sessionToken: "probe-route-session",
+    startWorker: false,
+  });
+  const server = createServer((request, response) => void app.handler(request, response));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const base = `http://127.0.0.1:${address.port}`;
+  try {
+    const launch = await fetch(`${base}/launch?token=probe-route-bootstrap`, { redirect: "manual" });
+    const cookie = (launch.headers.get("set-cookie") ?? "").split(";", 1)[0];
+    const settings = await fetch(`${base}/api/settings/llm`, { headers: { Cookie: cookie } });
+    const epoch = settings.headers.get("x-zhiye-data-epoch");
+    assert.ok(epoch);
+    const headers = {
+      Cookie: cookie,
+      Origin: base,
+      "Content-Type": "application/json",
+      "X-Zhiye-Data-Epoch": epoch,
+    };
+    const body = JSON.stringify({
+      target: "local",
+      endpointUrl: `http://127.0.0.1:${providerAddress.port}/v1/chat/completions`,
+      model: "probe-model",
+      trusted: true,
+    });
+
+    const controller = new AbortController();
+    let receivedLateSuccess = false;
+    const disconnected = fetch(`${base}/api/settings/llm/test`, {
+      method: "POST", headers, body, signal: controller.signal,
+    }).then(
+      (response) => { receivedLateSuccess = response.ok; return null; },
+      (error: unknown) => error,
+    );
+    await first.arrived.promise;
+    controller.abort();
+    const disconnectError = await disconnected;
+    assert.equal(disconnectError instanceof Error && disconnectError.name, "AbortError");
+    await first.closed.promise;
+    assert.equal(receivedLateSuccess, false);
+    const retry = await fetch(`${base}/api/settings/llm/test`, { method: "POST", headers, body });
+    assert.equal(retry.status, 200);
+    assert.equal((await retry.json() as LlmConnectionTestResult).ok, true);
+    assert.equal(receivedLateSuccess, false);
+
+    const hangingProbe = fetch(`${base}/api/settings/llm/test`, { method: "POST", headers, body });
+    await second.arrived.promise;
+    const remoteEndpoint = "https://probe-key.example/v1/chat/completions";
+    const keyResponse = await fetch(`${base}/api/settings/llm/key`, {
+      method: "PUT", headers,
+      body: JSON.stringify({ apiKey: "probe-key", endpointUrl: remoteEndpoint }),
+    });
+    assert.equal(keyResponse.status, 200);
+    await second.closed.promise;
+    assert.deepEqual(await keyResponse.json(), { configured: true, endpointUrl: remoteEndpoint });
+    const cancelled = await hangingProbe;
+    assert.equal(cancelled.status, 409);
+    assert.equal(((await cancelled.json()) as { error: { code: string } }).error.code, "LLM_CANCELLED");
+  } finally {
+    await app.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) => provider.close(() => resolve()));
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("LLM API requires preview confirmation, reuses results, cancels, and disables atomically", async () => {
@@ -664,19 +963,40 @@ test("LLM resolver timeout, nested pauses, and permanent stop cannot strand a ta
       settingsRevision: preview.settingsRevision,
     };
   };
+  const probeInput = {
+    target: "local" as const,
+    endpointUrl: "http://127.0.0.1:9/v1/chat/completions",
+    model: "fake",
+    trusted: true as const,
+  };
   try {
     const timed = createDerivedTasks({ database: () => db, resolveTarget: neverResolve, requestTimeoutMs: 10 });
+    await assert.rejects(timed.testConnection(probeInput, new AbortController().signal), /timed out/u);
     const timedTask = timed.start(created.id, inputFor(timed, "summary")).task;
     assert.equal((await waitForMemoryTask(timed, timedTask.id)).error?.code, "LLM_TIMEOUT");
     await timed.stop();
 
     const stoppable = createDerivedTasks({ database: () => db, resolveTarget: neverResolve });
     const stoppedTask = stoppable.start(created.id, inputFor(stoppable, "outline")).task;
+    await assert.rejects(stoppable.testConnection(probeInput, new AbortController().signal), /already running/u);
     await Promise.race([
       stoppable.stop(),
       new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("stop did not return")), 200)),
     ]);
     assert.equal(stoppable.get(stoppedTask.id)?.status, "cancelled");
+
+    const abortable = createDerivedTasks({ database: () => db, resolveTarget: neverResolve });
+    const clientController = new AbortController();
+    const clientProbe = abortable.testConnection(probeInput, clientController.signal);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.throws(() => abortable.start(created.id, inputFor(abortable, "summary")), /already running/u);
+    clientController.abort();
+    await assert.rejects(clientProbe, /cancelled/u);
+    const stoppedProbe = abortable.testConnection(probeInput, new AbortController().signal);
+    const stoppedProbeRejection = assert.rejects(stoppedProbe, /cancelled/u);
+    await abortable.stop();
+    await stoppedProbeRejection;
+    await assert.rejects(abortable.testConnection(probeInput, new AbortController().signal), /temporarily unavailable/u);
 
     const paused = createDerivedTasks({ database: () => db, resolveTarget: neverResolve });
     const preview = paused.preview(created.id, "translation", edited.document.revision, "zh-CN");
@@ -688,7 +1008,10 @@ test("LLM resolver timeout, nested pauses, and permanent stop cannot strand a ta
       sendHash: preview.sendHash,
       settingsRevision: preview.settingsRevision,
     };
+    const maintenanceProbe = paused.testConnection(probeInput, new AbortController().signal);
+    const maintenanceProbeRejection = assert.rejects(maintenanceProbe, /cancelled/u);
     await paused.pause();
+    await maintenanceProbeRejection;
     await paused.pause();
     paused.resume();
     assert.throws(() => paused.start(created.id, input), /temporarily unavailable/u);

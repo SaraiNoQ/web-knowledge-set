@@ -29,6 +29,8 @@ import type {
   KnowledgeCollection,
   KnowledgeDocument,
   KnowledgeTag,
+  LlmConnectionTestInput,
+  LlmConnectionTestResult,
   MergeCollectionResponse,
   LlmSettings,
   LlmApiKeyStatus,
@@ -162,6 +164,14 @@ export const api = {
 
   getLlmApiKeyStatus(signal?: AbortSignal) {
     return request<LlmApiKeyStatus>("/api/settings/llm/key", { signal });
+  },
+
+  testLlmConnection(input: LlmConnectionTestInput, signal?: AbortSignal) {
+    return request<LlmConnectionTestResult>("/api/settings/llm/test", {
+      method: "POST",
+      body: JSON.stringify(input),
+      signal,
+    });
   },
 
   updateLlmSettings(settings: UpdateLlmSettingsInput) {
