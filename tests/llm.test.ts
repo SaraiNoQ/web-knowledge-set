@@ -105,15 +105,16 @@ test("LLM API requires preview confirmation, reuses results, cancels, and disabl
     const preview = (await previewResponse.json()) as DerivedPreview;
     assert.equal(preview.coverage.truncated, true);
     assert.ok(preview.coverage.sentChars < preview.coverage.sourceChars);
-    assert.ok(preview.sentText.includes("FRONT"));
-    assert.ok(preview.sentText.includes("MIDDLE"));
-    assert.ok(preview.sentText.includes("TAIL"));
-    assert.equal(preview.sentText.includes("\ud800") || preview.sentText.includes("\udfff"), false);
+    assert.ok(preview.sentTexts[0]!.includes("FRONT"));
+    assert.ok(preview.sentTexts[0]!.includes("MIDDLE"));
+    assert.ok(preview.sentTexts[0]!.includes("TAIL"));
+    assert.equal(preview.sentTexts[0]!.includes("\ud800") || preview.sentTexts[0]!.includes("\udfff"), false);
 
     const startBody = JSON.stringify({
       type: preview.type,
       revision: preview.revision,
       inputHash: preview.inputHash,
+      sendHash: preview.sendHash,
       settingsRevision: preview.settingsRevision,
     });
     assert.equal((await fetch(`${base}/api/documents/${created.id}/derived-task`, {
@@ -124,6 +125,8 @@ test("LLM API requires preview confirmation, reuses results, cancels, and disabl
     });
     assert.equal(startedResponse.status, 202);
     const started = (await startedResponse.json()) as DerivedTask;
+    assert.equal("sentTexts" in started.preview, false);
+    assert.deepEqual(started.progress, { completedBatches: 0, totalBatches: 1 });
     const completed = await waitForTask(base, cookie, started.id);
     assert.equal(completed.status, "succeeded");
     assert.equal(completed.result?.usage?.totalTokens, 16);
@@ -164,6 +167,7 @@ test("LLM API requires preview confirmation, reuses results, cancels, and disabl
         type: cancelPreview.type,
         revision: cancelPreview.revision,
         inputHash: cancelPreview.inputHash,
+        sendHash: cancelPreview.sendHash,
         settingsRevision: cancelPreview.settingsRevision,
       }),
     })).json()) as DerivedTask;
@@ -298,6 +302,7 @@ test("LLM API keys stay bound to one normalized remote endpoint and never persis
       method: "POST", headers,
       body: JSON.stringify({
         type: previewA.type, revision: previewA.revision, inputHash: previewA.inputHash,
+        sendHash: previewA.sendHash,
         settingsRevision: previewA.settingsRevision,
       }),
     })).json() as DerivedTask;
@@ -351,6 +356,7 @@ test("LLM API keys stay bound to one normalized remote endpoint and never persis
       method: "POST", headers,
       body: JSON.stringify({
         type: previewB.type, revision: previewB.revision, inputHash: previewB.inputHash,
+        sendHash: previewB.sendHash,
         settingsRevision: previewB.settingsRevision,
       }),
     })).json() as DerivedTask;
@@ -467,6 +473,7 @@ test("LLM runner rejects unsafe provider behavior without saving partial results
         type: preview.type,
         revision: preview.revision,
         inputHash: preview.inputHash,
+        sendHash: preview.sendHash,
         settingsRevision: preview.settingsRevision,
       }).task;
       const finished = await waitForMemoryTask(manager, started.id);
@@ -486,6 +493,7 @@ test("LLM runner rejects unsafe provider behavior without saving partial results
       type: restartPreview.type,
       revision: restartPreview.revision,
       inputHash: restartPreview.inputHash,
+      sendHash: restartPreview.sendHash,
       settingsRevision: restartPreview.settingsRevision,
     }).task;
     await new Promise((resolve) => setImmediate(resolve));
@@ -517,6 +525,8 @@ test("Markdown translation preserves structure and rejects changed segment ident
     "",
     "<aside>Keep raw HTML</aside>",
     "",
+    "Before <span>keep inline HTML text</span> after.",
+    "",
     "`const inline = true`",
     "",
     "```js",
@@ -532,13 +542,14 @@ test("Markdown translation preserves structure and rejects changed segment ident
     "[^1]: Footnote detail.",
   ].join("\n");
   const input = markdownTranslationInput(markdown);
-  const segments = JSON.parse(input.sentText) as Array<{ id: string; text: string }>;
+  const segments = JSON.parse(input.sentTexts[0]!) as Array<{ id: string; text: string }>;
   assert.ok(segments.some(({ text }) => text === "Read this"));
   assert.equal(segments.some(({ text }) => text.includes("https://")), false);
   assert.equal(segments.some(({ text }) => text.includes("www.example.com")), false);
   assert.equal(segments.some(({ text }) => text.includes("Keep this metadata")), false);
   assert.equal(segments.some(({ text }) => text.includes("Do not translate alt")), false);
   assert.equal(segments.some(({ text }) => text.includes("Keep raw HTML")), false);
+  assert.equal(segments.some(({ text }) => text.includes("keep inline HTML text")), false);
   assert.equal(segments.some(({ text }) => text.includes("keep code")), false);
 
   const translated = applyMarkdownTranslation(markdown, JSON.stringify(
@@ -551,6 +562,7 @@ test("Markdown translation preserves structure and rejects changed segment ident
   assert.match(translated, /www\.example\.com\/path\?q=1/u);
   assert.match(translated, /!\[Do not translate alt\]\(https:\/\/example\.com\/image\.png\)/u);
   assert.match(translated, /<aside>Keep raw HTML<\/aside>/u);
+  assert.match(translated, /<span>keep inline HTML text<\/span>/u);
   assert.match(translated, /`const inline = true`/u);
   assert.match(translated, /console\.log\('keep code'\)/u);
   assert.match(translated, /\| --- \| --- \|/u);
@@ -561,7 +573,60 @@ test("Markdown translation preserves structure and rejects changed segment ident
     )),
     (error: unknown) => error instanceof Error && error.message.includes("identifier"),
   );
-  assert.throws(() => markdownTranslationInput("x".repeat(40_001)), /complete document/u);
+  assert.throws(() => markdownTranslationInput("x".repeat(1_000_001)), /1000000/u);
+});
+
+test("Markdown translation batches long Unicode input within every request boundary", () => {
+  const markdown = [
+    "---",
+    "title: Keep metadata",
+    "---",
+    "# Long source",
+    "",
+    `${"😀 multilingual words ".repeat(12_000)}tail`,
+    "",
+    "[Keep destination](https://example.com/a?q=1)",
+    "",
+    "<aside>Keep raw HTML</aside>",
+    "",
+    "```js",
+    "console.log('keep code')",
+    "```",
+  ].join("\n");
+  const input = markdownTranslationInput(markdown);
+  assert.ok(input.sentTexts.length > 1);
+  assert.ok(input.sentTexts.length <= 64);
+  const records = input.sentTexts.flatMap((sentText) => {
+    assert.ok(sentText.length <= 40_000);
+    assert.ok(Buffer.byteLength(sentText, "utf8") <= 128 * 1024);
+    return JSON.parse(sentText) as Array<{ id: string; text: string }>;
+  });
+  assert.ok(records.length <= 5_000);
+  assert.deepEqual(records.map(({ id }) => id), records.map((_record, index) => `s${index + 1}`));
+  for (const { text } of records) {
+    assert.ok(text.length <= 12_000);
+    for (let index = 0; index < text.length; index += 1) {
+      const value = text.charCodeAt(index);
+      if (value >= 0xd800 && value <= 0xdbff) {
+        const next = text.charCodeAt(++index);
+        assert.ok(next >= 0xdc00 && next <= 0xdfff);
+      } else {
+        assert.ok(value < 0xdc00 || value > 0xdfff);
+      }
+    }
+  }
+  const responses = input.sentTexts.map((sentText) => JSON.stringify(
+    (JSON.parse(sentText) as Array<{ id: string }>).map(({ id }) => ({ id, text: `Translated ${id}` })),
+  ));
+  const translated = applyMarkdownTranslation(markdown, responses);
+  assert.match(translated, /^---\ntitle: Keep metadata\n---\n/u);
+  assert.match(translated, /\]\(https:\/\/example\.com\/a\?q=1\)/u);
+  assert.match(translated, /<aside>Keep raw HTML<\/aside>/u);
+  assert.match(translated, /console\.log\('keep code'\)/u);
+  assert.throws(
+    () => markdownTranslationInput(Array.from({ length: 5_001 }, (_value, index) => `piece ${index}`).join("\n\n")),
+    /too many translation segments/u,
+  );
 });
 
 test("LLM target validation separates remote public HTTPS from explicit loopback", async () => {
@@ -595,6 +660,7 @@ test("LLM resolver timeout, nested pauses, and permanent stop cannot strand a ta
       type: preview.type,
       revision: preview.revision,
       inputHash: preview.inputHash,
+      sendHash: preview.sendHash,
       settingsRevision: preview.settingsRevision,
     };
   };
@@ -619,6 +685,7 @@ test("LLM resolver timeout, nested pauses, and permanent stop cannot strand a ta
       targetLanguage: preview.targetLanguage!,
       revision: preview.revision,
       inputHash: preview.inputHash,
+      sendHash: preview.sendHash,
       settingsRevision: preview.settingsRevision,
     };
     await paused.pause();

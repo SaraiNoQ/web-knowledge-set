@@ -206,6 +206,7 @@ export const api = {
         type: preview.type,
         revision: preview.revision,
         inputHash: preview.inputHash,
+        sendHash: preview.sendHash,
         settingsRevision: preview.settingsRevision,
         ...(preview.targetLanguage ? { targetLanguage: preview.targetLanguage } : {}),
       }),

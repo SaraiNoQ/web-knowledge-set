@@ -193,12 +193,14 @@ test("translations are cached per target language and become stale after source 
     if (edited.kind !== "updated") return;
     const sourceChars = edited.document.markdown.length;
     const inputHash = derivedInputHash(edited.document.title, edited.document.markdown);
-    const save = (language: "en" | "ja", output: string) => fixture.db.saveDerivedResult({
+    const save = (language: "en" | "ja", output: string, version: "v1" | "v2" = "v2") => fixture.db.saveDerivedResult({
       documentId: created.id,
       type: "translation",
       model: "test-model",
       endpointId: "local-test",
-      promptVersion: `translation-v1-p40000:${language}`,
+      promptVersion: version === "v1"
+        ? `translation-v1-p40000:${language}`
+        : `translation-v2-b40000-p12000:${language}`,
       inputHash,
       output,
       durationMs: 1,
@@ -206,13 +208,17 @@ test("translations are cached per target language and become stale after source 
       sentChars: sourceChars,
       truncated: false,
     });
+    const legacyEnglish = save("en", "# Legacy English\n\nBody", "v1");
     const english = save("en", "# English\n\nBody");
     const japanese = save("ja", "# 日本語\n\n本文");
     const duplicate = save("en", "Must not replace cached output");
+    assert.equal(legacyEnglish.kind, "saved");
     assert.equal(english.kind, "saved");
     assert.equal(japanese.kind, "saved");
     assert.equal(duplicate.kind, "saved");
-    if (english.kind !== "saved" || japanese.kind !== "saved" || duplicate.kind !== "saved") return;
+    if (legacyEnglish.kind !== "saved" || english.kind !== "saved" || japanese.kind !== "saved" || duplicate.kind !== "saved") return;
+    assert.notEqual(legacyEnglish.result.id, english.result.id);
+    assert.equal(legacyEnglish.result.targetLanguage, "en");
     assert.notEqual(english.result.id, japanese.result.id);
     assert.equal(english.result.targetLanguage, "en");
     assert.equal(japanese.result.targetLanguage, "ja");

@@ -758,9 +758,9 @@ const derivedResultTypes = new Set<DerivedResultType>([
 
 function derivedTargetLanguage(type: DerivedResultType, promptVersion: string) {
   if (type !== "translation") return null;
-  const prefix = "translation-v1-p40000:";
-  const language = promptVersion.startsWith(prefix) ? promptVersion.slice(prefix.length) : "";
-  return promptVersion === `${prefix}${language}` && Object.hasOwn(TRANSLATION_LANGUAGES, language)
+  const match = /^(?:translation-v1-p40000|translation-v2-b40000-p12000):(.+)$/u.exec(promptVersion);
+  const language = match?.[1] ?? "";
+  return Object.hasOwn(TRANSLATION_LANGUAGES, language)
     ? language as keyof typeof TRANSLATION_LANGUAGES
     : null;
 }

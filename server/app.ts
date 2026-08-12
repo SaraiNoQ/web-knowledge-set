@@ -759,11 +759,14 @@ function derivedPreviewRequest(body: Record<string, unknown>) {
 }
 
 function startDerivedTaskRequest(body: Record<string, unknown>): StartDerivedTaskInput {
-  if (Object.keys(body).some((key) => !["type", "revision", "inputHash", "settingsRevision", "targetLanguage"].includes(key))) {
+  if (Object.keys(body).some((key) => !["type", "revision", "inputHash", "sendHash", "settingsRevision", "targetLanguage"].includes(key))) {
     throw new HttpError(400, "INVALID_DERIVED_TASK", "Derived task request contains an unknown field");
   }
   if (typeof body.inputHash !== "string" || !/^[a-f0-9]{64}$/u.test(body.inputHash)) {
     throw new HttpError(400, "INVALID_DERIVED_TASK", "inputHash must be a lowercase SHA-256 value");
+  }
+  if (typeof body.sendHash !== "string" || !/^[a-f0-9]{64}$/u.test(body.sendHash)) {
+    throw new HttpError(400, "INVALID_DERIVED_TASK", "sendHash must be a lowercase SHA-256 value");
   }
   if (!Number.isSafeInteger(body.settingsRevision) || (body.settingsRevision as number) < 1) {
     throw new HttpError(400, "INVALID_DERIVED_TASK", "settingsRevision must be a positive integer");
@@ -774,6 +777,7 @@ function startDerivedTaskRequest(body: Record<string, unknown>): StartDerivedTas
     ...(translationLanguage(type, body.targetLanguage) ? { targetLanguage: body.targetLanguage as TranslationLanguage } : {}),
     revision: bodyRevision(body),
     inputHash: body.inputHash,
+    sendHash: body.sendHash,
     settingsRevision: body.settingsRevision as number,
   };
 }

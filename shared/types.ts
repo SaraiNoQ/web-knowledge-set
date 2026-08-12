@@ -185,14 +185,18 @@ export interface DerivedPreview {
   endpointId: string;
   target: { kind: LlmEndpointKind; url: string };
   coverage: DerivedCoverage;
-  sentText: string;
+  sentTexts: string[];
+  sendHash: string;
 }
+
+export type DerivedTaskPreview = Omit<DerivedPreview, "sentTexts">;
 
 export interface StartDerivedTaskInput {
   type: DerivedResultType;
   targetLanguage?: TranslationLanguage;
   revision: number;
   inputHash: string;
+  sendHash: string;
   settingsRevision: number;
 }
 
@@ -204,7 +208,8 @@ export interface DerivedTask {
   type: DerivedResultType;
   targetLanguage: TranslationLanguage | null;
   status: DerivedTaskStatus;
-  preview: DerivedPreview;
+  preview: DerivedTaskPreview;
+  progress: { completedBatches: number; totalBatches: number };
   result: DerivedResult | null;
   error: { code: string; message: string } | null;
   createdAt: string;

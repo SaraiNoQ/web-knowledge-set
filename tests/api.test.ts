@@ -1075,6 +1075,7 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
         type: restorePreview.type,
         revision: restorePreview.revision,
         inputHash: restorePreview.inputHash,
+        sendHash: restorePreview.sendHash,
         settingsRevision: restorePreview.settingsRevision,
       }),
     })).json()) as DerivedTask;

@@ -129,7 +129,7 @@ test("previews a batch before importing it", async ({ page }) => {
 });
 
 test("keeps optional AI generation explicit, cancellable, inert, and manually adopted", async ({ page }) => {
-  test.setTimeout(45_000);
+  test.setTimeout(90_000);
   const modelRequests: string[] = [];
   await page.route("https://model.example.test/**", async (route) => {
     modelRequests.push(route.request().url());
@@ -228,7 +228,17 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(page.locator(".tag-field input")).toHaveValue(/人工智能/u);
 
   await panel.getByRole("button", { name: "关闭 AI 派生知识" }).click();
-  const originalMarkdown = await page.getByLabel("Markdown 编辑器").textContent();
+  const editor = page.getByLabel("Markdown 编辑器");
+  const longMarkdown = `# 超长原文\n\n${"完整翻译段落。".repeat(35_800)}`;
+  const longSave = page.waitForResponse((response) => {
+    const request = response.request();
+    return response.ok() && request.method() === "PATCH" && /\/api\/documents\/[^/]+$/u.test(new URL(request.url()).pathname) &&
+      (request.postDataJSON() as { markdown?: string }).markdown === longMarkdown;
+  });
+  await editor.fill(longMarkdown);
+  await longSave;
+  await expect(page.getByText("已保存", { exact: true })).toBeVisible({ timeout: 8_000 });
+  const originalMarkdown = await editor.textContent();
   await page.getByRole("button", { name: "翻译", exact: true }).click();
   await expect(panel.getByRole("button", { name: "翻译", exact: true })).toHaveAttribute("aria-pressed", "true");
   const language = panel.getByLabel("翻译目标语言");
@@ -236,13 +246,31 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await language.selectOption("en");
   await panel.getByRole("button", { name: "预览翻译发送范围" }).click();
   await expect(panel.getByText("翻译 · English", { exact: true })).toBeVisible();
-  await expect(panel.getByLabel("将发送给模型的准确文本")).toContainText("抓取成功");
+  await expect(panel.getByLabel("将发送给模型的准确文本")).toContainText("超长原文");
+  const nextBatch = panel.getByRole("button", { name: "下一批" });
+  await expect(nextBatch).toBeEnabled();
+  await expect(panel.getByText("我已核对上方准确文本", { exact: false })).toHaveCount(0);
+  let reviewedBatches = 1;
+  while (await nextBatch.isEnabled()) {
+    await nextBatch.click();
+    reviewedBatches += 1;
+  }
+  expect(reviewedBatches).toBeGreaterThanOrEqual(2);
+  await panel.getByRole("button", { name: "上一批" }).click();
+  await nextBatch.click();
   await panel.getByText("我已核对上方准确文本", { exact: false }).click();
+  const translationRequest = page.waitForRequest((request) => request.method() === "POST" && /\/derived-task$/u.test(new URL(request.url()).pathname));
   await panel.getByRole("button", { name: "确认发送并生成" }).click();
+  expect((await translationRequest).postDataJSON()).toMatchObject({ sendHash: expect.any(String) });
   await expect(panel.getByText("翻译 · English正在生成")).toBeVisible();
-  await expect(panel.getByText("翻译 · English已生成", { exact: false })).toBeVisible({ timeout: 5_000 });
+  await expect(panel.getByText(/批次进度 [1-9]\d* \/ \d+/u)).toBeVisible({ timeout: 8_000 });
+  await expect(panel.getByText("翻译 · English已生成", { exact: false })).toBeVisible({ timeout: 45_000 });
   await expect(panel.getByText("翻译 · English", { exact: true }).last()).toBeVisible();
-  await expect(panel.getByText("译文：", { exact: false }).last()).toBeVisible();
+  await expect(panel.getByText("结果超过 250,000 字符", { exact: false })).toBeVisible();
+  await expect(panel.getByLabel("派生结果纯文本")).toBeVisible();
+  await expect(panel.getByRole("heading", { name: "译文：超长原文" })).toHaveCount(0);
+  await panel.getByRole("button", { name: "加载 Markdown 渲染" }).click();
+  await expect(panel.getByRole("heading", { name: "译文：超长原文" })).toBeVisible();
   await expect(page.getByLabel("Markdown 编辑器")).toHaveText(originalMarkdown || "");
 
   await page.getByRole("button", { name: "AI 设置", exact: true }).click();
