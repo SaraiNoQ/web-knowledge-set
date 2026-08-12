@@ -9,6 +9,7 @@ fn main() {
             "set_llm_api_key",
             "delete_llm_api_key",
             "choose_data_directory",
+            "restart_after_update",
         ]),
     ))
     .expect("failed to build Tauri application manifest")

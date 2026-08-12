@@ -820,3 +820,94 @@ test("routes desktop capture and file intents through existing imports", async (
   await dialog.getByRole("button", { name: "确认导入" }).click();
   await expect(dialog.getByText(/新增 1/u)).toBeVisible();
 });
+
+test("desktop updater confirms, verifies a backup, reports progress, and keeps failures retryable", async ({ page }) => {
+  await page.addInitScript(() => {
+    type UpdaterHarness = {
+      check: "none" | "available";
+      download: "waiting" | "failed";
+      calls: string[];
+      releaseDownload?: () => void;
+    };
+    const harness: UpdaterHarness = { check: "none", download: "failed", calls: [] };
+    Object.assign(window, { __UPDATER_TEST__: harness });
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      value: {
+        transformCallback: () => 1,
+        unregisterCallback: () => undefined,
+        invoke: async (command: string, args?: { onEvent?: { onmessage: (event: unknown) => void } }) => {
+          harness.calls.push(command);
+          if (command === "take_external_intents") return [];
+          if (command === "plugin:resources|close") return undefined;
+          if (command === "plugin:updater|check") {
+            return harness.check === "none" ? null : {
+              rid: 7,
+              currentVersion: "0.9.0",
+              version: "1.0.0",
+              date: "2026-08-12T00:00:00Z",
+              body: "签名正式版",
+              rawJson: {},
+            };
+          }
+          if (command === "plugin:updater|download_and_install") {
+            args?.onEvent?.onmessage({ event: "Started", data: { contentLength: 100 } });
+            args?.onEvent?.onmessage({ event: "Progress", data: { chunkLength: 25 } });
+            if (harness.download === "failed") throw new Error("模拟下载中断");
+            await new Promise<void>((resolve) => { harness.releaseDownload = resolve; });
+            args?.onEvent?.onmessage({ event: "Progress", data: { chunkLength: 75 } });
+            args?.onEvent?.onmessage({ event: "Finished" });
+            return undefined;
+          }
+          if (command === "restart_after_update") return undefined;
+          throw new Error(`Unexpected desktop command: ${command}`);
+        },
+      },
+    });
+  });
+  await page.goto("/");
+  const deferOnboarding = page.getByRole("button", { name: "稍后设置" });
+  if (await deferOnboarding.isVisible()) await deferOnboarding.click();
+  const updateButton = page.getByRole("button", { name: "检查更新" });
+  await expect(updateButton).toBeVisible();
+
+  await updateButton.click();
+  await expect(page.getByText("当前已经是最新版本。")).toBeVisible();
+  await page.getByRole("button", { name: "稍后", exact: true }).click();
+
+  await page.evaluate(() => {
+    (window as typeof window & { __UPDATER_TEST__: { check: string } }).__UPDATER_TEST__.check = "available";
+  });
+  await updateButton.click();
+  await expect(page.getByText("v0.9.0 → v1.0.0")).toBeVisible();
+  await page.getByRole("button", { name: "稍后", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "应用更新" })).toBeHidden();
+
+  await page.route("**/api/data-safety/backups", async (route) => {
+    if (route.request().method() === "POST") {
+      await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: { code: "BACKUP_FAILED", message: "模拟留档失败" } }) });
+    } else await route.continue();
+  });
+  await updateButton.click();
+  await page.getByRole("button", { name: "创建留档并更新" }).click();
+  await expect(page.getByRole("alert")).toContainText("模拟留档失败");
+  expect(await page.evaluate(() => (window as typeof window & { __UPDATER_TEST__: { calls: string[] } }).__UPDATER_TEST__.calls.filter((value) => value === "plugin:updater|download_and_install").length)).toBe(0);
+  await page.getByRole("button", { name: "稍后", exact: true }).click();
+  await page.unroute("**/api/data-safety/backups");
+
+  await updateButton.click();
+  await page.getByRole("button", { name: "创建留档并更新" }).click();
+  await expect(page.getByRole("alert")).toContainText("模拟下载中断");
+  await page.getByRole("button", { name: "稍后", exact: true }).click();
+
+  await page.evaluate(() => {
+    (window as typeof window & { __UPDATER_TEST__: { download: string } }).__UPDATER_TEST__.download = "waiting";
+  });
+  await updateButton.click();
+  await page.getByRole("button", { name: "创建留档并更新" }).click();
+  await expect(page.getByText("正在下载并验证签名… 25%")).toBeVisible();
+  await page.evaluate(() => {
+    (window as typeof window & { __UPDATER_TEST__: { releaseDownload?: () => void } }).__UPDATER_TEST__.releaseDownload?.();
+  });
+  await expect(page.getByText("更新已安装，正在安全保存并重新启动…")).toBeVisible();
+  expect(await page.evaluate(() => (window as typeof window & { __UPDATER_TEST__: { calls: string[] } }).__UPDATER_TEST__.calls)).toContain("restart_after_update");
+});

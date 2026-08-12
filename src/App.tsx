@@ -33,6 +33,7 @@ import type {
 import { api, ApiRequestError } from "./api";
 import type { DocumentPatch } from "./api";
 import { AiSettings } from "./components/AiSettings";
+import { AppUpdater } from "./components/AppUpdater";
 import { DataSafety } from "./components/DataSafety";
 import { Diagnostics } from "./components/Diagnostics";
 import { DerivedKnowledge } from "./components/DerivedKnowledge";
@@ -2903,7 +2904,7 @@ export default function App() {
           <span><strong>织页</strong><small>ZHIYE · LOCAL KNOWLEDGE</small></span>
         </div>
         <p className="masthead-note">把散落的网页，<br />织成可编辑的知识。</p>
-        <div className="masthead-actions"><button type="button" className="shortcut-help-button" onClick={() => setShortcutHelp(true)} aria-label="查看快捷键">?</button><button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
+        <div className="masthead-actions"><button type="button" className="shortcut-help-button" onClick={() => setShortcutHelp(true)} aria-label="查看快捷键">?</button>{"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}<button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
           <i />{safetyRecovery ? "恢复模式" : "数据安全"}
         </button></div>
       </header>

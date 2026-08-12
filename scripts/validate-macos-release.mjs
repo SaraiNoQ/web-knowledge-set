@@ -5,6 +5,7 @@ const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 const tauri = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8"));
 const cargo = readFileSync("src-tauri/Cargo.toml", "utf8");
 const workflow = readFileSync(".github/workflows/macos-release.yml", "utf8");
+const updateCapability = JSON.parse(readFileSync("src-tauri/capabilities/updates.json", "utf8"));
 const cargoVersion = cargo.match(/^version = "([^"]+)"$/m)?.[1];
 const versions = [packageJson.version, tauri.version, cargoVersion];
 
@@ -23,6 +24,26 @@ if (!workflow.includes("'\u007b\"build\":\u007b\"beforeBuildCommand\":\"\"\u007d
   throw new Error("The release build must not overwrite the pre-signed desktop runtime");
 }
 if (!workflow.includes('ZHIYE_SIGN_RELEASE: "1"')) throw new Error("Nested release signing is not enabled");
+if (tauri.plugins?.updater || tauri.bundle?.createUpdaterArtifacts) {
+  throw new Error("Updater credentials and endpoints must only enter the temporary release config");
+}
+if (JSON.stringify(updateCapability.permissions) !== JSON.stringify([
+  "updater:allow-check",
+  "updater:allow-download-and-install",
+  "allow-restart-after-update",
+])) throw new Error("Updater capability must expose only the approved update and safe restart commands");
+for (const required of [
+  "TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}",
+  "TAURI_UPDATER_ENDPOINT: ${{ vars.TAURI_UPDATER_ENDPOINT }}",
+  "TAURI_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}",
+  "createUpdaterArtifacts:true",
+  '"darwin-aarch64":{signature,url}',
+  "release-assets/latest.json",
+  "--example verify_updater",
+  "verified-updater",
+]) {
+  if (!workflow.includes(required)) throw new Error(`Missing signed updater release step: ${required}`);
+}
 if (!workflow.includes('ditto "$APP" verified-artifact/Zhiye.app')) {
   throw new Error("Release verification must use the app shipped inside the DMG");
 }

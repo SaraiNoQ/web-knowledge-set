@@ -29,6 +29,7 @@ struct LocalService {
     phase: AtomicU8,
     stderr: Mutex<String>,
     stopping: AtomicBool,
+    restart_after_shutdown: AtomicBool,
     close_attempt: Mutex<Option<u64>>,
     next_close_attempt: AtomicU64,
     accepted_origin: Arc<Mutex<Option<String>>>,
@@ -86,7 +87,19 @@ fn stop_service(app: &tauri::AppHandle) {
     };
 }
 
-fn request_close(app: &tauri::AppHandle) -> bool {
+fn take_restart_request(value: &AtomicBool) -> bool {
+    value.swap(false, Ordering::SeqCst)
+}
+
+fn finish_service_exit(app: &tauri::AppHandle) {
+    if take_restart_request(&app.state::<LocalService>().restart_after_shutdown) {
+        app.request_restart();
+    } else {
+        app.exit(0);
+    }
+}
+
+fn request_close(app: &tauri::AppHandle, accept_existing: bool) -> bool {
     let service = app.state::<LocalService>();
     if service.phase.load(Ordering::SeqCst) != READY || service.stopping.load(Ordering::SeqCst) {
         return false;
@@ -100,7 +113,7 @@ fn request_close(app: &tauri::AppHandle) -> bool {
             .lock()
             .expect("local service state poisoned");
         if current.is_some() {
-            return true;
+            return accept_existing;
         }
         let attempt_id = service.next_close_attempt.fetch_add(1, Ordering::SeqCst);
         current.replace(attempt_id);
@@ -137,6 +150,10 @@ fn request_close(app: &tauri::AppHandle) -> bool {
             }
         };
         if timed_out {
+            timeout_handle
+                .state::<LocalService>()
+                .restart_after_shutdown
+                .store(false, Ordering::SeqCst);
             if let Some(window) = timeout_handle.get_webview_window("main") {
                 let timeout_script = format!(
                     "window.dispatchEvent(new CustomEvent('zhiye:close-timeout', {{ detail: {{ attemptId: '{attempt_id}' }} }}))"
@@ -178,7 +195,7 @@ fn shutdown_sidecar(app: &tauri::AppHandle, attempt_id: u64) {
         });
     if write_result.is_err() {
         stop_service(app);
-        app.exit(0);
+        finish_service_exit(app);
         return;
     }
 
@@ -193,9 +210,29 @@ fn shutdown_sidecar(app: &tauri::AppHandle, attempt_id: u64) {
             .unwrap_or(false)
         {
             stop_service(&timeout_handle);
-            timeout_handle.exit(0);
+            finish_service_exit(&timeout_handle);
         }
     });
+}
+
+#[tauri::command]
+fn restart_after_update(app: tauri::AppHandle) -> Result<(), String> {
+    let service = app.state::<LocalService>();
+    if service
+        .restart_after_shutdown
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err("更新重启已在进行。".to_owned());
+    }
+    if request_close(&app, false) {
+        Ok(())
+    } else {
+        service
+            .restart_after_shutdown
+            .store(false, Ordering::SeqCst);
+        Err("应用尚未准备好安全重启。".to_owned())
+    }
 }
 
 fn escape_html(value: &str) -> String {
@@ -346,6 +383,7 @@ pub fn run() {
             external::focus_main(app);
         }))
         .plugin(tauri_plugin_deep_link::init());
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     #[cfg(target_os = "macos")]
     let builder = builder.plugin(tauri_plugin_dialog::init());
     let app = builder
@@ -359,6 +397,7 @@ pub fn run() {
             keychain::set_llm_api_key,
             keychain::delete_llm_api_key,
             launcher::choose_data_directory,
+            restart_after_update,
         ])
         .manage(external::ExternalState::default())
         .manage(LocalService {
@@ -366,6 +405,7 @@ pub fn run() {
             phase: AtomicU8::new(STARTING),
             stderr: Mutex::new(String::new()),
             stopping: AtomicBool::new(false),
+            restart_after_shutdown: AtomicBool::new(false),
             close_attempt: Mutex::new(None),
             next_close_attempt: AtomicU64::new(1),
             accepted_origin,
@@ -572,7 +612,7 @@ pub fn run() {
                                     .lock()
                                     .expect("local service state poisoned")
                                     .take();
-                                handle.exit(0);
+                                finish_service_exit(&handle);
                             } else {
                                 fail_service(&handle, &format!("本地服务进程已退出：{payload:?}"));
                             }
@@ -628,12 +668,12 @@ pub fn run() {
             event: WindowEvent::CloseRequested { api, .. },
             ..
         } if label == "main" => {
-            if request_close(handle) {
+            if request_close(handle, true) {
                 api.prevent_close();
             }
         }
         RunEvent::ExitRequested { api, .. } => {
-            if request_close(handle) {
+            if request_close(handle, true) {
                 api.prevent_exit();
             }
         }
@@ -700,5 +740,12 @@ mod tests {
                 ("NODE_ENV", "production"),
             ]
         );
+    }
+
+    #[test]
+    fn update_restart_request_is_consumed_once() {
+        let requested = AtomicBool::new(true);
+        assert!(take_restart_request(&requested));
+        assert!(!take_restart_request(&requested));
     }
 }

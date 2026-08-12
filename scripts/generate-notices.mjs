@@ -127,7 +127,7 @@ const donor = {
   "tauri-plugin@2.6.3": ["tauri-build@2.6.3"],
 };
 const override = new Map([
-  [["block2@0.6.2", "dispatch2@0.3.1", "objc2@0.6.4", "objc2-app-kit@0.3.2", "objc2-core-foundation@0.3.2", "objc2-core-graphics@0.3.2", "objc2-encode@4.1.0", "objc2-exception-helper@0.1.1", "objc2-foundation@0.3.2", "objc2-io-surface@0.3.2", "objc2-web-kit@0.3.2"], "objc2-LICENSE.md"],
+  [["block2@0.6.2", "dispatch2@0.3.1", "objc2@0.6.4", "objc2-app-kit@0.3.2", "objc2-core-foundation@0.3.2", "objc2-core-graphics@0.3.2", "objc2-encode@4.1.0", "objc2-exception-helper@0.1.1", "objc2-foundation@0.3.2", "objc2-io-surface@0.3.2", "objc2-osa-kit@0.3.2", "objc2-web-kit@0.3.2"], "objc2-LICENSE.md"],
   [["sigchld@0.2.4"], "sigchld-LICENSE-MIT.txt"],
   [["selectors@0.36.1"], "selectors-NOTICE-MPL-2.0.txt"],
   [["unic-char-property@0.9.0", "unic-char-range@0.9.0", "unic-common@0.9.0", "unic-ucd-ident@0.9.0", "unic-ucd-version@0.9.0"], "rust-unic-NOTICE.txt"],
