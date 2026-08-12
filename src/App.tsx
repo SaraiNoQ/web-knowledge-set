@@ -506,6 +506,7 @@ export default function App() {
   const [portableError, setPortableError] = useState("");
   const [listRefresh, setListRefresh] = useState(0);
   const [shortcutHelp, setShortcutHelp] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [inTrash, setInTrash] = useState(false);
   const [knownTags, setKnownTags] = useState<string[]>([]);
   const [listLoading, setListLoading] = useState(true);
@@ -2361,7 +2362,7 @@ export default function App() {
 
   useEffect(() => {
     const handleShortcuts = (event: globalThis.KeyboardEvent) => {
-      if (bulkImportOpen) return;
+      if (bulkImportOpen || guideOpen) return;
       if (shortcutHelp) {
         if (event.key === "Escape") setShortcutHelp(false);
         return;
@@ -2396,7 +2397,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handleShortcuts);
     return () => window.removeEventListener("keydown", handleShortcuts);
-  }, [bulkImportOpen, captureHistoryOpen, closeDocument, collectionsOpen, derivedOpen, historyOpen, qualityOpen, shortcutHelp]);
+  }, [bulkImportOpen, captureHistoryOpen, closeDocument, collectionsOpen, derivedOpen, guideOpen, historyOpen, qualityOpen, shortcutHelp]);
 
   const retryCapture = async () => {
     if (!currentDoc) return;
@@ -2904,12 +2905,21 @@ export default function App() {
           <span><strong>织页</strong><small>ZHIYE · LOCAL KNOWLEDGE</small></span>
         </div>
         <p className="masthead-note">把散落的网页，<br />织成可编辑的知识。</p>
-        <div className="masthead-actions"><button type="button" className="shortcut-help-button" onClick={() => setShortcutHelp(true)} aria-label="查看快捷键">?</button>{"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}<button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
+        <div className="masthead-actions">{onboarding !== "unavailable" && <button type="button" className="guide-button" onClick={() => setGuideOpen(true)} disabled={closing}>使用指南</button>}<button type="button" className="shortcut-help-button" onClick={() => setShortcutHelp(true)} aria-label="查看快捷键">?</button>{"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}<button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
           <i />{safetyRecovery ? "恢复模式" : "数据安全"}
         </button></div>
       </header>
 
       {offline && <div className="offline-banner" role="status">系统报告当前离线；本地阅读、编辑与搜索仍可使用，网页抓取和远程 AI 可能失败。</div>}
+
+      {guideOpen && onboarding !== "unavailable" && (
+        <Onboarding
+          revisit
+          state={onboarding}
+          onComplete={(next) => { setOnboarding(next); setGuideOpen(false); }}
+          onLater={() => setGuideOpen(false)}
+        />
+      )}
 
       {shortcutHelp && <dialog ref={shortcutDialogRef} className="shortcut-backdrop" aria-labelledby="shortcut-title" onClose={() => setShortcutHelp(false)} onMouseDown={(event) => { if (event.target === event.currentTarget) setShortcutHelp(false); }}><section className="shortcut-card"><header><div><span className="eyebrow">KEYBOARD MAP</span><h2 id="shortcut-title">快捷键</h2></div><button type="button" autoFocus onClick={() => setShortcutHelp(false)} aria-label="关闭快捷键">×</button></header><dl><div><dt><kbd>⌘</kbd><kbd>K</kbd></dt><dd>聚焦搜索</dd></div><div><dt><kbd>/</kbd></dt><dd>聚焦搜索</dd></div><div><dt><kbd>J</kbd> / <kbd>K</kbd></dt><dd>在列表中移动</dd></div><div><dt><kbd>X</kbd></dt><dd>选中或取消当前行</dd></div><div><dt><kbd>↵</kbd></dt><dd>打开当前行</dd></div><div><dt><kbd>⌘</kbd><kbd>S</kbd></dt><dd>立即保存</dd></div><div><dt><kbd>Esc</kbd></dt><dd>关闭面板或返回列表</dd></div><div><dt><kbd>?</kbd></dt><dd>显示本帮助</dd></div></dl></section></dialog>}
 

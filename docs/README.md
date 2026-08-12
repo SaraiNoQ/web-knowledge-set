@@ -16,7 +16,7 @@
 
 ## 开始使用
 
-桌面端首次启动会显示引导。默认数据目录由 macOS 管理；正式应用标识对应：
+桌面端首次启动会显示引导，跳过后也可从顶部的“使用指南”再次打开。默认数据目录由 macOS 管理；正式应用标识对应：
 
 ```text
 ~/Library/Application Support/io.github.sarainoq.zhiye

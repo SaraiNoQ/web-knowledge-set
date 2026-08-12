@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { OnboardingState } from "../../shared/types";
 import { api, ApiRequestError } from "../api";
@@ -8,24 +8,39 @@ import { api, ApiRequestError } from "../api";
 const steps = [
   { mark: "01", title: "只在你的电脑上", eyebrow: "LOCAL BY DEFAULT" },
   { mark: "02", title: "选定知识库位置", eyebrow: "DATA LOCATION" },
-  { mark: "03", title: "给恢复留一条路", eyebrow: "RECOVERY" },
-  { mark: "04", title: "知道第一版的边界", eyebrow: "WORKING LIMITS" },
+  { mark: "03", title: "从链接收取知识", eyebrow: "CAPTURE" },
+  { mark: "04", title: "搜索与整理", eyebrow: "LIBRARY" },
+  { mark: "05", title: "编辑 Markdown", eyebrow: "EDIT & PREVIEW" },
+  { mark: "06", title: "备份与 AI 边界", eyebrow: "SAFETY FIRST" },
 ] as const;
 
 function errorMessage(value: unknown) {
   return value instanceof Error ? value.message : String(value);
 }
 
-export function Onboarding({ state, onComplete, onLater }: {
+export function Onboarding({ state, onComplete, onLater, revisit = false }: {
   state: OnboardingState;
   onComplete: (state: OnboardingState) => void;
   onLater: () => void;
+  revisit?: boolean;
 }) {
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [restartRequired, setRestartRequired] = useState(false);
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const desktop = "__TAURI_INTERNALS__" in window;
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!revisit || !dialog) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    dialog.showModal();
+    return () => {
+      if (dialog.open) dialog.close();
+      previousFocus?.focus();
+    };
+  }, [revisit]);
 
   const chooseDirectory = async () => {
     setBusy(true);
@@ -41,6 +56,10 @@ export function Onboarding({ state, onComplete, onLater }: {
   };
 
   const complete = async () => {
+    if (state.completed) {
+      onComplete(state);
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -74,15 +93,15 @@ export function Onboarding({ state, onComplete, onLater }: {
     }
   };
 
-  return (
-    <main className="onboarding-page" aria-labelledby="onboarding-title">
+  const page = (
+    <section className={`onboarding-page ${revisit ? "is-revisit" : ""}`} aria-labelledby="onboarding-title">
       <header className="onboarding-masthead">
         <div className="brand"><span className="brand-seal">知</span><span><strong>织页</strong><small>ZHIYE · FIRST THREAD</small></span></div>
-        <button type="button" onClick={onLater} disabled={busy}>稍后设置</button>
+        <button type="button" autoFocus={revisit} onClick={onLater} disabled={busy}>{revisit ? "关闭指南" : "稍后设置"}</button>
       </header>
 
       <div className="onboarding-layout">
-        <nav className="onboarding-rail" aria-label="首次设置进度">
+        <nav className="onboarding-rail" aria-label="使用指南进度">
           {steps.map((item, index) => (
             <button type="button" key={item.mark} aria-current={index === step ? "step" : undefined} onClick={() => setStep(index)} disabled={busy || restartRequired}>
               <span>{item.mark}</span><strong>{item.title}</strong>
@@ -91,7 +110,7 @@ export function Onboarding({ state, onComplete, onLater }: {
         </nav>
 
         <section className="onboarding-sheet">
-          <span className="eyebrow">{steps[step].eyebrow} · {steps[step].mark} / 04</span>
+          <span className="eyebrow">{steps[step].eyebrow} · {steps[step].mark} / {String(steps.length).padStart(2, "0")}</span>
           {step === 0 && <>
             <h1 id="onboarding-title">你的知识，<br />先留在本机。</h1>
             <p className="onboarding-lead">织页没有账户系统、云同步或遥测。网页抓取只访问你主动提交的公开地址；本地编辑、搜索与整理都在这台电脑完成。</p>
@@ -118,15 +137,28 @@ export function Onboarding({ state, onComplete, onLater }: {
           </>}
 
           {step === 2 && <>
-            <h1 id="onboarding-title">备份不是装饰，<br />它是返回键。</h1>
-            <p className="onboarding-lead">织页每天最多创建一次自动完整备份，并在数据库升级前先留存旧版本。恢复会校验清单、哈希与数据库结构，再切换当前数据。</p>
-            <ol className="onboarding-sequence"><li><span>1</span><div><strong>自动留档</strong><p>每日一次，默认保留最近 7 份。</p></div></li><li><span>2</span><div><strong>升级前保护</strong><p>迁移数据库前先生成可验证备份。</p></div></li><li><span>3</span><div><strong>人工恢复</strong><p>从“数据安全”检查、恢复或导出诊断。</p></div></li></ol>
+            <h1 id="onboarding-title">从一个链接，<br />收取一张织片。</h1>
+            <p className="onboarding-lead">把公开网页地址粘贴到页面顶部，点击“收取网页”。织页会先直接读取，正文不足时再自动使用隔离浏览器，并保留来源与本地快照。</p>
+            <div className="onboarding-facts"><article><strong>URL</strong><span>粘贴公开链接</span></article><article><strong>AUTO</strong><span>静态失败自动回退</span></article><article><strong>STATUS</strong><span>随时查看进度与错误</span></article></div>
+            <small>登录态、付费墙、验证码、PDF 与整站爬取暂不支持。</small>
           </>}
 
           {step === 3 && <>
-            <h1 id="onboarding-title">先把公开网页，<br />织成可靠文本。</h1>
-            <p className="onboarding-lead">第一版专注公开文章：登录态、付费墙、验证码、PDF 与整站爬取暂不支持；外部图片不保证离线。AI 默认关闭，只有确认发送范围后才会请求你配置的模型端点。</p>
-            <div className="onboarding-limits"><p><strong>⌘ K</strong><span>聚焦搜索</span></p><p><strong>⌘ S</strong><span>立即保存</span></p><p><strong>?</strong><span>查看完整快捷键</span></p></div>
+            <h1 id="onboarding-title">找到它，<br />再把它归好。</h1>
+            <p className="onboarding-lead">左侧资料库用标题、正文和来源搜索。标签适合描述属性，集合适合组织主题；收藏、归档与回收站让资料库保持清楚。</p>
+            <ol className="onboarding-sequence"><li><span>1</span><div><strong>全文搜索</strong><p>按 ⌘ K 随时聚焦搜索框。</p></div></li><li><span>2</span><div><strong>标签与集合</strong><p>一篇知识可同时属于多个主题。</p></div></li><li><span>3</span><div><strong>状态视图</strong><p>快速查看最近、收藏、失败或回收站内容。</p></div></li></ol>
+          </>}
+
+          {step === 4 && <>
+            <h1 id="onboarding-title">正文归你，<br />来源仍可追。</h1>
+            <p className="onboarding-lead">右侧工作台保存标准 Markdown，可在编辑、对照和预览之间切换。人工修改不会被重新抓取或 AI 静默覆盖，修订历史也可随时恢复。</p>
+            <div className="onboarding-limits"><p><strong>EDIT</strong><span>直接编辑 Markdown</span></p><p><strong>SPLIT</strong><span>边写边看预览</span></p><p><strong>⌘ S</strong><span>立即保存</span></p></div>
+          </>}
+
+          {step === 5 && <>
+            <h1 id="onboarding-title">先留返回键，<br />再请模型帮忙。</h1>
+            <p className="onboarding-lead">“数据安全”会校验并管理完整备份。AI 默认关闭；开启后仍需逐篇查看发送范围并明确确认，模型结果作为派生内容保存，不直接改写正文。</p>
+            <ol className="onboarding-sequence"><li><span>1</span><div><strong>自动留档</strong><p>每日最多一次，默认保留最近 7 份。</p></div></li><li><span>2</span><div><strong>升级前保护</strong><p>数据库迁移前先生成可验证备份。</p></div></li><li><span>3</span><div><strong>AI 需要确认</strong><p>只向你配置的端点发送当次明示的文本。</p></div></li></ol>
           </>}
 
           {error && <p className="onboarding-error" role="alert">{error}</p>}
@@ -134,10 +166,21 @@ export function Onboarding({ state, onComplete, onLater }: {
             <button type="button" onClick={() => setStep((value) => Math.max(0, value - 1))} disabled={busy || step === 0}>上一步</button>
             {step < steps.length - 1
               ? <button type="button" className="primary-button" onClick={() => setStep((value) => value + 1)} disabled={busy}>继续</button>
-              : <button type="button" className="primary-button" onClick={() => void complete()} disabled={busy}>{busy ? "正在保存…" : "进入资料库"}</button>}
+              : <button type="button" className="primary-button" onClick={() => void complete()} disabled={busy}>{busy ? "正在保存…" : state.completed ? "关闭指南" : "进入资料库"}</button>}
           </footer>}
         </section>
       </div>
-    </main>
+    </section>
   );
+
+  return revisit ? (
+    <dialog
+      ref={dialogRef}
+      className="onboarding-dialog"
+      aria-labelledby="onboarding-title"
+      onCancel={(event) => { event.preventDefault(); if (!busy) onLater(); }}
+    >
+      {page}
+    </dialog>
+  ) : <main className="onboarding-frame">{page}</main>;
 }
