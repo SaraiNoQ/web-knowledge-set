@@ -28,6 +28,9 @@ COLD_LINK="zhiye://capture?url=https%3A%2F%2Fexample.com%2Fzhiye-cold-smoke"
 WARM_LINK="zhiye://capture?url=https%3A%2F%2Fexample.com%2Fzhiye-warm-smoke"
 CUSTOM_URL="https://example.com/zhiye-custom-data-smoke"
 CUSTOM_LINK="zhiye://capture?url=https%3A%2F%2Fexample.com%2Fzhiye-custom-data-smoke"
+RESTART_URL="https://example.com/zhiye-restart-smoke"
+RESTART_LINK="zhiye://capture?url=https%3A%2F%2Fexample.com%2Fzhiye-restart-smoke"
+crashed_sidecar_pid=""
 
 quit_app() {
   osascript -e 'tell application id "dev.local.zhiye" to quit' >/dev/null 2>&1 || true
@@ -40,6 +43,12 @@ quit_app() {
 
 cleanup() {
   quit_app
+  if [[ -n "$crashed_sidecar_pid" ]]; then
+    sidecar_command=$(ps -p "$crashed_sidecar_pid" -o command= 2>/dev/null || true)
+    if [[ "$sidecar_command" == *"$APP/Contents/MacOS/node"* ]]; then
+      kill -9 "$crashed_sidecar_pid" >/dev/null 2>&1 || true
+    fi
+  fi
   launchctl unsetenv ZHIYE_DESKTOP_SMOKE >/dev/null 2>&1 || true
   launchctl unsetenv ZHIYE_KEYCHAIN_SMOKE >/dev/null 2>&1 || true
   rm -rf -- "$NOTE_DIR"
@@ -105,4 +114,23 @@ DATABASE="$CUSTOM_DATA_DIR/zhiye.sqlite3"
 open -b dev.local.zhiye "$CUSTOM_LINK"
 wait_for_source "$CUSTOM_URL"
 [[ $(sqlite3 "$DEFAULT_DATABASE" "SELECT count(*) FROM documents WHERE source_url = '$CUSTOM_URL'") == "0" ]]
+[[ $(pgrep -x zhiye | wc -l | tr -d ' ') == "1" ]]
+
+app_pid=$(pgrep -x zhiye)
+crashed_sidecar_pid=$(pgrep -f "$APP/Contents/MacOS/node")
+[[ -n "$app_pid" && -n "$crashed_sidecar_pid" ]]
+[[ "$crashed_sidecar_pid" != *$'\n'* ]]
+kill -9 "$app_pid"
+for _ in {1..10}; do
+  kill -0 "$crashed_sidecar_pid" >/dev/null 2>&1 || break
+  sleep 1
+done
+if kill -0 "$crashed_sidecar_pid" >/dev/null 2>&1 || pgrep -f "$APP/Contents/MacOS/node" >/dev/null; then
+  echo "Tauri SIGKILL left the Node sidecar running" >&2
+  exit 1
+fi
+crashed_sidecar_pid=""
+open -b dev.local.zhiye "$RESTART_LINK"
+wait_for_source "$RESTART_URL"
+[[ $(sqlite3 "$DATABASE" "SELECT count(*) FROM documents WHERE source_url = '$CUSTOM_URL'") == "1" ]]
 [[ $(pgrep -x zhiye | wc -l | tr -d ' ') == "1" ]]
