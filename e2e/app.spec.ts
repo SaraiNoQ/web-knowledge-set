@@ -180,7 +180,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await page.getByLabel("AI 远程端点地址").fill("http://insecure.example.test/v1/chat/completions");
   await page.getByLabel("远程模型 API 密钥").fill("must-not-bind-to-insecure-endpoint");
   await page.getByRole("button", { name: "保存密钥" }).click();
-  await expect(page.getByRole("alert")).toContainText("HTTPS");
+  await expect(page.getByRole("alert")).toContainText("端点地址无效");
   await expect(page.getByText("当前平台未加载密钥", { exact: false })).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "删除密钥" }).click();
@@ -1031,14 +1031,14 @@ test("desktop updater confirms, verifies a backup, reports progress, and keeps f
   });
   await updateButton.click();
   await page.getByRole("button", { name: "创建留档并更新" }).click();
-  await expect(page.getByRole("alert")).toContainText("模拟留档失败");
+  await expect(page.getByRole("alert")).toContainText("完整留档创建失败");
   expect(await page.evaluate(() => (window as typeof window & { __UPDATER_TEST__: { calls: string[] } }).__UPDATER_TEST__.calls.filter((value) => value === "plugin:updater|download_and_install").length)).toBe(0);
   await page.getByRole("button", { name: "稍后", exact: true }).click();
   await page.unroute("**/api/data-safety/backups");
 
   await updateButton.click();
   await page.getByRole("button", { name: "创建留档并更新" }).click();
-  await expect(page.getByRole("alert")).toContainText("模拟下载中断");
+  await expect(page.getByRole("alert")).toContainText("更新未完成");
   await page.getByRole("button", { name: "稍后", exact: true }).click();
 
   await page.evaluate(() => {

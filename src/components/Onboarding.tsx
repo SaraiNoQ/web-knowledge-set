@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import type { OnboardingState } from "../../shared/types";
 import { api, ApiRequestError } from "../api";
+import { userErrorFrom } from "../error-messages";
 
 const steps = [
   { mark: "01", title: "只在你的电脑上", eyebrow: "LOCAL BY DEFAULT" },
@@ -13,10 +14,6 @@ const steps = [
   { mark: "05", title: "编辑 Markdown", eyebrow: "EDIT & PREVIEW" },
   { mark: "06", title: "备份与 AI 边界", eyebrow: "SAFETY FIRST" },
 ] as const;
-
-function errorMessage(value: unknown) {
-  return value instanceof Error ? value.message : String(value);
-}
 
 export function Onboarding({ state, onComplete, onLater, revisit = false }: {
   state: OnboardingState;
@@ -49,7 +46,7 @@ export function Onboarding({ state, onComplete, onLater, revisit = false }: {
       const result = await invoke<{ configured: boolean }>("choose_data_directory");
       if (result.configured) setRestartRequired(true);
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(userErrorFrom(cause, "无法选择知识库位置，请确认文件夹可用后重试。"));
     } finally {
       setBusy(false);
     }
@@ -76,7 +73,7 @@ export function Onboarding({ state, onComplete, onLater, revisit = false }: {
           // Use the original conflict below.
         }
       }
-      setError(errorMessage(cause));
+      setError(userErrorFrom(cause, "无法保存首次使用状态，请稍后重试。"));
     } finally {
       setBusy(false);
     }
@@ -88,7 +85,7 @@ export function Onboarding({ state, onComplete, onLater, revisit = false }: {
     try {
       await getCurrentWindow().close();
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(userErrorFrom(cause, "无法安全退出织页，请保存工作后重试。"));
       setBusy(false);
     }
   };

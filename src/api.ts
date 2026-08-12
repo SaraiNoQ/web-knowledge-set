@@ -40,6 +40,7 @@ import type {
   TagMutationResponse,
   UpdateLlmSettingsInput,
 } from "../shared/types";
+import { isAbortError, userErrorMessage } from "./error-messages";
 
 export type { DataSafetyStatus, DocumentFilters, RecentFilter } from "../shared/types";
 
@@ -66,11 +67,17 @@ async function requestResponse(path: string, init: RequestInit = {}, replaceData
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (init.body && dataEpoch) headers.set(DATA_EPOCH_HEADER, dataEpoch);
 
-  const response = await fetch(path, {
-    ...init,
-    headers,
-    credentials: "same-origin",
-  });
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      ...init,
+      headers,
+      credentials: "same-origin",
+    });
+  } catch (cause) {
+    if (isAbortError(cause)) throw cause;
+    throw new ApiRequestError(userErrorMessage("LOCAL_SERVICE_UNREACHABLE"), 0, "LOCAL_SERVICE_UNREACHABLE");
+  }
   const responseEpoch = response.headers.get(DATA_EPOCH_HEADER);
   if (responseEpoch) {
     if (dataEpoch === null || (replaceDataEpoch && response.ok)) dataEpoch = responseEpoch;
@@ -86,10 +93,11 @@ async function requestResponse(path: string, init: RequestInit = {}, replaceData
     } catch {
       // Non-JSON failures still surface with a useful HTTP fallback.
     }
+    const code = payload?.error.code || "REQUEST_FAILED";
     throw new ApiRequestError(
-      payload?.error.message || `请求失败（${response.status}）`,
+      userErrorMessage(code, response.status),
       response.status,
-      payload?.error.code,
+      code,
       payload?.error.document,
       payload?.error.draft,
     );

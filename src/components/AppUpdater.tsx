@@ -3,10 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
 
 import { api } from "../api";
+import { userErrorFrom } from "../error-messages";
 
 type Phase = "idle" | "checking" | "current" | "available" | "backing-up" | "installing" | "restarting" | "error";
-
-const errorMessage = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 
 export function AppUpdater({ beforeOperation, disabled }: { beforeOperation: () => Promise<void>; disabled: boolean }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -74,7 +73,7 @@ export function AppUpdater({ beforeOperation, disabled }: { beforeOperation: () 
       setMetadata({ currentVersion: update.currentVersion, version: update.version, date: update.date, body: update.body });
       setPhase("available");
     } catch (cause) {
-      setError(`无法检查更新：${errorMessage(cause)}`);
+      setError(userErrorFrom(cause, "无法检查更新。请检查网络和更新配置后重试。"));
       setPhase("error");
     }
   };
@@ -85,7 +84,7 @@ export function AppUpdater({ beforeOperation, disabled }: { beforeOperation: () 
     try {
       await invoke("restart_after_update");
     } catch (cause) {
-      setError(`更新已安装，但无法安全重启：${errorMessage(cause)}。请保存工作后重新打开织页。`);
+      setError(userErrorFrom(cause, "更新已安装，但无法安全重启。请保存工作后重新打开织页。"));
       setPhase("error");
     }
   };
@@ -101,7 +100,7 @@ export function AppUpdater({ beforeOperation, disabled }: { beforeOperation: () 
       await beforeOperation();
       const backup = await api.createBackup();
       if (backup.status !== "verified" || !backup.verifiedAt) {
-        throw new Error(backup.errorMessage || "更新前完整留档未通过校验");
+        throw Object.assign(new Error("更新前完整留档未通过校验"), { code: backup.errorCode ?? "BACKUP_FAILED" });
       }
       setPhase("installing");
       await update.downloadAndInstall((event: DownloadEvent) => {
@@ -111,7 +110,7 @@ export function AppUpdater({ beforeOperation, disabled }: { beforeOperation: () 
       installedRef.current = true;
       await restart();
     } catch (cause) {
-      setError(`更新未完成：${errorMessage(cause)}。当前版本和本地数据保持不变，可稍后重试。`);
+      setError(userErrorFrom(cause, "更新未完成。当前版本和本地数据保持不变，可稍后重试。"));
       setPhase("error");
     }
   };

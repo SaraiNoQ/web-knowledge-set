@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import type { BackupReason, BackupRecord, BackupStatus } from "../../shared/types";
 import { api, ApiRequestError, type DataSafetyStatus, type RestoreBackupResult } from "../api";
+import { userErrorMessage } from "../error-messages";
 
 const reasonLabels: Record<BackupReason, string> = {
   manual: "手动留档",
@@ -66,7 +67,7 @@ function BackupRow({
         <span>{bytes(backup.totalBytes)}</span>
         {backup.schemaVersion && <span>schema {backup.schemaVersion}</span>}
       </div>
-      {backup.errorMessage && <p className="backup-error">{backup.errorMessage}</p>}
+      {(backup.errorCode || backup.errorMessage) && <p className="backup-error">{userErrorMessage(backup.errorCode ?? "BACKUP_FAILED")}</p>}
       <div className="backup-actions">
         <button type="button" onClick={onVerify} disabled={busy || recovery || !backup.directoryName}>重新校验</button>
         <button className="restore-button" type="button" onClick={onRestore} disabled={busy || !restorable}>恢复此留档</button>
@@ -239,7 +240,7 @@ export function DataSafety({
       {recovery && (
         <section className="recovery-banner" role="alert">
           <strong>织页已进入恢复模式</strong>
-          <p>{status.recoveryError?.message || "当前数据库无法安全打开。请选择一份已校验留档进行恢复。"}</p>
+          <p>{status.recoveryError ? userErrorMessage(status.recoveryError.code) : "当前数据库无法安全打开。请选择一份已校验留档进行恢复。"}</p>
           {status.recoveryError?.code && <code>{status.recoveryError.code}</code>}
         </section>
       )}

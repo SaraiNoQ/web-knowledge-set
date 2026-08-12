@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 import type { LlmApiKeyStatus, LlmConnectionTestResult, LlmSettings } from "../../shared/types";
-import { api, ApiRequestError } from "../api";
+import { api } from "../api";
+import { isAbortError, userErrorFrom } from "../error-messages";
 
 interface AiSettingsProps {
   onClose: () => void;
@@ -21,8 +22,6 @@ const REMOTE_PROVIDERS = [
   ["minimax", "MiniMax", "https://api.minimaxi.com/v1/chat/completions"],
   ["openrouter", "OpenRouter", "https://openrouter.ai/api/v1/chat/completions"],
 ] as const;
-
-const errorMessage = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 
 function endpointValue(value: string) {
   try {
@@ -98,7 +97,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
       install(value);
       setProcessKeyEndpoint(keyStatus.endpointUrl);
     }).catch((cause) => {
-      if (!(cause instanceof Error && cause.name === "AbortError")) setError(errorMessage(cause));
+      if (!isAbortError(cause)) setError(userErrorFrom(cause, "无法读取 AI 设置，请重新打开设置页。"));
     }).finally(() => {
       if (!controller.signal.aborted) setLoading(false);
     });
@@ -113,7 +112,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
     if (!desktop) return;
     void invoke<KeychainStatus>("llm_keychain_status")
       .then((status) => setKeychainEndpoint(status.endpointUrl))
-      .catch((cause) => setError(errorMessage(cause)));
+      .catch((cause) => setError(userErrorFrom(cause, "无法读取 macOS 钥匙串中的密钥状态。")));
   }, [desktop]);
 
   const storeApiKey = async () => {
@@ -136,9 +135,9 @@ export function AiSettings({ onClose }: AiSettingsProps) {
           try {
             const cleanupStatus = await api.deleteLlmApiKey();
             markProcessKey(cleanupStatus.endpointUrl);
-            setError(`macOS 钥匙串保存失败，已从当前进程撤回密钥：${errorMessage(keychainCause)}`);
+            setError(userErrorFrom(keychainCause, "macOS 钥匙串保存失败，已从当前进程撤回密钥。"));
           } catch (cleanupCause) {
-            setError(`macOS 钥匙串保存失败，且当前进程密钥清理失败：${errorMessage(cleanupCause)}`);
+            setError(userErrorFrom(cleanupCause, "macOS 钥匙串保存失败，且当前进程密钥清理失败。请重启织页后重试。"));
           }
           return;
         }
@@ -146,7 +145,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
       setApiKey("");
       setNotice(desktop ? "密钥已立即生效，并保存到 macOS 钥匙串。" : "密钥已立即生效；本地服务重启后需重新输入。");
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(userErrorFrom(cause, "密钥保存失败，请检查输入后重试。"));
     } finally {
       setSaving(false);
     }
@@ -167,13 +166,13 @@ export function AiSettings({ onClose }: AiSettingsProps) {
           const status = await invoke<KeychainStatus>("delete_llm_api_key");
           setKeychainEndpoint(status.endpointUrl);
         } catch (keychainCause) {
-          setError(`当前进程密钥已清除，但 macOS 钥匙串删除失败：${errorMessage(keychainCause)}`);
+          setError(userErrorFrom(keychainCause, "当前进程密钥已清除，但 macOS 钥匙串删除失败。"));
           return;
         }
       }
       setNotice(desktop ? "密钥已从当前进程和 macOS 钥匙串删除。" : "密钥已从当前本地服务进程删除。");
     } catch (cause) {
-      setError(`当前进程密钥清除失败，${desktop ? "未改动 macOS 钥匙串" : "请重试"}：${errorMessage(cause)}`);
+      setError(userErrorFrom(cause, `当前进程密钥清除失败，${desktop ? "未改动 macOS 钥匙串。" : "请重试。"}`));
     } finally {
       setSaving(false);
     }
@@ -196,7 +195,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
       install(updated);
       setNotice(updated.enabled ? "AI 派生已启用。只有逐篇确认后才会发送正文。" : "设置已保存，AI 仍处于关闭状态。");
     } catch (cause) {
-      setError(cause instanceof ApiRequestError && cause.code === "LLM_SETTINGS_CONFLICT" ? "设置已在别处更新，请关闭后重新打开。" : errorMessage(cause));
+      setError(userErrorFrom(cause, "AI 设置未保存，请检查输入后重试。"));
     } finally {
       setSaving(false);
     }
@@ -219,7 +218,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
         controller.signal,
       ));
     } catch (cause) {
-      if (!(cause instanceof Error && cause.name === "AbortError")) setError(errorMessage(cause));
+      if (!isAbortError(cause)) setError(userErrorFrom(cause, "AI 连接测试失败，请检查端点、模型和网络。"));
     } finally {
       if (testController.current === controller) {
         testController.current = null;
@@ -239,7 +238,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
       install(response.settings);
       setNotice(`AI 已关闭，并删除 ${response.deletedResults} 条派生结果。`);
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(userErrorFrom(cause, "无法关闭 AI 或删除派生结果，请稍后重试。"));
     } finally {
       setSaving(false);
     }

@@ -13,6 +13,7 @@ import type {
   TranslationLanguage,
 } from "../../shared/types";
 import { api } from "../api";
+import { userErrorMessage } from "../error-messages";
 
 const TYPE_LABEL: Record<DerivedResultType, string> = {
   summary: "摘要",
@@ -25,12 +26,6 @@ const LIGHTWEIGHT_RESULT_CHARS = 250_000;
 
 function typeLabel(type: DerivedResultType, targetLanguage?: TranslationLanguage | null) {
   return type === "translation" && targetLanguage ? `翻译 · ${TRANSLATION_LANGUAGES[targetLanguage]}` : TYPE_LABEL[type];
-}
-
-function taskErrorMessage(code: string, message: string) {
-  return code === "LLM_TLS_ERROR"
-    ? "AI 服务器证书校验失败。当前网络可能拦截 HTTPS，请更换可安全连通的网络或 AI 平台；系统不会绕过证书校验。"
-    : message;
 }
 
 function dateTime(value: string) {
@@ -298,7 +293,7 @@ export function DerivedKnowledge({ document, open, preferredType: type, onTypeCh
                 </section>
               )}
 
-              {task && task.status !== "succeeded" && <section className={`derived-task is-${task.status}`} aria-live="polite"><div><span>03 · TASK</span><strong>{taskLabel}{task.status === "running" ? "正在生成" : task.status === "failed" ? "生成失败" : "已取消"}</strong>{task.status === "running" && <div className="derived-task-progress"><progress aria-label="AI 生成批次进度" max={task.progress.totalBatches} value={task.progress.completedBatches} /><small>批次进度 {task.progress.completedBatches} / {task.progress.totalBatches}</small></div>}{task.error && <small>{task.error.code} · {taskErrorMessage(task.error.code, task.error.message)}</small>}{task.status !== "running" && task.progress.totalBatches > 1 && <small className="derived-retry-note">重试将从第一批开始，不会复用已完成批次。</small>}</div>{task.status === "running" ? <button type="button" onClick={() => void cancel()} disabled={busy}>取消任务</button> : <button type="button" onClick={() => void retry()} disabled={busy || !settings?.enabled}>重试</button>}</section>}
+              {task && task.status !== "succeeded" && <section className={`derived-task is-${task.status}`} aria-live="polite"><div><span>03 · TASK</span><strong>{taskLabel}{task.status === "running" ? "正在生成" : task.status === "failed" ? "生成失败" : "已取消"}</strong>{task.status === "running" && <div className="derived-task-progress"><progress aria-label="AI 生成批次进度" max={task.progress.totalBatches} value={task.progress.completedBatches} /><small>批次进度 {task.progress.completedBatches} / {task.progress.totalBatches}</small></div>}{task.error && <small>{task.error.code} · {userErrorMessage(task.error.code)}</small>}{task.status !== "running" && task.progress.totalBatches > 1 && <small className="derived-retry-note">重试将从第一批开始，不会复用已完成批次。</small>}</div>{task.status === "running" ? <button type="button" onClick={() => void cancel()} disabled={busy}>取消任务</button> : <button type="button" onClick={() => void retry()} disabled={busy || !settings?.enabled}>重试</button>}</section>}
 
               {(notice || error) && <p className={`derived-message ${error ? "is-error" : ""}`} role={error ? "alert" : "status"}>{error || notice}</p>}
 

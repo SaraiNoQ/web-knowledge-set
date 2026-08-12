@@ -40,6 +40,7 @@ import { Diagnostics } from "./components/Diagnostics";
 import { DerivedKnowledge } from "./components/DerivedKnowledge";
 import { MarkdownEditor } from "./components/MarkdownEditor";
 import { Onboarding } from "./components/Onboarding";
+import { userErrorFrom, userErrorMessage } from "./error-messages";
 
 type EditorMode = "edit" | "split" | "preview";
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
@@ -292,7 +293,7 @@ function OfflineImage({ asset, alt }: { asset?: DocumentAsset; alt?: string }) {
     return <ImagePlaceholder alt={alt}>图片正在保存到本地。</ImagePlaceholder>;
   }
   if (asset.status === "failed") {
-    return <ImagePlaceholder alt={alt}>{`图片离线保存失败${asset.errorMessage ? `：${asset.errorMessage}` : asset.errorCode ? `：${asset.errorCode}` : "。"}`}</ImagePlaceholder>;
+    return <ImagePlaceholder alt={alt}>{`图片离线保存失败：${userErrorMessage(asset.errorCode ?? "ASSET_CACHE_FAILED")}`}</ImagePlaceholder>;
   }
   if (!asset.assetHash || failed) {
     return <ImagePlaceholder alt={alt}>{failed ? "本地图片无法读取，不会回退到原站。" : "离线图片记录不完整。"}</ImagePlaceholder>;
@@ -463,7 +464,7 @@ function CaptureHistoryPanel({
                   <strong>{capture.mode === "browser" ? "浏览器采集" : capture.mode === "http" ? "直接读取" : "未进入提取"}</strong>
                   <p>{source ? <a href={source} target="_blank" rel="noreferrer noopener">{source}</a> : "未记录最终地址"}</p>
                   {capture.warning && <p className="capture-ledger-warning">警告 · {capture.warning}</p>}
-                  {(capture.errorCode || capture.errorMessage) && <p className="capture-ledger-error">{capture.errorCode || "CAPTURE_FAILED"} · {capture.errorMessage || "采集失败"}</p>}
+                  {(capture.errorCode || capture.errorMessage) && <p className="capture-ledger-error">{capture.errorCode || "CAPTURE_FAILED"} · {userErrorMessage(capture.errorCode ?? "CAPTURE_FAILED")}</p>}
                 </div>
                 <dl><div><dt>耗时</dt><dd>{captureDuration(capture.durationMs)}</dd></div><div><dt>HTTP</dt><dd>{capture.httpStatus ?? "—"}</dd></div><div><dt>提取器</dt><dd>{capture.extractorVersion || "旧版"}</dd></div><div><dt>快照</dt><dd>{snapshotLabel}</dd></div></dl>
                 <button type="button" onClick={() => void reextract(capture)} disabled={capture.snapshotStored !== "available" || Boolean(reextracting) || applying || Boolean(document.deletedAt)} title={capture.snapshotStored !== "available" ? snapshotLabel : document.deletedAt ? "恢复文档后可重新提取" : undefined}>{reextracting === capture.id ? "提取中…" : "从快照重新提取"}</button>
@@ -1662,7 +1663,7 @@ export default function App() {
   externalIntentHandlerRef.current = async (intents) => {
     const externalError = intents.find((intent): intent is Extract<ExternalIntent, { kind: "error" }> => intent.kind === "error");
     if (externalError) {
-      setBulkImportError(externalError.message);
+      setBulkImportError("桌面文件未能加入导入列表，请重新选择文件。");
       setBulkImportOpen(true);
     }
     for (const intent of intents) {
@@ -1708,14 +1709,14 @@ export default function App() {
       setBulkImportOpen(true);
       setBulkImportNotice(`已从桌面接收 ${accepted.length} 个文件，请检查后导入。`);
     } catch (error) {
-      setBulkImportError((error as Error).message);
+      setBulkImportError(userErrorFrom(error, "无法读取桌面导入文件，请检查文件后重试。"));
       setBulkImportOpen(true);
     } finally {
       if (pendingTokens.size) {
         try {
           await invoke("discard_external_tokens", { tokens: [...pendingTokens] });
         } catch (error) {
-          setBulkImportError(`无法清理未读取的桌面文件：${(error as Error).message}`);
+          setBulkImportError(userErrorFrom(error, "无法清理未读取的桌面文件，请重启织页后重试。"));
         }
       }
     }
@@ -1734,7 +1735,7 @@ export default function App() {
     let chain = Promise.resolve();
     const onReady = () => {
       chain = chain.then(drain).catch((error) => {
-        if (!stopped) setImportError(`无法处理桌面导入：${(error as Error).message}`);
+        if (!stopped) setImportError(userErrorFrom(error, "无法处理桌面导入，请重新打开文件。"));
       });
     };
     window.addEventListener("zhiye:external-intents-ready", onReady);
@@ -2993,7 +2994,14 @@ export default function App() {
                 {bulkImportPreview.items.slice(0, 100).map((item) => {
                   const result = bulkResultById.get(item.id);
                   const status = result ? IMPORT_RESULT_LABEL[result.status] : IMPORT_PREVIEW_LABEL[item.status];
-                  return <li key={item.id} className={`is-${result?.status || item.status}`}><span className="bulk-item-index">{item.index + 1}</span><div><strong>{item.label}</strong><small>{result?.error || item.error || item.warnings.join(" · ") || item.sourceUrl || "准备就绪"}</small></div><em>{status}</em></li>;
+                  const detail = result?.error
+                    ? result.status === "conflict" ? "预检后原知识发生了变化，请重新检查导入内容。" : "此项导入失败，请检查文件内容后重试。"
+                    : item.error
+                      ? "此项格式无效，请检查 URL、文本编码或 Front Matter。"
+                      : item.warnings.length
+                        ? "存在未识别的 Front Matter 字段，原内容已保留。"
+                        : item.sourceUrl || "准备就绪";
+                  return <li key={item.id} className={`is-${result?.status || item.status}`}><span className="bulk-item-index">{item.index + 1}</span><div><strong>{item.label}</strong><small>{detail}</small></div><em>{status}</em></li>;
                 })}
               </ol>
               {bulkImportPreview.items.length > 100 && <p className="bulk-list-limit">仅展示前 100 项；其余 {bulkImportPreview.items.length - 100} 项仍会按同一策略处理。</p>}
@@ -3310,7 +3318,7 @@ export default function App() {
                 <div className="capture-failed" role="alert">
                   <span className="failure-code">{currentDoc.errorCode || "CAPTURE_FAILED"}</span>
                   <h3>这张网页没有收进来</h3>
-                  <p>{currentDoc.errorMessage || "请检查链接后再试一次。"}</p>
+                  <p>{userErrorMessage(currentDoc.errorCode ?? "CAPTURE_FAILED")}</p>
                   <button type="button" className="primary-button" onClick={retryCapture} disabled={retrying}>{retrying ? <><Spinner />重试中</> : "重新抓取"}</button>
                 </div>
               ) : (
