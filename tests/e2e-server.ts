@@ -14,9 +14,12 @@ const llmServer = createServer(async (request, response) => {
   for await (const chunk of request) chunks.push(Buffer.from(chunk));
   const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { messages?: Array<{ content?: string }> };
   const system = body.messages?.[0]?.content || "";
-  const content = system.includes("tag suggestion")
-    ? JSON.stringify(["人工智能", "本地知识库"])
-    : "## 本地摘要\n\n这是确定性的测试摘要。[不可点击](https://model.example.test/)\n\n![不得请求](https://model.example.test/pixel.png)\n\n<script>window.__modelXss = true</script>";
+  const content = system.includes("Translate only")
+    ? JSON.stringify((JSON.parse(body.messages?.[1]?.content || "[]") as Array<{ id: string; text: string }>)
+      .map(({ id, text }) => ({ id, text: `译文：${text}` })))
+    : system.includes("tag suggestion")
+      ? JSON.stringify(["人工智能", "本地知识库"])
+      : "## 本地摘要\n\n这是确定性的测试摘要。[不可点击](https://model.example.test/)\n\n![不得请求](https://model.example.test/pixel.png)\n\n<script>window.__modelXss = true</script>";
   setTimeout(() => {
     response.writeHead(200, { "Content-Type": "application/json" });
     response.end(JSON.stringify({ choices: [{ message: { content } }], usage: { prompt_tokens: 12, completion_tokens: 8, total_tokens: 20 } }));

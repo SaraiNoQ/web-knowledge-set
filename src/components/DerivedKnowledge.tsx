@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { TRANSLATION_LANGUAGES } from "../../shared/types";
 import type {
   DerivedPreview,
   DerivedResult,
@@ -9,6 +10,7 @@ import type {
   DerivedTask,
   KnowledgeDocument,
   LlmSettings,
+  TranslationLanguage,
 } from "../../shared/types";
 import { api } from "../api";
 
@@ -17,7 +19,12 @@ const TYPE_LABEL: Record<DerivedResultType, string> = {
   outline: "分层提纲",
   keywords: "关键词",
   "tag-suggestions": "标签建议",
+  translation: "翻译",
 };
+
+function typeLabel(type: DerivedResultType, targetLanguage?: TranslationLanguage | null) {
+  return type === "translation" && targetLanguage ? `翻译 · ${TRANSLATION_LANGUAGES[targetLanguage]}` : TYPE_LABEL[type];
+}
 
 function dateTime(value: string) {
   try {
@@ -54,18 +61,20 @@ function ModelMarkdown({ children }: { children: string }) {
 interface DerivedKnowledgeProps {
   document: KnowledgeDocument;
   open: boolean;
+  preferredType: DerivedResultType;
+  onTypeChange: (type: DerivedResultType) => void;
   onClose: () => void;
   generationBlockedReason: string | null;
   onAdoptTags: (tags: string[]) => Promise<void>;
 }
 
-export function DerivedKnowledge({ document, open, onClose, generationBlockedReason, onAdoptTags }: DerivedKnowledgeProps) {
+export function DerivedKnowledge({ document, open, preferredType: type, onTypeChange, onClose, generationBlockedReason, onAdoptTags }: DerivedKnowledgeProps) {
   const [settings, setSettings] = useState<LlmSettings | null>(null);
   const [results, setResults] = useState<DerivedResult[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [task, setTask] = useState<DerivedTask | null>(null);
-  const [type, setType] = useState<DerivedResultType>("summary");
+  const [targetLanguage, setTargetLanguage] = useState<TranslationLanguage>("zh-CN");
   const [preview, setPreview] = useState<DerivedPreview | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [selectedTags, setSelectedTags] = useState<{ resultId: string; tags: string[] }>({ resultId: "", tags: [] });
@@ -108,7 +117,7 @@ export function DerivedKnowledge({ document, open, onClose, generationBlockedRea
         if (updated.status === "succeeded") {
           setPreview(null);
           setConfirmed(false);
-          setNotice(`${TYPE_LABEL[updated.type]}已生成，正文与标签均未修改。`);
+          setNotice(`${typeLabel(updated.type, updated.targetLanguage)}已生成，正文与标签均未修改。`);
           void loadResults(1);
         }
       }).catch((cause) => setError((cause as Error).message));
@@ -122,7 +131,7 @@ export function DerivedKnowledge({ document, open, onClose, generationBlockedRea
     setError("");
     setNotice("");
     try {
-      setPreview(await api.previewDerivedResult(document.id, type, document.revision));
+      setPreview(await api.previewDerivedResult(document.id, type, document.revision, type === "translation" ? targetLanguage : undefined));
       setConfirmed(false);
     } catch (cause) {
       setError((cause as Error).message);
@@ -142,7 +151,7 @@ export function DerivedKnowledge({ document, open, onClose, generationBlockedRea
       if (started.status === "succeeded") {
         setPreview(null);
         setConfirmed(false);
-        setNotice(`${TYPE_LABEL[started.type]}已有相同输入结果，未重复请求模型。`);
+        setNotice(`${typeLabel(started.type, started.targetLanguage)}已有相同输入结果，未重复请求模型。`);
         await loadResults(1);
       }
     } catch (cause) {
@@ -194,7 +203,7 @@ export function DerivedKnowledge({ document, open, onClose, generationBlockedRea
   };
 
   const remove = async (result: DerivedResult) => {
-    if (!window.confirm(`删除这条${TYPE_LABEL[result.type]}结果？`)) return;
+    if (!window.confirm(`删除这条${typeLabel(result.type, result.targetLanguage)}结果？`)) return;
     setBusy(true);
     setError("");
     try {
@@ -223,7 +232,7 @@ export function DerivedKnowledge({ document, open, onClose, generationBlockedRea
   };
 
   const pinned = useMemo(() => results.find((result) => result.type === "summary" && result.pinned), [results]);
-  const taskLabel = task ? TYPE_LABEL[task.type] : "";
+  const taskLabel = task ? typeLabel(task.type, task.targetLanguage) : "";
 
   return (
     <>
@@ -236,10 +245,13 @@ export function DerivedKnowledge({ document, open, onClose, generationBlockedRea
             <>
               <section className="derived-generator" aria-labelledby="derived-generator-title">
                 <div><span>01 · GENERATE</span><h4 id="derived-generator-title">选择一项，再核对发送范围</h4></div>
-                <fieldset disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason)}>
-                  <legend className="sr-only">派生类型</legend>
-                  {(Object.entries(TYPE_LABEL) as Array<[DerivedResultType, string]>).map(([value, label]) => <button key={value} type="button" aria-pressed={type === value} onClick={() => { setType(value); setPreview(null); setConfirmed(false); }}>{label}</button>)}
-                </fieldset>
+                <div className="derived-options">
+                  <fieldset disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason)}>
+                    <legend className="sr-only">派生类型</legend>
+                    {(Object.entries(TYPE_LABEL) as Array<[DerivedResultType, string]>).map(([value, label]) => <button key={value} type="button" aria-pressed={type === value} onClick={() => { onTypeChange(value); setPreview(null); setConfirmed(false); }}>{label}</button>)}
+                  </fieldset>
+                  {type === "translation" && <label className="derived-target-language"><span>翻译为</span><select aria-label="翻译目标语言" value={targetLanguage} onChange={(event) => { setTargetLanguage(event.target.value as TranslationLanguage); setPreview(null); setConfirmed(false); }} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason)}>{(Object.entries(TRANSLATION_LANGUAGES) as Array<[TranslationLanguage, string]>).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
+                </div>
                 {!settings?.enabled && <p className="derived-boundary">AI 当前关闭。历史结果仍可查看；请先到页首“AI 设置”中启用。</p>}
                 {generationBlockedReason && <p className="derived-boundary">{generationBlockedReason}</p>}
                 <button type="button" className="primary-button" onClick={() => void prepare()} disabled={busy || !settings?.enabled || task?.status === "running" || Boolean(generationBlockedReason)}>{busy && !preview ? "准备中…" : `预览${TYPE_LABEL[type]}发送范围`}</button>
@@ -248,7 +260,7 @@ export function DerivedKnowledge({ document, open, onClose, generationBlockedRea
               {preview && (
                 <section className="derived-preview" aria-label="模型发送范围预览">
                   <div className="derived-coverage"><span>02 · SEND PREVIEW</span><strong>{preview.coverage.sentChars.toLocaleString("zh-CN")} / {preview.coverage.sourceChars.toLocaleString("zh-CN")} 字符</strong><em>{preview.coverage.truncated ? "已按稳定段落截断" : "覆盖完整正文"}</em></div>
-                  <dl><div><dt>目标</dt><dd>{preview.target.url}</dd></div><div><dt>模型</dt><dd>{preview.model}</dd></div><div><dt>类型</dt><dd>{TYPE_LABEL[preview.type]}</dd></div></dl>
+                  <dl><div><dt>目标</dt><dd>{preview.target.url}</dd></div><div><dt>模型</dt><dd>{preview.model}</dd></div><div><dt>类型</dt><dd>{typeLabel(preview.type, preview.targetLanguage)}</dd></div></dl>
                   <pre aria-label="将发送给模型的准确文本">{preview.sentText}</pre>
                   <label className="derived-confirm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /><span>我已核对上方准确文本与网络目标，确认本次发送。</span></label>
                   <div><button type="button" onClick={() => { setPreview(null); setConfirmed(false); }}>取消</button><button type="button" className="primary-button" onClick={() => void start()} disabled={!confirmed || busy}>{busy ? "提交中…" : "确认发送并生成"}</button></div>
@@ -264,7 +276,7 @@ export function DerivedKnowledge({ document, open, onClose, generationBlockedRea
                 {!results.length ? <p className="derived-empty">还没有派生结果。AI 关闭时，这里也不会产生任何后台请求。</p> : <ol>{results.map((result) => {
                   const tags = result.type === "tag-suggestions" ? stringList(result.output) : [];
                   const checkedTags = selectedTags.resultId === result.id ? selectedTags.tags : [];
-                  return <li key={result.id} className={result.stale ? "is-stale" : undefined}><header><div><strong>{TYPE_LABEL[result.type]}</strong>{result.pinned && <span>已固定</span>}{result.stale && <em>已过期</em>}{result.truncated && <em>输入已截断</em>}</div><time dateTime={result.createdAt}>{dateTime(result.createdAt)}</time></header><div className="derived-result-meta">{result.model} · {result.endpointId} · {result.durationMs} ms{result.usage?.totalTokens ? ` · ${result.usage.totalTokens} tokens` : ""}</div>{result.type === "tag-suggestions" ? <fieldset className="derived-tags" disabled={busy || Boolean(generationBlockedReason)}><legend>选择要加入的标签（默认不选）</legend>{tags.map((tag) => <label key={tag}><input type="checkbox" checked={checkedTags.includes(tag)} onChange={(event) => setSelectedTags((current) => { const selected = current.resultId === result.id ? current.tags : []; return { resultId: result.id, tags: event.target.checked ? [...new Set([...selected, tag])] : selected.filter((value) => value !== tag) }; })} />#{tag}</label>)}<button type="button" onClick={() => void adoptTags(result)} disabled={!checkedTags.length || busy}>采纳所选标签</button></fieldset> : <ModelMarkdown>{result.output}</ModelMarkdown>}<footer>{result.type === "summary" && <button type="button" onClick={() => void pin(result)} disabled={busy}>{result.pinned ? "取消固定" : "固定摘要"}</button>}<button type="button" className="danger" onClick={() => void remove(result)} disabled={busy}>删除结果</button></footer></li>;
+                  return <li key={result.id} className={result.stale ? "is-stale" : undefined}><header><div><strong>{typeLabel(result.type, result.targetLanguage)}</strong>{result.pinned && <span>已固定</span>}{result.stale && <em>已过期</em>}{result.truncated && <em>输入已截断</em>}</div><time dateTime={result.createdAt}>{dateTime(result.createdAt)}</time></header><div className="derived-result-meta">{result.model} · {result.endpointId} · {result.durationMs} ms{result.usage?.totalTokens ? ` · ${result.usage.totalTokens} tokens` : ""}</div>{result.type === "tag-suggestions" ? <fieldset className="derived-tags" disabled={busy || Boolean(generationBlockedReason)}><legend>选择要加入的标签（默认不选）</legend>{tags.map((tag) => <label key={tag}><input type="checkbox" checked={checkedTags.includes(tag)} onChange={(event) => setSelectedTags((current) => { const selected = current.resultId === result.id ? current.tags : []; return { resultId: result.id, tags: event.target.checked ? [...new Set([...selected, tag])] : selected.filter((value) => value !== tag) }; })} />#{tag}</label>)}<button type="button" onClick={() => void adoptTags(result)} disabled={!checkedTags.length || busy}>采纳所选标签</button></fieldset> : <ModelMarkdown>{result.output}</ModelMarkdown>}<footer>{result.type === "summary" && <button type="button" onClick={() => void pin(result)} disabled={busy}>{result.pinned ? "取消固定" : "固定摘要"}</button>}<button type="button" className="danger" onClick={() => void remove(result)} disabled={busy}>删除结果</button></footer></li>;
                 })}</ol>}
                 {total > 30 && <nav aria-label="派生历史分页"><button type="button" disabled={page <= 1 || busy} onClick={() => void loadResults(page - 1)}>上一页</button><span>{page} / {Math.ceil(total / 30)}</span><button type="button" disabled={page >= Math.ceil(total / 30) || busy} onClick={() => void loadResults(page + 1)}>下一页</button></nav>}
               </section>

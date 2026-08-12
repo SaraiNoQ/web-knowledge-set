@@ -15,6 +15,7 @@ import type {
   DerivedResultListResponse,
   DerivedResultType,
   DerivedTask,
+  TranslationLanguage,
   DocumentAsset,
   DocumentDraft,
   DocumentFilters,
@@ -172,10 +173,10 @@ export const api = {
     });
   },
 
-  previewDerivedResult(documentId: string, type: DerivedResultType, revision: number) {
+  previewDerivedResult(documentId: string, type: DerivedResultType, revision: number, targetLanguage?: TranslationLanguage) {
     return request<DerivedPreview>(`/api/documents/${encodeURIComponent(documentId)}/derived-preview`, {
       method: "POST",
-      body: JSON.stringify({ type, revision }),
+      body: JSON.stringify({ type, revision, ...(targetLanguage ? { targetLanguage } : {}) }),
     });
   },
 
@@ -187,6 +188,7 @@ export const api = {
         revision: preview.revision,
         inputHash: preview.inputHash,
         settingsRevision: preview.settingsRevision,
+        ...(preview.targetLanguage ? { targetLanguage: preview.targetLanguage } : {}),
       }),
     });
   },

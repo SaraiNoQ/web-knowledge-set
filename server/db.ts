@@ -41,6 +41,7 @@ import type {
   SaveDerivedResultInput,
   TagMutationResponse,
 } from "../shared/types.js";
+import { TRANSLATION_LANGUAGES } from "../shared/types.js";
 
 const PAGE_SIZE = 30;
 
@@ -471,6 +472,52 @@ const migrations = [
     SELECT RAISE(ABORT, 'derived results are immutable');
   END;
   `,
+  `
+  DROP TRIGGER derived_results_immutable;
+  DROP INDEX derived_results_one_pinned_summary;
+  DROP INDEX derived_results_document_created;
+  ALTER TABLE derived_results RENAME TO derived_results_v14;
+
+  CREATE TABLE derived_results (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    type TEXT NOT NULL CHECK (type IN ('summary', 'outline', 'keywords', 'tag-suggestions', 'translation')),
+    model TEXT NOT NULL CHECK (length(model) BETWEEN 1 AND 200),
+    endpoint_id TEXT NOT NULL CHECK (length(endpoint_id) BETWEEN 1 AND 100),
+    prompt_version TEXT NOT NULL CHECK (length(prompt_version) BETWEEN 1 AND 100),
+    input_hash TEXT NOT NULL
+      CHECK (length(input_hash) = 64 AND input_hash NOT GLOB '*[^0-9a-f]*'),
+    output TEXT NOT NULL CHECK (length(output) BETWEEN 1 AND 2097152),
+    duration_ms INTEGER NOT NULL CHECK (duration_ms BETWEEN 0 AND 86400000),
+    usage_json TEXT CHECK (
+      usage_json IS NULL OR (json_valid(usage_json) AND json_type(usage_json) = 'object')
+    ),
+    source_chars INTEGER NOT NULL CHECK (source_chars BETWEEN 1 AND 10485760),
+    sent_chars INTEGER NOT NULL CHECK (sent_chars BETWEEN 1 AND source_chars),
+    truncated INTEGER NOT NULL CHECK (
+      (truncated = 0 AND sent_chars = source_chars) OR
+      (truncated = 1 AND sent_chars < source_chars)
+    ),
+    pinned INTEGER NOT NULL DEFAULT 0 CHECK (
+      pinned IN (0, 1) AND (pinned = 0 OR type = 'summary')
+    ),
+    created_at TEXT NOT NULL,
+    UNIQUE(document_id, type, model, endpoint_id, prompt_version, input_hash)
+  );
+  INSERT INTO derived_results SELECT * FROM derived_results_v14;
+  DROP TABLE derived_results_v14;
+  CREATE INDEX derived_results_document_created
+    ON derived_results(document_id, created_at DESC, id DESC);
+  CREATE UNIQUE INDEX derived_results_one_pinned_summary
+    ON derived_results(document_id) WHERE type = 'summary' AND pinned = 1;
+  CREATE TRIGGER derived_results_immutable
+  BEFORE UPDATE OF id, document_id, type, model, endpoint_id, prompt_version,
+                   input_hash, output, duration_ms, usage_json, source_chars,
+                   sent_chars, truncated, created_at
+  ON derived_results BEGIN
+    SELECT RAISE(ABORT, 'derived results are immutable');
+  END;
+  `,
 ];
 
 export const CURRENT_SCHEMA_VERSION = migrations.length;
@@ -706,7 +753,17 @@ const derivedResultTypes = new Set<DerivedResultType>([
   "outline",
   "keywords",
   "tag-suggestions",
+  "translation",
 ]);
+
+function derivedTargetLanguage(type: DerivedResultType, promptVersion: string) {
+  if (type !== "translation") return null;
+  const prefix = "translation-v1-p40000:";
+  const language = promptVersion.startsWith(prefix) ? promptVersion.slice(prefix.length) : "";
+  return promptVersion === `${prefix}${language}` && Object.hasOwn(TRANSLATION_LANGUAGES, language)
+    ? language as keyof typeof TRANSLATION_LANGUAGES
+    : null;
+}
 
 function now() {
   return new Date().toISOString();
@@ -747,6 +804,9 @@ function normalizedDerivedResult(input: SaveDerivedResultInput) {
     throw new RangeError("Derived result endpoint ID must be a non-secret identifier, not a URL");
   }
   if (!promptVersion || promptVersion.length > 100) throw new RangeError("Derived result prompt version must be 1 to 100 characters");
+  if (input.type === "translation" && !derivedTargetLanguage(input.type, promptVersion)) {
+    throw new RangeError("Translation prompt version must include a supported target language");
+  }
   if (!/^[a-f0-9]{64}$/u.test(input.inputHash)) throw new RangeError("Derived result input hash must be lowercase SHA-256");
   if (!input.output.trim() || Buffer.byteLength(input.output, "utf8") > 2 * 1024 * 1024) {
     throw new RangeError("Derived result output must be non-empty and no larger than 2 MiB");
@@ -1574,6 +1634,7 @@ export class KnowledgeDatabase {
       model: row.model,
       endpointId: row.endpoint_id,
       promptVersion: row.prompt_version,
+      targetLanguage: derivedTargetLanguage(row.type, row.prompt_version),
       inputHash: row.input_hash,
       output: row.output,
       durationMs: row.duration_ms,

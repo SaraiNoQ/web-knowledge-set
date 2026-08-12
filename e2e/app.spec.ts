@@ -129,12 +129,15 @@ test("previews a batch before importing it", async ({ page }) => {
 });
 
 test("keeps optional AI generation explicit, cancellable, inert, and manually adopted", async ({ page }) => {
+  test.setTimeout(45_000);
   const modelRequests: string[] = [];
   await page.route("https://model.example.test/**", async (route) => {
     modelRequests.push(route.request().url());
     await route.abort();
   });
   await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  if (await deferSetup.isVisible()) await deferSetup.click();
   await page.getByLabel("网页地址").fill("https://example.com/ai-lifecycle");
   await page.getByRole("button", { name: "收取网页" }).click();
   await expect(page.getByLabel("文档标题")).toHaveValue("AI 生命周期文章", { timeout: 8_000 });
@@ -183,10 +186,28 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(page.getByLabel("文档标题")).toHaveValue("AI 生命周期文章");
   await expect(page.locator(".tag-field input")).toHaveValue(/人工智能/u);
 
+  await panel.getByRole("button", { name: "关闭 AI 派生知识" }).click();
+  const originalMarkdown = await page.getByLabel("Markdown 编辑器").textContent();
+  await page.getByRole("button", { name: "翻译", exact: true }).click();
+  await expect(panel.getByRole("button", { name: "翻译", exact: true })).toHaveAttribute("aria-pressed", "true");
+  const language = panel.getByLabel("翻译目标语言");
+  await expect(language.locator("option")).toHaveCount(11);
+  await language.selectOption("en");
+  await panel.getByRole("button", { name: "预览翻译发送范围" }).click();
+  await expect(panel.getByText("翻译 · English", { exact: true })).toBeVisible();
+  await expect(panel.getByLabel("将发送给模型的准确文本")).toContainText("抓取成功");
+  await panel.getByText("我已核对上方准确文本", { exact: false }).click();
+  await panel.getByRole("button", { name: "确认发送并生成" }).click();
+  await expect(panel.getByText("翻译 · English正在生成")).toBeVisible();
+  await expect(panel.getByText("翻译 · English已生成", { exact: false })).toBeVisible({ timeout: 5_000 });
+  await expect(panel.getByText("翻译 · English", { exact: true }).last()).toBeVisible();
+  await expect(panel.getByText("译文：", { exact: false }).last()).toBeVisible();
+  await expect(page.getByLabel("Markdown 编辑器")).toHaveText(originalMarkdown || "");
+
   await page.getByRole("button", { name: "AI 设置", exact: true }).click();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "关闭 AI 并删除全部结果" }).click();
-  await expect(page.getByText(/AI 已关闭，并删除 2 条派生结果/u)).toBeVisible();
+  await expect(page.getByText(/AI 已关闭，并删除 3 条派生结果/u)).toBeVisible();
   await page.getByRole("button", { name: "返回资料库" }).click();
   await page.getByRole("button", { name: "AI 派生", exact: true }).click();
   await expect(page.getByText("还没有派生结果。", { exact: false })).toBeVisible();

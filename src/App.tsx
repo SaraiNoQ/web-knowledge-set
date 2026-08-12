@@ -19,6 +19,7 @@ import type {
   DocumentDraft,
   DocumentRevision,
   DocumentSummary,
+  DerivedResultType,
   ImportApplyResult,
   ImportKind,
   ImportPreview,
@@ -572,6 +573,7 @@ export default function App() {
   const [safetyRecovery, setSafetyRecovery] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [derivedOpen, setDerivedOpen] = useState(false);
+  const [derivedPreferredType, setDerivedPreferredType] = useState<DerivedResultType>("summary");
   const [collections, setCollections] = useState<KnowledgeCollection[]>([]);
   const [collectionsOpen, setCollectionsOpen] = useState(false);
   const [collectionsLoading, setCollectionsLoading] = useState(false);
@@ -2612,7 +2614,20 @@ export default function App() {
     setCaptureHistoryOpen(false);
     setQualityOpen(false);
     setCollectionsOpen(false);
-    setDerivedOpen((value) => !value);
+    setDerivedOpen((value) => {
+      if (!value) setDerivedPreferredType("summary");
+      return !value;
+    });
+  };
+
+  const openTranslation = () => {
+    if (closeAttemptRef.current || !currentDoc) return;
+    setHistoryOpen(false);
+    setCaptureHistoryOpen(false);
+    setQualityOpen(false);
+    setCollectionsOpen(false);
+    setDerivedPreferredType("translation");
+    setDerivedOpen(true);
   };
 
   const applyReextraction = async (
@@ -3191,6 +3206,7 @@ export default function App() {
                   <button type="button" className="history-button" onClick={toggleQuality} disabled={closing || currentDoc.status !== "ready"} aria-expanded={qualityOpen} aria-controls="capture-quality">质量检查</button>
                   <button type="button" className="history-button" onClick={toggleCaptureHistory} disabled={closing} aria-expanded={captureHistoryOpen} aria-controls="capture-history">采集历史</button>
                   <button type="button" className="history-button" onClick={toggleDerived} disabled={closing} aria-expanded={derivedOpen} aria-controls="derived-knowledge">AI 派生</button>
+                  <button type="button" className="history-button translation-button" onClick={openTranslation} disabled={closing} aria-expanded={derivedOpen && derivedPreferredType === "translation"} aria-controls="derived-knowledge">翻译</button>
                   {!currentDoc.deletedAt && (
                     <button type="button" className="text-button danger" onClick={() => void moveToTrash()} disabled={closing || organizationSaving || Boolean(organizationConflict) || Boolean(remoteDraftConflict) || Boolean(lifecycleAction) || hasUnsavedChanges || saveState === "saving"} title={hasUnsavedChanges || remoteDraftConflict || organizationConflict ? "请先处理当前更改" : undefined}>
                       {lifecycleAction === "delete" ? "正在移除…" : "移入回收站"}
@@ -3260,6 +3276,8 @@ export default function App() {
               <DerivedKnowledge
                 document={currentDoc}
                 open={derivedOpen}
+                preferredType={derivedPreferredType}
+                onTypeChange={setDerivedPreferredType}
                 onClose={() => setDerivedOpen(false)}
                 generationBlockedReason={derivedBlockedReason}
                 onAdoptTags={adoptDerivedTags}

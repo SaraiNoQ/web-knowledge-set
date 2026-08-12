@@ -55,7 +55,7 @@ test("v14 recent filters persist in the local database", () => {
     sort: "updated",
   }];
   try {
-    assert.equal(CURRENT_SCHEMA_VERSION, 14);
+    assert.equal(CURRENT_SCHEMA_VERSION, 15);
     assert.deepEqual(fixture.db.getRecentFilters(), { filters: [], revision: 0 });
     assert.deepEqual(fixture.db.getOnboarding(), { completed: false, revision: 0 });
     assert.deepEqual(fixture.db.setOnboarding(true, 0), {
@@ -179,6 +179,60 @@ test("derived results are immutable, deduplicated, stale-aware, pinnable, and do
     }).kind, "deleted");
     fixture.db.sql.prepare("DELETE FROM documents WHERE id = ?").run(created.id);
     assert.equal((fixture.db.sql.prepare("SELECT count(*) AS count FROM derived_results").get() as { count: number }).count, 0);
+  } finally {
+    fixture.close();
+  }
+});
+
+test("translations are cached per target language and become stale after source edits", () => {
+  const fixture = database();
+  try {
+    const created = fixture.db.createOrGetDocument("https://example.com/translations").document;
+    const edited = fixture.db.updateDocument(created.id, created.revision, { markdown: "# Source\n\nBody" });
+    assert.equal(edited.kind, "updated");
+    if (edited.kind !== "updated") return;
+    const sourceChars = edited.document.markdown.length;
+    const inputHash = derivedInputHash(edited.document.title, edited.document.markdown);
+    const save = (language: "en" | "ja", output: string) => fixture.db.saveDerivedResult({
+      documentId: created.id,
+      type: "translation",
+      model: "test-model",
+      endpointId: "local-test",
+      promptVersion: `translation-v1-p40000:${language}`,
+      inputHash,
+      output,
+      durationMs: 1,
+      sourceChars,
+      sentChars: sourceChars,
+      truncated: false,
+    });
+    const english = save("en", "# English\n\nBody");
+    const japanese = save("ja", "# 日本語\n\n本文");
+    const duplicate = save("en", "Must not replace cached output");
+    assert.equal(english.kind, "saved");
+    assert.equal(japanese.kind, "saved");
+    assert.equal(duplicate.kind, "saved");
+    if (english.kind !== "saved" || japanese.kind !== "saved" || duplicate.kind !== "saved") return;
+    assert.notEqual(english.result.id, japanese.result.id);
+    assert.equal(english.result.targetLanguage, "en");
+    assert.equal(japanese.result.targetLanguage, "ja");
+    assert.equal(duplicate.result.id, english.result.id);
+    assert.equal(duplicate.result.output, english.result.output);
+    assert.equal(fixture.db.updateDocument(created.id, edited.document.revision, { markdown: "Changed" }).kind, "updated");
+    assert.ok(fixture.db.listDerivedResults(created.id)?.items.every(({ stale }) => stale));
+    assert.throws(() => fixture.db.saveDerivedResult({
+      documentId: created.id,
+      type: "translation",
+      model: "test-model",
+      endpointId: "local-test",
+      promptVersion: "translation-v1-p40000:xx",
+      inputHash,
+      output: "Invalid",
+      durationMs: 1,
+      sourceChars,
+      sentChars: sourceChars,
+      truncated: false,
+    }), /supported target language/u);
   } finally {
     fixture.close();
   }
@@ -1287,10 +1341,10 @@ test("schema inspection is read-only and rejects future or incomplete histories"
         UNIQUE(batch_id, item_index)
       );
       CREATE INDEX import_items_batch ON import_items(batch_id, item_index);
-      DELETE FROM schema_migrations WHERE version = ${CURRENT_SCHEMA_VERSION};
+      DELETE FROM schema_migrations WHERE version IN (${CURRENT_SCHEMA_VERSION - 1}, ${CURRENT_SCHEMA_VERSION});
     `);
     raw.close();
-    assert.deepEqual(inspectDatabaseSchema(dataDir).pendingVersions, [CURRENT_SCHEMA_VERSION]);
+    assert.deepEqual(inspectDatabaseSchema(dataDir).pendingVersions, [CURRENT_SCHEMA_VERSION - 1, CURRENT_SCHEMA_VERSION]);
     assert.equal(migrateDatabase(dataDir).status, "current");
 
     const future = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));
@@ -1333,7 +1387,7 @@ test("all pending migrations roll back together on failure", () => {
       currentVersion: 3,
       supportedVersion: CURRENT_SCHEMA_VERSION,
       appliedVersions: [1, 2, 3],
-      pendingVersions: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+      pendingVersions: Array.from({ length: CURRENT_SCHEMA_VERSION - 3 }, (_, index) => index + 4),
     });
     const unchanged = new DatabaseSync(path, { readOnly: true });
     try {

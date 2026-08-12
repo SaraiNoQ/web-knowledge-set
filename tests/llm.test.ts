@@ -7,7 +7,12 @@ import test from "node:test";
 
 import { createApp } from "../server/app.js";
 import { openDatabase } from "../server/db.js";
-import { createDerivedTasks, resolveLlmTarget } from "../server/llm.js";
+import {
+  applyMarkdownTranslation,
+  createDerivedTasks,
+  markdownTranslationInput,
+  resolveLlmTarget,
+} from "../server/llm.js";
 import type { DerivedPreview, DerivedResultType, DerivedTask, LlmSettings } from "../shared/types.js";
 
 test("LLM API requires preview confirmation, reuses results, cancels, and disables atomically", async () => {
@@ -319,6 +324,67 @@ test("LLM runner rejects unsafe provider behavior without saving partial results
   }
 });
 
+test("Markdown translation preserves structure and rejects changed segment identifiers", () => {
+  const markdown = [
+    "---",
+    "title: Keep this metadata",
+    "---",
+    "# Hello *world*",
+    "",
+    "[Read this](https://example.com/path?q=1) and <https://example.com/bare>.",
+    "Visit www.example.com/path?q=1 without changing the address.",
+    "",
+    "![Do not translate alt](https://example.com/image.png)",
+    "",
+    "<aside>Keep raw HTML</aside>",
+    "",
+    "`const inline = true`",
+    "",
+    "```js",
+    "console.log('keep code')",
+    "```",
+    "",
+    "| Name | Value |",
+    "| --- | --- |",
+    "| One | Two |",
+    "",
+    "Footnote text[^1].",
+    "",
+    "[^1]: Footnote detail.",
+  ].join("\n");
+  const input = markdownTranslationInput(markdown);
+  const segments = JSON.parse(input.sentText) as Array<{ id: string; text: string }>;
+  assert.ok(segments.some(({ text }) => text === "Read this"));
+  assert.equal(segments.some(({ text }) => text.includes("https://")), false);
+  assert.equal(segments.some(({ text }) => text.includes("www.example.com")), false);
+  assert.equal(segments.some(({ text }) => text.includes("Keep this metadata")), false);
+  assert.equal(segments.some(({ text }) => text.includes("Do not translate alt")), false);
+  assert.equal(segments.some(({ text }) => text.includes("Keep raw HTML")), false);
+  assert.equal(segments.some(({ text }) => text.includes("keep code")), false);
+
+  const translated = applyMarkdownTranslation(markdown, JSON.stringify(
+    segments.map(({ id }, index) => ({ id, text: `Translated ${index + 1}` })),
+  ));
+  assert.match(translated, /^---\ntitle: Keep this metadata\n---\n/u);
+  assert.match(translated, /# Translated 1 \*Translated 2\*/u);
+  assert.match(translated, /\[Translated 3\]\(https:\/\/example\.com\/path\?q=1\)/u);
+  assert.match(translated, /<https:\/\/example\.com\/bare>/u);
+  assert.match(translated, /www\.example\.com\/path\?q=1/u);
+  assert.match(translated, /!\[Do not translate alt\]\(https:\/\/example\.com\/image\.png\)/u);
+  assert.match(translated, /<aside>Keep raw HTML<\/aside>/u);
+  assert.match(translated, /`const inline = true`/u);
+  assert.match(translated, /console\.log\('keep code'\)/u);
+  assert.match(translated, /\| --- \| --- \|/u);
+  assert.match(translated, /\[\^1\]:/u);
+  assert.throws(
+    () => applyMarkdownTranslation(markdown, JSON.stringify(
+      segments.map(({ id }, index) => ({ id: index ? id : "changed", text: "Unsafe" })),
+    )),
+    (error: unknown) => error instanceof Error && error.message.includes("identifier"),
+  );
+  assert.throws(() => markdownTranslationInput("x".repeat(40_001)), /complete document/u);
+});
+
 test("LLM target validation separates remote public HTTPS from explicit loopback", async () => {
   await assert.rejects(resolveLlmTarget("remote", "http://127.0.0.1/v1/chat/completions"), /HTTPS/u);
   await assert.rejects(resolveLlmTarget("local", "https://example.com/v1/chat/completions"), /loopback/u);
@@ -368,7 +434,14 @@ test("LLM resolver timeout, nested pauses, and permanent stop cannot strand a ta
     assert.equal(stoppable.get(stoppedTask.id)?.status, "cancelled");
 
     const paused = createDerivedTasks({ database: () => db, resolveTarget: neverResolve });
-    const input = inputFor(paused, "keywords");
+    const preview = paused.preview(created.id, "translation", edited.document.revision, "zh-CN");
+    const input = {
+      type: preview.type,
+      targetLanguage: preview.targetLanguage!,
+      revision: preview.revision,
+      inputHash: preview.inputHash,
+      settingsRevision: preview.settingsRevision,
+    };
     await paused.pause();
     await paused.pause();
     paused.resume();

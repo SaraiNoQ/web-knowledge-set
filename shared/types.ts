@@ -73,7 +73,23 @@ export interface KnowledgeDocument extends DocumentSummary {
   sourceNote: string;
 }
 
-export type DerivedResultType = "summary" | "outline" | "keywords" | "tag-suggestions";
+export const TRANSLATION_LANGUAGES = {
+  "zh-CN": "简体中文",
+  "zh-TW": "繁體中文",
+  en: "English",
+  ja: "日本語",
+  ko: "한국어",
+  fr: "Français",
+  de: "Deutsch",
+  es: "Español",
+  pt: "Português",
+  ru: "Русский",
+  ar: "العربية",
+} as const;
+
+export type TranslationLanguage = keyof typeof TRANSLATION_LANGUAGES;
+
+export type DerivedResultType = "summary" | "outline" | "keywords" | "tag-suggestions" | "translation";
 
 export interface DerivedResultUsage {
   inputTokens?: number;
@@ -88,6 +104,7 @@ export interface DerivedResult {
   model: string;
   endpointId: string;
   promptVersion: string;
+  targetLanguage: TranslationLanguage | null;
   inputHash: string;
   output: string;
   durationMs: number;
@@ -154,6 +171,7 @@ export interface DerivedCoverage {
 
 export interface DerivedPreview {
   type: DerivedResultType;
+  targetLanguage: TranslationLanguage | null;
   revision: number;
   inputHash: string;
   promptVersion: string;
@@ -167,6 +185,7 @@ export interface DerivedPreview {
 
 export interface StartDerivedTaskInput {
   type: DerivedResultType;
+  targetLanguage?: TranslationLanguage;
   revision: number;
   inputHash: string;
   settingsRevision: number;
@@ -178,6 +197,7 @@ export interface DerivedTask {
   id: string;
   documentId: string;
   type: DerivedResultType;
+  targetLanguage: TranslationLanguage | null;
   status: DerivedTaskStatus;
   preview: DerivedPreview;
   result: DerivedResult | null;

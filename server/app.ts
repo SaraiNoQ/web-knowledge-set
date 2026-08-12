@@ -22,7 +22,9 @@ import type {
   ImportStrategy,
   RecentFilter,
   StartDerivedTaskInput,
+  TranslationLanguage,
 } from "../shared/types.js";
+import { TRANSLATION_LANGUAGES } from "../shared/types.js";
 import { cacheDocumentAssets, type AssetFetchFunction } from "./assets.js";
 import { createAuth } from "./auth.js";
 import { BackupError, recoverInterruptedRestore, restoreBackup } from "./backup.js";
@@ -86,7 +88,7 @@ const statuses = new Set<CaptureStatus>(["queued", "fetching", "extracting", "re
 const captureModes = new Set<CaptureMode>(["http", "browser"]);
 const searchScopes = new Set<DocumentSearchScope>(["all", "title", "body", "source"]);
 const documentSorts = new Set<DocumentSort>(["updated", "created", "title"]);
-const derivedResultTypes = new Set<DerivedResultType>(["summary", "outline", "keywords", "tag-suggestions"]);
+const derivedResultTypes = new Set<DerivedResultType>(["summary", "outline", "keywords", "tag-suggestions", "translation"]);
 const importKinds = new Set<ImportKind>(["urls", "bookmarks", "markdown"]);
 const importStrategies = new Set<ImportStrategy>(["skip", "copy", "update"]);
 const documentFilterKeys = new Set([
@@ -734,15 +736,29 @@ function derivedType(value: unknown) {
   return value as DerivedResultType;
 }
 
-function derivedPreviewRequest(body: Record<string, unknown>) {
-  if (Object.keys(body).some((key) => key !== "type" && key !== "revision")) {
-    throw new HttpError(400, "INVALID_DERIVED_PREVIEW", "Preview accepts only type and revision");
+function translationLanguage(type: DerivedResultType, value: unknown) {
+  if (type === "translation") {
+    if (typeof value !== "string" || !Object.hasOwn(TRANSLATION_LANGUAGES, value)) {
+      throw new HttpError(400, "INVALID_TRANSLATION_LANGUAGE", "Translation requires a supported targetLanguage");
+    }
+    return value as TranslationLanguage;
   }
-  return { type: derivedType(body.type), revision: bodyRevision(body) };
+  if (value !== undefined) {
+    throw new HttpError(400, "INVALID_TRANSLATION_LANGUAGE", "targetLanguage is accepted only for translation");
+  }
+  return undefined;
+}
+
+function derivedPreviewRequest(body: Record<string, unknown>) {
+  if (Object.keys(body).some((key) => !["type", "revision", "targetLanguage"].includes(key))) {
+    throw new HttpError(400, "INVALID_DERIVED_PREVIEW", "Preview accepts only type, revision, and targetLanguage");
+  }
+  const type = derivedType(body.type);
+  return { type, revision: bodyRevision(body), targetLanguage: translationLanguage(type, body.targetLanguage) };
 }
 
 function startDerivedTaskRequest(body: Record<string, unknown>): StartDerivedTaskInput {
-  if (Object.keys(body).some((key) => !["type", "revision", "inputHash", "settingsRevision"].includes(key))) {
+  if (Object.keys(body).some((key) => !["type", "revision", "inputHash", "settingsRevision", "targetLanguage"].includes(key))) {
     throw new HttpError(400, "INVALID_DERIVED_TASK", "Derived task request contains an unknown field");
   }
   if (typeof body.inputHash !== "string" || !/^[a-f0-9]{64}$/u.test(body.inputHash)) {
@@ -751,8 +767,10 @@ function startDerivedTaskRequest(body: Record<string, unknown>): StartDerivedTas
   if (!Number.isSafeInteger(body.settingsRevision) || (body.settingsRevision as number) < 1) {
     throw new HttpError(400, "INVALID_DERIVED_TASK", "settingsRevision must be a positive integer");
   }
+  const type = derivedType(body.type);
   return {
-    type: derivedType(body.type),
+    type,
+    ...(translationLanguage(type, body.targetLanguage) ? { targetLanguage: body.targetLanguage as TranslationLanguage } : {}),
     revision: bodyRevision(body),
     inputHash: body.inputHash,
     settingsRevision: body.settingsRevision as number,
@@ -1782,7 +1800,9 @@ export function createApp(options: AppOptions) {
       const derivedPreviewMatch = pathname.match(/^\/api\/documents\/([^/]+)\/derived-preview$/u);
       if (derivedPreviewMatch && request.method === "POST") {
         const input = derivedPreviewRequest(await mutationBody(request));
-        sendJson(response, 200, derivedTasks.preview(decodeId(derivedPreviewMatch[1]), input.type, input.revision));
+        sendJson(response, 200, derivedTasks.preview(
+          decodeId(derivedPreviewMatch[1]), input.type, input.revision, input.targetLanguage,
+        ));
         return;
       }
 
