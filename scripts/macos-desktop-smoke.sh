@@ -6,7 +6,7 @@ if [[ -z "$BUILT_APP" ]]; then
   echo "Desktop app bundle was not produced" >&2
   exit 1
 fi
-BUNDLE_ID=$(defaults read "$BUILT_APP/Contents/Info" CFBundleIdentifier)
+BUNDLE_ID=$(plutil -extract CFBundleIdentifier raw -o - "$BUILT_APP/Contents/Info.plist")
 APP="/Applications/Zhiye Smoke.app"
 [[ ! -e "$APP" ]]
 ditto "$BUILT_APP" "$APP"
