@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const outputPath = resolve(root, "THIRD_PARTY_NOTICES.md");
+const outputPath = resolve(root, "docs", "THIRD_PARTY_NOTICES.md");
 const licensesPath = resolve(root, "THIRD_PARTY_LICENSES.txt");
 const check = process.argv.includes("--check");
 const pnpm = process.env.npm_execpath

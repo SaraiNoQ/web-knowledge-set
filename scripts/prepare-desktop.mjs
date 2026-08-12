@@ -38,7 +38,7 @@ cpSync(join(root, "package.json"), join(runtime, "package.json"));
 cpSync(join(root, "pnpm-lock.yaml"), join(runtime, "pnpm-lock.yaml"));
 mkdirSync(join(runtime, "legal"));
 cpSync(join(root, "LICENSE"), join(runtime, "legal", "Zhiye-LICENSE"));
-cpSync(join(root, "THIRD_PARTY_NOTICES.md"), join(runtime, "legal", "THIRD_PARTY_NOTICES.md"));
+cpSync(join(root, "docs", "THIRD_PARTY_NOTICES.md"), join(runtime, "legal", "THIRD_PARTY_NOTICES.md"));
 cpSync(join(root, "THIRD_PARTY_LICENSES.txt"), join(runtime, "legal", "THIRD_PARTY_LICENSES.txt"));
 
 const nodeLicense = [

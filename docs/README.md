@@ -83,7 +83,7 @@ KB_DATA_DIR=/你的/知识库目录 pnpm start
 
 ## 开发
 
-开发环境规则见 [AGENTS.md](./AGENTS.md)，完整路线和发布门槛见 [DEVELOPMENT_PLAN.md](./DEVELOPMENT_PLAN.md)。本地目录只用于编辑与同步源码；禁止在本地安装依赖、构建、测试或启动开发服务。所有这些操作都在 `root@campus-server:/root/dev/zhiye` 完成。
+开发环境规则见 [AGENTS.md](../AGENTS.md)，完整路线和发布门槛见 [DEVELOPMENT_PLAN.md](./DEVELOPMENT_PLAN.md)，待开发功能见 [FEATURES.md](./FEATURES.md)。本地目录只用于编辑与同步源码；禁止在本地安装依赖、构建、测试或启动开发服务。所有这些操作都在 `root@campus-server:/root/dev/zhiye` 完成。
 
 服务器使用固定 Node `24.19.0`：
 
@@ -112,4 +112,4 @@ ssh -L 4173:127.0.0.1:4173 root@campus-server
 
 故障排查、诊断包、安全更新与回退说明见 [SUPPORT.md](./SUPPORT.md)。安全问题请按 [SECURITY.md](./SECURITY.md#报告安全问题) 私下报告，不要在公开 issue 中附加漏洞细节、数据库、快照、备份、诊断包或密钥。
 
-项目源码采用 [MIT License](./LICENSE)；打包依赖的许可证与版权声明见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
+项目源码采用 [MIT License](../LICENSE)；打包依赖的许可证与版权声明见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。

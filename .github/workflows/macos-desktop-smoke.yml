@@ -63,7 +63,7 @@ jobs:
           test -n "$APP"
           /tmp/syft scan "dir:$APP" --output cyclonedx-json=release-evidence/macos-app.cdx.json
           (cd "$(dirname "$APP")" && find "$(basename "$APP")" -type f -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256) > release-evidence/macos-app.sha256
-          cp THIRD_PARTY_NOTICES.md release-evidence/
+          cp docs/THIRD_PARTY_NOTICES.md release-evidence/
       - name: Exercise isolated macOS Keychain entry
         run: cargo test --manifest-path src-tauri/Cargo.toml keychain::tests
       - name: Exercise macOS URL and file entry points

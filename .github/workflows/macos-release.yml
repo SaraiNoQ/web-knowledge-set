@@ -155,7 +155,7 @@ jobs:
           cp "$UPDATER_SIG_PATH" "release-assets/$UPDATER_NAME.sig"
           export VERSION UPDATER_NAME
           node -e 'const fs=require("node:fs"); const signature=fs.readFileSync(`release-assets/${process.env.UPDATER_NAME}.sig`,"utf8").trim(); const tag=`v${process.env.VERSION}`; const url=`https://github.com/SaraiNoQ/web-knowledge-set/releases/download/${tag}/${process.env.UPDATER_NAME}`; const manifest={version:process.env.VERSION,notes:`织页 ${tag} 已通过签名与公证；更新前会自动创建完整留档。`,pub_date:new Date().toISOString(),platforms:{"darwin-aarch64":{signature,url}}}; fs.writeFileSync("release-assets/latest.json",`${JSON.stringify(manifest,null,2)}\n`)'
-          cp THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.txt release-assets/
+          cp docs/THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.txt release-assets/
           curl --fail --location --proto '=https' --tlsv1.2 --output /tmp/syft.tar.gz https://github.com/anchore/syft/releases/download/v1.51.0/syft_1.51.0_darwin_arm64.tar.gz
           echo "4f37f4c7fefce0a68e4cf71ba3f5f9829a99e65d89b29f7ee41b8c2c10ea8c59  /tmp/syft.tar.gz" | shasum -a 256 --check
           tar -xzf /tmp/syft.tar.gz -C /tmp syft
