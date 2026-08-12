@@ -37,6 +37,10 @@
   "bundle": {
     "active": true,
     "category": "Productivity",
+    "macOS": {
+      "entitlements": "entitlements.chromium.plist",
+      "minimumSystemVersion": "13.5"
+    },
     "shortDescription": "把互联网文章整理为本地可编辑的 Markdown 知识库",
     "fileAssociations": [
       {

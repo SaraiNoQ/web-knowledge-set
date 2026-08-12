@@ -1,19 +1,20 @@
 #!/bin/bash
 set -euo pipefail
 
-BUILT_APP=$(find src-tauri/target/debug/bundle/macos -maxdepth 1 -name '*.app' -print -quit)
+BUILT_APP=${1:-$(find src-tauri/target/debug/bundle/macos -maxdepth 1 -name '*.app' -print -quit)}
 if [[ -z "$BUILT_APP" ]]; then
   echo "Desktop app bundle was not produced" >&2
   exit 1
 fi
+BUNDLE_ID=$(defaults read "$BUILT_APP/Contents/Info" CFBundleIdentifier)
 APP="/Applications/Zhiye Smoke.app"
 [[ ! -e "$APP" ]]
 ditto "$BUILT_APP" "$APP"
 
-DATA_DIR="$HOME/Library/Application Support/dev.local.zhiye"
+DATA_DIR="$HOME/Library/Application Support/$BUNDLE_ID"
 DATABASE="$DATA_DIR/zhiye.sqlite3"
 DEFAULT_DATABASE="$DATABASE"
-LAUNCHER_DIR="$HOME/Library/Application Support/dev.local.zhiye-launcher"
+LAUNCHER_DIR="$HOME/Library/Application Support/$BUNDLE_ID-launcher"
 LAUNCHER_CONFIG="$LAUNCHER_DIR/launcher.json"
 CUSTOM_DATA_DIR=$(mktemp -d)
 FILE_MARKER="$DATA_DIR/.desktop-smoke-files"
@@ -33,7 +34,7 @@ RESTART_LINK="zhiye://capture?url=https%3A%2F%2Fexample.com%2Fzhiye-restart-smok
 crashed_sidecar_pid=""
 
 quit_app() {
-  osascript -e 'tell application id "dev.local.zhiye" to quit' >/dev/null 2>&1 || true
+  osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
   for _ in {1..10}; do
     pgrep -x zhiye >/dev/null || return 0
     sleep 1
@@ -82,22 +83,22 @@ rm -f -- "$FILE_MARKER" "$INTENT_MARKER" "$ERROR_MARKER" "$LLM_MARKER"
 rm -rf -- "$LAUNCHER_DIR"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"
 plutil -extract CFBundleURLTypes xml1 -o - "$APP/Contents/Info.plist" | grep -q '<string>zhiye</string>'
-open -b dev.local.zhiye "$COLD_LINK"
+open -b "$BUNDLE_ID" "$COLD_LINK"
 wait_for_source "$COLD_URL"
 grep -Fx 'configured' "$LLM_MARKER" >/dev/null
 
-open -b dev.local.zhiye "$WARM_LINK"
+open -b "$BUNDLE_ID" "$WARM_LINK"
 wait_for_source "$WARM_URL"
 [[ $(pgrep -x zhiye | wc -l | tr -d ' ') == "1" ]]
 
 before=$(sqlite3 "$DATABASE" 'SELECT count(*) FROM documents')
-open -b dev.local.zhiye 'zhiye://delete?url=https%3A%2F%2Fexample.com%2Fmust-not-run'
+open -b "$BUNDLE_ID" 'zhiye://delete?url=https%3A%2F%2Fexample.com%2Fmust-not-run'
 sleep 2
 after=$(sqlite3 "$DATABASE" 'SELECT count(*) FROM documents')
 [[ "$before" == "$after" ]]
 
 printf '# Finder smoke\n\nThis file must be handled without starting another app.\n' > "$NOTE"
-open -b dev.local.zhiye "$NOTE"
+open -b "$BUNDLE_ID" "$NOTE"
 for _ in {1..15}; do
   [[ -f "$FILE_MARKER" ]] && grep -Fx 'finder-smoke.md' "$FILE_MARKER" >/dev/null && break
   sleep 1
@@ -111,7 +112,7 @@ printf '{"version":1,"data_dir":"%s"}' "$CUSTOM_DATA_DIR" > "$LAUNCHER_CONFIG"
 chmod 600 "$LAUNCHER_CONFIG"
 DATA_DIR="$CUSTOM_DATA_DIR"
 DATABASE="$CUSTOM_DATA_DIR/zhiye.sqlite3"
-open -b dev.local.zhiye "$CUSTOM_LINK"
+open -b "$BUNDLE_ID" "$CUSTOM_LINK"
 wait_for_source "$CUSTOM_URL"
 [[ $(sqlite3 "$DEFAULT_DATABASE" "SELECT count(*) FROM documents WHERE source_url = '$CUSTOM_URL'") == "0" ]]
 [[ $(pgrep -x zhiye | wc -l | tr -d ' ') == "1" ]]
@@ -130,7 +131,7 @@ if kill -0 "$crashed_sidecar_pid" >/dev/null 2>&1 || pgrep -f "$APP/Contents/Mac
   exit 1
 fi
 crashed_sidecar_pid=""
-open -b dev.local.zhiye "$RESTART_LINK"
+open -b "$BUNDLE_ID" "$RESTART_LINK"
 wait_for_source "$RESTART_URL"
 [[ $(sqlite3 "$DATABASE" "SELECT count(*) FROM documents WHERE source_url = '$CUSTOM_URL'") == "1" ]]
 [[ $(pgrep -x zhiye | wc -l | tr -d ' ') == "1" ]]
