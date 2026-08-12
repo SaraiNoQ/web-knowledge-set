@@ -31,6 +31,15 @@ const types = new Set<DerivedResultType>(["summary", "outline", "keywords", "tag
 const MAX_TRANSLATION_SEGMENTS = 5_000;
 const MAX_TRANSLATED_SEGMENT_CHARS = 20_000;
 const MAX_TRANSLATED_TEXT_CHARS = 200_000;
+const TLS_ERROR_CODES = new Set([
+  "CERT_HAS_EXPIRED",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_GET_ISSUER_CERT",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+]);
 
 interface MarkdownNode {
   type: string;
@@ -63,6 +72,15 @@ export class LlmError extends Error {
     super(message);
     this.name = "LlmError";
   }
+}
+
+export function llmNetworkError(cause: unknown) {
+  const code = cause && typeof cause === "object" && "code" in cause
+    ? String((cause as { code?: unknown }).code)
+    : "";
+  return TLS_ERROR_CODES.has(code)
+    ? new LlmError(502, "LLM_TLS_ERROR", "LLM endpoint certificate verification failed; use a trusted network or another provider")
+    : new LlmError(502, "LLM_NETWORK_ERROR", "LLM endpoint request failed");
 }
 
 export interface ResolvedLlmTarget {
@@ -486,7 +504,7 @@ async function requestCompletion(
     if (cause instanceof LlmError) throw cause;
     if (signal.aborted) throw new LlmError(409, "LLM_CANCELLED", "LLM task was cancelled");
     if (timeoutSignal.aborted) throw new LlmError(504, "LLM_TIMEOUT", "LLM request timed out");
-    throw new LlmError(502, "LLM_NETWORK_ERROR", "LLM endpoint request failed");
+    throw llmNetworkError(cause);
   });
   const status = response.statusCode ?? 0;
   if (status >= 300 && status < 400) {

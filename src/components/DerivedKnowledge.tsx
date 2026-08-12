@@ -26,6 +26,12 @@ function typeLabel(type: DerivedResultType, targetLanguage?: TranslationLanguage
   return type === "translation" && targetLanguage ? `翻译 · ${TRANSLATION_LANGUAGES[targetLanguage]}` : TYPE_LABEL[type];
 }
 
+function taskErrorMessage(code: string, message: string) {
+  return code === "LLM_TLS_ERROR"
+    ? "AI 服务器证书校验失败。当前网络可能拦截 HTTPS，请更换可安全连通的网络或 AI 平台；系统不会绕过证书校验。"
+    : message;
+}
+
 function dateTime(value: string) {
   try {
     return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
@@ -267,7 +273,7 @@ export function DerivedKnowledge({ document, open, preferredType: type, onTypeCh
                 </section>
               )}
 
-              {task && task.status !== "succeeded" && <section className={`derived-task is-${task.status}`} aria-live="polite"><div><span>03 · TASK</span><strong>{taskLabel}{task.status === "running" ? "正在生成" : task.status === "failed" ? "生成失败" : "已取消"}</strong>{task.error && <small>{task.error.code} · {task.error.message}</small>}</div>{task.status === "running" ? <button type="button" onClick={() => void cancel()} disabled={busy}>取消任务</button> : <button type="button" onClick={() => void retry()} disabled={busy || !settings?.enabled}>重试</button>}</section>}
+              {task && task.status !== "succeeded" && <section className={`derived-task is-${task.status}`} aria-live="polite"><div><span>03 · TASK</span><strong>{taskLabel}{task.status === "running" ? "正在生成" : task.status === "failed" ? "生成失败" : "已取消"}</strong>{task.error && <small>{task.error.code} · {taskErrorMessage(task.error.code, task.error.message)}</small>}</div>{task.status === "running" ? <button type="button" onClick={() => void cancel()} disabled={busy}>取消任务</button> : <button type="button" onClick={() => void retry()} disabled={busy || !settings?.enabled}>重试</button>}</section>}
 
               {(notice || error) && <p className={`derived-message ${error ? "is-error" : ""}`} role={error ? "alert" : "status"}>{error || notice}</p>}
 

@@ -10,10 +10,16 @@ import { openDatabase } from "../server/db.js";
 import {
   applyMarkdownTranslation,
   createDerivedTasks,
+  llmNetworkError,
   markdownTranslationInput,
   resolveLlmTarget,
 } from "../server/llm.js";
 import type { DerivedPreview, DerivedResultType, DerivedTask, LlmSettings } from "../shared/types.js";
+
+test("LLM network failures distinguish rejected TLS certificates", () => {
+  assert.equal(llmNetworkError(Object.assign(new Error("certificate"), { code: "SELF_SIGNED_CERT_IN_CHAIN" })).code, "LLM_TLS_ERROR");
+  assert.equal(llmNetworkError(Object.assign(new Error("socket"), { code: "ECONNRESET" })).code, "LLM_NETWORK_ERROR");
+});
 
 test("LLM API requires preview confirmation, reuses results, cancels, and disables atomically", async () => {
   const root = mkdtempSync(join(tmpdir(), "zhiye-llm-"));
