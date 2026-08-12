@@ -125,6 +125,7 @@ export interface CleanupDataResult {
   referenced: string[];
   deleted: string[];
   unsafeSnapshotEntries: string[];
+  unsafeAssetEntries: string[];
 }
 
 export const api = {

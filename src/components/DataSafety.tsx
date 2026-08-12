@@ -174,7 +174,7 @@ export function DataSafety({
   };
 
   const cleanup = async () => {
-    if (!window.confirm("清理未被数据库引用的网页快照？仍在使用的文件不会被删除。")) return;
+    if (!window.confirm("清理未被数据库引用的网页快照与离线资源？仍在使用的文件不会被删除。")) return;
     setBusy("cleanup");
     setError("");
     setNotice("");
@@ -182,10 +182,14 @@ export function DataSafety({
       const result = await api.cleanupData();
       const next = await refresh();
       const pending = next.health?.database.pendingFileDeletions.length ?? 0;
-      if (result.unsafeSnapshotEntries.length || pending) {
-        setError(`已删除 ${result.deleted.length} 个未引用快照；${pending} 个文件待重试，${result.unsafeSnapshotEntries.length} 个不安全条目未处理。`);
+      const deletedSnapshots = result.deleted.filter((path) => path.startsWith("snapshots/")).length;
+      const deletedAssets = result.deleted.filter((path) => path.startsWith("assets/")).length;
+      const unsafeEntries = result.unsafeSnapshotEntries.length + result.unsafeAssetEntries.length;
+      const summary = `已删除 ${deletedSnapshots} 个未引用快照、${deletedAssets} 个未引用离线资源。`;
+      if (unsafeEntries || pending) {
+        setError(`${summary}${pending} 个文件待重试，${unsafeEntries} 个不安全条目未处理。`);
       } else {
-        setNotice(`已删除 ${result.deleted.length} 个未引用快照。`);
+        setNotice(summary);
       }
     } catch (cause) {
       setError((cause as Error).message);
@@ -218,6 +222,7 @@ export function DataSafety({
   );
   const fileIssues = status.health
     ? status.health.missingSnapshots.length + status.health.orphanSnapshots.length + status.health.unsafeSnapshotEntries.length
+      + status.health.missingAssets.length + status.health.orphanAssets.length + status.health.unsafeAssetEntries.length
     : 0;
 
   return (
@@ -226,7 +231,7 @@ export function DataSafety({
         <div>
           <span className="eyebrow">DATA STEWARDSHIP · 本机</span>
           <h1>数据安全</h1>
-          <p>校验数据库与网页快照，创建可恢复的完整留档。</p>
+          <p>校验数据库、网页快照与离线资源，创建可恢复的完整留档。</p>
         </div>
         <div className="safety-head-actions"><button type="button" className="safety-close" onClick={onDiagnostics} disabled={Boolean(busy)}>诊断台</button>{!recovery && <button type="button" className="safety-close" onClick={onClose} disabled={Boolean(busy)}>返回资料库</button>}</div>
       </header>
@@ -252,12 +257,12 @@ export function DataSafety({
         <article>
           <span>FILES</span>
           <strong>{status.health ? fileIssues ? `${fileIssues} 项` : "一致" : "—"}</strong>
-          <small>{status.health ? `${status.health.missingSnapshots.length} 缺失 · ${status.health.orphanSnapshots.length} 未引用` : "暂无文件索引"}</small>
+          <small>{status.health ? `快照 ${status.health.missingSnapshots.length} 缺失/${status.health.orphanSnapshots.length} 未引用/${status.health.unsafeSnapshotEntries.length} 不安全 · 离线资源 ${status.health.missingAssets.length} 缺失/${status.health.orphanAssets.length} 未引用/${status.health.unsafeAssetEntries.length} 不安全` : "暂无文件索引"}</small>
         </article>
         <article>
           <span>STORAGE</span>
           <strong>{bytes(status.health?.storageBytes)}</strong>
-          <small>数据库与网页快照</small>
+          <small>数据库、网页快照与离线资源</small>
         </article>
         <article>
           <span>LAST BACKUP</span>
@@ -300,8 +305,8 @@ export function DataSafety({
           </form>
           <hr />
           <h3>文件清理</h3>
-          <p>只删除没有任何数据库记录引用的网页快照；失败项会留待下次重试。</p>
-          <button type="button" onClick={() => void cleanup()} disabled={Boolean(busy) || recovery || status.maintenance}>{busy === "cleanup" ? "正在清理…" : "清理未引用快照"}</button>
+          <p>只删除没有任何数据库记录引用的网页快照与离线资源；失败项会留待下次重试。</p>
+          <button type="button" onClick={() => void cleanup()} disabled={Boolean(busy) || recovery || status.maintenance}>{busy === "cleanup" ? "正在清理…" : "清理未引用文件"}</button>
         </aside>
       </div>
     </main>
