@@ -163,6 +163,11 @@ export interface LlmSettings {
 
 export type UpdateLlmSettingsInput = Omit<LlmSettings, "apiKeyConfigured">;
 
+export interface LlmApiKeyStatus {
+  configured: boolean;
+  endpointUrl: string | null;
+}
+
 export interface DerivedCoverage {
   sourceChars: number;
   sentChars: number;

@@ -58,7 +58,7 @@ import {
 } from "./diagnostics.js";
 import { extractHtml } from "./extract.js";
 import { ImportParseError, parseImportRequest } from "./import.js";
-import { createDerivedTasks, LlmError, llmSettingsInput, type ResolveLlmTarget } from "./llm.js";
+import { createDerivedTasks, LlmError, llmApiKeyInput, llmSettingsInput, type ResolveLlmTarget } from "./llm.js";
 import {
   createPortableBundle,
   PortableError,
@@ -167,6 +167,7 @@ export interface AppOptions {
   startWorker?: boolean;
   onDesktopCloseReady?: (attemptId: string) => void;
   llmApiKey?: string;
+  llmApiKeyEndpoint?: string;
   resolveLlmTarget?: ResolveLlmTarget;
   appVersion?: string;
   diagnostics?: DiagnosticsLogger;
@@ -1041,6 +1042,7 @@ export function createApp(options: AppOptions) {
       return db;
     },
     apiKey: options.llmApiKey,
+    apiKeyEndpoint: options.llmApiKeyEndpoint,
     resolveTarget: options.resolveLlmTarget,
   });
   let maintenanceKind: string | null = null;
@@ -1267,9 +1269,45 @@ export function createApp(options: AppOptions) {
         return;
       }
 
+      if (pathname === "/api/settings/llm/key" && request.method === "GET") {
+        if (requestUrl.searchParams.size) {
+          throw new LlmError(400, "INVALID_LLM_API_KEY", "API key status does not accept query parameters");
+        }
+        sendJson(response, 200, derivedTasks.apiKeyStatus());
+        return;
+      }
+
+      if (pathname === "/api/settings/llm/key" && request.method === "PUT") {
+        const credential = llmApiKeyInput(await mutationBody(request));
+        await derivedTasks.pause();
+        try {
+          derivedTasks.setApiKey(credential.apiKey, credential.endpointUrl);
+          sendJson(response, 200, derivedTasks.apiKeyStatus());
+        } finally {
+          derivedTasks.resume();
+        }
+        return;
+      }
+
+      if (pathname === "/api/settings/llm/key" && request.method === "DELETE") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length) {
+          throw new LlmError(400, "INVALID_LLM_API_KEY", "API key deletion does not accept fields");
+        }
+        await derivedTasks.pause();
+        try {
+          derivedTasks.deleteApiKey();
+          sendJson(response, 200, derivedTasks.apiKeyStatus());
+        } finally {
+          derivedTasks.resume();
+        }
+        return;
+      }
+
       if (pathname === "/api/settings/llm" && request.method === "PUT") {
         const value = llmSettingsInput(await mutationBody(request));
-        if (value.enabled && value.target === "remote" && !options.llmApiKey?.trim()) {
+        const apiKeyConfigured = derivedTasks.hasApiKey(value.remote.endpointUrl);
+        if (value.enabled && value.target === "remote" && !apiKeyConfigured) {
           throw new LlmError(409, "LLM_KEY_MISSING", "Remote LLM use requires a configured API key");
         }
         await derivedTasks.pause();
@@ -1279,7 +1317,7 @@ export function createApp(options: AppOptions) {
             target: value.target,
             remote: value.remote,
             local: value.local,
-          }, value.revision, Boolean(options.llmApiKey?.trim()));
+          }, value.revision, apiKeyConfigured);
           if (result.kind === "conflict") {
             throw new HttpError(409, "LLM_SETTINGS_CONFLICT", "LLM settings changed in another window");
           }
@@ -1299,10 +1337,11 @@ export function createApp(options: AppOptions) {
         }
         await derivedTasks.pause();
         try {
+          const apiKeyConfigured = derivedTasks.settings().apiKeyConfigured;
           const result = requireDatabase().disableLlm(
             body.revision as number,
             body.deleteResults,
-            Boolean(options.llmApiKey?.trim()),
+            apiKeyConfigured,
           );
           if (result.kind === "conflict") {
             throw new HttpError(409, "LLM_SETTINGS_CONFLICT", "LLM settings changed in another window");

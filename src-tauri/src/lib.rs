@@ -506,9 +506,13 @@ pub fn run() {
                     for (name, value) in SIDECAR_ENVIRONMENT {
                         command = command.env(name, value);
                     }
-                    match keychain::load_api_key() {
-                        Ok(Some(api_key)) => command.env("ZHIYE_LLM_API_KEY", api_key),
-                        _ => command.env("ZHIYE_LLM_API_KEY", ""),
+                    match keychain::load_credentials() {
+                        Ok(Some(credentials)) => command
+                            .env("ZHIYE_LLM_API_KEY", credentials.api_key)
+                            .env("ZHIYE_LLM_API_ENDPOINT", credentials.endpoint_url),
+                        _ => command
+                            .env("ZHIYE_LLM_API_KEY", "")
+                            .env("ZHIYE_LLM_API_ENDPOINT", ""),
                     }
                 }
                 Err(error) => {

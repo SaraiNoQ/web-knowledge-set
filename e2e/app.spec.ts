@@ -143,6 +143,46 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(page.getByLabel("文档标题")).toHaveValue("AI 生命周期文章", { timeout: 8_000 });
 
   await page.getByRole("button", { name: "AI 设置", exact: true }).click();
+  const remoteProvider = page.getByLabel("AI 远程平台");
+  await expect(remoteProvider.locator("option")).toHaveCount(10);
+  await page.getByLabel("AI 远程模型").fill("remote-e2e-model");
+  await page.getByLabel("远程模型 API 密钥").fill("e2e-memory-only-key");
+  const keyRequest = page.waitForRequest((request) => request.method() === "PUT" && new URL(request.url()).pathname === "/api/settings/llm/key");
+  await page.getByRole("button", { name: "保存密钥" }).click();
+  expect((await keyRequest).postDataJSON()).toEqual({
+    apiKey: "e2e-memory-only-key",
+    endpointUrl: "https://api.openai.com/v1/chat/completions",
+  });
+  await expect(page.getByText("密钥已立即生效", { exact: false })).toBeVisible();
+  await expect(page.getByText("当前进程已加载当前平台密钥", { exact: false })).toBeVisible();
+  await page.reload();
+  const deferAfterReload = page.getByRole("button", { name: "稍后设置" });
+  if (await deferAfterReload.isVisible()) await deferAfterReload.click();
+  await page.getByRole("button", { name: "AI 设置", exact: true }).click();
+  await expect(page.getByText("当前进程已加载当前平台密钥", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: "删除密钥" })).toBeVisible();
+  await page.getByLabel("AI 远程模型").fill("remote-e2e-model");
+  const remoteProviderAfterReload = page.getByLabel("AI 远程平台");
+  await page.getByLabel("远程模型 API 密钥").fill("must-not-cross-platforms");
+  await remoteProviderAfterReload.selectOption("deepseek");
+  await expect(page.getByText("https://api.deepseek.com/chat/completions", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("AI 远程端点地址")).toHaveCount(0);
+  await expect(page.getByLabel("远程模型 API 密钥")).toHaveValue("");
+  await expect(page.getByText("当前平台未加载密钥", { exact: false })).toBeVisible();
+  await page.getByText("允许 AI 派生知识", { exact: true }).click();
+  await expect(page.getByRole("button", { name: "保存设置" })).toBeDisabled();
+  await page.getByText("允许 AI 派生知识", { exact: true }).click();
+  await remoteProviderAfterReload.selectOption("other");
+  await expect(page.getByLabel("AI 远程端点地址")).toBeVisible();
+  await page.getByLabel("AI 远程端点地址").fill("http://insecure.example.test/v1/chat/completions");
+  await page.getByLabel("远程模型 API 密钥").fill("must-not-bind-to-insecure-endpoint");
+  await page.getByRole("button", { name: "保存密钥" }).click();
+  await expect(page.getByRole("alert")).toContainText("HTTPS");
+  await expect(page.getByText("当前平台未加载密钥", { exact: false })).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "删除密钥" }).click();
+  await expect(page.getByText("当前平台未加载密钥", { exact: false })).toBeVisible();
+  await remoteProviderAfterReload.selectOption("openai");
   await page.getByRole("button", { name: "可信本地端点" }).click();
   await page.getByLabel("AI 本地端点地址").fill("http://127.0.0.1:4175/v1/chat/completions");
   await page.getByLabel("AI 本地模型").fill("fake-e2e-model");
@@ -151,6 +191,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await page.getByRole("button", { name: "保存设置" }).click();
   await expect(page.getByText("AI 派生已启用。", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "返回资料库" }).click();
+  await page.getByRole("button", { name: /AI 生命周期文章/u }).click();
 
   await page.getByRole("button", { name: "AI 派生", exact: true }).click();
   const panel = page.getByRole("complementary", { name: "AI 派生知识" });

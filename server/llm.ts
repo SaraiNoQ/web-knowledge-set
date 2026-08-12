@@ -12,6 +12,7 @@ import type {
   DerivedResultType,
   DerivedResultUsage,
   DerivedTask,
+  LlmApiKeyStatus,
   LlmEndpointKind,
   LlmSettings,
   StartDerivedTaskInput,
@@ -24,6 +25,7 @@ import { isPublicIp } from "./url-security.js";
 
 const MAX_INPUT_CHARS = 40_000;
 const MAX_RESPONSE_BYTES = 256 * 1024;
+const MAX_API_KEY_BYTES = 16 * 1024;
 const REQUEST_TIMEOUT_MS = 60_000;
 const types = new Set<DerivedResultType>(["summary", "outline", "keywords", "tag-suggestions", "translation"]);
 const MAX_TRANSLATION_SEGMENTS = 5_000;
@@ -178,6 +180,25 @@ export function llmSettingsInput(body: Record<string, unknown>): UpdateLlmSettin
     throw new LlmError(400, "INVALID_LLM_SETTINGS", "The selected endpoint must be complete and explicitly trusted");
   }
   return value;
+}
+
+function normalizedApiKey(value: string) {
+  const result = value.trim();
+  if (!result || Buffer.byteLength(result, "utf8") > MAX_API_KEY_BYTES || /\p{Cc}/u.test(result)) {
+    throw new LlmError(400, "INVALID_LLM_API_KEY", "API key must be 1–16384 bytes and contain no control characters");
+  }
+  return result;
+}
+
+export function llmApiKeyInput(body: Record<string, unknown>) {
+  if (Object.keys(body).some((key) => key !== "apiKey" && key !== "endpointUrl") ||
+      typeof body.apiKey !== "string" || typeof body.endpointUrl !== "string") {
+    throw new LlmError(400, "INVALID_LLM_API_KEY", "apiKey and endpointUrl are required strings");
+  }
+  return {
+    apiKey: normalizedApiKey(body.apiKey),
+    endpointUrl: normalizedEndpoint("remote", body.endpointUrl.trim()).href,
+  };
 }
 
 function endpointId(url: string) {
@@ -541,6 +562,7 @@ function errorValue(error: unknown) {
 export function createDerivedTasks(options: {
   database: () => KnowledgeDatabase;
   apiKey?: string;
+  apiKeyEndpoint?: string;
   resolveTarget?: ResolveLlmTarget;
   requestTimeoutMs?: number;
 }) {
@@ -549,14 +571,39 @@ export function createDerivedTasks(options: {
   let active: { task: DerivedTask; controller: AbortController; done: Promise<void> } | null = null;
   let pauseDepth = 0;
   let stopped = false;
-  const apiKey = options.apiKey?.trim() ?? "";
+  let credential: { value: string; endpointUrl: string } | null = null;
+  try {
+    if (options.apiKey && options.apiKeyEndpoint) {
+      credential = {
+        value: normalizedApiKey(options.apiKey),
+        endpointUrl: normalizedEndpoint("remote", options.apiKeyEndpoint.trim()).href,
+      };
+    }
+  } catch {
+    // Invalid startup credentials are ignored instead of weakening endpoint binding.
+  }
   const resolver = options.resolveTarget ?? resolveLlmTarget;
   const timeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > REQUEST_TIMEOUT_MS) {
     throw new RangeError("LLM request timeout must be from 1 to 60000 milliseconds");
   }
 
-  const settings = () => options.database().getLlmSettings(Boolean(apiKey));
+  const apiKeyFor = (endpointUrl: string) => {
+    if (!credential || !endpointUrl) return "";
+    try {
+      return normalizedEndpoint("remote", endpointUrl).href === credential.endpointUrl ? credential.value : "";
+    } catch {
+      return "";
+    }
+  };
+  const settings = () => {
+    const current = options.database().getLlmSettings(false);
+    return { ...current, apiKeyConfigured: Boolean(apiKeyFor(current.remote.endpointUrl)) };
+  };
+  const apiKeyStatus = (): LlmApiKeyStatus => ({
+    configured: credential !== null,
+    endpointUrl: credential?.endpointUrl ?? null,
+  });
   const preview = (
     documentId: string,
     type: DerivedResultType,
@@ -574,7 +621,7 @@ export function createDerivedTasks(options: {
     if (document.revision !== revision) throw new LlmError(409, "REVISION_CONFLICT", "Document changed since it was loaded");
     const current = settings();
     if (!current.enabled) throw new LlmError(409, "LLM_DISABLED", "LLM features are disabled");
-    if (current.target === "remote" && !apiKey) {
+    if (current.target === "remote" && !apiKeyFor(current.remote.endpointUrl)) {
       throw new LlmError(409, "LLM_KEY_MISSING", "Remote LLM use requires a configured API key");
     }
     const selected = current[current.target];
@@ -615,6 +662,10 @@ export function createDerivedTasks(options: {
     const controller = new AbortController();
     const done = (async () => {
       try {
+        const apiKey = task.preview.target.kind === "remote" ? apiKeyFor(task.preview.target.url) : "";
+        if (task.preview.target.kind === "remote" && !apiKey) {
+          throw new LlmError(409, "LLM_KEY_MISSING", "Remote LLM use requires a configured API key");
+        }
         const value = await requestCompletion(task.preview, apiKey, controller.signal, resolver, timeoutMs);
         let output = value.output;
         if (task.type === "translation") {
@@ -692,6 +743,7 @@ export function createDerivedTasks(options: {
 
   return {
     settings,
+    apiKeyStatus,
     preview,
     start,
     get(id: string) { return tasks.get(id) ?? null; },
@@ -726,6 +778,14 @@ export function createDerivedTasks(options: {
       await cancelAndWait();
     },
     resume() { if (pauseDepth > 0) pauseDepth -= 1; },
+    hasApiKey(endpointUrl: string) { return Boolean(apiKeyFor(endpointUrl)); },
+    setApiKey(value: string, endpointUrl: string) {
+      credential = {
+        value: normalizedApiKey(value),
+        endpointUrl: normalizedEndpoint("remote", endpointUrl.trim()).href,
+      };
+    },
+    deleteApiKey() { credential = null; },
     clearHistory() {
       tasks.clear();
       latest.clear();

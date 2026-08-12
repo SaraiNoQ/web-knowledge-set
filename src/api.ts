@@ -31,6 +31,7 @@ import type {
   KnowledgeTag,
   MergeCollectionResponse,
   LlmSettings,
+  LlmApiKeyStatus,
   RecentFilter,
   RecentFiltersState,
   ReextractionPreview,
@@ -159,10 +160,28 @@ export const api = {
     return request<LlmSettings>("/api/settings/llm", { signal });
   },
 
+  getLlmApiKeyStatus(signal?: AbortSignal) {
+    return request<LlmApiKeyStatus>("/api/settings/llm/key", { signal });
+  },
+
   updateLlmSettings(settings: UpdateLlmSettingsInput) {
     return request<LlmSettings>("/api/settings/llm", {
       method: "PUT",
       body: JSON.stringify(settings),
+    });
+  },
+
+  setLlmApiKey(apiKey: string, endpointUrl: string) {
+    return request<LlmApiKeyStatus>("/api/settings/llm/key", {
+      method: "PUT",
+      body: JSON.stringify({ apiKey, endpointUrl }),
+    });
+  },
+
+  deleteLlmApiKey() {
+    return request<LlmApiKeyStatus>("/api/settings/llm/key", {
+      method: "DELETE",
+      body: "{}",
     });
   },
 

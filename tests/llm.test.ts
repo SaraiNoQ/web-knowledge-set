@@ -30,9 +30,7 @@ test("LLM API requires preview confirmation, reuses results, cancels, and disabl
     if (body.includes("CANCEL-ME")) await slow;
     response.writeHead(200, { "Content-Type": "application/json", "Content-Encoding": "identity" });
     response.end(JSON.stringify({
-      choices: [{ message: { content: body.includes("ECHO-SECRET")
-        ? "test-key-not-persisted"
-        : "## Safe summary\n\nGrounded output." } }],
+      choices: [{ message: { content: "## Safe summary\n\nGrounded output." } }],
       usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 },
     }));
   });
@@ -52,7 +50,6 @@ test("LLM API requires preview confirmation, reuses results, cancels, and disabl
     database,
     bootstrapToken: "llm-bootstrap",
     sessionToken: "llm-session",
-    llmApiKey: "test-key-not-persisted",
     startWorker: false,
   });
   const server = createServer((request, response) => void app.handler(request, response));
@@ -91,8 +88,7 @@ test("LLM API requires preview confirmation, reuses results, cancels, and disabl
     });
     assert.equal(settingsResponse.status, 200);
     const settings = (await settingsResponse.json()) as LlmSettings;
-    assert.equal(settings.apiKeyConfigured, true);
-    assert.equal(JSON.stringify(settings).includes("test-key-not-persisted"), false);
+    assert.equal(settings.apiKeyConfigured, false);
 
     const previewResponse = await fetch(`${base}/api/documents/${created.id}/derived-preview`, {
       method: "POST",
@@ -149,26 +145,7 @@ test("LLM API requires preview confirmation, reuses results, cancels, and disabl
     assert.equal(calls, 2);
 
     const current = database.getDocument(created.id)!;
-    const echoed = database.updateDocument(created.id, current.revision, { markdown: "ECHO-SECRET" });
-    assert.equal(echoed.kind, "updated");
-    if (echoed.kind !== "updated") return;
-    const echoPreview = (await (await fetch(`${base}/api/documents/${created.id}/derived-preview`, {
-      method: "POST", headers,
-      body: JSON.stringify({ type: "summary", revision: echoed.document.revision }),
-    })).json()) as DerivedPreview;
-    const echoTask = (await (await fetch(`${base}/api/documents/${created.id}/derived-task`, {
-      method: "POST", headers,
-      body: JSON.stringify({
-        type: echoPreview.type, revision: echoPreview.revision, inputHash: echoPreview.inputHash,
-        settingsRevision: echoPreview.settingsRevision,
-      }),
-    })).json()) as DerivedTask;
-    const echoFailed = await waitForTask(base, cookie, echoTask.id);
-    assert.equal(echoFailed.error?.code, "LLM_SECRET_ECHO");
-    assert.equal(JSON.stringify(echoFailed).includes("test-key-not-persisted"), false);
-    assert.equal(database.listDerivedResults(created.id)?.total, 1);
-
-    const changed = database.updateDocument(created.id, echoed.document.revision, { markdown: "CANCEL-ME" });
+    const changed = database.updateDocument(created.id, current.revision, { markdown: "CANCEL-ME" });
     assert.equal(changed.kind, "updated");
     if (changed.kind !== "updated") return;
     const cancelPreview = (await (await fetch(`${base}/api/documents/${created.id}/derived-preview`, {
@@ -184,7 +161,7 @@ test("LLM API requires preview confirmation, reuses results, cancels, and disabl
         settingsRevision: cancelPreview.settingsRevision,
       }),
     })).json()) as DerivedTask;
-    while (calls < 4) await new Promise((resolve) => setTimeout(resolve, 5));
+    while (calls < 3) await new Promise((resolve) => setTimeout(resolve, 5));
     const cancelledResponse = await fetch(`${base}/api/derived-tasks/${cancelling.id}`, {
       method: "DELETE", headers, body: "{}",
     });
@@ -203,14 +180,210 @@ test("LLM API requires preview confirmation, reuses results, cancels, and disabl
     assert.equal(database.listDerivedResults(created.id)?.total, 0);
     assert.equal((await fetch(`${base}/api/derived-tasks/${cancelling.id}`, { headers: { Cookie: cookie } })).status, 404);
     assert.equal(await (await fetch(`${base}/api/documents/${created.id}/derived-task`, { headers: { Cookie: cookie } })).json(), null);
-    database.sql.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-    for (const path of [join(root, "data", "zhiye.sqlite3"), join(root, "data", "zhiye.sqlite3-wal")]) {
-      if (existsSync(path)) assert.equal(readFileSync(path).includes(Buffer.from("test-key-not-persisted")), false);
-    }
   } finally {
     releaseSlow();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await app.close();
+    await new Promise<void>((resolve) => provider.close(() => resolve()));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("LLM API keys stay bound to one normalized remote endpoint and never persist", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zhiye-llm-key-"));
+  const database = openDatabase(join(root, "data"));
+  const endpointA = "https://provider-a.example/v1/chat/completions";
+  const endpointB = "https://provider-b.example/v1/chat/completions";
+  const secretA = "endpoint-a-secret";
+  const secretB = "endpoint-b-secret";
+  const orphanSecret = "unbound-startup-secret";
+  const document = database.createOrGetDocument("https://example.com/key-binding").document;
+  const stored = database.setLlmSettings({
+    enabled: false,
+    target: "remote",
+    remote: { endpointUrl: endpointA, model: "fake-model" },
+    local: { endpointUrl: "", model: "", trusted: false },
+  }, 0);
+  assert.equal(stored.kind, "updated");
+  if (stored.kind !== "updated") return;
+
+  const startupBound = createDerivedTasks({
+    database: () => database,
+    apiKey: "paired-startup-secret",
+    apiKeyEndpoint: " https://PROVIDER-A.EXAMPLE:443/v1/chat/completions ",
+  });
+  assert.equal(startupBound.settings().apiKeyConfigured, true);
+  await startupBound.stop();
+
+  const requests: Array<{ path: string; authorization: string | undefined }> = [];
+  const provider = createServer(async (request, response) => {
+    for await (const _chunk of request) { /* drain request */ }
+    requests.push({ path: request.url ?? "", authorization: request.headers.authorization });
+    const content = request.url === "/a" ? secretA : "Safe endpoint B result";
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ choices: [{ message: { content } }] }));
+  });
+  await new Promise<void>((resolve) => provider.listen(0, "127.0.0.1", resolve));
+  const providerAddress = provider.address();
+  assert.ok(providerAddress && typeof providerAddress !== "string");
+  const app = createApp({
+    dataDir: join(root, "data"),
+    database,
+    bootstrapToken: "key-bootstrap",
+    sessionToken: "key-session",
+    llmApiKey: orphanSecret,
+    resolveLlmTarget: async (_kind, input) => ({
+      url: new URL(`http://127.0.0.1:${providerAddress.port}/${new URL(input).hostname === "provider-a.example" ? "a" : "b"}`),
+      address: "127.0.0.1",
+      family: 4,
+    }),
+    startWorker: false,
+  });
+  const server = createServer((request, response) => void app.handler(request, response));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const base = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const launch = await fetch(`${base}/launch?token=key-bootstrap`, { redirect: "manual" });
+    const cookie = (launch.headers.get("set-cookie") ?? "").split(";", 1)[0];
+    const initial = await fetch(`${base}/api/settings/llm`, { headers: { Cookie: cookie } });
+    const epoch = initial.headers.get("x-zhiye-data-epoch");
+    assert.ok(epoch);
+    assert.equal(((await initial.json()) as LlmSettings).apiKeyConfigured, false);
+    const headers = {
+      Cookie: cookie,
+      Origin: base,
+      "Content-Type": "application/json",
+      "X-Zhiye-Data-Epoch": epoch,
+    };
+    const putA = await fetch(`${base}/api/settings/llm/key`, {
+      method: "PUT", headers, body: JSON.stringify({ apiKey: `  ${secretA}  `, endpointUrl: endpointA }),
+    });
+    assert.equal(putA.status, 200);
+    assert.equal((await putA.text()).includes(secretA), false);
+    const configured = await fetch(`${base}/api/settings/llm`, { headers: { Cookie: cookie } });
+    const configuredBody = await configured.text();
+    assert.equal(JSON.parse(configuredBody).apiKeyConfigured, true);
+    assert.equal(configuredBody.includes(secretA), false);
+    const keyStatusA = await fetch(`${base}/api/settings/llm/key`, { headers: { Cookie: cookie } });
+    assert.deepEqual(await keyStatusA.json(), { configured: true, endpointUrl: endpointA });
+    assert.equal((await fetch(`${base}/api/settings/llm/key?unexpected=1`, {
+      headers: { Cookie: cookie },
+    })).status, 400);
+
+    const enabledAResponse = await fetch(`${base}/api/settings/llm`, {
+      method: "PUT", headers,
+      body: JSON.stringify({
+        enabled: true,
+        target: "remote",
+        remote: { endpointUrl: endpointA, model: "fake-model" },
+        local: { endpointUrl: "", model: "", trusted: false },
+        revision: stored.settings.revision,
+      }),
+    });
+    assert.equal(enabledAResponse.status, 200);
+    const enabledA = await enabledAResponse.json() as LlmSettings;
+    const previewA = await (await fetch(`${base}/api/documents/${document.id}/derived-preview`, {
+      method: "POST", headers, body: JSON.stringify({ type: "summary", revision: document.revision }),
+    })).json() as DerivedPreview;
+    const taskA = await (await fetch(`${base}/api/documents/${document.id}/derived-task`, {
+      method: "POST", headers,
+      body: JSON.stringify({
+        type: previewA.type, revision: previewA.revision, inputHash: previewA.inputHash,
+        settingsRevision: previewA.settingsRevision,
+      }),
+    })).json() as DerivedTask;
+    const failedA = await waitForTask(base, cookie, taskA.id);
+    assert.equal(failedA.error?.code, "LLM_SECRET_ECHO");
+    assert.equal(JSON.stringify(failedA).includes(secretA), false);
+    assert.deepEqual(requests, [{ path: "/a", authorization: `Bearer ${secretA}` }]);
+
+    const switchedResponse = await fetch(`${base}/api/settings/llm`, {
+      method: "PUT", headers,
+      body: JSON.stringify({
+        enabled: false,
+        target: "remote",
+        remote: { endpointUrl: endpointB, model: "fake-model" },
+        local: { endpointUrl: "", model: "", trusted: false },
+        revision: enabledA.revision,
+      }),
+    });
+    assert.equal(switchedResponse.status, 200);
+    const switched = await switchedResponse.json() as LlmSettings;
+    assert.equal(switched.apiKeyConfigured, false);
+    assert.deepEqual(await (await fetch(`${base}/api/settings/llm/key`, {
+      headers: { Cookie: cookie },
+    })).json(), { configured: true, endpointUrl: endpointA });
+    const forcedEnabledB = database.setLlmSettings({
+      enabled: true,
+      target: "remote",
+      remote: { endpointUrl: endpointB, model: "fake-model" },
+      local: { endpointUrl: "", model: "", trusted: false },
+    }, switched.revision, false);
+    assert.equal(forcedEnabledB.kind, "updated");
+    const blockedPreview = await fetch(`${base}/api/documents/${document.id}/derived-preview`, {
+      method: "POST", headers, body: JSON.stringify({ type: "summary", revision: document.revision }),
+    });
+    assert.equal(blockedPreview.status, 409);
+    assert.equal(((await blockedPreview.json()) as { error: { code: string } }).error.code, "LLM_KEY_MISSING");
+    assert.equal(requests.length, 1);
+
+    const putB = await fetch(`${base}/api/settings/llm/key`, {
+      method: "PUT", headers, body: JSON.stringify({ apiKey: secretB, endpointUrl: endpointB }),
+    });
+    assert.equal(putB.status, 200);
+    assert.equal((await putB.text()).includes(secretB), false);
+    assert.equal(((await (await fetch(`${base}/api/settings/llm`, {
+      headers: { Cookie: cookie },
+    })).json()) as LlmSettings).apiKeyConfigured, true);
+    const previewB = await (await fetch(`${base}/api/documents/${document.id}/derived-preview`, {
+      method: "POST", headers, body: JSON.stringify({ type: "summary", revision: document.revision }),
+    })).json() as DerivedPreview;
+    const taskB = await (await fetch(`${base}/api/documents/${document.id}/derived-task`, {
+      method: "POST", headers,
+      body: JSON.stringify({
+        type: previewB.type, revision: previewB.revision, inputHash: previewB.inputHash,
+        settingsRevision: previewB.settingsRevision,
+      }),
+    })).json() as DerivedTask;
+    assert.equal((await waitForTask(base, cookie, taskB.id)).status, "succeeded");
+    assert.deepEqual(requests[1], { path: "/b", authorization: `Bearer ${secretB}` });
+    assert.equal(requests.some(({ path, authorization }) => path === "/b" && authorization?.includes(secretA)), false);
+
+    for (const body of [
+      { apiKey: "", endpointUrl: endpointB },
+      { apiKey: "line\nbreak", endpointUrl: endpointB },
+      { apiKey: "x".repeat(16 * 1024 + 1), endpointUrl: endpointB },
+      { apiKey: "valid", endpointUrl: "http://provider-b.example/v1/chat/completions" },
+      { apiKey: "valid" },
+    ]) {
+      const invalid = await fetch(`${base}/api/settings/llm/key`, {
+        method: "PUT", headers, body: JSON.stringify(body),
+      });
+      assert.equal(invalid.status, 400);
+    }
+    assert.equal((await fetch(`${base}/api/settings/llm/key`, {
+      method: "DELETE", headers, body: "{}",
+    })).status, 200);
+    assert.equal(((await (await fetch(`${base}/api/settings/llm`, {
+      headers: { Cookie: cookie },
+    })).json()) as LlmSettings).apiKeyConfigured, false);
+    assert.deepEqual(await (await fetch(`${base}/api/settings/llm/key`, {
+      headers: { Cookie: cookie },
+    })).json(), { configured: false, endpointUrl: null });
+    database.sql.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    for (const path of [join(root, "data", "zhiye.sqlite3"), join(root, "data", "zhiye.sqlite3-wal")]) {
+      if (!existsSync(path)) continue;
+      const contents = readFileSync(path);
+      for (const secret of [secretA, secretB, orphanSecret, "paired-startup-secret"]) {
+        assert.equal(contents.includes(Buffer.from(secret)), false);
+      }
+    }
+  } finally {
+    await app.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     await new Promise<void>((resolve) => provider.close(() => resolve()));
     rmSync(root, { recursive: true, force: true });
   }

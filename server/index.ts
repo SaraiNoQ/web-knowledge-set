@@ -102,9 +102,11 @@ function packageVersion() {
 const appVersion = packageVersion();
 const diagnostics = new DiagnosticsLogger(dataDir);
 const llmApiKey = process.env.ZHIYE_LLM_API_KEY?.trim() ?? "";
+const llmApiKeyEndpoint = process.env.ZHIYE_LLM_API_ENDPOINT?.trim() ?? "";
 delete process.env.ZHIYE_LLM_API_KEY;
+delete process.env.ZHIYE_LLM_API_ENDPOINT;
 if (process.env.ZHIYE_DESKTOP_SMOKE === "1") {
-  writeFileSync(join(dataDir, ".desktop-smoke-llm"), llmApiKey ? "configured" : "missing", { mode: 0o600 });
+  writeFileSync(join(dataDir, ".desktop-smoke-llm"), llmApiKey && llmApiKeyEndpoint ? "configured" : "missing", { mode: 0o600 });
 }
 if (!Number.isInteger(requestedPort) || requestedPort < 0 || requestedPort > 65_535) {
   throw new Error("KB_PORT must be an integer from 0 to 65535");
@@ -182,6 +184,7 @@ const app = createApp({
   staticDir,
   dev,
   llmApiKey,
+  llmApiKeyEndpoint,
   appVersion,
   diagnostics,
   onDesktopCloseReady: desktop ? (attemptId) => console.log(`ZHIYE_CLOSE_READY ${attemptId}`) : undefined,

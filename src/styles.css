@@ -1566,8 +1566,9 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .ai-enable small { color: var(--ink-faint); font-size: var(--font-caption); }
 .ai-settings-card > label:not(.ai-enable, .ai-local-trust) { display: grid; gap: 6px; }
 .ai-settings-card > label > span, .ai-settings-row label > span { color: var(--ink-faint); font-size: var(--font-caption); letter-spacing: .05em; }
-.ai-settings-card input:not([type="checkbox"]), .ai-settings-row input { width: 100%; min-height: 39px; padding: 0 10px; color: var(--ink); background: rgba(244,240,229,.76); border: 1px solid var(--line-strong); outline: 0; font: var(--font-small)/1 var(--font-mono); }
-.ai-settings-card input:focus { border-color: var(--vermilion); }
+.ai-settings-card input:not([type="checkbox"]), .ai-settings-card select, .ai-settings-row input { width: 100%; min-height: 39px; padding: 0 10px; color: var(--ink); background: rgba(244,240,229,.76); border: 1px solid var(--line-strong); outline: 0; font: var(--font-small)/1 var(--font-mono); }
+.ai-settings-card select { padding-right: 34px; }
+.ai-settings-card input:focus, .ai-settings-card select:focus { border-color: var(--vermilion); }
 .ai-settings-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .ai-settings-row label { display: grid; gap: 6px; }
 .ai-endpoint-kind { display: grid; grid-template-columns: 1fr 1fr; margin: 0; padding: 0; border: 1px solid var(--line-strong); }
