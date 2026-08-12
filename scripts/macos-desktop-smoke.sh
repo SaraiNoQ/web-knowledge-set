@@ -75,6 +75,10 @@ wait_for_source() {
   return 1
 }
 
+open_app() {
+  open -a "$APP" "$1"
+}
+
 quit_app
 launchctl setenv ZHIYE_DESKTOP_SMOKE 1
 launchctl setenv ZHIYE_KEYCHAIN_SMOKE 1
@@ -83,22 +87,22 @@ rm -f -- "$FILE_MARKER" "$INTENT_MARKER" "$ERROR_MARKER" "$LLM_MARKER"
 rm -rf -- "$LAUNCHER_DIR"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"
 plutil -extract CFBundleURLTypes xml1 -o - "$APP/Contents/Info.plist" | grep -q '<string>zhiye</string>'
-open -b "$BUNDLE_ID" "$COLD_LINK"
+open_app "$COLD_LINK"
 wait_for_source "$COLD_URL"
 grep -Fx 'configured' "$LLM_MARKER" >/dev/null
 
-open -b "$BUNDLE_ID" "$WARM_LINK"
+open_app "$WARM_LINK"
 wait_for_source "$WARM_URL"
 [[ $(pgrep -x zhiye | wc -l | tr -d ' ') == "1" ]]
 
 before=$(sqlite3 "$DATABASE" 'SELECT count(*) FROM documents')
-open -b "$BUNDLE_ID" 'zhiye://delete?url=https%3A%2F%2Fexample.com%2Fmust-not-run'
+open_app 'zhiye://delete?url=https%3A%2F%2Fexample.com%2Fmust-not-run'
 sleep 2
 after=$(sqlite3 "$DATABASE" 'SELECT count(*) FROM documents')
 [[ "$before" == "$after" ]]
 
 printf '# Finder smoke\n\nThis file must be handled without starting another app.\n' > "$NOTE"
-open -b "$BUNDLE_ID" "$NOTE"
+open_app "$NOTE"
 for _ in {1..15}; do
   [[ -f "$FILE_MARKER" ]] && grep -Fx 'finder-smoke.md' "$FILE_MARKER" >/dev/null && break
   sleep 1
@@ -112,7 +116,7 @@ printf '{"version":1,"data_dir":"%s"}' "$CUSTOM_DATA_DIR" > "$LAUNCHER_CONFIG"
 chmod 600 "$LAUNCHER_CONFIG"
 DATA_DIR="$CUSTOM_DATA_DIR"
 DATABASE="$CUSTOM_DATA_DIR/zhiye.sqlite3"
-open -b "$BUNDLE_ID" "$CUSTOM_LINK"
+open_app "$CUSTOM_LINK"
 wait_for_source "$CUSTOM_URL"
 [[ $(sqlite3 "$DEFAULT_DATABASE" "SELECT count(*) FROM documents WHERE source_url = '$CUSTOM_URL'") == "0" ]]
 [[ $(pgrep -x zhiye | wc -l | tr -d ' ') == "1" ]]
@@ -131,7 +135,7 @@ if kill -0 "$crashed_sidecar_pid" >/dev/null 2>&1 || pgrep -f "$APP/Contents/Mac
   exit 1
 fi
 crashed_sidecar_pid=""
-open -b "$BUNDLE_ID" "$RESTART_LINK"
+open_app "$RESTART_LINK"
 wait_for_source "$RESTART_URL"
 [[ $(sqlite3 "$DATABASE" "SELECT count(*) FROM documents WHERE source_url = '$CUSTOM_URL'") == "1" ]]
 [[ $(pgrep -x zhiye | wc -l | tr -d ' ') == "1" ]]
