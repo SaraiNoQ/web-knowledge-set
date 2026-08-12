@@ -367,6 +367,8 @@ fn fail_service(app: &tauri::AppHandle, reason: &str) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    let updater_configured = context.config().plugins.0.contains_key("updater");
     let accepted_origin = Arc::new(Mutex::new(None));
     let navigation_origin = accepted_origin.clone();
     let builder = tauri::Builder::default()
@@ -383,7 +385,11 @@ pub fn run() {
             external::focus_main(app);
         }))
         .plugin(tauri_plugin_deep_link::init());
-    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let builder = if updater_configured {
+        builder.plugin(tauri_plugin_updater::Builder::new().build())
+    } else {
+        builder
+    };
     #[cfg(target_os = "macos")]
     let builder = builder.plugin(tauri_plugin_dialog::init());
     let app = builder
@@ -652,7 +658,7 @@ pub fn run() {
 
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("failed to build the Zhiye desktop app");
 
     app.run(|handle, event| match event {
