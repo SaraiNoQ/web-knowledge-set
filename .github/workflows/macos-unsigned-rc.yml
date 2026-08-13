@@ -49,6 +49,8 @@ jobs:
           rustup default 1.97.1
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install chromium --only-shell
+      - name: Prepare desktop runtime
+        run: pnpm desktop:prepare
       - name: Run complete application gates
         run: pnpm verify
       - name: Run desktop gates
