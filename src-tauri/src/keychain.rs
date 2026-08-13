@@ -207,7 +207,7 @@ pub(crate) fn seed_smoke_api_key() -> Result<(), String> {
 pub(crate) fn llm_keychain_status() -> Result<KeychainStatus, String> {
     #[cfg(target_os = "macos")]
     {
-        return read_bound(bound_account()).map(keychain_status);
+        read_bound(bound_account()).map(keychain_status)
     }
     #[cfg(not(target_os = "macos"))]
     Err("密钥存储仅支持 macOS 桌面应用".to_owned())
@@ -222,10 +222,10 @@ pub(crate) fn set_llm_api_key(
     {
         let endpoint_url =
             replace_bound(bound_account(), legacy_account(), &api_key, &endpoint_url)?;
-        return Ok(KeychainStatus {
+        Ok(KeychainStatus {
             configured: true,
             endpoint_url: Some(endpoint_url),
-        });
+        })
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -239,10 +239,10 @@ pub(crate) fn delete_llm_api_key() -> Result<KeychainStatus, String> {
     #[cfg(target_os = "macos")]
     {
         delete_all(bound_account(), legacy_account())?;
-        return Ok(KeychainStatus {
+        Ok(KeychainStatus {
             configured: false,
             endpoint_url: None,
-        });
+        })
     }
     #[cfg(not(target_os = "macos"))]
     Err("密钥存储仅支持 macOS 桌面应用".to_owned())
