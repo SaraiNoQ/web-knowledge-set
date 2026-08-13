@@ -561,6 +561,13 @@ export const api = {
     });
   },
 
+  convertFailedDocumentToManual(id: string, revision: number) {
+    return request<KnowledgeDocument>(`/api/documents/${encodeURIComponent(id)}/manual`, {
+      method: "POST",
+      body: JSON.stringify({ revision }),
+    });
+  },
+
   deleteDocument(id: string, revision: number) {
     return request<KnowledgeDocument>(`/api/documents/${encodeURIComponent(id)}`, {
       method: "DELETE",

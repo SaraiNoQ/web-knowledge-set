@@ -2365,6 +2365,27 @@ export function createApp(options: AppOptions) {
         return;
       }
 
+      const manualMatch = pathname.match(/^\/api\/documents\/([^/]+)\/manual$/u);
+      if (request.method === "POST" && manualMatch) {
+        const revision = bodyRevision(await mutationBody(request));
+        const result = requireDatabase().convertFailedDocumentToManual(decodeId(manualMatch[1]), revision);
+        if (result.kind === "missing") throw new HttpError(404, "NOT_FOUND", "Document not found");
+        if (result.kind === "deleted") {
+          sendError(response, 409, "DOCUMENT_DELETED", "Restore the document before editing it", result.document);
+          return;
+        }
+        if (result.kind === "conflict") {
+          sendError(response, 409, "REVISION_CONFLICT", "Document changed since it was loaded", result.document);
+          return;
+        }
+        if (result.kind === "not_failed") {
+          sendError(response, 409, "NOT_FAILED", "Only failed captures can become manual excerpts", result.document);
+          return;
+        }
+        sendJson(response, 200, result.document);
+        return;
+      }
+
       const documentMatch = pathname.match(/^\/api\/documents\/([^/]+)$/u);
       if (documentMatch && request.method === "GET") {
         const document = requireDatabase().getDocument(decodeId(documentMatch[1]));

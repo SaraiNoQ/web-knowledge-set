@@ -3214,6 +3214,26 @@ export class KnowledgeDatabase {
     });
   }
 
+  convertFailedDocumentToManual(id: string, revision: number) {
+    return transaction(this.sql, () => {
+      const current = this.getDocument(id);
+      if (!current) return { kind: "missing" as const };
+      if (current.deletedAt) return { kind: "deleted" as const, document: current };
+      if (current.revision !== revision) return { kind: "conflict" as const, document: current };
+      if (current.status !== "failed") return { kind: "not_failed" as const, document: current };
+      const timestamp = now();
+      this.sql.prepare(
+        `UPDATE documents
+         SET status = 'ready', warning = '自动抓取受限；正文由用户手动摘录',
+             error_code = NULL, error_message = NULL, capture_mode = NULL,
+             revision = revision + 1, updated_at = ? WHERE id = ?`,
+      ).run(timestamp, id);
+      const document = this.getDocument(id)!;
+      this.recordRevision(document);
+      return { kind: "converted" as const, document };
+    });
+  }
+
   cancelQueuedCapture(id: string) {
     return transaction(this.sql, () => {
       const current = this.getDocument(id);

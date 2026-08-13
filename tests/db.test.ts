@@ -609,6 +609,24 @@ test("failed capture stays durable until an explicit retry", () => {
   }
 });
 
+test("failed capture can become an editable manual excerpt", () => {
+  const fixture = database();
+  try {
+    const created = fixture.db.createOrGetDocument("https://example.com/restricted").document;
+    const job = fixture.db.claimNextCapture();
+    assert.ok(job);
+    const failed = fixture.db.failCapture(job, "HTTP_ERROR", "HTTP 403");
+    const converted = fixture.db.convertFailedDocumentToManual(failed.id, failed.revision);
+    assert.equal(converted.kind, "converted");
+    assert.equal(converted.document.status, "ready");
+    assert.equal(converted.document.errorCode, null);
+    assert.match(converted.document.warning ?? "", /手动摘录/u);
+    assert.equal(fixture.db.listCaptureHistory(created.id)?.[0]?.errorCode, "HTTP_ERROR");
+  } finally {
+    fixture.close();
+  }
+});
+
 test("drafts survive restart and only matching document saves clear them", () => {
   const directory = mkdtempSync(join(tmpdir(), "zhiye-drafts-"));
   let db = openDatabase(directory);

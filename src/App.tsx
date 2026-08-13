@@ -2422,6 +2422,24 @@ export default function App() {
     }
   };
 
+  const beginManualExcerpt = async () => {
+    if (!currentDoc || retrying) return;
+    setRetrying(true);
+    try {
+      const updated = await api.convertFailedDocumentToManual(currentDoc.id, currentDoc.revision);
+      installCurrentDocument(updated);
+      updateListItem(updated);
+      setDraft(draftOf(updated));
+      setMode("edit");
+      setDraftNotice("已保留原链接。请粘贴正文并保存；自动抓取失败记录仍可在采集历史中查看。");
+      setListRefresh((value) => value + 1);
+    } catch (error) {
+      setDetailError((error as Error).message);
+    } finally {
+      setRetrying(false);
+    }
+  };
+
   const cancelCapture = async () => {
     if (!currentDoc || currentDoc.status !== "queued" || closeAttemptRef.current) return;
     const documentId = currentDoc.id;
@@ -3348,7 +3366,10 @@ export default function App() {
                   <span className="failure-code">{currentDoc.errorCode || "CAPTURE_FAILED"}</span>
                   <h3>这张网页没有收进来</h3>
                   <p>{userErrorMessage(currentDoc.errorCode ?? "CAPTURE_FAILED")}</p>
-                  <button type="button" className="primary-button" onClick={retryCapture} disabled={retrying}>{retrying ? <><Spinner />重试中</> : "重新抓取"}</button>
+                  <div className="capture-failed-actions">
+                    <button type="button" className="primary-button" onClick={retryCapture} disabled={retrying}>{retrying ? <><Spinner />处理中…</> : "重新抓取"}</button>
+                    <button type="button" className="text-button" onClick={() => void beginManualExcerpt()} disabled={retrying}>手动摘录正文</button>
+                  </div>
                 </div>
               ) : (
                 <>{!longPreviewAllowed && <div className="notice warning" role="status"><strong>长文模式</strong><span>正文较长，已默认暂停预览以保持编辑流畅；需要时可手动切换到预览。</span></div>}<div className="editor-workbench">

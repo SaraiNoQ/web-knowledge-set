@@ -940,6 +940,8 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 }
 .failure-code { margin-bottom: 12px; color: var(--vermilion); font: 600 var(--font-caption)/1 var(--font-mono); letter-spacing: .14em; }
 .capture-failed .primary-button { margin-top: 14px; }
+.capture-failed-actions { display: flex; align-items: center; gap: 18px; margin-top: 14px; }
+.capture-failed-actions .primary-button { margin-top: 0; }
 
 .editor-workbench { min-width: 0; }
 .editor-toolbar {
