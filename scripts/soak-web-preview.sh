@@ -476,11 +476,15 @@ async function main() {
   };
   summary.temporaryGrowthSuspected = summary.temporaryBytesDelta > 0 &&
     stats.longestTemporaryGrowthRun * intervalSeconds >= 3_600;
+  summary.rssGrowthSuspected = summary.rssDeltaKiB > 65_536;
+  summary.fdGrowthSuspected = summary.fdDelta > 16;
+  summary.temporaryFilesGrowthSuspected = summary.temporaryFilesDelta > 32;
   summary.pass = complete && stats.sampleFailures === 0 && stats.healthFailures === 0 &&
     stats.integrityFailures === 0 && stats.maxForeignKeyViolations === 0 &&
     stats.maxMissingSnapshots === 0 && stats.maxMissingAssets === 0 &&
     stats.maxUnsafeSnapshots === 0 && stats.maxUnsafeAssets === 0 && stats.maxRuntimeOrphans === 0 &&
-    stats.mainPidChanges === 0 && !summary.temporaryGrowthSuspected;
+    stats.mainPidChanges === 0 && !summary.temporaryGrowthSuspected &&
+    !summary.rssGrowthSuspected && !summary.fdGrowthSuspected && !summary.temporaryFilesGrowthSuspected;
   const summaryFd = fs.openSync(path.join(outputDirectory, "summary.json"), "wx", 0o600);
   fs.writeSync(summaryFd, `${JSON.stringify(summary, null, 2)}\n`);
   fs.fsyncSync(summaryFd);

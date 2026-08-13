@@ -31,7 +31,9 @@ if (!workflow.includes("if: github.event_name == 'push' && github.ref == 'refs/t
     !workflow.includes("--verify-tag")) {
   fail("Only the exact tag path may create a draft prerelease");
 }
-if (!workflow.includes("gh release download") || !workflow.includes("sha256sum -c SHA256SUMS")) {
+if (!workflow.includes("gh release download") ||
+    !workflow.includes("cmp release-assets/SHA256SUMS downloaded-assets/SHA256SUMS") ||
+    !workflow.includes("sha256sum -c SHA256SUMS")) {
   fail("Published assets must be downloaded and hash-verified before disclosure");
 }
 if (!workflow.includes("--draft=false --prerelease") || !workflow.includes("isDraft,isImmutable,isPrerelease")) {
@@ -59,6 +61,7 @@ for (const required of [
   "--latest=false",
   'repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME',
   'repos/$GITHUB_REPOSITORY/commits/main',
+  'repos/$GITHUB_REPOSITORY/immutable-releases',
   "isDraft,isImmutable,isPrerelease",
 ]) {
   if (!workflow.includes(required)) fail(`Unsigned RC workflow is missing: ${required}`);
