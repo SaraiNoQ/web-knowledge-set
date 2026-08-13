@@ -34,6 +34,8 @@
 
 三次干净镜像门禁、最终 RC 的 24 小时 soak、受保护 DeepSeek smoke 和未签名资产复验尚未完成，因此“RC 质量与发布证据”台账继续保持未勾选。
 
+- [ ] **24 小时非 root Web soak 记录**：最终 RC 的 `zhiye-preview` 服务以非 root 用户连续运行 24 小时；有界记录健康、数据完整性、RSS、FD、私有临时文件和同 runtime 孤儿进程计数，并在 systemd 重启后另行复验，证据不含 Cookie、标题或路径。
+
 ### M6：DeepSeek 真实验收自动化（2026-08-13）
 
 - 手动 workflow 只接受完整提交 SHA；先确认触发分支为 `main`、checkout 结果精确匹配且该提交属于 `origin/main`，再进入需人工批准的 `deepseek-smoke` Environment。该 Environment 还必须限制只有 `main` 可部署，并把 `APPROVED_DEEPSEEK_SHA` 变量设为本次精确 SHA；不等时会在密钥注入前失败。
@@ -41,3 +43,12 @@
 - 真实链路固定为 `https://api.deepseek.com/chat/completions` 和 `deepseek-v4-flash`；先通过连接测试 API 发送非文档探针，再通过 Markdown 导入、派生任务和结果列表 API 翻译仓库内非隐私 fixture。
 - 验收断言列表、链接 URL、行内代码与代码块不变，原文修订和正文未覆盖，译文已从派生结果 API 读回；关闭应用并重开 SQLite 后再次核对原文和译文 ID/正文。程序只输出状态、固定模型、耗时和稳定错误码。
 - 本节目前只记录自动化实现，不记录真实 DeepSeek 通过。仓库管理员仍需创建 `deepseek-smoke` Environment，设置 required reviewer、`main` deployment branch、精确 `APPROVED_DEEPSEEK_SHA` 和 `DEEPSEEK_API_KEY`，然后对 `main` 上已批准 SHA 手动执行并归档结果。
+
+### M7：未签名 RC 发布工程（2026-08-13）
+
+- `package.json`、Tauri 配置和 Cargo 版本源已统一为 `0.9.2-rc.1`；正式 identifier 保持 `io.github.sarainoq.zhiye`。
+- 独立未签名 workflow 只响应精确 `v0.9.2-rc.1` tag 和手动演练；演练只上传 Actions 资产，不创建 Release。
+- 构建 job 不读取 Apple 或 updater secrets，使用 Tauri `--no-sign`，不生成更新包、签名文件、公证结果或 `latest.json`。它会挂载产出 DMG，对其中的实际应用执行 release 桌面和 Chromium 安全 smoke，并断言 arm64、macOS 13.5、数字 macOS 版本元数据、无 Developer ID 身份及无 Apple 公证票据。
+- 仓库管理员必须在打 tag 前预先启用 immutable releases。tag 路径会在创建 Release 前通过 GitHub API 复验远程 tag 和 `main` 尖端均精确指向 `GITHUB_SHA`，再创建 draft prerelease、下载全部资产、对比精确文件清单并重算 SHA-256；只有复验通过才公开为 prerelease，且不设为 latest。公开后还必须由 `gh release view` 确认 `isImmutable=true`。
+- 产物包含未签名 Apple Silicon DMG、两份 CycloneDX SBOM、`SHA256SUMS`、MIT 和第三方许可、隐私、支持与发布说明；安装说明只使用 Finder“右键→打开”，不要求关闭 Gatekeeper 或删除 quarantine。
+- 本节目前只记录发布工程实现；macOS 演练、tag 发布与下载复验未完成，不得以源码审查代替产物证据。

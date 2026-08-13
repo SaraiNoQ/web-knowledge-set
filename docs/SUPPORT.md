@@ -1,6 +1,6 @@
 # 支持与故障排查
 
-织页当前为 `0.9.1` 发布候选构建，尚无签名、公证的正式 macOS 安装包。源码和未签名构建不配置更新通道；以下步骤以保护本地数据为第一原则。
+织页当前为 `0.9.2-rc.1` 功能完整预览版。Apple Silicon DMG 没有 Developer ID 签名或 Apple 公证，不配置更新通道；以下步骤以保护本地数据为第一原则。
 
 ## 先保护数据
 
@@ -53,6 +53,18 @@ scripts/deploy-web-preview.sh activate <完整提交 SHA>
 ```
 
 `activate` 只有在 systemd 主进程属于 `zhiye-preview`，且数据安全接口确认正常模式、数据库完整、无外键及缺失/不安全文件问题时才完成；新版本失败会恢复先前的 `current`。旧 root 数据和留档原目录至少保留七天，不在切换脚本中删除。需要人工回退时执行 `scripts/deploy-web-preview.sh rollback <旧提交 SHA>`，再核验资料数量、数据库完整性和无孤儿 Node/Chromium 进程。
+
+最终 RC 激活后，以 root 启动 24 小时记录器；它只写时间、稳定状态和计数，不写会话 Cookie、标题或文件路径。默认每 5 分钟采样一次，只接受以字母或数字开头、其余为字母、数字、点、下划线或连字符的记录名，并在严格由 root 所有、权限为 `0700` 的 `/var/lib/zhiye-preview-evidence` 下创建同名目录；已有目录的类型、所有者或权限不符时会直接拒绝，不会自动修复：
+
+```sh
+scripts/soak-web-preview.sh rc-0.9.2
+
+# summary.json 显示 complete=true 且 pass=true 后，再执行明确重启与复验。
+systemctl restart zhiye-preview.service
+scripts/soak-web-preview.sh --verify-restart rc-0.9.2
+```
+
+归档对应记录目录中的 `samples.jsonl`、`summary.json` 和 `restart-verification.json`；最后一份必须显示新 MainPID 且 `pass=true`。长跑期间发生 MainPID 变化、发现孤儿进程，或临时文件体积连续增长至少一小时，都会使汇总失败。短时验证可显式传入持续秒数和采样间隔，例如 `scripts/soak-web-preview.sh check-600s 600 30`，不能把短时结果记作最终 soak。
 
 ### 正式身份升级后提示两个知识库
 

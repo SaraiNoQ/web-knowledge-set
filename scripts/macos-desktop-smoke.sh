@@ -2,6 +2,8 @@
 set -euo pipefail
 
 BUILT_APP=${1:-$(find src-tauri/target/debug/bundle/macos -maxdepth 1 -name '*.app' -print -quit)}
+SMOKE_MODE=${2:-debug}
+[[ "$SMOKE_MODE" == debug || "$SMOKE_MODE" == release ]] || { echo "smoke mode must be debug or release" >&2; exit 2; }
 if [[ -z "$BUILT_APP" ]]; then
   echo "Desktop app bundle was not produced" >&2
   exit 1
@@ -51,6 +53,7 @@ cleanup() {
     fi
   fi
   launchctl unsetenv ZHIYE_DESKTOP_SMOKE >/dev/null 2>&1 || true
+  launchctl unsetenv ZHIYE_DESKTOP_SMOKE_SEED_KEY >/dev/null 2>&1 || true
   launchctl unsetenv ZHIYE_KEYCHAIN_SMOKE >/dev/null 2>&1 || true
   rm -rf -- "$NOTE_DIR"
   rm -rf -- "$CUSTOM_DATA_DIR"
@@ -76,8 +79,14 @@ wait_for_source() {
 }
 
 quit_app
-launchctl setenv ZHIYE_DESKTOP_SMOKE 1
-launchctl setenv ZHIYE_KEYCHAIN_SMOKE 1
+if [[ "$SMOKE_MODE" == debug ]]; then
+  launchctl setenv ZHIYE_DESKTOP_SMOKE 1
+  launchctl setenv ZHIYE_KEYCHAIN_SMOKE 1
+else
+  launchctl unsetenv ZHIYE_DESKTOP_SMOKE >/dev/null 2>&1 || true
+  launchctl unsetenv ZHIYE_DESKTOP_SMOKE_SEED_KEY >/dev/null 2>&1 || true
+  launchctl unsetenv ZHIYE_KEYCHAIN_SMOKE >/dev/null 2>&1 || true
+fi
 [[ -x "$APP/Contents/MacOS/zhiye" ]]
 rm -f -- "$FILE_MARKER" "$INTENT_MARKER" "$ERROR_MARKER" "$LLM_MARKER"
 rm -rf -- "$LAUNCHER_DIR"
@@ -85,7 +94,9 @@ rm -rf -- "$LAUNCHER_DIR"
 plutil -extract CFBundleURLTypes xml1 -o - "$APP/Contents/Info.plist" | grep -q '<string>zhiye</string>'
 open -b "$BUNDLE_ID" "$COLD_LINK"
 wait_for_source "$COLD_URL"
-grep -Fx 'configured' "$LLM_MARKER" >/dev/null
+if [[ "$SMOKE_MODE" == debug ]]; then
+  grep -Fx 'configured' "$LLM_MARKER" >/dev/null
+fi
 
 open -b "$BUNDLE_ID" "$WARM_LINK"
 wait_for_source "$WARM_URL"
@@ -97,14 +108,16 @@ sleep 2
 after=$(sqlite3 "$DATABASE" 'SELECT count(*) FROM documents')
 [[ "$before" == "$after" ]]
 
-printf '# Finder smoke\n\nThis file must be handled without starting another app.\n' > "$NOTE"
-open -b "$BUNDLE_ID" "$NOTE"
-for _ in {1..15}; do
-  [[ -f "$FILE_MARKER" ]] && grep -Fx 'finder-smoke.md' "$FILE_MARKER" >/dev/null && break
-  sleep 1
-done
-grep -Fx 'finder-smoke.md' "$FILE_MARKER" >/dev/null
-[[ $(pgrep -x zhiye | wc -l | tr -d ' ') == "1" ]]
+if [[ "$SMOKE_MODE" == debug ]]; then
+  printf '# Finder smoke\n\nThis file must be handled without starting another app.\n' > "$NOTE"
+  open -b "$BUNDLE_ID" "$NOTE"
+  for _ in {1..15}; do
+    [[ -f "$FILE_MARKER" ]] && grep -Fx 'finder-smoke.md' "$FILE_MARKER" >/dev/null && break
+    sleep 1
+  done
+  grep -Fx 'finder-smoke.md' "$FILE_MARKER" >/dev/null
+  [[ $(pgrep -x zhiye | wc -l | tr -d ' ') == "1" ]]
+fi
 
 quit_app
 mkdir -m 700 "$LAUNCHER_DIR"

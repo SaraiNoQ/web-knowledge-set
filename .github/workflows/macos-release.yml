@@ -136,7 +136,7 @@ jobs:
           echo "updater_sig=$UPDATER.sig" >> "$GITHUB_OUTPUT"
       - name: Exercise signed packaged application
         run: |
-          scripts/macos-desktop-smoke.sh "${{ steps.artifact.outputs.app }}"
+          scripts/macos-desktop-smoke.sh "${{ steps.artifact.outputs.app }}" release
           node scripts/macos-browser-security-smoke.mjs "${{ steps.artifact.outputs.app }}/Contents/Resources/runtime"
           node scripts/macos-browser-security-smoke.mjs "${{ steps.artifact.outputs.updater_app }}/Contents/Resources/runtime"
       - name: Build release evidence
