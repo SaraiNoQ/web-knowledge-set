@@ -33,13 +33,26 @@ export interface AuthOptions {
   bootstrapToken?: string;
   sessionToken?: string;
   dev?: boolean;
+  trustedLocalhost?: boolean;
 }
 
 export function createAuth(options: AuthOptions = {}) {
   const bootstrapToken = options.bootstrapToken || token();
   const sessionToken = options.sessionToken || token();
   const dev = options.dev ?? process.env.KB_DEV === "1";
+  const trustedLocalhost = options.trustedLocalhost ?? process.env.KB_TRUST_LOCALHOST === "1";
+  if (dev && trustedLocalhost) throw new Error("KB_TRUST_LOCALHOST cannot be used with KB_DEV=1");
   let launchAvailable = true;
+
+  const establishSession = (response: ServerResponse) => {
+    response.writeHead(302, {
+      Location: "/",
+      "Set-Cookie": `${SESSION_COOKIE}=${sessionToken}; HttpOnly; SameSite=Strict; Path=/`,
+      "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer",
+    });
+    response.end();
+  };
 
   return {
     bootstrapToken,
@@ -50,6 +63,10 @@ export function createAuth(options: AuthOptions = {}) {
     },
 
     launch(requestUrl: URL, response: ServerResponse) {
+      if (trustedLocalhost) {
+        establishSession(response);
+        return;
+      }
       if (!launchAvailable || !equal(requestUrl.searchParams.get("token") ?? undefined, bootstrapToken)) {
         response.writeHead(401, {
           "Content-Type": "application/json; charset=utf-8",
@@ -59,13 +76,13 @@ export function createAuth(options: AuthOptions = {}) {
         return;
       }
       launchAvailable = false;
-      response.writeHead(302, {
-        Location: "/",
-        "Set-Cookie": `${SESSION_COOKIE}=${sessionToken}; HttpOnly; SameSite=Strict; Path=/`,
-        "Cache-Control": "no-store",
-        "Referrer-Policy": "no-referrer",
-      });
-      response.end();
+      establishSession(response);
+    },
+
+    establishTrustedSession(request: IncomingMessage, response: ServerResponse) {
+      if (!trustedLocalhost || equal(cookies(request.headers.cookie).get(SESSION_COOKIE), sessionToken)) return false;
+      establishSession(response);
+      return true;
     },
   };
 }

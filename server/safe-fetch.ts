@@ -84,12 +84,16 @@ function requestOnce(
   });
 }
 
-async function fetchHtml(input: string | URL, signal: AbortSignal): Promise<FetchResult> {
+async function fetchHtml(
+  input: string | URL,
+  signal: AbortSignal,
+  resolveTarget: typeof resolvePublicTarget,
+): Promise<FetchResult> {
   const deadline = Date.now() + TIMEOUT_MS;
   let current = input;
 
   for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
-    const target = await resolvePublicTarget(current);
+    const target = await resolveTarget(current);
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new CapturePipelineError("FETCH_TIMEOUT", "网页抓取超时");
     const response = await requestOnce(target.url, target.address, target.family, remaining, signal, {
@@ -205,11 +209,14 @@ async function fetchBinary(
   throw new CapturePipelineError("HTTP_ERROR", "图片重定向过多");
 }
 
-export async function safeFetchHtml(input: string | URL): Promise<FetchResult> {
+export async function safeFetchHtml(
+  input: string | URL,
+  options: { resolveTarget?: typeof resolvePublicTarget } = {},
+): Promise<FetchResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    return await fetchHtml(input, controller.signal);
+    return await fetchHtml(input, controller.signal, options.resolveTarget ?? resolvePublicTarget);
   } catch (cause) {
     if (controller.signal.aborted) {
       throw new CapturePipelineError("FETCH_TIMEOUT", "网页抓取超时", { cause });

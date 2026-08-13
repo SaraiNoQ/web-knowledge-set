@@ -28,8 +28,31 @@
 ### 本地 Web 显示未授权或无法连接
 
 - 确认服务仍在运行，并使用本次启动终端打印的完整 `ZHIYE_READY` 地址；旧令牌和只访问端口根地址不能建立新会话。
+- 只有管理员明确配置的 `KB_TRUST_LOCALHOST=1` 预览服务可直接打开根地址。该模式信任能连入服务器 localhost 的用户，只能经受信 SSH 隧道使用，不得与 `KB_DEV=1`、桌面 sidecar、`0.0.0.0` 或反向代理并用。
 - 服务只监听 `127.0.0.1`。远端开发时先建立 SSH 隧道，再打开完整一次性地址；不要改为监听 `0.0.0.0`。
 - 同一数据目录一次只能由一个实例使用。完全退出另一个 Web/桌面实例后重试。
+
+### 固定 Web 预览服务迁移与回退
+
+固定预览只允许安装到 `/opt/zhiye-preview`，数据只放在 `/var/lib/zhiye-preview/data`，并由无登录用户 `zhiye-preview` 运行。切换前必须在旧服务的“数据安全”中创建完整留档并再次校验为 `verified`；然后正常停止旧进程，确认 `127.0.0.1:4301` 已无监听，才能冷复制整个数据目录。不得复制仍在运行的 SQLite，也不得让部署脚本自动杀死未知占用者。
+
+```sh
+pnpm desktop:prepare
+scripts/deploy-web-preview.sh stage <完整提交 SHA> .
+
+# 旧进程完全退出后，且目标目录确认为空时执行一次。
+test -z "$(find /var/lib/zhiye-preview/data -mindepth 1 -print -quit)"
+cp -a /root/zhiye-web-preview-data/. /var/lib/zhiye-preview/data/
+test ! -e /var/lib/zhiye-preview/data-backups
+test ! -L /var/lib/zhiye-preview/data-backups
+runuser -u zhiye-preview -- mkdir -m 0700 /var/lib/zhiye-preview/data-backups
+cp -a /root/zhiye-web-preview-data-backups/. /var/lib/zhiye-preview/data-backups/
+chown -R zhiye-preview:zhiye-preview /var/lib/zhiye-preview
+
+scripts/deploy-web-preview.sh activate <完整提交 SHA>
+```
+
+`activate` 只有在 systemd 主进程属于 `zhiye-preview`，且数据安全接口确认正常模式、数据库完整、无外键及缺失/不安全文件问题时才完成；新版本失败会恢复先前的 `current`。旧 root 数据和留档原目录至少保留七天，不在切换脚本中删除。需要人工回退时执行 `scripts/deploy-web-preview.sh rollback <旧提交 SHA>`，再核验资料数量、数据库完整性和无孤儿 Node/Chromium 进程。
 
 ### 正式身份升级后提示两个知识库
 

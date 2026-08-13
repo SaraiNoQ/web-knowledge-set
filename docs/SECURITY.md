@@ -6,7 +6,7 @@
 
 ### 本地服务与会话
 
-Node 服务只绑定 `127.0.0.1`，拒绝非 localhost `Host`、跨源写请求和非 JSON 写入。启动时生成一次性随机令牌，兑换为 `HttpOnly; SameSite=Strict` 会话 Cookie 后从地址栏移除；API 无有效会话会返回未授权。桌面端使用受限 CSP 和最小 Tauri capability，前端不能任意启动 shell 或 sidecar。
+Node 服务只绑定 `127.0.0.1`，拒绝非 localhost `Host`、跨源写请求和非 JSON 写入。默认启动时生成一次性随机令牌，兑换为 `HttpOnly; SameSite=Strict` 会话 Cookie 后从地址栏移除；API 无有效会话会返回未授权。显式的 `KB_TRUST_LOCALHOST=1` 只允许 production Web 服务经 SSH 隧道使用，它信任能连入该 localhost 端口的用户，但仍需随机 Cookie 才能访问 API；开发模式和 Tauri sidecar 都拒绝开启它。桌面端使用受限 CSP 和最小 Tauri capability，前端不能任意启动 shell 或 sidecar。
 
 仍需信任当前系统用户和操作系统。以相同用户运行、能读取进程或应用文件的恶意软件不在此边界内；localhost 也不等于抵御已攻陷主机。不要转发或公开本地服务端口。
 

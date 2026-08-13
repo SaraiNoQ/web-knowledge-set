@@ -88,6 +88,12 @@ const dataDir = resolve(
 const staticDir = resolve(process.env.KB_STATIC_DIR ?? join(process.cwd(), "dist"));
 const backupRoot = defaultBackupRoot(dataDir);
 const requestedPort = Number(process.env.KB_PORT ?? 0);
+const dev = process.env.KB_DEV === "1";
+const desktop = process.env.KB_DESKTOP === "1";
+const trustedLocalhost = process.env.KB_TRUST_LOCALHOST === "1";
+if (trustedLocalhost && (dev || desktop || process.env.NODE_ENV !== "production")) {
+  throw new Error("KB_TRUST_LOCALHOST=1 requires production Web mode");
+}
 function packageVersion() {
   for (const path of [new URL("../package.json", import.meta.url), new URL("../../package.json", import.meta.url)]) {
     try {
@@ -174,8 +180,6 @@ const startup = await runStartup<StartupValue, VerifiedBackup>({
   recoverOnError: (error) => ({ database: null, recoveryError: error }),
 });
 const releaseLock = startup.releaseLock;
-const dev = process.env.KB_DEV === "1";
-const desktop = process.env.KB_DESKTOP === "1";
 const app = createApp({
   dataDir,
   database: startup.value.database,
@@ -183,6 +187,7 @@ const app = createApp({
   backupRoot,
   staticDir,
   dev,
+  trustedLocalhost,
   llmApiKey,
   llmApiKeyEndpoint,
   appVersion,
@@ -230,7 +235,9 @@ server.once("error", (error) => {
 server.listen(requestedPort, "127.0.0.1", () => {
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Server did not bind a TCP port");
-  const launchUrl = `http://127.0.0.1:${address.port}/launch?token=${encodeURIComponent(app.bootstrapToken)}`;
+  const launchUrl = trustedLocalhost
+    ? `http://127.0.0.1:${address.port}/`
+    : `http://127.0.0.1:${address.port}/launch?token=${encodeURIComponent(app.bootstrapToken)}`;
   diagnostics.log({ level: "info", event: "service_ready", mode: desktop ? "desktop" : "web" });
   console.log(`ZHIYE_READY ${launchUrl}`);
 });

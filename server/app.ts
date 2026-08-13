@@ -177,6 +177,7 @@ export interface AppOptions {
   bootstrapToken?: string;
   sessionToken?: string;
   dev?: boolean;
+  trustedLocalhost?: boolean;
   capture?: CaptureFunction;
   fetchAsset?: AssetFetchFunction;
   startWorker?: boolean;
@@ -1056,10 +1057,15 @@ export function createApp(options: AppOptions) {
   let dataEpoch = randomUUID();
   let recoveryError: unknown = options.recoveryError ?? null;
   const backupRoot = options.backupRoot ?? defaultBackupRoot(options.dataDir);
+  const trustedLocalhost = options.trustedLocalhost ?? process.env.KB_TRUST_LOCALHOST === "1";
+  if (trustedLocalhost && options.onDesktopCloseReady) {
+    throw new Error("KB_TRUST_LOCALHOST cannot be used in desktop mode");
+  }
   const auth = createAuth({
     bootstrapToken: options.bootstrapToken ?? process.env.KB_BOOTSTRAP_TOKEN,
     sessionToken: options.sessionToken,
     dev: options.dev,
+    trustedLocalhost,
   });
   const capture: CaptureFunction =
     options.capture ?? (async (url) => (await import("./capture.js")).captureUrl(url));
@@ -1217,6 +1223,7 @@ export function createApp(options: AppOptions) {
         auth.launch(requestUrl, response);
         return;
       }
+      if (request.method === "GET" && pathname === "/" && auth.establishTrustedSession(request, response)) return;
       if (pathname.startsWith("/api/") && !auth.isAuthenticated(request)) {
         sendError(response, 401, "UNAUTHORIZED", "Authentication required");
         return;

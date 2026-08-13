@@ -7,11 +7,13 @@ import test from "node:test";
 
 import { openDatabase } from "../server/db.js";
 
-function startService(dataDir?: string, home?: string) {
+function startService(dataDir?: string, home?: string, overrides: NodeJS.ProcessEnv = {}) {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     KB_DESKTOP: "1",
+    KB_TRUST_LOCALHOST: "0",
     KB_STATIC_DIR: resolve("dist"),
+    ...overrides,
   };
   if (dataDir) env.KB_DATA_DIR = dataDir;
   else delete env.KB_DATA_DIR;
@@ -26,8 +28,8 @@ function startService(dataDir?: string, home?: string) {
   child.stderr.on("data", (chunk: string) => {
     stderr += chunk;
   });
-  const ready = new Promise<void>((resolveReady, reject) => {
-    let stdout = "";
+  let stdout = "";
+  const ready = new Promise<string>((resolveReady, reject) => {
     const timeout = setTimeout(() => {
       child.kill("SIGKILL");
       reject(new Error(`service did not become ready: ${stderr}`));
@@ -43,17 +45,63 @@ function startService(dataDir?: string, home?: string) {
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       stdout += chunk;
-      if (stdout.includes("ZHIYE_READY ")) {
+      const match = /ZHIYE_READY (\S+)/u.exec(stdout);
+      if (match) {
         clearTimeout(timeout);
         child.off("exit", exited);
-        resolveReady();
+        resolveReady(match[1]!);
       }
     });
     child.once("error", failed);
     child.once("exit", exited);
   });
-  return { child, ready, stderr: () => stderr };
+  return { child, ready, stderr: () => stderr, stdout: () => stdout };
 }
+
+test("trusted localhost is production-Web-only and reports the bare root URL", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zhiye-trusted-localhost-"));
+  const staticDir = join(root, "static");
+  mkdirSync(staticDir);
+  writeFileSync(join(staticDir, "index.html"), "<!doctype html><title>trusted</title>");
+
+  for (const invalid of [
+    { KB_DESKTOP: "1", KB_DEV: "0", NODE_ENV: "production" },
+    { KB_DESKTOP: "0", KB_DEV: "1", NODE_ENV: "production" },
+    { KB_DESKTOP: "0", KB_DEV: "0", NODE_ENV: "development" },
+  ]) {
+    const service = startService(join(root, "invalid-data"), undefined, {
+      ...invalid,
+      KB_TRUST_LOCALHOST: "1",
+      KB_STATIC_DIR: staticDir,
+    });
+    await assert.rejects(service.ready, /KB_TRUST_LOCALHOST=1 requires production Web mode/u);
+    if (service.child.exitCode === null) service.child.kill("SIGKILL");
+  }
+
+  const service = startService(join(root, "data"), undefined, {
+    KB_DESKTOP: "0",
+    KB_DEV: "0",
+    KB_TRUST_LOCALHOST: "1",
+    KB_STATIC_DIR: staticDir,
+    NODE_ENV: "production",
+  });
+  const timeout = setTimeout(() => service.child.kill("SIGKILL"), 15_000);
+  try {
+    const readyUrl = await service.ready;
+    assert.match(readyUrl, /^http:\/\/127\.0\.0\.1:\d+\/$/u);
+    assert.doesNotMatch(service.stdout(), /\/launch\?token=/u);
+    assert.equal((await fetch(`${readyUrl}api/documents`)).status, 401);
+    assert.equal((await fetch(readyUrl, { redirect: "manual" })).status, 302);
+
+    const exited = new Promise<number | null>((resolveExit) => service.child.once("exit", resolveExit));
+    service.child.kill("SIGTERM");
+    assert.equal(await exited, 0, service.stderr());
+  } finally {
+    clearTimeout(timeout);
+    if (service.child.exitCode === null) service.child.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("formal default identity reuses one legacy Web library and rejects two", async () => {
   const home = mkdtempSync(join(tmpdir(), "zhiye-default-identity-"));

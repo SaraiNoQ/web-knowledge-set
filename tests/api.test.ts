@@ -1368,3 +1368,50 @@ test("asset API exposes ready files and keeps per-image failures separate from c
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("trusted localhost establishes a cookie at the root without authenticating bare APIs", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zhiye-trusted-auth-"));
+  const directory = join(root, "data");
+  const staticDir = join(root, "static");
+  mkdirSync(staticDir);
+  writeFileSync(join(staticDir, "index.html"), "<!doctype html><title>trusted</title>");
+  const app = createApp({
+    dataDir: directory,
+    database: openDatabase(directory),
+    staticDir,
+    trustedLocalhost: true,
+    startWorker: false,
+  });
+  const server = createServer((request, response) => void app.handler(request, response));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const base = `http://127.0.0.1:${address.port}`;
+
+  try {
+    assert.equal((await fetch(`${base}/api/documents`)).status, 401);
+    const rootLaunch = await fetch(`${base}/`, { redirect: "manual" });
+    assert.equal(rootLaunch.status, 302);
+    assert.equal(rootLaunch.headers.get("location"), "/");
+    const cookie = (rootLaunch.headers.get("set-cookie") ?? "").split(";", 1)[0];
+    assert.match(cookie, /^zhiye_session=[A-Za-z0-9_-]{43}$/u);
+    assert.match(rootLaunch.headers.get("set-cookie") ?? "", /HttpOnly; SameSite=Strict; Path=\//u);
+    assert.equal((await fetch(`${base}/api/documents`)).status, 401);
+    assert.equal((await fetch(`${base}/api/documents`, { headers: { Cookie: cookie } })).status, 200);
+
+    const page = await fetch(`${base}/`, { headers: { Cookie: cookie }, redirect: "manual" });
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /<title>trusted<\/title>/u);
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const legacyLaunch = await fetch(`${base}/launch?token=invalid`, { redirect: "manual" });
+      assert.equal(legacyLaunch.status, 302);
+      assert.equal(legacyLaunch.headers.get("location"), "/");
+      assert.ok(legacyLaunch.headers.get("set-cookie"));
+    }
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await app.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

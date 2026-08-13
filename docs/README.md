@@ -30,7 +30,7 @@
 KB_DATA_DIR=/你的/知识库目录 pnpm start
 ```
 
-浏览器不能在服务运行时切换数据目录。未指定时，macOS 使用上述目录，其他 Unix 系统使用 `~/.local/share/io.github.sarainoq.zhiye`。服务只监听随机或指定的 `127.0.0.1` 端口；终端输出的一次性 `ZHIYE_READY` 地址用于建立本地会话，使用后令牌会从地址栏移除。
+浏览器不能在服务运行时切换数据目录。未指定时，macOS 使用上述目录，其他 Unix 系统使用 `~/.local/share/io.github.sarainoq.zhiye`。服务只监听随机或指定的 `127.0.0.1` 端口；默认使用终端输出的一次性 `ZHIYE_READY` 地址建立会话。受控服务器可显式设置 `KB_TRUST_LOCALHOST=1`：经 SSH 隧道打开裸地址时自动建立随机 `HttpOnly; SameSite=Strict` 会话；该模式仍不可监听局域网或公网。
 
 早期开发构建使用 `dev.local.zhiye` 目录和钥匙串服务。`0.9.1` 首次启动时，如果只发现一个旧知识库或旧桌面目录指针，会将正式启动配置安全指向原位置，不搬动或复制 SQLite、留档与诊断数据。早期未绑定端点的钥匙串密钥不会自动加载，请在 AI 设置中为当前平台重新录入；保存或删除时会清理旧条目。若新旧两个目录都含数据，应用会明确停止而不打开空库；先保留两份数据，再通过完整留档合并。本地 Web 模式冲突时请用 `KB_DATA_DIR` 明确选择。
 
@@ -107,7 +107,7 @@ KB_PORT=4173 KB_DATA_DIR=/root/dev/zhiye/.data npx -y node@24.19.0 /usr/lib/node
 ssh -L 4173:127.0.0.1:4173 root@campus-server
 ```
 
-然后打开终端打印的 `ZHIYE_READY` 地址，不要只访问端口根地址。Tauri 外壳、sidecar 和 Chromium 可在服务器完成平台无关及 Linux 检查；最终 macOS 包必须在受控 macOS runner 上生成和验证。
+默认模式打开终端打印的 `ZHIYE_READY` 地址。固定预览服务由 `scripts/deploy-web-preview.sh` 以无登录用户运行，它只绑定服务器 `127.0.0.1:4301`；建立 `ssh -L 4301:127.0.0.1:4301 root@campus-server` 后可打开 `http://127.0.0.1:4301/`。Tauri 外壳、sidecar 和 Chromium 可在服务器完成平台无关及 Linux 检查；最终 macOS 包必须在受控 macOS runner 上生成和验证。
 
 ## 获取帮助
 

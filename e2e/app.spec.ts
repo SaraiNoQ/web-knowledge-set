@@ -333,16 +333,17 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   const exportPath = await exportLink.getAttribute("href");
   expect(exportPath).toMatch(/^\/api\/data-safety\/backups\/[^/]+\/export\.zhiye-backup$/u);
   if (!exportPath) throw new Error("留档导出地址缺失");
-  const exportResponsePromise = page.waitForResponse((response) => new URL(response.url()).pathname === exportPath);
+  const exportResponse = await page.request.get(exportPath);
+  expect(exportResponse.ok()).toBe(true);
+  expect(exportResponse.headers()["content-type"]).toBe("application/vnd.zhiye.backup+zip");
+  expect(exportResponse.headers()["content-disposition"]).toMatch(/attachment; filename="[^"]+\.zhiye-backup"/u);
   const downloadPromise = page.waitForEvent("download");
   page.once("dialog", async (dialog) => {
     expect(dialog.message()).toContain("包含完整知识数据");
     await dialog.accept();
   });
   await exportLink.click();
-  const [exportResponse, download] = await Promise.all([exportResponsePromise, downloadPromise]);
-  expect(exportResponse.headers()["content-type"]).toBe("application/vnd.zhiye.backup+zip");
-  expect(exportResponse.headers()["content-disposition"]).toMatch(/attachment; filename="[^"]+\.zhiye-backup"/u);
+  const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/\.zhiye-backup$/u);
   const downloadPath = await download.path();
   if (!downloadPath) throw new Error("浏览器未保留导出留档");

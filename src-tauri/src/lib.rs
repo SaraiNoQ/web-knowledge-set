@@ -17,8 +17,9 @@ const FAILED: u8 = 2;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 const STDERR_LIMIT: usize = 8 * 1024;
-const SIDECAR_ENVIRONMENT: [(&str, &str); 4] = [
+const SIDECAR_ENVIRONMENT: [(&str, &str); 5] = [
     ("KB_DEV", "0"),
+    ("KB_TRUST_LOCALHOST", "0"),
     ("KB_PORT", "0"),
     ("KB_BOOTSTRAP_TOKEN", ""),
     ("NODE_ENV", "production"),
@@ -752,6 +753,7 @@ mod tests {
             SIDECAR_ENVIRONMENT,
             [
                 ("KB_DEV", "0"),
+                ("KB_TRUST_LOCALHOST", "0"),
                 ("KB_PORT", "0"),
                 ("KB_BOOTSTRAP_TOKEN", ""),
                 ("NODE_ENV", "production"),
