@@ -73,6 +73,19 @@ export interface KnowledgeDocument extends DocumentSummary {
   sourceNote: string;
 }
 
+export type BrowserExtensionKind = "chrome" | "firefox";
+
+export interface BrowserExtensionPairing {
+  id: string;
+  browser: BrowserExtensionKind;
+  createdAt: string;
+}
+
+export interface BrowserExtensionPairingCode {
+  code: string;
+  expiresAt: string;
+}
+
 export const TRANSLATION_LANGUAGES = {
   "zh-CN": "简体中文",
   "zh-TW": "繁體中文",

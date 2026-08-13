@@ -5,6 +5,7 @@
 | `src/` | React/Vite interface, editor, preview, and product workflows. |
 | `server/` | Local Node service, REST API, SQLite access, capture, import/export, backup, diagnostics, and LLM calls. |
 | `shared/` | Types shared by the browser interface and local service. |
+| `extension/` | Shared Chrome/Firefox clipper popup, active-tab extractor, manifests, and styles. |
 | `src-tauri/` | Thin Tauri desktop shell, capabilities, sidecar lifecycle, macOS integration, and icons. |
 | `tests/` | Node unit/integration tests and fixed fixtures. |
 | `e2e/` | Playwright user-flow and local-session tests. |

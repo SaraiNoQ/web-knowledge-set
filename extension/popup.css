@@ -1,0 +1,20 @@
+:root { color: #2b2924; background: #f5f0e6; font: 15px/1.5 system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body { width: 420px; margin: 0; }
+header { display: flex; gap: 12px; align-items: center; padding: 18px 20px; border-bottom: 1px solid #cfc5b4; }
+header > span { display: grid; place-items: center; width: 36px; height: 36px; color: #fff; background: #bd3f29; font: 700 20px serif; }
+header strong, header small { display: block; }
+header small { color: #706b63; }
+main { padding: 20px; }
+h1 { margin: 0 0 8px; font: 600 24px serif; }
+p { color: #68635b; }
+label { display: block; margin: 14px 0; font-weight: 600; }
+input, textarea { width: 100%; margin-top: 6px; padding: 10px; border: 1px solid #b9b09f; background: #fffdf7; font: inherit; }
+textarea { min-height: 260px; resize: vertical; font: 13px/1.5 ui-monospace, monospace; }
+button { padding: 10px 16px; border: 0; color: #fff; background: #bd3f29; font: 700 14px inherit; cursor: pointer; }
+#extract { width: 100%; }
+#count { float: right; color: #777166; font-weight: 400; }
+#status { min-height: 22px; margin-bottom: 0; }
+#status.error { color: #a52e20; }
+[hidden] { display: none !important; }
+

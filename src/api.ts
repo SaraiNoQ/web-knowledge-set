@@ -2,6 +2,8 @@ import type {
   ApiError,
   BackupRecord,
   BackupSettings,
+  BrowserExtensionPairing,
+  BrowserExtensionPairingCode,
   BatchDocumentsRequest,
   BatchDocumentsResponse,
   CaptureHistoryItem,
@@ -565,6 +567,24 @@ export const api = {
     return request<KnowledgeDocument>(`/api/documents/${encodeURIComponent(id)}/manual`, {
       method: "POST",
       body: JSON.stringify({ revision }),
+    });
+  },
+
+  createBrowserExtensionPairingCode() {
+    return request<BrowserExtensionPairingCode>("/api/settings/browser-extension/pairing-code", {
+      method: "POST",
+      body: "{}",
+    });
+  },
+
+  getBrowserExtensionPairings(signal?: AbortSignal) {
+    return request<{ pairings: BrowserExtensionPairing[] }>("/api/settings/browser-extension/pairings", { signal });
+  },
+
+  revokeBrowserExtensionPairing(id: string) {
+    return request<void>(`/api/settings/browser-extension/pairings/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      body: "{}",
     });
   },
 

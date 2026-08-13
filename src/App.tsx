@@ -35,6 +35,7 @@ import { api, ApiRequestError } from "./api";
 import type { DocumentPatch } from "./api";
 import { AiSettings } from "./components/AiSettings";
 import { AppUpdater } from "./components/AppUpdater";
+import { BrowserExtension } from "./components/BrowserExtension";
 import { DataSafety } from "./components/DataSafety";
 import { Diagnostics } from "./components/Diagnostics";
 import { DerivedKnowledge } from "./components/DerivedKnowledge";
@@ -2973,6 +2974,7 @@ export default function App() {
               <div><dt>许可</dt><dd>MIT</dd></div>
             </dl>
           </div>
+          {safetyRecovery ? <p className="notice warning">恢复资料后才能生成扩展配对码。</p> : <BrowserExtension />}
           <section className="help-shortcuts" aria-labelledby="shortcut-title">
             <h3 id="shortcut-title">快捷键</h3>
             <dl className="shortcut-list"><div><dt><kbd>⌘</kbd><kbd>K</kbd></dt><dd>聚焦搜索</dd></div><div><dt><kbd>/</kbd></dt><dd>聚焦搜索</dd></div><div><dt><kbd>J</kbd> / <kbd>K</kbd></dt><dd>在列表中移动</dd></div><div><dt><kbd>X</kbd></dt><dd>选中或取消当前行</dd></div><div><dt><kbd>↵</kbd></dt><dd>打开当前行</dd></div><div><dt><kbd>⌘</kbd><kbd>S</kbd></dt><dd>立即保存</dd></div><div><dt><kbd>Esc</kbd></dt><dd>关闭面板或返回列表</dd></div><div><dt><kbd>?</kbd></dt><dd>显示本帮助</dd></div></dl>

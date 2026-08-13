@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>织页剪藏</title><link rel="stylesheet" href="popup.css"></head>
+  <body>
+    <header><span>织</span><div><strong>织页剪藏</strong><small>当前登录页面 → Markdown</small></div></header>
+    <main>
+      <section id="pair-panel">
+        <h1>连接织页</h1>
+        <p>先在织页“帮助 → 浏览器扩展”生成 5 分钟配对码。</p>
+        <form id="pairing-form"><label>配对码<input id="pairing-code" maxlength="10" pattern="[A-Z2-9]{10}" autocomplete="one-time-code" required></label><button>配对</button></form>
+      </section>
+      <section id="clip-panel" hidden>
+        <button id="extract" type="button">提取当前页面</button>
+        <form id="clip-form" hidden>
+          <label>标题<input id="title" maxlength="1000" required></label>
+          <label>来源<input id="source" type="url" required></label>
+          <label>Markdown <span id="count"></span><textarea id="markdown" required></textarea></label>
+          <button>确认并保存新副本</button>
+        </form>
+      </section>
+      <p id="status" role="status"></p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
+

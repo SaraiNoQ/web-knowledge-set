@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { chmodSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, rmSync, unlinkSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -9,6 +9,8 @@ import type {
   AssetStatus,
   BackupRecord,
   BackupSettings,
+  BrowserExtensionKind,
+  BrowserExtensionPairing,
   BatchDocumentAction,
   BatchDocumentsResponse,
   CaptureErrorCode,
@@ -58,6 +60,23 @@ const defaultLlmSettings: StoredLlmSettings = {
   remote: { endpointUrl: "", model: "" },
   local: { endpointUrl: "", model: "", trusted: false },
 };
+
+interface StoredBrowserExtensionPairing extends BrowserExtensionPairing {
+  tokenHash: string;
+}
+
+function parseBrowserExtensionPairings(value: string): StoredBrowserExtensionPairing[] {
+  const parsed: unknown = JSON.parse(value);
+  if (!Array.isArray(parsed) || parsed.length > 20 || parsed.some((item) => {
+    if (!item || typeof item !== "object") return true;
+    const value = item as Partial<StoredBrowserExtensionPairing>;
+    return typeof value.id !== "string" || !/^[0-9a-f-]{36}$/u.test(value.id) ||
+      (value.browser !== "chrome" && value.browser !== "firefox") ||
+      typeof value.createdAt !== "string" || !Number.isFinite(Date.parse(value.createdAt)) ||
+      typeof value.tokenHash !== "string" || !/^[0-9a-f]{64}$/u.test(value.tokenHash);
+  })) throw new Error("Stored browser extension pairings are invalid");
+  return parsed as StoredBrowserExtensionPairing[];
+}
 
 function parseLlmSettings(value: string): StoredLlmSettings {
   const parsed = JSON.parse(value) as Partial<StoredLlmSettings>;
@@ -1236,6 +1255,57 @@ export class KnowledgeDatabase {
       : { kind: "conflict" as const, state: this.getOnboarding() };
   }
 
+  private storedBrowserExtensionPairings() {
+    const row = this.sql.prepare("SELECT value FROM app_settings WHERE key = 'browser-extension-pairings'")
+      .get() as { value: string } | undefined;
+    return row ? parseBrowserExtensionPairings(row.value) : [];
+  }
+
+  private writeBrowserExtensionPairings(pairings: StoredBrowserExtensionPairing[]) {
+    this.sql.prepare(
+      `INSERT INTO app_settings(key, value, revision, updated_at)
+       VALUES ('browser-extension-pairings', ?, 1, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+         revision = app_settings.revision + 1, updated_at = excluded.updated_at`,
+    ).run(JSON.stringify(pairings), now());
+  }
+
+  listBrowserExtensionPairings(): BrowserExtensionPairing[] {
+    return this.storedBrowserExtensionPairings().map(({ tokenHash: _tokenHash, ...pairing }) => pairing);
+  }
+
+  addBrowserExtensionPairing(browser: BrowserExtensionKind, tokenHash: string) {
+    return transaction(this.sql, () => {
+      const pairings = this.storedBrowserExtensionPairings();
+      if (pairings.length >= 20) return null;
+      const pairing = { id: randomUUID(), browser, createdAt: now(), tokenHash };
+      this.writeBrowserExtensionPairings([...pairings, pairing]);
+      return { id: pairing.id, browser: pairing.browser, createdAt: pairing.createdAt };
+    });
+  }
+
+  hasBrowserExtensionTokenHash(tokenHash: string) {
+    const candidate = Buffer.from(tokenHash, "hex");
+    return this.storedBrowserExtensionPairings().some((pairing) => {
+      const stored = Buffer.from(pairing.tokenHash, "hex");
+      return stored.length === candidate.length && timingSafeEqual(stored, candidate);
+    });
+  }
+
+  revokeBrowserExtensionPairing(id: string) {
+    return transaction(this.sql, () => {
+      const pairings = this.storedBrowserExtensionPairings();
+      const remaining = pairings.filter((pairing) => pairing.id !== id);
+      if (remaining.length === pairings.length) return false;
+      this.writeBrowserExtensionPairings(remaining);
+      return true;
+    });
+  }
+
+  clearBrowserExtensionPairings() {
+    this.sql.prepare("DELETE FROM app_settings WHERE key = 'browser-extension-pairings'").run();
+  }
+
   getLlmSettings(apiKeyConfigured = false): LlmSettings {
     const row = this.sql
       .prepare("SELECT value, revision FROM app_settings WHERE key = 'llm'")
@@ -2081,6 +2151,31 @@ export class KnowledgeDatabase {
         created: true,
         duplicateKind: resolved ? "resolved" as const : null,
       };
+    });
+  }
+
+  createBrowserExtensionClip(input: {
+    sourceUrl: string;
+    title: string;
+    author: string | null;
+    publishedAt: string | null;
+    markdown: string;
+  }) {
+    return transaction(this.sql, () => {
+      const id = randomUUID();
+      const timestamp = now();
+      this.sql.prepare(
+        `INSERT INTO documents(
+           id, source_url, final_url, canonical_url, title, author, published_at, markdown, status,
+           title_edited, markdown_edited, author_edited, published_at_edited, source_note, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', 1, 1, 1, 1, '浏览器扩展剪藏', ?, ?)`,
+      ).run(
+        id, `${input.sourceUrl}#zhiye-clip-${id.slice(0, 8)}`, input.sourceUrl, input.sourceUrl,
+        input.title, input.author, input.publishedAt, input.markdown, timestamp, timestamp,
+      );
+      const document = this.getDocument(id)!;
+      this.recordRevision(document);
+      return document;
     });
   }
 

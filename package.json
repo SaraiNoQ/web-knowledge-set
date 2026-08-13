@@ -10,9 +10,9 @@
   },
   "scripts": {
     "dev": "KB_DEV=1 tsx watch server/index.ts",
-    "build": "tsc -p tsconfig.server.json && vite build",
+    "build": "tsc -p tsconfig.server.json && vite build && node scripts/build-extension.mjs",
     "start": "node dist-server/server/index.js",
-    "check": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "check": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.test.json --noEmit && tsc -p tsconfig.extension.json --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "test:e2e": "pnpm build && playwright test",
     "benchmark:library": "tsx scripts/benchmark-library.ts",

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { closeSync, constants, createReadStream, existsSync, fsyncSync, openSync, rmSync, statSync } from "node:fs";
 import { open, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -9,6 +9,7 @@ import { gunzip, gzip } from "node:zlib";
 import type {
   BatchDocumentAction,
   BatchDocumentsRequest,
+  BrowserExtensionKind,
   CaptureErrorCode,
   CaptureMode,
   CaptureStatus,
@@ -87,6 +88,7 @@ const MAX_HTML_BYTES = 5 * 1024 * 1024;
 const MAX_COMPRESSED_SNAPSHOT_BYTES = 6 * 1024 * 1024;
 const DATA_EPOCH_HEADER = "X-Zhiye-Data-Epoch";
 const JSON_MUTATION_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
+const EXTENSION_PUBLIC_PATHS = new Set(["/api/browser-extension/pair", "/api/browser-extension/clips"]);
 const captureErrorCodes = new Set<CaptureErrorCode>([
   "INVALID_URL",
   "BLOCKED_ADDRESS",
@@ -129,6 +131,7 @@ const contentTypes: Record<string, string> = {
   ".png": "image/png",
   ".svg": "image/svg+xml",
   ".webp": "image/webp",
+  ".zip": "application/zip",
 };
 const contentSecurityPolicy = [
   "default-src 'self'",
@@ -249,6 +252,33 @@ function sameOrigin(request: IncomingMessage) {
   } catch {
     return false;
   }
+}
+
+function browserExtensionOrigin(value: string | undefined): BrowserExtensionKind | null {
+  if (!value) return null;
+  if (/^chrome-extension:\/\/[a-p]{32}$/u.test(value)) return "chrome";
+  if (/^moz-extension:\/\/[0-9a-f-]{36}$/iu.test(value)) return "firefox";
+  return null;
+}
+
+function pairingCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  return [...randomBytes(10)].map((byte) => alphabet[byte! & 31]).join("");
+}
+
+function guardBrowserExtensionMutation(request: IncomingMessage) {
+  const browser = browserExtensionOrigin(request.headers.origin);
+  if (!browser) throw new HttpError(403, "EXTENSION_ORIGIN_REJECTED", "Browser extension origin required");
+  const contentType = request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
+  if (contentType !== "application/json") throw new HttpError(415, "JSON_REQUIRED", "Content-Type must be application/json");
+  return browser;
+}
+
+function extensionCorsHeaders(response: ServerResponse, origin: string) {
+  response.setHeader("Access-Control-Allow-Origin", origin);
+  response.setHeader("Access-Control-Allow-Methods", "POST");
+  response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  response.setHeader("Vary", "Origin");
 }
 
 function guardMutation(request: IncomingMessage) {
@@ -441,6 +471,33 @@ function publishedDate(value: unknown) {
     throw new HttpError(400, "INVALID_PUBLISHED_AT", "publishedAt must be null or a real YYYY-MM-DD date");
   }
   return date;
+}
+
+function browserExtensionClipInput(body: Record<string, unknown>) {
+  const allowed = new Set(["sourceUrl", "title", "author", "publishedAt", "markdown"]);
+  if (Object.keys(body).some((key) => !allowed.has(key))) {
+    throw new HttpError(400, "INVALID_EXTENSION_CLIP", "Extension clip contains an unknown field");
+  }
+  const sourceUrl = normalizeUrl(body.sourceUrl);
+  if (typeof body.title !== "string" || !body.title.trim() || body.title.length > 1_000) {
+    throw new HttpError(400, "INVALID_TITLE", "title must be a non-empty string under 1000 characters");
+  }
+  if (typeof body.markdown !== "string" || !body.markdown.trim()) {
+    throw new HttpError(400, "INVALID_MARKDOWN", "markdown must be non-empty");
+  }
+  if (Buffer.byteLength(body.markdown, "utf8") > 2 * 1024 * 1024) {
+    throw new HttpError(413, "MARKDOWN_TOO_LARGE", "markdown exceeds 2 MiB");
+  }
+  const hasUnsafeControl = (value: string) => /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value);
+  if (hasUnsafeControl(body.title) || hasUnsafeControl(body.markdown)) {
+    throw new HttpError(400, "INVALID_CONTROL_CHARACTER", "clip text contains a control character");
+  }
+  const author = body.author === undefined || body.author === null ? null : nullableText(body.author, "author", 1_000);
+  if (author && hasUnsafeControl(author)) {
+    throw new HttpError(400, "INVALID_CONTROL_CHARACTER", "clip text contains a control character");
+  }
+  const publishedAt = body.publishedAt === undefined || body.publishedAt === null ? null : publishedDate(body.publishedAt);
+  return { sourceUrl, title: body.title.trim(), author, publishedAt, markdown: body.markdown };
 }
 
 function collectionIdsValue(value: unknown) {
@@ -1088,6 +1145,7 @@ export function createApp(options: AppOptions) {
   let maintenanceKind: string | null = null;
   let maintenanceDone: Promise<void> | null = null;
   let finishMaintenance: (() => void) | null = null;
+  let extensionPairingCode: { hash: Buffer; expiresAt: number; failures: number } | null = null;
 
   const requireDatabase = () => {
     if (maintenanceKind) {
@@ -1215,6 +1273,71 @@ export function createApp(options: AppOptions) {
       const { pathname } = requestUrl;
       if (pathname.startsWith("/api/")) response.setHeader(DATA_EPOCH_HEADER, dataEpoch);
 
+      const extensionBrowser = browserExtensionOrigin(request.headers.origin);
+      if (EXTENSION_PUBLIC_PATHS.has(pathname) && extensionBrowser) {
+        extensionCorsHeaders(response, request.headers.origin!);
+      }
+      if (EXTENSION_PUBLIC_PATHS.has(pathname) && request.method === "POST" && !extensionBrowser) {
+        throw new HttpError(403, "EXTENSION_ORIGIN_REJECTED", "Browser extension origin required");
+      }
+      if (extensionBrowser && pathname.startsWith("/api/") && !EXTENSION_PUBLIC_PATHS.has(pathname)) {
+        throw new HttpError(403, "EXTENSION_SCOPE_REJECTED", "Browser extensions may only pair and create clips");
+      }
+
+      if (request.method === "OPTIONS" && EXTENSION_PUBLIC_PATHS.has(pathname)) {
+        if (!extensionBrowser) throw new HttpError(403, "EXTENSION_ORIGIN_REJECTED", "Browser extension origin required");
+        const requestedMethod = request.headers["access-control-request-method"];
+        const requestedHeaders = String(request.headers["access-control-request-headers"] ?? "")
+          .split(",").map((value) => value.trim().toLowerCase()).filter(Boolean);
+        if (requestedMethod !== "POST" || requestedHeaders.some((value) => value !== "authorization" && value !== "content-type")) {
+          throw new HttpError(403, "EXTENSION_PREFLIGHT_REJECTED", "Extension preflight rejected");
+        }
+        response.writeHead(204, { "Cache-Control": "no-store", ...securityHeaders() });
+        response.end();
+        return;
+      }
+
+      if (pathname === "/api/browser-extension/pair" && request.method === "POST") {
+        const browser = guardBrowserExtensionMutation(request);
+        const body = await readJson(request);
+        if (Object.keys(body).some((key) => key !== "code" && key !== "browser") || body.browser !== browser ||
+          typeof body.code !== "string" || !/^[A-Z2-9]{10}$/u.test(body.code)) {
+          throw new HttpError(400, "INVALID_PAIRING_REQUEST", "A valid pairing code and browser are required");
+        }
+        const candidateHash = createHash("sha256").update(body.code).digest();
+        const pairing = extensionPairingCode;
+        if (!pairing || Date.now() >= pairing.expiresAt || pairing.failures >= 5 ||
+          !timingSafeEqual(candidateHash, pairing.hash)) {
+          if (pairing) {
+            pairing.failures += 1;
+            if (pairing.failures >= 5 || Date.now() >= pairing.expiresAt) extensionPairingCode = null;
+          }
+          throw new HttpError(401, "PAIRING_CODE_REJECTED", "Pairing code is invalid or expired");
+        }
+        extensionPairingCode = null;
+        const token = randomBytes(32).toString("base64url");
+        const paired = requireDatabase().addBrowserExtensionPairing(
+          browser,
+          createHash("sha256").update(token).digest("hex"),
+        );
+        if (!paired) throw new HttpError(409, "PAIRING_LIMIT", "At most 20 browser extensions may be paired");
+        sendJson(response, 201, { token, pairing: paired });
+        return;
+      }
+
+      if (pathname === "/api/browser-extension/clips" && request.method === "POST") {
+        guardBrowserExtensionMutation(request);
+        const match = /^Bearer ([A-Za-z0-9_-]{43})$/u.exec(request.headers.authorization ?? "");
+        if (!match) throw new HttpError(401, "EXTENSION_UNAUTHORIZED", "Extension token required");
+        const tokenHash = createHash("sha256").update(match[1]!).digest("hex");
+        if (!requireDatabase().hasBrowserExtensionTokenHash(tokenHash)) {
+          throw new HttpError(401, "EXTENSION_UNAUTHORIZED", "Extension token is invalid or revoked");
+        }
+        const document = requireDatabase().createBrowserExtensionClip(browserExtensionClipInput(await readJson(request)));
+        sendJson(response, 201, { documentId: document.id });
+        return;
+      }
+
       if (request.method === "GET" && pathname === "/health") {
         sendJson(response, 200, { ok: true });
         return;
@@ -1261,6 +1384,33 @@ export function createApp(options: AppOptions) {
             ? guardBackupArchiveMutation(request)
             : guardDataMutation(request)
         : null;
+
+      if (pathname === "/api/settings/browser-extension/pairing-code" && request.method === "POST") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length) throw new HttpError(400, "INVALID_PAIRING_REQUEST", "Pairing code request accepts no fields");
+        const code = pairingCode();
+        const expiresAt = Date.now() + 5 * 60_000;
+        extensionPairingCode = { hash: createHash("sha256").update(code).digest(), expiresAt, failures: 0 };
+        sendJson(response, 201, { code, expiresAt: new Date(expiresAt).toISOString() });
+        return;
+      }
+
+      if (pathname === "/api/settings/browser-extension/pairings" && request.method === "GET") {
+        sendJson(response, 200, { pairings: requireDatabase().listBrowserExtensionPairings() });
+        return;
+      }
+
+      const extensionPairingMatch = pathname.match(/^\/api\/settings\/browser-extension\/pairings\/([^/]+)$/u);
+      if (extensionPairingMatch && request.method === "DELETE") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length) throw new HttpError(400, "INVALID_PAIRING_DELETE", "Pairing deletion accepts no fields");
+        if (!requireDatabase().revokeBrowserExtensionPairing(decodeId(extensionPairingMatch[1]))) {
+          throw new HttpError(404, "PAIRING_NOT_FOUND", "Browser extension pairing not found");
+        }
+        response.writeHead(204, { "Cache-Control": "no-store", ...securityHeaders() });
+        response.end();
+        return;
+      }
 
       if (pathname === "/api/data-safety" && request.method === "GET") {
         sendJson(response, 200, await status());
@@ -1747,6 +1897,7 @@ export function createApp(options: AppOptions) {
                 migrateDatabase(stagingDataDir);
                 const candidate = openDatabase(stagingDataDir);
                 try {
+                  candidate.clearBrowserExtensionPairings();
                   const health = candidate.getDatabaseHealth();
                   if (
                     health.integrityCheck.length !== 1 ||
@@ -1761,6 +1912,7 @@ export function createApp(options: AppOptions) {
               },
             });
             db = openDatabase(options.dataDir);
+            db.clearBrowserExtensionPairings();
             dataEpoch = randomUUID();
             derivedTasks.clearHistory();
             recoveryError = null;

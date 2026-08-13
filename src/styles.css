@@ -139,6 +139,17 @@ a { color: inherit; }
 .help-links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line-strong); }
 .help-links a { color: var(--ink-soft); font-size: var(--font-ui); text-underline-offset: 4px; }
 .help-links a::after { margin-left: 5px; color: var(--vermilion); content: "↗"; }
+.extension-help { margin-top: 20px; padding: 22px; border: 1px solid var(--line); }
+.extension-help > span { color: var(--vermilion); font: 600 var(--font-caption)/1.4 var(--font-mono); letter-spacing: .08em; }
+.extension-help > p { color: var(--ink-soft); font-size: var(--font-body); }
+.extension-downloads { display: flex; flex-wrap: wrap; gap: 10px; }
+.extension-downloads a { padding: 9px 13px; color: var(--paper); background: var(--ink); text-decoration: none; font-size: var(--font-ui); }
+.extension-code { display: flex; align-items: baseline; gap: 14px; margin-top: 14px; padding: 12px; background: rgba(194,60,38,.08); }
+.extension-code strong { color: var(--vermilion-dark); font: 700 24px/1 var(--font-mono); letter-spacing: .15em; }
+.extension-code small { color: var(--ink-soft); }
+.extension-pairings { margin: 14px 0 0; padding: 0; list-style: none; }
+.extension-pairings li { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+.extension-pairings button { border: 0; color: var(--vermilion-dark); background: transparent; cursor: pointer; }
 
 .bulk-import-card {
   width: min(860px, 100%);
