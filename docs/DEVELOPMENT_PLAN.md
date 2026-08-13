@@ -40,7 +40,7 @@ v1.0 坚持以下边界：
 - 增补提取/GFM/动态页面样本、完整留档 E2E 与自动无障碍扫描。
 - 在干净服务器镜像连续三次运行完整门禁，并对最终非 root Web 部署执行 24 小时 soak、重启与完整性复验。
 - 在受保护 macOS CI 使用非隐私 fixture 完成 DeepSeek 连接与翻译 smoke；campus-server 的受干扰 TLS 链路不得通过关闭证书校验绕过。
-- 完成 `v0.9.2-rc.1` 未签名 Apple Silicon 产物、哈希、SBOM、许可证和安装说明的实际下载复验。
+- 完成 `v0.9.2-rc.2` 未签名 Apple Silicon 产物、哈希、SBOM、许可证和安装说明的实际下载复验。
 
 ### 外部阻塞
 
@@ -48,7 +48,7 @@ v1.0 坚持以下边界：
 - DeepSeek 真实 smoke 需要受保护 GitHub Environment 中的 API Key 和人工批准；源码、日志、诊断包及构建产物不得包含该密钥。
 - 24 小时 soak 具有不可压缩的自然时间；未签名 macOS RC 与 DeepSeek smoke 仍需要可用的受保护 macOS CI runner，GitHub 分支保护、Environment 与 Release 发布需要仓库管理员权限。
 
-交付分为两个阶段：阶段 A 发布 `v0.9.2-rc.1` 功能完整预览版（稳定 Web + 未签名 Apple Silicon 包）；阶段 B 在 Apple 凭据、受保护 macOS CI、updater 密钥及发布权限就绪且 Definition of Done 全部通过后，发布签名、公证并完成真实更新演练的 `v1.0.0`。
+交付分为两个阶段：阶段 A 发布 `v0.9.2-rc.2` 功能完整预览版（稳定 Web + 未签名 Apple Silicon 包）；阶段 B 在 Apple 凭据、受保护 macOS CI、updater 密钥及发布权限就绪且 Definition of Done 全部通过后，发布签名、公证并完成真实更新演练的 `v1.0.0`。
 
 ## 3. 统一开发与交付规则
 
@@ -81,7 +81,8 @@ v1.0 坚持以下边界：
 - `v0.2` 至 `v0.6`：按下面阶段逐步完成正式能力。
 - `v0.9.0`：功能冻结的候选版，只接受缺陷、文档和发布工程修改。
 - `v0.9.1`：锁定正式应用身份并安全承接早期开发数据的无签名候选版；不宣称已上线。
-- `v0.9.2-rc.1`：阶段 A 功能完整预览版；稳定 Web 和未签名 Apple Silicon 包，不包含正式自动更新能力。
+- `v0.9.2-rc.1`：首次阶段 A 发布尝试；因 macOS 测试路径别名问题中止，未创建 Release。
+- `v0.9.2-rc.2`：阶段 A 功能完整预览版；稳定 Web 和未签名 Apple Silicon 包，不包含正式自动更新能力。
 - `v1.0.0`：阶段 B 正式版；Apple 签名、公证、更新实测和本文 Definition of Done 全部满足后发布。数据库迁移只能前向追加，不修改已经发布的迁移。
 
 ## 4. 历史路线图与验收记录

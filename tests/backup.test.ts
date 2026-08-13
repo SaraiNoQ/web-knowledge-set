@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   statfsSync,
@@ -51,7 +52,7 @@ const mutableFs = createRequire(import.meta.url)("node:fs") as {
 };
 
 function workspace() {
-  const root = mkdtempSync(join(tmpdir(), "zhiye-backup-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "zhiye-backup-")));
   const dataDir = join(root, "data");
   const backupRoot = join(root, "backups");
   const db = openDatabase(dataDir);

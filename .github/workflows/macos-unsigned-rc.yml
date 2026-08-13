@@ -2,7 +2,7 @@ name: macOS unsigned RC
 
 on:
   push:
-    tags: ["v0.9.2-rc.1"]
+    tags: ["v0.9.2-rc.2"]
   workflow_dispatch:
     inputs:
       approved_sha:
@@ -56,7 +56,7 @@ jobs:
           cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
           cargo test --locked --manifest-path src-tauri/Cargo.toml
       - name: Build application and DMG
-        run: pnpm tauri build --ci --no-sign --config '{"bundle":{"macOS":{"infoPlist":"Info.rc.plist","bundleVersion":"90201"}}}' --bundles app,dmg
+        run: pnpm tauri build --ci --no-sign --config '{"bundle":{"macOS":{"infoPlist":"Info.rc.plist","bundleVersion":"90202"}}}' --bundles app,dmg
       - name: Extract the application actually shipped in the DMG
         id: artifact
         shell: bash
@@ -85,7 +85,7 @@ jobs:
           set -euo pipefail
           test "$(plutil -extract CFBundleIdentifier raw -o - "$VERIFIED_APP/Contents/Info.plist")" = io.github.sarainoq.zhiye
           test "$(plutil -extract CFBundleShortVersionString raw -o - "$VERIFIED_APP/Contents/Info.plist")" = 0.9.2
-          test "$(plutil -extract CFBundleVersion raw -o - "$VERIFIED_APP/Contents/Info.plist")" = 90201
+          test "$(plutil -extract CFBundleVersion raw -o - "$VERIFIED_APP/Contents/Info.plist")" = 90202
           test "$(plutil -extract LSMinimumSystemVersion raw -o - "$VERIFIED_APP/Contents/Info.plist")" = 13.5
           test -x "$VERIFIED_APP/Contents/MacOS/zhiye"
           test -x "$VERIFIED_APP/Contents/MacOS/node"
@@ -149,24 +149,24 @@ jobs:
           /tmp/syft scan dir:. --output cyclonedx-json=/tmp/source.cdx.json
           /tmp/syft scan "dir:$VERIFIED_APP" --output cyclonedx-json=/tmp/macos-app.cdx.json
           mkdir release-assets
-          cp "$DMG_PATH" release-assets/Zhiye_0.9.2-rc.1_aarch64_unsigned.dmg
+          cp "$DMG_PATH" release-assets/Zhiye_0.9.2-rc.2_aarch64_unsigned.dmg
           cp /tmp/source.cdx.json /tmp/macos-app.cdx.json release-assets/
           cp LICENSE release-assets/LICENSE.txt
           cp docs/THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.txt release-assets/
           cp docs/PRIVACY.md release-assets/PRIVACY.md
           cp docs/SUPPORT.md release-assets/SUPPORT.md
-          cp docs/RELEASE_NOTES_0.9.2-rc.1.md release-assets/RELEASE_NOTES.md
+          cp docs/RELEASE_NOTES_0.9.2-rc.2.md release-assets/RELEASE_NOTES.md
           test "$(find release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" = 9
           (cd release-assets && find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256 > SHA256SUMS)
           test "$(find release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" = 10
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: zhiye-0.9.2-rc.1-unsigned-${{ github.sha }}
+          name: zhiye-0.9.2-rc.2-unsigned-${{ github.sha }}
           path: release-assets/
           if-no-files-found: error
 
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/tags/v0.9.2-rc.1'
+    if: github.event_name == 'push' && github.ref == 'refs/tags/v0.9.2-rc.2'
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -176,7 +176,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: zhiye-0.9.2-rc.1-unsigned-${{ github.sha }}
+          name: zhiye-0.9.2-rc.2-unsigned-${{ github.sha }}
           path: release-assets
       - name: Create draft, download, verify, then publish prerelease
         env:
@@ -185,7 +185,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$GITHUB_REF_NAME" = v0.9.2-rc.1
+          test "$GITHUB_REF_NAME" = v0.9.2-rc.2
           test "$APPROVED_UNSIGNED_RC_SHA" = "$GITHUB_SHA"
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)" = "$GITHUB_SHA"
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$GITHUB_SHA"
@@ -193,10 +193,10 @@ jobs:
             echo "Release already exists; tags and RC releases are immutable" >&2
             exit 1
           fi
-          EXPECTED=$(printf '%s\n' LICENSE.txt PRIVACY.md RELEASE_NOTES.md SHA256SUMS SUPPORT.md THIRD_PARTY_LICENSES.txt THIRD_PARTY_NOTICES.md Zhiye_0.9.2-rc.1_aarch64_unsigned.dmg macos-app.cdx.json source.cdx.json | LC_ALL=C sort)
+          EXPECTED=$(printf '%s\n' LICENSE.txt PRIVACY.md RELEASE_NOTES.md SHA256SUMS SUPPORT.md THIRD_PARTY_LICENSES.txt THIRD_PARTY_NOTICES.md Zhiye_0.9.2-rc.2_aarch64_unsigned.dmg macos-app.cdx.json source.cdx.json | LC_ALL=C sort)
           ACTUAL=$(find release-assets -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort)
           test "$ACTUAL" = "$EXPECTED"
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --prerelease --latest=false --verify-tag --title "织页 0.9.2-rc.1（Apple Silicon 未签名预览版）" --notes-file release-assets/RELEASE_NOTES.md release-assets/*
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --prerelease --latest=false --verify-tag --title "织页 0.9.2-rc.2（Apple Silicon 未签名预览版）" --notes-file release-assets/RELEASE_NOTES.md release-assets/*
           mkdir downloaded-assets
           gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir downloaded-assets
           DOWNLOADED=$(find downloaded-assets -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort)

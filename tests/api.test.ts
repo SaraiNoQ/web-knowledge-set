@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, fsyncSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, fsyncSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, request as httpRequest } from "node:http";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
@@ -49,7 +49,7 @@ async function waitFor(base: string, cookie: string, id: string, status: Knowled
 }
 
 test("local API authenticates, captures, edits, exports, deduplicates, and retries", async () => {
-  const root = mkdtempSync(join(tmpdir(), "zhiye-api-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "zhiye-api-")));
   const directory = join(root, "data");
   const attempts = new Map<string, number>();
   let markSlowCaptureStarted!: () => void;

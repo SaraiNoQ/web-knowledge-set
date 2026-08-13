@@ -1,6 +1,6 @@
 # 支持与故障排查
 
-织页当前为 `0.9.2-rc.1` 功能完整预览版。Apple Silicon DMG 没有 Developer ID 签名或 Apple 公证，不配置更新通道；以下步骤以保护本地数据为第一原则。
+织页当前为 `0.9.2-rc.2` 功能完整预览版。Apple Silicon DMG 没有 Developer ID 签名或 Apple 公证，不配置更新通道；以下步骤以保护本地数据为第一原则。
 
 ## 先保护数据
 

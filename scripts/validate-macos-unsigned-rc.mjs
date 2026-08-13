@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-const version = "0.9.2-rc.1";
+const version = "0.9.2-rc.2";
 const tag = `v${version}`;
 const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 const tauri = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8"));
@@ -25,7 +25,7 @@ if (tauri.plugins?.updater || tauri.bundle?.createUpdaterArtifacts) {
 if (!workflow.includes(`tags: ["${tag}"]`) || !workflow.includes("workflow_dispatch:")) {
   fail("Unsigned RC workflow must accept only its exact tag plus manual rehearsal");
 }
-if (!workflow.includes("if: github.event_name == 'push' && github.ref == 'refs/tags/v0.9.2-rc.1'") ||
+if (!workflow.includes("if: github.event_name == 'push' && github.ref == 'refs/tags/v0.9.2-rc.2'") ||
     !workflow.includes("gh release create") ||
     !workflow.includes("--draft --prerelease") ||
     !workflow.includes("--verify-tag")) {
@@ -43,7 +43,7 @@ for (const required of [
   "pnpm verify",
   "cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
   "pnpm tauri build --ci --no-sign",
-  '\"infoPlist\":\"Info.rc.plist\",\"bundleVersion\":\"90201\"',
+  '\"infoPlist\":\"Info.rc.plist\",\"bundleVersion\":\"90202\"',
   "scripts/macos-desktop-smoke.sh \"$VERIFIED_APP\" release",
   "scripts/macos-browser-security-smoke.mjs",
   "test \"$(uname -m)\" = arm64",
@@ -55,7 +55,7 @@ for (const required of [
   "xcrun stapler validate",
   "source.cdx.json",
   "macos-app.cdx.json",
-  "Zhiye_0.9.2-rc.1_aarch64_unsigned.dmg",
+  "Zhiye_0.9.2-rc.2_aarch64_unsigned.dmg",
   "SHA256SUMS",
   "RELEASE_NOTES.md",
   "--latest=false",

@@ -51,4 +51,12 @@
 - 构建 job 不读取 Apple 或 updater secrets，使用 Tauri `--no-sign`，不生成更新包、签名文件、公证结果或 `latest.json`。它会挂载产出 DMG，对其中的实际应用执行 release 桌面和 Chromium 安全 smoke，并断言 arm64、macOS 13.5、数字 macOS 版本元数据、无 Developer ID 身份及无 Apple 公证票据。
 - 仓库管理员必须在打 tag 前预先启用 immutable releases，并把获准的 `main` 完整 SHA 写入仓库变量 `APPROVED_UNSIGNED_RC_SHA`。tag 路径会在创建 Release 前复验该变量、远程 tag 和 `main` 尖端均精确指向 `GITHUB_SHA`，再创建 draft prerelease、下载全部资产、对比精确文件清单并重算 SHA-256；只有复验通过才公开为 prerelease，且不设为 latest。公开后还必须由 `gh release view` 确认 `isImmutable=true`。
 - 产物包含未签名 Apple Silicon DMG、两份 CycloneDX SBOM、`SHA256SUMS`、MIT 和第三方许可、隐私、支持与发布说明；安装说明只使用 Finder“右键→打开”，不要求关闭 Gatekeeper 或删除 quarantine。
-- 本节目前只记录发布工程实现；macOS 演练、tag 发布与下载复验未完成，不得以源码审查代替产物证据。
+
+#### `v0.9.2-rc.1` 发布尝试
+
+- tag 指向 `298850abd76bfb4b04612fd7eeec8e6232533efc`。
+- GitHub Actions run `31709549661` 因 macOS 把 `/var` 规范化为 `/private/var`，而测试故障注入仍按原路径比较而失败。流水线在发布 job 前停止，未创建 draft 或公开 GitHub Release。
+
+#### `v0.9.2-rc.2` 待发布
+
+- `v0.9.2-rc.2` 作为替代候选，只修正上述测试路径别名问题并同步版本与发布文档。目前尚无 tag、Release 或产物复验证据。
