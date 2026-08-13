@@ -70,6 +70,47 @@ test("keeps the primary workspace keyboard and screen-reader reachable", async (
   await expect(page.getByLabel("网页地址")).toBeFocused();
 });
 
+test("opens one keyboard-accessible help and about dialog in normal and recovery modes", async ({ page }) => {
+  await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  if (await deferSetup.isVisible()) await deferSetup.click();
+
+  const helpButton = page.getByRole("button", { name: "帮助", exact: true });
+  await helpButton.focus();
+  await helpButton.click();
+  const help = page.getByRole("dialog", { name: "帮助与关于" });
+  await expect(help).toBeVisible();
+  await expect(help.getByRole("heading", { name: "快速上手" })).toBeVisible();
+  await expect(help.getByText(/^v\d+\.\d+\.\d+(?:-[\w.]+)?$/u)).toBeVisible();
+  await expect(help.getByText("本地 Web", { exact: true })).toBeVisible();
+  for (const link of await help.getByRole("link").all()) {
+    await expect(link).toHaveAttribute("target", "_blank");
+    await expect(link).toHaveAttribute("rel", /noopener/u);
+  }
+  await page.keyboard.press("Escape");
+  await expect(help).toBeHidden();
+  await expect(helpButton).toBeFocused();
+
+  await page.keyboard.press("?");
+  await expect(help).toBeVisible();
+  await help.getByRole("button", { name: "重新打开使用指南" }).click();
+  const guide = page.getByRole("dialog", { name: /你的知识/u });
+  await expect(guide).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.route("**/api/settings/onboarding", (route) => route.fulfill({ status: 503, contentType: "application/json", body: '{"error":{"code":"DATA_UNAVAILABLE","message":"recovery"}}' }));
+  await page.route("**/api/data-safety", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json() as Record<string, unknown>;
+    await route.fulfill({ response, json: { ...body, mode: "recovery", recoveryError: { code: "DATABASE_CORRUPT", message: "recovery" } } });
+  });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "数据安全" })).toBeVisible();
+  await page.getByRole("button", { name: "帮助", exact: true }).click();
+  await expect(help.getByText("本地 Web · 恢复模式", { exact: true })).toBeVisible();
+  await expect(help.getByRole("button", { name: "恢复资料后可打开指南" })).toBeDisabled();
+});
+
 test("previews a batch before importing it", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "批量导入" }).click();
@@ -857,8 +898,8 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   const keyboardRow = page.getByRole("button", { name: /人工整理标题/ });
   await expect(keyboardRow).toBeVisible();
   await page.keyboard.press("?");
-  await expect(page.getByRole("dialog", { name: "快捷键" })).toBeVisible();
-  await page.getByRole("button", { name: "关闭快捷键" }).click();
+  await expect(page.getByRole("dialog", { name: "帮助与关于" })).toBeVisible();
+  await page.getByRole("button", { name: "关闭帮助" }).click();
   await keyboardRow.focus();
   await page.keyboard.press("x");
   await expect(page.getByLabel("选择 人工整理标题")).toBeChecked();

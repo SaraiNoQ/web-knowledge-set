@@ -109,8 +109,7 @@ a { color: inherit; }
 }
 
 .masthead-actions { display: flex; align-items: center; gap: 8px; }
-.shortcut-help-button { display: grid; place-items: center; width: 30px; height: 30px; color: var(--ink-soft); background: transparent; border: 1px solid var(--line); border-radius: 50%; font: 500 var(--font-readable)/1 var(--font-mono); }
-.guide-button { padding: 8px 0; color: var(--ink-soft); background: transparent; border: 0; border-bottom: 1px solid var(--line-strong); font-size: var(--font-ui); white-space: nowrap; }
+.shortcut-help-button, .guide-button { padding: 8px 0; color: var(--ink-soft); background: transparent; border: 0; border-bottom: 1px solid var(--line-strong); font-size: var(--font-ui); white-space: nowrap; }
 
 .shortcut-backdrop { width: 100%; max-width: none; height: 100%; max-height: none; padding: 20px; background: transparent; border: 0; }
 .shortcut-backdrop[open] { display: grid; place-items: center; }
@@ -124,6 +123,22 @@ a { color: inherit; }
 .shortcut-card dt { display: flex; gap: 4px; }
 .shortcut-card dd { margin: 0; color: var(--ink-soft); font-size: var(--font-ui); }
 .shortcut-card kbd { min-width: 24px; padding: 4px 6px; text-align: center; background: rgba(250,247,239,.8); border: 1px solid var(--line); font: 500 var(--font-small)/1 var(--font-mono); }
+.help-card { width: min(720px, 100%); max-height: calc(100vh - 40px); overflow: auto; }
+.help-overview { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(170px, .7fr); gap: 28px; margin-top: 22px; padding: 22px; background: rgba(235,229,215,.72); border: 1px solid var(--line); }
+.help-overview section > span { color: var(--vermilion); font: 600 var(--font-caption)/1.4 var(--font-mono); letter-spacing: .08em; }
+.help-card h3 { margin: 8px 0; font: 500 19px/1.25 var(--font-serif); }
+.help-overview p { margin: 0 0 16px; color: var(--ink-soft); font-size: var(--font-body); line-height: 1.7; }
+.help-overview .guide-button { color: var(--vermilion-dark); }
+.shortcut-card .help-meta { display: grid; grid-template-columns: 1fr; align-content: start; gap: 0; margin: 0; }
+.shortcut-card .help-meta > div { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--line); }
+.help-meta dt { color: var(--ink-faint); font: 600 var(--font-caption)/1.3 var(--font-mono); letter-spacing: .06em; }
+.help-meta dd { color: var(--ink); }
+.help-shortcuts { margin-top: 22px; }
+.help-shortcuts h3 { margin-bottom: 0; }
+.shortcut-card .shortcut-list { margin-top: 10px; }
+.help-links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line-strong); }
+.help-links a { color: var(--ink-soft); font-size: var(--font-ui); text-underline-offset: 4px; }
+.help-links a::after { margin-left: 5px; color: var(--vermilion); content: "↗"; }
 
 .bulk-import-card {
   width: min(860px, 100%);
@@ -1480,6 +1495,8 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 }
 
 @media (max-width: 520px) {
+  .help-overview { grid-template-columns: 1fr; padding: 16px; }
+  .shortcut-card .shortcut-list { grid-template-columns: 1fr; }
   .local-mark { width: 8px; overflow: hidden; }
   .local-mark i { flex: 0 0 auto; }
   .capture-band { grid-template-columns: 22px 1fr; }
