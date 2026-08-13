@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { FormEvent } from "react";
+import type { ChangeEvent, FormEvent } from "react";
 import type { BackupReason, BackupRecord, BackupStatus } from "../../shared/types";
 import { api, ApiRequestError, type DataSafetyStatus, type RestoreBackupResult } from "../api";
 import { userErrorMessage } from "../error-messages";
@@ -70,6 +70,15 @@ function BackupRow({
       {(backup.errorCode || backup.errorMessage) && <p className="backup-error">{userErrorMessage(backup.errorCode ?? "BACKUP_FAILED")}</p>}
       <div className="backup-actions">
         <button type="button" onClick={onVerify} disabled={busy || recovery || !backup.directoryName}>重新校验</button>
+        {restorable && !busy ? (
+          <a
+            href={api.backupExportUrl(backup.id)}
+            download
+            onClick={(event) => {
+              if (!window.confirm("导出文件未加密，包含完整知识数据。确定继续下载吗？")) event.preventDefault();
+            }}
+          >导出文件</a>
+        ) : <button type="button" disabled>导出文件</button>}
         <button className="restore-button" type="button" onClick={onRestore} disabled={busy || !restorable}>恢复此留档</button>
       </div>
     </li>
@@ -133,6 +142,23 @@ export function DataSafety({
     await beforeOperation();
     await api.createBackup();
   }, "完整留档已创建并校验。");
+
+  const importBackup = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    if (!file.name.toLocaleLowerCase().endsWith(".zhiye-backup")) {
+      setError("请选择 .zhiye-backup 完整留档文件。");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024 * 1024) {
+      setError("留档文件超过 2 GiB 安全上限，无法导入。");
+      return;
+    }
+    if (!window.confirm("所选文件未加密，可能包含完整知识数据。导入只会创建已校验留档，不会覆盖当前资料或自动恢复。确定继续吗？")) return;
+    await perform("import", () => api.importBackup(file), "留档文件已导入并校验；当前资料未更改。如需切换数据，请再选择“恢复此留档”。");
+  };
 
   const verify = (backup: BackupRecord) => perform(`verify:${backup.id}`, () => api.verifyBackup(backup.id), "留档校验完成。");
 
@@ -275,10 +301,26 @@ export function DataSafety({
       <div className="safety-columns">
         <section className="safety-card backup-ledger">
           <header>
-            <div><span className="eyebrow">ARCHIVE LEDGER</span><h2>完整留档</h2></div>
-            <button className="primary-button" type="button" onClick={() => void createBackup()} disabled={Boolean(busy) || recovery || status.maintenance}>
-              {busy === "create" ? "正在留档…" : "创建留档"}
-            </button>
+            <div>
+              <span className="eyebrow">ARCHIVE LEDGER</span>
+              <h2>完整留档</h2>
+              <p>.zhiye-backup 未加密，包含数据库、网页快照和离线资源；导入只新增已校验留档，不会自动恢复。</p>
+            </div>
+            <div className="backup-ledger-actions">
+              <label className="backup-import">
+                <input
+                  type="file"
+                  accept=".zhiye-backup,application/vnd.zhiye.backup+zip"
+                  aria-label="导入完整留档文件"
+                  disabled={Boolean(busy) || status.maintenance}
+                  onChange={(event) => void importBackup(event)}
+                />
+                <span>{busy === "import" ? "正在导入…" : "导入留档文件"}</span>
+              </label>
+              <button className="primary-button" type="button" onClick={() => void createBackup()} disabled={Boolean(busy) || recovery || status.maintenance}>
+                {busy === "create" ? "正在留档…" : "创建留档"}
+              </button>
+            </div>
           </header>
           {!status.backups.length ? <p className="safety-empty">还没有完整留档。</p> : (
             <ol className="backup-list">

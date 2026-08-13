@@ -20,6 +20,14 @@ test("unknown codes stay Chinese, retain safe diagnostics, and discard raw detai
   assert.match(userErrorMessage("../../provider secret", 500), /UNKNOWN_ERROR/u);
 });
 
+test("portable backup failures explain safe recovery actions in Chinese", () => {
+  assert.match(userErrorMessage("BACKUP_IMPORT_FAILED"), /当前资料未更改/u);
+  assert.match(userErrorMessage("INVALID_BACKUP_ARCHIVE"), /损坏/u);
+  assert.match(userErrorMessage("BACKUP_ARCHIVE_TOO_LARGE"), /2 GiB/u);
+  assert.match(userErrorMessage("UNSUPPORTED_SCHEMA"), /升级应用/u);
+  assert.match(userErrorMessage("ZIP_SYMLINK"), /停止导入/u);
+});
+
 test("native errors use a Chinese fallback while aborts remain distinguishable", () => {
   const fallback = "无法连接本地服务，请重试。";
   assert.equal(userErrorFrom(new TypeError("Failed to fetch provider secret"), fallback), fallback);

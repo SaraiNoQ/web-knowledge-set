@@ -345,6 +345,18 @@ export const api = {
     });
   },
 
+  backupExportUrl(id: string) {
+    return `/api/data-safety/backups/${encodeURIComponent(id)}/export.zhiye-backup`;
+  },
+
+  importBackup(file: File) {
+    return request<BackupRecord>("/api/data-safety/backups/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/vnd.zhiye.backup+zip" },
+      body: file,
+    });
+  },
+
   restoreBackup(id: string, allowQuarantine = false) {
     return request<RestoreBackupResult>(`/api/data-safety/backups/${encodeURIComponent(id)}/restore`, {
       method: "POST",

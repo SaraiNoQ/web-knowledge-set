@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Request } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 
 const readyImageUrl = "https://assets.example.test/ready.png";
@@ -327,6 +327,45 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await page.getByRole("button", { name: "创建留档" }).click();
   await expect(page.getByText("完整留档已创建并校验。")).toBeVisible();
   await expect(page.getByText("校验通过").first()).toBeVisible();
+  const backupRows = page.locator(".backup-row");
+  const backupCount = await backupRows.count();
+  const exportLink = backupRows.first().getByRole("link", { name: "导出文件" });
+  const exportPath = await exportLink.getAttribute("href");
+  expect(exportPath).toMatch(/^\/api\/data-safety\/backups\/[^/]+\/export\.zhiye-backup$/u);
+  if (!exportPath) throw new Error("留档导出地址缺失");
+  const exportResponsePromise = page.waitForResponse((response) => new URL(response.url()).pathname === exportPath);
+  const downloadPromise = page.waitForEvent("download");
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("包含完整知识数据");
+    await dialog.accept();
+  });
+  await exportLink.click();
+  const [exportResponse, download] = await Promise.all([exportResponsePromise, downloadPromise]);
+  expect(exportResponse.headers()["content-type"]).toBe("application/vnd.zhiye.backup+zip");
+  expect(exportResponse.headers()["content-disposition"]).toMatch(/attachment; filename="[^"]+\.zhiye-backup"/u);
+  expect(download.suggestedFilename()).toMatch(/\.zhiye-backup$/u);
+  const downloadPath = await download.path();
+  if (!downloadPath) throw new Error("浏览器未保留导出留档");
+
+  const restoreRequests: string[] = [];
+  const recordRestore = (request: Request) => {
+    if (/\/api\/data-safety\/backups\/[^/]+\/restore$/u.test(new URL(request.url()).pathname)) restoreRequests.push(request.url());
+  };
+  page.on("request", recordRestore);
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("不会覆盖当前资料或自动恢复");
+    await dialog.accept();
+  });
+  await page.getByLabel("导入完整留档文件").setInputFiles({
+    name: download.suggestedFilename(),
+    mimeType: "application/vnd.zhiye.backup+zip",
+    buffer: await readFile(downloadPath),
+  });
+  await expect(page.getByText("留档文件已导入并校验；当前资料未更改。")).toBeVisible();
+  await expect(backupRows).toHaveCount(backupCount + 1);
+  expect(restoreRequests).toEqual([]);
+  page.off("request", recordRestore);
+  await expect(page.getByRole("heading", { name: "数据安全" })).toBeVisible();
   await page.getByRole("button", { name: "返回资料库" }).click();
   await page.getByLabel("网页地址").fill("https://example.com/requested");
   await page.getByRole("button", { name: "收取网页" }).click();

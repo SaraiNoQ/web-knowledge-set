@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, constants, createReadStream, existsSync, fsyncSync, openSync, statSync } from "node:fs";
+import { closeSync, constants, createReadStream, existsSync, fsyncSync, openSync, rmSync, statSync } from "node:fs";
 import { open, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, extname, join, resolve, sep } from "node:path";
@@ -27,7 +27,14 @@ import type {
 import { TRANSLATION_LANGUAGES } from "../shared/types.js";
 import { cacheDocumentAssets, type AssetFetchFunction } from "./assets.js";
 import { createAuth } from "./auth.js";
-import { BackupError, recoverInterruptedRestore, restoreBackup } from "./backup.js";
+import {
+  BACKUP_ARCHIVE_MIME,
+  BackupError,
+  createBackupArchive,
+  MAX_BACKUP_ARCHIVE_BYTES,
+  recoverInterruptedRestore,
+  restoreBackup,
+} from "./backup.js";
 import {
   cleanupOrphanSnapshots,
   createRecordedBackup,
@@ -35,6 +42,7 @@ import {
   dataSafetyHealth,
   defaultBackupRoot,
   errorDetails,
+  importRecordedBackup,
   listRecoveryBackups,
   pruneAutomaticBackups,
   reconcileBackupRecords,
@@ -289,6 +297,21 @@ async function readBinary(request: IncomingMessage, limit: number) {
   }
   if (!size) throw new HttpError(400, "EMPTY_ZIP", "ZIP request body is empty");
   return Buffer.concat(chunks);
+}
+
+function backupArchiveLength(request: IncomingMessage) {
+  const value = request.headers["content-length"];
+  if (value === undefined) {
+    throw new HttpError(411, "CONTENT_LENGTH_REQUIRED", "Backup archive Content-Length is required");
+  }
+  if (!/^[1-9][0-9]*$/u.test(value)) {
+    throw new HttpError(400, "INVALID_CONTENT_LENGTH", "Backup archive Content-Length is invalid");
+  }
+  const bytes = Number(value);
+  if (!Number.isSafeInteger(bytes) || bytes > MAX_BACKUP_ARCHIVE_BYTES) {
+    throw new HttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Backup archive exceeds 2 GiB");
+  }
+  return bytes;
 }
 
 function operationAbort(request: IncomingMessage, response: ServerResponse) {
@@ -1093,6 +1116,16 @@ export function createApp(options: AppOptions) {
     return enteringEpoch;
   };
 
+  const guardBackupArchiveMutation = (request: IncomingMessage) => {
+    if (!sameOrigin(request)) throw new HttpError(403, "ORIGIN_REJECTED", "Cross-origin mutations are not allowed");
+    if (request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() !== BACKUP_ARCHIVE_MIME) {
+      throw new HttpError(415, "BACKUP_ARCHIVE_REQUIRED", `Content-Type must be ${BACKUP_ARCHIVE_MIME}`);
+    }
+    const enteringEpoch = request.headers[DATA_EPOCH_HEADER.toLowerCase()];
+    assertDataEpoch(enteringEpoch);
+    return enteringEpoch;
+  };
+
   const mutationBody = async (request: IncomingMessage) => {
     const enteringEpoch = request.headers[DATA_EPOCH_HEADER.toLowerCase()];
     const body = await readJson(request);
@@ -1213,8 +1246,13 @@ export function createApp(options: AppOptions) {
         return;
       }
       const bundlePreview = pathname === "/api/imports/bundle/preview" && request.method === "POST";
+      const backupArchiveImport = pathname === "/api/data-safety/backups/import" && request.method === "POST";
       const enteringDataEpoch = pathname.startsWith("/api/") && JSON_MUTATION_METHODS.has(request.method ?? "")
-        ? bundlePreview ? guardBundleMutation(request) : guardDataMutation(request)
+        ? bundlePreview
+          ? guardBundleMutation(request)
+          : backupArchiveImport
+            ? guardBackupArchiveMutation(request)
+            : guardDataMutation(request)
         : null;
 
       if (pathname === "/api/data-safety" && request.method === "GET") {
@@ -1509,6 +1547,92 @@ export function createApp(options: AppOptions) {
 
       if (maintenanceKind && pathname.startsWith("/api/")) {
         throw new HttpError(503, "MAINTENANCE", `Data maintenance is in progress: ${maintenanceKind}`);
+      }
+
+      const exportBackupMatch = pathname.match(/^\/api\/data-safety\/backups\/([^/]+)\/export\.zhiye-backup$/u);
+      if (exportBackupMatch && request.method === "GET") {
+        if (requestUrl.search) throw new HttpError(400, "INVALID_BACKUP_EXPORT", "Backup export does not accept query parameters");
+        const operation = operationAbort(request, response);
+        let archive: Awaited<ReturnType<typeof createBackupArchive>>;
+        try {
+          archive = await runMaintenance("backup export", async () => {
+            await worker.pause();
+            try {
+              const selected = await resolveBackupRecord(db, backupRoot, decodeId(exportBackupMatch[1]));
+              return await createBackupArchive({
+                dataDir: options.dataDir,
+                backupRoot,
+                backupPath: selected.backupValue.path,
+                signal: operation.signal,
+              });
+            } finally {
+              worker.resume();
+            }
+          });
+        } finally {
+          operation.dispose();
+        }
+        if (response.destroyed) {
+          rmSync(archive.path, { force: true });
+          return;
+        }
+        let cleaned = false;
+        const stream = createReadStream(archive.path);
+        const cleanup = () => {
+          if (cleaned) return;
+          cleaned = true;
+          rmSync(archive.path, { force: true });
+        };
+        response.once("finish", () => {
+          stream.destroy();
+          cleanup();
+        });
+        response.once("close", () => {
+          if (!response.writableFinished) stream.destroy();
+          cleanup();
+        });
+        stream.once("error", (error) => {
+          cleanup();
+          response.destroy(error);
+        });
+        response.writeHead(200, {
+          "Content-Type": BACKUP_ARCHIVE_MIME,
+          "Content-Disposition": `attachment; filename="${archive.filename}"`,
+          "Content-Length": String(archive.bytes),
+          "Cache-Control": "no-store",
+          ...securityHeaders(),
+        });
+        stream.pipe(response);
+        return;
+      }
+
+      if (pathname === "/api/data-safety/backups/import" && request.method === "POST") {
+        if (requestUrl.search) throw new HttpError(400, "INVALID_BACKUP_IMPORT", "Backup import does not accept query parameters");
+        const declaredBytes = backupArchiveLength(request);
+        const operation = operationAbort(request, response);
+        try {
+          const record = await runMaintenance("backup import", async () => {
+            await worker.pause();
+            try {
+              return await importRecordedBackup(
+                db,
+                options.dataDir,
+                backupRoot,
+                request,
+                declaredBytes,
+                CURRENT_SCHEMA_VERSION,
+                operation.signal,
+              );
+            } finally {
+              worker.resume();
+            }
+          });
+          assertDataEpoch(enteringDataEpoch);
+          sendJson(response, 201, record);
+        } finally {
+          operation.dispose();
+        }
+        return;
       }
 
       if (pathname === "/api/data-safety/backups" && request.method === "POST") {
@@ -2300,7 +2424,11 @@ export function createApp(options: AppOptions) {
       else if (error instanceof BackupError) {
         sendError(
           response,
-          error.code === "QUARANTINE_REQUIRED" ? 409 : 400,
+          error.code === "QUARANTINE_REQUIRED"
+            ? 409
+            : error.code === "BACKUP_ARCHIVE_TOO_LARGE"
+              ? 413
+              : 400,
           error.code,
           error.message,
         );

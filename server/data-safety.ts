@@ -11,6 +11,7 @@ import type {
 import {
   createBackup,
   deleteBackup,
+  importBackupArchive,
   verifyBackup,
   type VerifiedBackup,
 } from "./backup.js";
@@ -177,6 +178,27 @@ export async function createRecordedBackup(
     db.upsertBackupRecord(failedRecord(reason, error));
     throw error;
   }
+}
+
+export async function importRecordedBackup(
+  db: KnowledgeDatabase | null,
+  dataDir: string,
+  backupRoot: string,
+  source: AsyncIterable<string | Uint8Array>,
+  declaredBytes: number | null,
+  supportedSchemaVersion: number,
+  signal?: AbortSignal,
+) {
+  const backupValue = await importBackupArchive({
+    dataDir,
+    backupRoot,
+    source,
+    declaredBytes,
+    supportedSchemaVersion,
+    signal,
+  });
+  const record = verifiedRecord(backupValue, db?.getBackupRecordByDirectoryName(basename(backupValue.path)));
+  return db?.upsertBackupRecord(record) ?? record;
 }
 
 async function recordAndBackup(

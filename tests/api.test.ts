@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, fsyncSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, fsyncSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, request as httpRequest } from "node:http";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
@@ -7,6 +7,7 @@ import { basename, join } from "node:path";
 import test from "node:test";
 
 import { createApp, type CaptureFunction } from "../server/app.js";
+import { BACKUP_ARCHIVE_MIME } from "../server/backup.js";
 import { derivedInputHash, openDatabase } from "../server/db.js";
 import type {
   BackupRecord,
@@ -474,6 +475,71 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
       ).status,
       200,
     );
+    assert.equal(
+      (await fetch(`${base}/api/data-safety/backups/${encodeURIComponent(backupRecord.id)}/export.zhiye-backup`)).status,
+      401,
+    );
+    assert.equal(
+      (
+        await fetch(
+          `${base}/api/data-safety/backups/${encodeURIComponent(backupRecord.id)}/export.zhiye-backup?unexpected=1`,
+          { headers: { Cookie: cookie } },
+        )
+      ).status,
+      400,
+    );
+    const archiveResponse = await fetch(
+      `${base}/api/data-safety/backups/${encodeURIComponent(backupRecord.id)}/export.zhiye-backup`,
+      { headers: { Cookie: cookie } },
+    );
+    assert.equal(archiveResponse.status, 200);
+    assert.equal(archiveResponse.headers.get("content-type"), BACKUP_ARCHIVE_MIME);
+    assert.match(archiveResponse.headers.get("content-disposition") ?? "", /^attachment; filename="backup-.+\.zhiye-backup"$/u);
+    const fullBackupArchive = Buffer.from(await archiveResponse.arrayBuffer());
+    assert.equal(Number(archiveResponse.headers.get("content-length")), fullBackupArchive.length);
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (!readdirSync(`${directory}-backups`).some((entry) => entry.startsWith(".zhiye-backup-export-"))) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      if (attempt === 99) assert.fail("completed backup export left its temporary archive behind");
+    }
+    const wrongBackupMime = await fetch(`${base}/api/data-safety/backups/import`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: fullBackupArchive,
+    });
+    assert.equal(wrongBackupMime.status, 415);
+    assert.equal(((await wrongBackupMime.json()) as { error: { code: string } }).error.code, "BACKUP_ARCHIVE_REQUIRED");
+    const missingLength = await new Promise<{ status: number; code: string }>((resolve, reject) => {
+      const request = httpRequest(`${base}/api/data-safety/backups/import`, {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          Origin: base,
+          "Content-Type": BACKUP_ARCHIVE_MIME,
+          "Transfer-Encoding": "chunked",
+          "X-Zhiye-Data-Epoch": initialDataEpoch,
+        },
+      }, (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+        response.on("end", () => {
+          const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { error: { code: string } };
+          resolve({ status: response.statusCode ?? 0, code: payload.error.code });
+        });
+      });
+      request.on("error", reject);
+      request.end(fullBackupArchive);
+    });
+    assert.deepEqual(missingLength, { status: 411, code: "CONTENT_LENGTH_REQUIRED" });
+    const importedBackupResponse = await fetch(`${base}/api/data-safety/backups/import`, {
+      method: "POST",
+      headers: { ...jsonHeaders, "Content-Type": BACKUP_ARCHIVE_MIME },
+      body: fullBackupArchive,
+    });
+    assert.equal(importedBackupResponse.status, 201);
+    const importedBackupRecord = (await importedBackupResponse.json()) as BackupRecord;
+    assert.equal(importedBackupRecord.status, "verified");
+    assert.notEqual(importedBackupRecord.id, backupRecord.id);
     for (const automaticRetentionCount of [0, 101]) {
       const response = await fetch(`${base}/api/data-safety/settings`, {
         method: "PATCH",
@@ -1165,6 +1231,21 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
       await fetch(`${base}/api/data-safety`, { headers: { Cookie: cookie } })
     ).json()) as DataSafetyStatus;
     assert.equal(recoveryStatus.mode, "recovery");
+    const recoveryImport = await fetch(`${base}/api/data-safety/backups/import`, {
+      method: "POST",
+      headers: { ...jsonHeaders, "Content-Type": BACKUP_ARCHIVE_MIME },
+      body: fullBackupArchive,
+    });
+    assert.equal(recoveryImport.status, 201);
+    const recoveryImportedRecord = (await recoveryImport.json()) as BackupRecord;
+    assert.equal(recoveryImportedRecord.status, "verified");
+    const recoveryExport = await fetch(
+      `${base}/api/data-safety/backups/${encodeURIComponent(recoveryImportedRecord.id)}/export.zhiye-backup`,
+      { headers: { Cookie: cookie } },
+    );
+    assert.equal(recoveryExport.status, 200);
+    assert.equal(recoveryExport.headers.get("content-type"), BACKUP_ARCHIVE_MIME);
+    assert.ok((await recoveryExport.arrayBuffer()).byteLength > 0);
     assert.equal((await fetch(`${base}/api/documents`, { headers: { Cookie: cookie } })).status, 503);
     const recoveryClose = await fetch(`${base}/api/desktop/close-ready`, {
       method: "POST",

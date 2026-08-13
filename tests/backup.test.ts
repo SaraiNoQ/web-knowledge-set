@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
   existsSync,
+  createReadStream,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -20,17 +21,28 @@ import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
+import { strToU8, zipSync } from "fflate";
+
 import {
   BackupError,
   cleanupIncompleteBackups,
   createBackup,
+  createBackupArchive,
   deleteBackup,
+  importBackupArchive,
+  MAX_BACKUP_ARCHIVE_BYTES,
   recoverInterruptedRestore,
   restoreBackup,
   verifyBackup,
   type BackupManifest,
 } from "../server/backup.js";
 import { derivedInputHash, openDatabase, type KnowledgeDatabase } from "../server/db.js";
+import {
+  createRecordedBackup,
+  importRecordedBackup,
+  pruneAutomaticBackups,
+  reconcileBackupRecords,
+} from "../server/data-safety.js";
 import { acquireDataLock } from "../server/lock.js";
 
 const mutableFs = createRequire(import.meta.url)("node:fs") as {
@@ -916,20 +928,206 @@ test("corrupt current data requires confirmation and is preserved by quarantine 
   }
 });
 
-test("cleanup removes only incomplete backup directories", () => {
+test("full backup archives round-trip without restoring until explicitly requested", async () => {
+  const fixture = workspace();
+  let current: KnowledgeDatabase | undefined = fixture.db;
+  try {
+    const saved = capturedDocument(fixture.db, fixture.dataDir);
+    const original = await createBackup({
+      dataDir: fixture.dataDir,
+      backupRoot: fixture.backupRoot,
+      database: fixture.db.sql,
+      reason: "manual",
+    });
+    const changed = fixture.db.updateDocument(saved.document.id, saved.document.revision, {
+      title: "Changed after archive export",
+    });
+    assert.equal(changed.kind, "updated");
+
+    const archive = await createBackupArchive({
+      dataDir: fixture.dataDir,
+      backupRoot: fixture.backupRoot,
+      backupPath: original.path,
+    });
+    assert.match(archive.filename, /^backup-.+\.zhiye-backup$/u);
+    assert.equal(statSync(archive.path).mode & 0o777, 0o600);
+    assert.equal(statSync(archive.path).size, archive.bytes);
+
+    const imported = await importBackupArchive({
+      dataDir: fixture.dataDir,
+      backupRoot: fixture.backupRoot,
+      source: createReadStream(archive.path),
+      declaredBytes: archive.bytes,
+      supportedSchemaVersion: original.manifest.schemaVersion,
+    });
+    assert.notEqual(imported.path, original.path);
+    assert.deepEqual(imported.manifest, original.manifest);
+    assert.equal(fixture.db.getDocument(saved.document.id)?.title, "Changed after archive export");
+
+    fixture.db.close();
+    current = undefined;
+    await restoreBackup({
+      dataDir: fixture.dataDir,
+      backupRoot: fixture.backupRoot,
+      backupPath: imported.path,
+      supportedSchemaVersion: imported.manifest.schemaVersion,
+      prepareStaging,
+    });
+    current = openDatabase(fixture.dataDir);
+    assert.equal(current.getDocument(saved.document.id)?.title, saved.document.title);
+    assert.equal(readFileSync(join(fixture.dataDir, saved.snapshotPath), "utf8"), "compressed-html");
+    assert.equal(existsSync(join(fixture.dataDir, saved.assetPath)), true);
+  } finally {
+    cleanup(fixture.root, current);
+  }
+});
+
+test("full backup archive import rejects unsupported ZIP metadata and cleans staging", async () => {
+  const fixture = workspace();
+  try {
+    capturedDocument(fixture.db, fixture.dataDir);
+    const backupValue = await createBackup({
+      dataDir: fixture.dataDir,
+      backupRoot: fixture.backupRoot,
+      database: fixture.db.sql,
+    });
+    const archive = await createBackupArchive({
+      dataDir: fixture.dataDir,
+      backupRoot: fixture.backupRoot,
+      backupPath: backupValue.path,
+    });
+    const valid = readFileSync(archive.path);
+    const central = valid.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+    const eocd = valid.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    assert.ok(central > 0 && eocd > central);
+
+    const encrypted = Buffer.from(valid);
+    encrypted.writeUInt16LE(encrypted.readUInt16LE(central + 8) | 1, central + 8);
+    encrypted.writeUInt16LE(encrypted.readUInt16LE(6) | 1, 6);
+    const symlink = Buffer.from(valid);
+    symlink.writeUInt16LE((3 << 8) | (symlink.readUInt16LE(central + 4) & 0xff), central + 4);
+    symlink.writeUInt32LE((0o120777 << 16) >>> 0, central + 38);
+    const zip64 = Buffer.from(valid);
+    zip64.writeUInt16LE(0xffff, eocd + 8);
+    zip64.writeUInt16LE(0xffff, eocd + 10);
+    const corrupt = Buffer.from(valid);
+    const firstData = 30 + corrupt.readUInt16LE(26) + corrupt.readUInt16LE(28);
+    corrupt[firstData] = corrupt[firstData]! ^ 1;
+    const unknown = Buffer.from(zipSync({ "unknown.txt": strToU8("not a backup") }, { level: 0 }));
+
+    for (const [body, code] of [
+      [encrypted, "INVALID_BACKUP_ARCHIVE"],
+      [symlink, "ZIP_SYMLINK"],
+      [zip64, "INVALID_BACKUP_ARCHIVE"],
+      [corrupt, "CHECKSUM_MISMATCH"],
+      [unknown, "UNEXPECTED_ZIP_ENTRY"],
+    ] as const) {
+      await assert.rejects(
+        importBackupArchive({
+          dataDir: fixture.dataDir,
+          backupRoot: fixture.backupRoot,
+          source: (async function* () { yield body; })(),
+          declaredBytes: body.length,
+          supportedSchemaVersion: backupValue.manifest.schemaVersion,
+        }),
+        (error: unknown) => error instanceof BackupError && error.code === code,
+      );
+      assert.equal(
+        readdirSync(fixture.backupRoot).some((entry) =>
+          /^\.zhiye-backup-(?:import-[a-f0-9-]{36}\.tmp|[a-zA-Z0-9]{6})$/u.test(entry)
+        ),
+        false,
+      );
+    }
+    await assert.rejects(
+      importBackupArchive({
+        dataDir: fixture.dataDir,
+        backupRoot: fixture.backupRoot,
+        source: (async function* () {})(),
+        declaredBytes: MAX_BACKUP_ARCHIVE_BYTES + 1,
+        supportedSchemaVersion: backupValue.manifest.schemaVersion,
+      }),
+      (error: unknown) => error instanceof BackupError && error.code === "BACKUP_ARCHIVE_TOO_LARGE",
+    );
+
+    const controller = new AbortController();
+    await assert.rejects(
+      importBackupArchive({
+        dataDir: fixture.dataDir,
+        backupRoot: fixture.backupRoot,
+        source: (async function* () {
+          yield valid.subarray(0, Math.min(valid.length, 64));
+          controller.abort();
+          yield valid.subarray(64);
+        })(),
+        declaredBytes: valid.length,
+        supportedSchemaVersion: backupValue.manifest.schemaVersion,
+        signal: controller.signal,
+      }),
+      (error: unknown) => error instanceof BackupError && error.code === "REQUEST_ABORTED",
+    );
+    assert.equal(
+      readdirSync(fixture.backupRoot).some((entry) => entry.startsWith(".zhiye-backup-import-")),
+      false,
+    );
+  } finally {
+    cleanup(fixture.root, fixture.db);
+  }
+});
+
+test("imported automatic archives become manual records and survive retention", async () => {
+  const fixture = workspace();
+  try {
+    capturedDocument(fixture.db, fixture.dataDir);
+    const automatic = await createBackup({
+      dataDir: fixture.dataDir,
+      backupRoot: fixture.backupRoot,
+      database: fixture.db.sql,
+      reason: "automatic",
+    });
+    const archive = await createBackupArchive({
+      dataDir: fixture.dataDir,
+      backupRoot: fixture.backupRoot,
+      backupPath: automatic.path,
+    });
+    const imported = await importRecordedBackup(
+      fixture.db,
+      fixture.dataDir,
+      fixture.backupRoot,
+      createReadStream(archive.path),
+      archive.bytes,
+      automatic.manifest.schemaVersion,
+    );
+    assert.equal(imported.reason, "manual");
+    await reconcileBackupRecords(fixture.db, fixture.backupRoot);
+    assert.equal(fixture.db.getBackupRecord(imported.id)?.reason, "manual");
+    fixture.db.setAutomaticRetentionCount(1);
+    await new Promise<void>((resolve) => setTimeout(resolve, 2));
+    await createRecordedBackup(fixture.db, fixture.dataDir, fixture.backupRoot, "automatic");
+    await pruneAutomaticBackups(fixture.db, fixture.backupRoot);
+    assert.equal(existsSync(join(fixture.backupRoot, imported.directoryName!)), true);
+  } finally {
+    cleanup(fixture.root, fixture.db);
+  }
+});
+
+test("cleanup removes only incomplete backup directories and archives", () => {
   const root = mkdtempSync(join(tmpdir(), "zhiye-backup-cleanup-"));
   try {
     const backupRoot = join(root, "backups");
     mkdirSync(backupRoot, { mode: 0o777 });
     const incomplete = mkdtempSync(join(backupRoot, ".zhiye-backup-"));
+    const incompleteArchive = join(backupRoot, ".zhiye-backup-import-11111111-1111-4111-8111-111111111111.tmp");
     const complete = join(backupRoot, "backup-complete");
     const unrelated = join(backupRoot, ".zhiye-backup-not-six-characters");
     mkdirSync(complete);
+    writeFileSync(incompleteArchive, "incomplete", { mode: 0o600 });
     writeFileSync(unrelated, "keep");
 
-    assert.equal(cleanupIncompleteBackups(backupRoot, join(root, "data")), 1);
+    assert.equal(cleanupIncompleteBackups(backupRoot, join(root, "data")), 2);
     assert.equal(statSync(backupRoot).mode & 0o777, 0o700);
     assert.equal(existsSync(incomplete), false);
+    assert.equal(existsSync(incompleteArchive), false);
     assert.equal(existsSync(complete), true);
     assert.equal(readFileSync(unrelated, "utf8"), "keep");
   } finally {

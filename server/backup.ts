@@ -11,6 +11,7 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  readSync,
   readdirSync,
   realpathSync,
   renameSync,
@@ -18,10 +19,14 @@ import {
   statfsSync,
   unlinkSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { constants as fsConstants } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
+import { crc32 } from "node:zlib";
+
+import { Zip, ZipPassThrough } from "fflate";
 
 const FORMAT = "zhiye-backup";
 const FORMAT_VERSION = 2;
@@ -30,6 +35,10 @@ const LIVE_DATABASE_FILE = "zhiye.sqlite3";
 const MANIFEST_FILE = "manifest.json";
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_FILES = 200_001;
+export const BACKUP_ARCHIVE_MIME = "application/vnd.zhiye.backup+zip";
+export const MAX_BACKUP_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_BACKUP_ARCHIVE_FILES = 50_000;
+const BACKUP_ARCHIVE_TEMP = /^\.zhiye-backup-(?:export|import)-[a-f0-9-]{36}\.tmp$/u;
 const SNAPSHOT_PATH = /^snapshots\/[a-zA-Z0-9-]+\.html\.gz$/u;
 const ASSET_PATH = /^assets\/[a-f0-9]{64}$/u;
 const ASSET_TEMPORARY = /^\.asset-[a-f0-9-]{36}\.tmp$/u;
@@ -93,6 +102,28 @@ export interface RestoreResult {
   preRestoreBackup: VerifiedBackup | null;
   quarantinedDataPath: string | null;
   cleanupPending: boolean;
+}
+
+export interface BackupArchive {
+  path: string;
+  filename: string;
+  bytes: number;
+}
+
+export interface ExportBackupArchiveOptions {
+  dataDir: string;
+  backupRoot: string;
+  backupPath: string;
+  signal?: AbortSignal;
+}
+
+export interface ImportBackupArchiveOptions {
+  dataDir: string;
+  backupRoot: string;
+  source: AsyncIterable<string | Uint8Array>;
+  declaredBytes?: number | null;
+  supportedSchemaVersion: number;
+  signal?: AbortSignal;
 }
 
 interface RestoreState {
@@ -204,6 +235,17 @@ function prepareBackupRoot(input: string, dataDir: string) {
   return root;
 }
 
+function existingBackupRoot(input: string, dataDir: string) {
+  const target = dataTarget(dataDir);
+  if (!existsSync(input)) return prepareBackupRoot(input, target);
+  const requested = resolve(input);
+  ensureDirectory(requested);
+  const root = realpathSync(requested);
+  if (isInside(root, target) || isInside(target, root)) fail("UNSAFE_PATH", "Backup directory overlaps protected data");
+  chmodSync(root, 0o700);
+  return root;
+}
+
 /** Call only while no backup operation is running. */
 export function cleanupIncompleteBackups(backupRoot: string, dataDir: string) {
   if (!existsSync(backupRoot)) return 0;
@@ -216,9 +258,15 @@ export function cleanupIncompleteBackups(backupRoot: string, dataDir: string) {
   }
   let removed = 0;
   for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (!/^\.zhiye-backup-[a-zA-Z0-9]{6}$/u.test(entry.name)) continue;
-    if (!entry.isDirectory()) fail("UNSAFE_PATH", `Incomplete backup entry is not a directory: ${entry.name}`);
-    rmSync(join(root, entry.name), { recursive: true });
+    if (/^\.zhiye-backup-[a-zA-Z0-9]{6}$/u.test(entry.name)) {
+      if (!entry.isDirectory()) fail("UNSAFE_PATH", `Incomplete backup entry is not a directory: ${entry.name}`);
+      rmSync(join(root, entry.name), { recursive: true });
+    } else if (BACKUP_ARCHIVE_TEMP.test(entry.name)) {
+      if (!entry.isFile()) fail("UNSAFE_PATH", `Incomplete backup archive is not a file: ${entry.name}`);
+      unlinkSync(join(root, entry.name));
+    } else {
+      continue;
+    }
     removed += 1;
   }
   if (removed) syncPath(root);
@@ -316,9 +364,12 @@ function ensureSupportedDataLayout(dataDir: string) {
   }
 }
 
-async function sha256File(path: string) {
+async function sha256File(path: string, signal?: AbortSignal) {
   const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
+  for await (const chunk of createReadStream(path, { signal })) {
+    checkArchiveAbort(signal);
+    hash.update(chunk as Buffer);
+  }
   return hash.digest("hex");
 }
 
@@ -571,17 +622,19 @@ function verifyLayout(root: string, manifest: BackupManifest) {
   }
 }
 
-export async function verifyBackup(path: string): Promise<VerifiedBackup> {
+export async function verifyBackup(path: string, signal?: AbortSignal): Promise<VerifiedBackup> {
+  checkArchiveAbort(signal);
   let root = resolve(path);
   ensureDirectory(root, "INVALID_BACKUP");
   root = realpathSync(root);
   const manifest = parseManifest(join(root, MANIFEST_FILE));
   verifyLayout(root, manifest);
   for (const file of manifest.files) {
+    checkArchiveAbort(signal);
     const filePath = backupFilePath(root, file.path);
     const stat = ensureRegularFile(filePath);
     if (stat.size !== file.bytes) fail("CHECKSUM_MISMATCH", `Backup file size changed: ${file.path}`);
-    const actualHash = await sha256File(filePath);
+    const actualHash = await sha256File(filePath, signal);
     if (actualHash !== file.sha256) {
       fail("CHECKSUM_MISMATCH", `Backup file checksum changed: ${file.path}`);
     }
@@ -589,6 +642,7 @@ export async function verifyBackup(path: string): Promise<VerifiedBackup> {
       fail("CHECKSUM_MISMATCH", `Backup asset hash does not match its path: ${file.path}`);
     }
   }
+  checkArchiveAbort(signal);
   const contents = inspectDatabase(join(root, DATABASE_FILE));
   if (contents.schemaVersion !== manifest.schemaVersion) {
     fail("INVALID_BACKUP", "Backup schema version does not match its manifest");
@@ -597,6 +651,424 @@ export async function verifyBackup(path: string): Promise<VerifiedBackup> {
   for (const file of manifest.files) expected.delete(file.path);
   if (expected.size) fail("INVALID_BACKUP", "Backup is missing files referenced by the database");
   return { path: root, manifest };
+}
+
+interface StoredArchiveEntry {
+  path: string;
+  crc: number;
+  bytes: number;
+  dataOffset: number;
+  intervalStart: number;
+  intervalEnd: number;
+}
+
+function checkArchiveAbort(signal?: AbortSignal) {
+  if (signal?.aborted) fail("REQUEST_ABORTED", "Backup archive operation was aborted");
+}
+
+function writeAll(descriptor: number, value: Uint8Array) {
+  let offset = 0;
+  while (offset < value.length) offset += writeSync(descriptor, value, offset, value.length - offset);
+}
+
+function readExactly(descriptor: number, bytes: number, position: number) {
+  if (!Number.isSafeInteger(bytes) || bytes < 0 || !Number.isSafeInteger(position) || position < 0) {
+    fail("INVALID_BACKUP_ARCHIVE", "Backup archive contains unsafe offsets");
+  }
+  const value = Buffer.allocUnsafe(bytes);
+  let offset = 0;
+  while (offset < bytes) {
+    const count = readSync(descriptor, value, offset, bytes - offset, position + offset);
+    if (!count) fail("INVALID_BACKUP_ARCHIVE", "Backup archive ended unexpectedly");
+    offset += count;
+  }
+  return value;
+}
+
+function archiveEntryPath(path: string) {
+  return path === MANIFEST_FILE || path === DATABASE_FILE || SNAPSHOT_PATH.test(path) || ASSET_PATH.test(path);
+}
+
+function temporaryArchivePath(root: string, kind: "export" | "import") {
+  return join(root, `.zhiye-backup-${kind}-${randomUUID()}.tmp`);
+}
+
+function zipEntrySize(path: string, bytes: number) {
+  return bytes + 92 + Buffer.byteLength(path) * 2;
+}
+
+export async function createBackupArchive(options: ExportBackupArchiveOptions): Promise<BackupArchive> {
+  checkArchiveAbort(options.signal);
+  const root = existingBackupRoot(options.backupRoot, options.dataDir);
+  const backupName = typeof options.backupPath === "string" ? basename(options.backupPath) : "";
+  if (!BACKUP_DIRECTORY.test(backupName) || options.backupPath !== join(root, backupName)) {
+    fail("UNSAFE_PATH", "Backup export requires a canonical backup directory inside the backup root");
+  }
+  const verified = await verifyBackup(options.backupPath, options.signal);
+  if (verified.path !== options.backupPath) fail("UNSAFE_PATH", "Backup export path changed during verification");
+  if (verified.manifest.files.length + 1 > MAX_BACKUP_ARCHIVE_FILES) {
+    fail("BACKUP_ARCHIVE_TOO_LARGE", "Backup archive contains too many files");
+  }
+
+  const manifest = Buffer.from(`${JSON.stringify(verified.manifest, null, 2)}\n`);
+  let expectedBytes = 22 + zipEntrySize(MANIFEST_FILE, manifest.length);
+  for (const file of verified.manifest.files) expectedBytes += zipEntrySize(file.path, file.bytes);
+  if (!Number.isSafeInteger(expectedBytes) || expectedBytes > MAX_BACKUP_ARCHIVE_BYTES) {
+    fail("BACKUP_ARCHIVE_TOO_LARGE", "Backup archive exceeds 2 GiB");
+  }
+  ensureSpace(root, BigInt(expectedBytes));
+
+  const temporary = temporaryArchivePath(root, "export");
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(
+      temporary,
+      fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY | fsConstants.O_NOFOLLOW,
+      0o600,
+    );
+    chmodSync(temporary, 0o600);
+    let written = 0;
+    let failed: unknown;
+    let resolveDone!: () => void;
+    let rejectDone!: (error: unknown) => void;
+    const done = new Promise<void>((resolveDoneValue, rejectDoneValue) => {
+      resolveDone = resolveDoneValue;
+      rejectDone = rejectDoneValue;
+    });
+    void done.catch(() => undefined);
+    const archive = new Zip((error, chunk, final) => {
+      if (failed) return;
+      if (error) {
+        failed = error;
+        rejectDone(error);
+        return;
+      }
+      try {
+        if (written + chunk.length > MAX_BACKUP_ARCHIVE_BYTES) {
+          fail("BACKUP_ARCHIVE_TOO_LARGE", "Backup archive exceeds 2 GiB");
+        }
+        writeAll(descriptor!, chunk);
+        written += chunk.length;
+        if (final) resolveDone();
+      } catch (writeError) {
+        failed = writeError;
+        rejectDone(writeError);
+      }
+    });
+    const add = async (path: string, body: Uint8Array | BackupFile) => {
+      checkArchiveAbort(options.signal);
+      const stream = new ZipPassThrough(path);
+      stream.os = 3;
+      stream.attrs = 0o100600 * 0x1_0000;
+      stream.mtime = new Date("1980-01-01T00:00:00.000Z");
+      archive.add(stream);
+      if (body instanceof Uint8Array) {
+        stream.push(body, true);
+        if (failed) throw failed;
+        return;
+      }
+      const hash = createHash("sha256");
+      let size = 0;
+      const sourcePath = backupFilePath(verified.path, body.path);
+      const sourceDescriptor = openSync(sourcePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+      for await (const chunk of createReadStream(sourcePath, {
+        fd: sourceDescriptor,
+        autoClose: true,
+        signal: options.signal,
+      })) {
+        checkArchiveAbort(options.signal);
+        const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        size += value.length;
+        if (size > body.bytes) fail("CHECKSUM_MISMATCH", `Backup file size changed: ${body.path}`);
+        hash.update(value);
+        stream.push(value);
+        if (failed) throw failed;
+      }
+      if (size !== body.bytes || hash.digest("hex") !== body.sha256) {
+        fail("CHECKSUM_MISMATCH", `Backup file changed during export: ${body.path}`);
+      }
+      stream.push(new Uint8Array(), true);
+      if (failed) throw failed;
+    };
+    try {
+      await add(MANIFEST_FILE, manifest);
+      for (const file of verified.manifest.files) await add(file.path, file);
+      checkArchiveAbort(options.signal);
+      archive.end();
+      await done;
+    } catch (error) {
+      archive.terminate();
+      throw failed ?? error;
+    }
+    if (written !== expectedBytes) fail("BACKUP_EXPORT_FAILED", "Backup archive size was not deterministic");
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = undefined;
+    syncPath(root);
+    return { path: temporary, filename: `${backupName}.zhiye-backup`, bytes: written };
+  } catch (error) {
+    if (descriptor !== undefined) closeSync(descriptor);
+    rmSync(temporary, { force: true });
+    if (options.signal?.aborted) fail("REQUEST_ABORTED", "Backup archive export was aborted", error);
+    if (error instanceof BackupError) throw error;
+    fail("BACKUP_EXPORT_FAILED", "Backup archive could not be created", error);
+  }
+}
+
+function inspectBackupArchive(path: string) {
+  const stat = ensureRegularFile(path, "INVALID_BACKUP_ARCHIVE");
+  if (stat.size < 22) fail("INVALID_BACKUP_ARCHIVE", "Backup archive is incomplete");
+  if (stat.size > MAX_BACKUP_ARCHIVE_BYTES) fail("BACKUP_ARCHIVE_TOO_LARGE", "Backup archive exceeds 2 GiB");
+  const descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  try {
+    const eocdOffset = stat.size - 22;
+    const eocd = readExactly(descriptor, 22, eocdOffset);
+    const entryCount = eocd.readUInt16LE(10);
+    const centralBytes = eocd.readUInt32LE(12);
+    const centralOffset = eocd.readUInt32LE(16);
+    if (
+      eocd.readUInt32LE(0) !== 0x06054b50 || eocd.readUInt16LE(4) !== 0 || eocd.readUInt16LE(6) !== 0 ||
+      entryCount !== eocd.readUInt16LE(8) || entryCount < 1 || entryCount > MAX_BACKUP_ARCHIVE_FILES ||
+      entryCount === 0xffff || centralBytes === 0xffffffff || centralOffset === 0xffffffff ||
+      eocd.readUInt16LE(20) !== 0 || centralOffset + centralBytes !== eocdOffset
+    ) {
+      fail("INVALID_BACKUP_ARCHIVE", "Backup archive uses an unsupported ZIP structure");
+    }
+
+    const entries: StoredArchiveEntry[] = [];
+    const names = new Set<string>();
+    let totalBytes = 0;
+    let offset = centralOffset;
+    for (let index = 0; index < entryCount; index += 1) {
+      const central = readExactly(descriptor, 46, offset);
+      if (central.readUInt32LE(0) !== 0x02014b50) {
+        fail("INVALID_BACKUP_ARCHIVE", "Backup archive central directory is invalid");
+      }
+      const madeBy = central.readUInt16LE(4);
+      const version = central.readUInt16LE(6);
+      const flags = central.readUInt16LE(8);
+      const method = central.readUInt16LE(10);
+      const crc = central.readUInt32LE(16);
+      const compressed = central.readUInt32LE(20);
+      const bytes = central.readUInt32LE(24);
+      const nameBytes = central.readUInt16LE(28);
+      const extraBytes = central.readUInt16LE(30);
+      const commentBytes = central.readUInt16LE(32);
+      const disk = central.readUInt16LE(34);
+      const external = central.readUInt32LE(38);
+      const localOffset = central.readUInt32LE(42);
+      if (
+        version > 20 || (flags & ~0x0808) !== 0 || method !== 0 || compressed !== bytes ||
+        [compressed, bytes, localOffset].includes(0xffffffff) || nameBytes < 1 || nameBytes > 1_024 ||
+        extraBytes !== 0 || commentBytes !== 0 || disk !== 0
+      ) {
+        fail("INVALID_BACKUP_ARCHIVE", "Backup archive contains an unsupported ZIP entry");
+      }
+      const host = madeBy >>> 8;
+      const fileType = (external >>> 16) & 0o170000;
+      if ((external & 0x10) !== 0 || ([3, 19].includes(host) && fileType !== 0 && fileType !== 0o100000)) {
+        fail("ZIP_SYMLINK", "Backup archive links and non-regular entries are not allowed");
+      }
+      const nameBuffer = readExactly(descriptor, nameBytes, offset + 46);
+      let name: string;
+      try {
+        name = new TextDecoder("utf-8", { fatal: true }).decode(nameBuffer);
+      } catch {
+        fail("INVALID_BACKUP_ARCHIVE", "Backup archive path is not valid UTF-8");
+      }
+      if (!archiveEntryPath(name!) || names.has(name!)) {
+        fail(names.has(name!) ? "DUPLICATE_ZIP_PATH" : "UNEXPECTED_ZIP_ENTRY", "Backup archive contains an unexpected or duplicate path");
+      }
+      names.add(name!);
+      if (name === MANIFEST_FILE && bytes > MAX_MANIFEST_BYTES) {
+        fail("INVALID_BACKUP_ARCHIVE", "Backup archive manifest is too large");
+      }
+      totalBytes += bytes;
+      if (!Number.isSafeInteger(totalBytes) || totalBytes > MAX_BACKUP_ARCHIVE_BYTES) {
+        fail("BACKUP_ARCHIVE_TOO_LARGE", "Backup archive payload exceeds 2 GiB");
+      }
+
+      const local = readExactly(descriptor, 30, localOffset);
+      if (
+        local.readUInt32LE(0) !== 0x04034b50 || local.readUInt16LE(4) > 20 ||
+        local.readUInt16LE(6) !== flags || local.readUInt16LE(8) !== method ||
+        local.readUInt16LE(26) !== nameBytes || local.readUInt16LE(28) !== 0 ||
+        !readExactly(descriptor, nameBytes, localOffset + 30).equals(nameBuffer)
+      ) {
+        fail("INVALID_BACKUP_ARCHIVE", "Backup archive local and central entries disagree");
+      }
+      const descriptorUsed = (flags & 0x0008) !== 0;
+      const localCrc = local.readUInt32LE(14);
+      const localCompressed = local.readUInt32LE(18);
+      const localBytes = local.readUInt32LE(22);
+      if (
+        descriptorUsed
+          ? !(
+            (localCrc === 0 && localCompressed === 0 && localBytes === 0) ||
+            (localCrc === crc && localCompressed === compressed && localBytes === bytes)
+          )
+          : localCrc !== crc || localCompressed !== compressed || localBytes !== bytes
+      ) {
+        fail("INVALID_BACKUP_ARCHIVE", "Backup archive local entry metadata is invalid");
+      }
+      const dataOffset = localOffset + 30 + nameBytes;
+      let intervalEnd = dataOffset + compressed;
+      if (intervalEnd > centralOffset) fail("INVALID_BACKUP_ARCHIVE", "Backup archive entry exceeds its data area");
+      if (descriptorUsed) {
+        const possibleSignature = readExactly(descriptor, 4, intervalEnd).readUInt32LE(0);
+        const descriptorOffset = possibleSignature === 0x08074b50 ? intervalEnd + 4 : intervalEnd;
+        const dataDescriptor = readExactly(descriptor, 12, descriptorOffset);
+        if (
+          dataDescriptor.readUInt32LE(0) !== crc || dataDescriptor.readUInt32LE(4) !== compressed ||
+          dataDescriptor.readUInt32LE(8) !== bytes
+        ) {
+          fail("INVALID_BACKUP_ARCHIVE", "Backup archive data descriptor is invalid");
+        }
+        intervalEnd = descriptorOffset + 12;
+      }
+      entries.push({ path: name!, crc, bytes, dataOffset, intervalStart: localOffset, intervalEnd });
+      offset += 46 + nameBytes;
+    }
+    if (offset !== eocdOffset) fail("INVALID_BACKUP_ARCHIVE", "Backup archive central directory length is invalid");
+    const intervals = [...entries].sort((left, right) => left.intervalStart - right.intervalStart);
+    if (
+      intervals[0]?.intervalStart !== 0 || intervals.at(-1)?.intervalEnd !== centralOffset ||
+      intervals.some((entry, index) => index > 0 && entry.intervalStart !== intervals[index - 1]!.intervalEnd)
+    ) {
+      fail("INVALID_BACKUP_ARCHIVE", "Backup archive entries overlap or contain hidden data");
+    }
+    return { entries, totalBytes };
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+async function extractBackupArchive(path: string, staging: string, entries: StoredArchiveEntry[], signal?: AbortSignal) {
+  const snapshots = join(staging, "snapshots");
+  const assets = join(staging, "assets");
+  mkdirSync(snapshots, { mode: 0o700 });
+  let assetsCreated = false;
+  for (const entry of entries) {
+    checkArchiveAbort(signal);
+    if (ASSET_PATH.test(entry.path) && !assetsCreated) {
+      mkdirSync(assets, { mode: 0o700 });
+      assetsCreated = true;
+    }
+    const destination = entry.path === MANIFEST_FILE || entry.path === DATABASE_FILE
+      ? join(staging, entry.path)
+      : join(staging, ...entry.path.split("/"));
+    const descriptor = openSync(
+      destination,
+      fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY | fsConstants.O_NOFOLLOW,
+      0o600,
+    );
+    let checksum = 0;
+    try {
+      if (entry.bytes) {
+        for await (const chunk of createReadStream(path, {
+          start: entry.dataOffset,
+          end: entry.dataOffset + entry.bytes - 1,
+          signal,
+        })) {
+          checkArchiveAbort(signal);
+          const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          checksum = crc32(value, checksum);
+          writeAll(descriptor, value);
+        }
+      }
+      fsyncSync(descriptor);
+    } finally {
+      closeSync(descriptor);
+    }
+    chmodSync(destination, 0o600);
+    if ((checksum >>> 0) !== entry.crc) fail("CHECKSUM_MISMATCH", `Backup archive CRC mismatch: ${entry.path}`);
+  }
+  const manifest = parseManifest(join(staging, MANIFEST_FILE));
+  if (manifest.version >= 2 && !assetsCreated) {
+    mkdirSync(assets, { mode: 0o700 });
+    assetsCreated = true;
+  }
+  syncPath(snapshots);
+  if (assetsCreated) syncPath(assets);
+  syncPath(staging);
+}
+
+export async function importBackupArchive(options: ImportBackupArchiveOptions): Promise<VerifiedBackup> {
+  if (!Number.isSafeInteger(options.supportedSchemaVersion) || options.supportedSchemaVersion < 1) {
+    fail("INVALID_SUPPORTED_SCHEMA", "supportedSchemaVersion must be a positive safe integer");
+  }
+  if (
+    options.declaredBytes !== undefined && options.declaredBytes !== null &&
+    (!Number.isSafeInteger(options.declaredBytes) || options.declaredBytes < 1 || options.declaredBytes > MAX_BACKUP_ARCHIVE_BYTES)
+  ) {
+    fail("BACKUP_ARCHIVE_TOO_LARGE", "Backup archive Content-Length is invalid or exceeds 2 GiB");
+  }
+  checkArchiveAbort(options.signal);
+  const root = prepareBackupRoot(options.backupRoot, dataTarget(options.dataDir));
+  if (options.declaredBytes) ensureSpace(root, BigInt(options.declaredBytes));
+  const temporary = temporaryArchivePath(root, "import");
+  let staging: string | undefined;
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(
+      temporary,
+      fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY | fsConstants.O_NOFOLLOW,
+      0o600,
+    );
+    chmodSync(temporary, 0o600);
+    let archiveBytes = 0;
+    for await (const chunk of options.source) {
+      checkArchiveAbort(options.signal);
+      const value = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+      archiveBytes += value.length;
+      if (archiveBytes > MAX_BACKUP_ARCHIVE_BYTES) fail("BACKUP_ARCHIVE_TOO_LARGE", "Backup archive exceeds 2 GiB");
+      writeAll(descriptor, value);
+    }
+    if (!archiveBytes) fail("INVALID_BACKUP_ARCHIVE", "Backup archive is empty");
+    if (options.declaredBytes && archiveBytes !== options.declaredBytes) {
+      fail("INVALID_BACKUP_ARCHIVE", "Backup archive length does not match Content-Length");
+    }
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = undefined;
+    syncPath(root);
+
+    const inspected = inspectBackupArchive(temporary);
+    ensureSpace(root, BigInt(inspected.totalBytes));
+    staging = mkdtempSync(join(root, ".zhiye-backup-"));
+    chmodSync(staging, 0o700);
+    await extractBackupArchive(temporary, staging, inspected.entries, options.signal);
+    const importedManifest = parseManifest(join(staging, MANIFEST_FILE));
+    if (importedManifest.reason !== "manual") {
+      writeFileSync(join(staging, MANIFEST_FILE), `${JSON.stringify({ ...importedManifest, reason: "manual" }, null, 2)}\n`, {
+        mode: 0o600,
+      });
+      syncPath(join(staging, MANIFEST_FILE));
+      syncPath(staging);
+    }
+    const verified = await verifyBackup(staging, options.signal);
+    if (verified.manifest.schemaVersion > options.supportedSchemaVersion) {
+      fail("UNSUPPORTED_SCHEMA", "Backup archive was created by a newer version of Zhiye");
+    }
+    const finalPath = join(
+      root,
+      `backup-${new Date().toISOString().replaceAll(/[-:.]/gu, "")}-${randomUUID()}`,
+    );
+    renameSync(staging, finalPath);
+    staging = undefined;
+    syncPath(root);
+    return { ...verified, path: finalPath };
+  } catch (error) {
+    if (options.signal?.aborted && !(error instanceof BackupError)) {
+      throw new BackupError("REQUEST_ABORTED", "Backup archive import was aborted", error);
+    }
+    if (error instanceof BackupError) throw error;
+    throw new BackupError("BACKUP_IMPORT_FAILED", "Backup archive could not be imported", error);
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+    if (staging) rmSync(staging, { recursive: true, force: true });
+    rmSync(temporary, { force: true });
+  }
 }
 
 /** The caller must pause capture and application writes for the duration of this operation. */
