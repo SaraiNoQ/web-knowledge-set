@@ -1,0 +1,75 @@
+name: macOS desktop smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  desktop-smoke:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+      - name: Prepare Rust
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --no-self-update
+          rustup default 1.97.1
+      - run: pnpm install --frozen-lockfile
+      - name: Audit JavaScript dependencies
+        run: |
+          pnpm audit --registry=https://registry.npmjs.org --audit-level high
+          pnpm audit --registry=https://registry.npmjs.org --prod --audit-level high
+      - name: Audit Rust dependencies
+        run: |
+          cargo install cargo-audit --version 0.22.2 --locked
+          cd src-tauri
+          cargo audit
+      - run: pnpm notices:check
+      - name: Install locked SBOM generator
+        run: |
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output /tmp/syft.tar.gz \
+            https://github.com/anchore/syft/releases/download/v1.51.0/syft_1.51.0_darwin_arm64.tar.gz
+          echo "4f37f4c7fefce0a68e4cf71ba3f5f9829a99e65d89b29f7ee41b8c2c10ea8c59  /tmp/syft.tar.gz" | shasum -a 256 --check
+          tar -xzf /tmp/syft.tar.gz -C /tmp syft
+          mkdir release-evidence
+          /tmp/syft scan dir:. --output cyclonedx-json=release-evidence/source.cdx.json
+      - name: Build unsigned desktop app
+        run: pnpm tauri build --debug --bundles app
+      - name: Exercise packaged Chromium security boundary
+        run: |
+          APP="$(find src-tauri/target/debug/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          BROWSER_MODULE="$(find "$APP/Contents/Resources" -path '*/runtime/dist-server/server/browser.js' -print -quit)"
+          test -n "$BROWSER_MODULE"
+          RUNTIME="$(cd "$(dirname "$BROWSER_MODULE")/../.." && pwd)"
+          node scripts/macos-browser-security-smoke.mjs "$RUNTIME"
+      - name: Record packaged application contents
+        run: |
+          APP="$(find src-tauri/target/debug/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP"
+          /tmp/syft scan "dir:$APP" --output cyclonedx-json=release-evidence/macos-app.cdx.json
+          (cd "$(dirname "$APP")" && find "$(basename "$APP")" -type f -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256) > release-evidence/macos-app.sha256
+          cp docs/THIRD_PARTY_NOTICES.md release-evidence/
+      - name: Exercise isolated macOS Keychain entry
+        run: cargo test --manifest-path src-tauri/Cargo.toml keychain::tests
+      - name: Exercise macOS URL and file entry points
+        run: scripts/macos-desktop-smoke.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-supply-chain-evidence-${{ github.sha }}
+          path: release-evidence/
+          if-no-files-found: error

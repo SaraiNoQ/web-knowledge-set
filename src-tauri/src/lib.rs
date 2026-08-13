@@ -1,8 +1,13 @@
+mod external;
+mod keychain;
+mod launcher;
+
 use std::fs;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{Manager, RunEvent};
+use tauri::{DragDropEvent, Manager, RunEvent, WindowEvent};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -10,13 +15,67 @@ const STARTING: u8 = 0;
 const READY: u8 = 1;
 const FAILED: u8 = 2;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 const STDERR_LIMIT: usize = 8 * 1024;
+const SIDECAR_ENVIRONMENT: [(&str, &str); 5] = [
+    ("KB_DEV", "0"),
+    ("KB_TRUST_LOCALHOST", "0"),
+    ("KB_PORT", "0"),
+    ("KB_BOOTSTRAP_TOKEN", ""),
+    ("NODE_ENV", "production"),
+];
 
 struct LocalService {
     child: Mutex<Option<CommandChild>>,
     phase: AtomicU8,
     stderr: Mutex<String>,
     stopping: AtomicBool,
+    restart_after_shutdown: AtomicBool,
+    close_attempt: Mutex<Option<u64>>,
+    next_close_attempt: AtomicU64,
+    accepted_origin: Arc<Mutex<Option<String>>>,
+}
+
+fn parse_ready_url(value: &str) -> Result<(tauri::Url, String), String> {
+    let url = tauri::Url::parse(value.trim()).map_err(|_| "READY URL 格式无效".to_owned())?;
+    let port = url.port().filter(|port| *port > 0);
+    let mut query = url.query_pairs();
+    let token = query.next();
+    if url.scheme() != "http"
+        || url.host_str() != Some("127.0.0.1")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || port.is_none()
+        || url.path() != "/launch"
+        || url.fragment().is_some()
+        || !matches!(token.as_ref(), Some((key, value)) if key == "token" && !value.is_empty())
+        || query.next().is_some()
+    {
+        return Err("READY URL 不在允许的本地启动边界内".to_owned());
+    }
+    drop(token);
+    let origin = format!("http://127.0.0.1:{}", port.expect("checked port"));
+    Ok((url, origin))
+}
+
+fn navigation_allowed(accepted_origin: Option<&str>, url: &tauri::Url) -> bool {
+    match accepted_origin {
+        Some(origin) => {
+            url.scheme() == "http"
+                && url.host_str() == Some("127.0.0.1")
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.port().is_some()
+                && format!("http://127.0.0.1:{}", url.port().expect("checked port")) == origin
+        }
+        None => {
+            url.scheme() == "data"
+                || url.as_str() == "about:blank"
+                || (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
+                || (matches!(url.scheme(), "http" | "https")
+                    && url.host_str() == Some("tauri.localhost"))
+        }
+    }
 }
 
 fn stop_service(app: &tauri::AppHandle) {
@@ -27,6 +86,159 @@ fn stop_service(app: &tauri::AppHandle) {
             let _ = child.kill();
         }
     };
+}
+
+fn take_restart_request(value: &AtomicBool) -> bool {
+    value.swap(false, Ordering::SeqCst)
+}
+
+fn finish_service_exit(app: &tauri::AppHandle) {
+    if take_restart_request(&app.state::<LocalService>().restart_after_shutdown) {
+        app.request_restart();
+    } else {
+        app.exit(0);
+    }
+}
+
+fn request_close(app: &tauri::AppHandle, accept_existing: bool) -> bool {
+    let service = app.state::<LocalService>();
+    if service.phase.load(Ordering::SeqCst) != READY || service.stopping.load(Ordering::SeqCst) {
+        return false;
+    }
+    let Some(window) = app.get_webview_window("main") else {
+        return false;
+    };
+    let attempt_id = {
+        let mut current = service
+            .close_attempt
+            .lock()
+            .expect("local service state poisoned");
+        if current.is_some() {
+            return accept_existing;
+        }
+        let attempt_id = service.next_close_attempt.fetch_add(1, Ordering::SeqCst);
+        current.replace(attempt_id);
+        attempt_id
+    };
+    let request_script = format!(
+        "window.dispatchEvent(new CustomEvent('zhiye:close-requested', {{ detail: {{ attemptId: '{attempt_id}' }} }}))"
+    );
+    if window.eval(&request_script).is_err() {
+        let mut current = service
+            .close_attempt
+            .lock()
+            .expect("local service state poisoned");
+        if *current == Some(attempt_id) {
+            current.take();
+        }
+        return false;
+    }
+
+    let timeout_handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(CLOSE_TIMEOUT);
+        let service = timeout_handle.state::<LocalService>();
+        let timed_out = {
+            let mut current = service
+                .close_attempt
+                .lock()
+                .expect("local service state poisoned");
+            if !service.stopping.load(Ordering::SeqCst) && *current == Some(attempt_id) {
+                current.take();
+                true
+            } else {
+                false
+            }
+        };
+        if timed_out {
+            timeout_handle
+                .state::<LocalService>()
+                .restart_after_shutdown
+                .store(false, Ordering::SeqCst);
+            if let Some(window) = timeout_handle.get_webview_window("main") {
+                let timeout_script = format!(
+                    "window.dispatchEvent(new CustomEvent('zhiye:close-timeout', {{ detail: {{ attemptId: '{attempt_id}' }} }}))"
+                );
+                let _ = window.eval(&timeout_script);
+            }
+        }
+    });
+    true
+}
+
+fn shutdown_sidecar(app: &tauri::AppHandle, attempt_id: u64) {
+    let service = app.state::<LocalService>();
+    {
+        let mut current = service
+            .close_attempt
+            .lock()
+            .expect("local service state poisoned");
+        if *current != Some(attempt_id)
+            || service
+                .stopping
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+        {
+            return;
+        }
+        current.take();
+    }
+    let write_result = service
+        .child
+        .lock()
+        .expect("local service state poisoned")
+        .as_mut()
+        .ok_or_else(|| "local service process is unavailable".to_owned())
+        .and_then(|child| {
+            child
+                .write(b"ZHIYE_SHUTDOWN\n")
+                .map_err(|error| error.to_string())
+        });
+    if write_result.is_err() {
+        stop_service(app);
+        finish_service_exit(app);
+        return;
+    }
+
+    let timeout_handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(CLOSE_TIMEOUT);
+        if timeout_handle
+            .state::<LocalService>()
+            .child
+            .lock()
+            .map(|child| child.is_some())
+            .unwrap_or(false)
+        {
+            stop_service(&timeout_handle);
+            finish_service_exit(&timeout_handle);
+        }
+    });
+}
+
+#[tauri::command]
+fn updater_configured(configured: tauri::State<'_, bool>) -> bool {
+    *configured
+}
+
+#[tauri::command]
+fn restart_after_update(app: tauri::AppHandle) -> Result<(), String> {
+    let service = app.state::<LocalService>();
+    if service
+        .restart_after_shutdown
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err("更新重启已在进行。".to_owned());
+    }
+    if request_close(&app, false) {
+        Ok(())
+    } else {
+        service
+            .restart_after_shutdown
+            .store(false, Ordering::SeqCst);
+        Err("应用尚未准备好安全重启。".to_owned())
+    }
 }
 
 fn escape_html(value: &str) -> String {
@@ -57,6 +269,8 @@ fn data_url(html: &str) -> String {
 }
 
 fn show_startup_error(app: &tauri::AppHandle, title: &str, message: &str, details: &str) {
+    #[cfg(debug_assertions)]
+    external::write_smoke_error(app, details);
     let title = escape_html(title);
     let message = escape_html(message);
     let details = escape_html(if details.trim().is_empty() {
@@ -122,6 +336,9 @@ fn fail_service(app: &tauri::AppHandle, reason: &str) {
     {
         return;
     }
+    if let Ok(mut origin) = service.accepted_origin.lock() {
+        origin.take();
+    }
 
     let captured = service
         .stderr
@@ -156,22 +373,67 @@ fn fail_service(app: &tauri::AppHandle, reason: &str) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    let context = tauri::generate_context!();
+    let updater_enabled = context.config().plugins.0.contains_key("updater");
+    let accepted_origin = Arc::new(Mutex::new(None));
+    let navigation_origin = accepted_origin.clone();
+    let builder = tauri::Builder::default()
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry, ()>::new("navigation-guard")
+                .on_navigation(move |webview, url| {
+                    let origin = navigation_origin.lock().ok();
+                    webview.label() != "main"
+                        || navigation_allowed(origin.as_deref().and_then(Option::as_deref), url)
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                if window.is_visible().unwrap_or(false) {
-                    let _ = window.set_focus();
-                }
-            }
+            external::focus_main(app);
         }))
+        .plugin(tauri_plugin_deep_link::init());
+    let builder = if updater_enabled {
+        builder.plugin(tauri_plugin_updater::Builder::new().build())
+    } else {
+        builder
+    };
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_plugin_dialog::init());
+    let app = builder
         .plugin(tauri_plugin_shell::init())
+        .invoke_handler(tauri::generate_handler![
+            external::take_external_intents,
+            external::read_external_text,
+            external::read_external_binary,
+            external::discard_external_tokens,
+            keychain::llm_keychain_status,
+            keychain::set_llm_api_key,
+            keychain::delete_llm_api_key,
+            launcher::choose_data_directory,
+            updater_configured,
+            restart_after_update,
+        ])
+        .manage(external::ExternalState::default())
         .manage(LocalService {
             child: Mutex::new(None),
             phase: AtomicU8::new(STARTING),
             stderr: Mutex::new(String::new()),
             stopping: AtomicBool::new(false),
+            restart_after_shutdown: AtomicBool::new(false),
+            close_attempt: Mutex::new(None),
+            next_close_attempt: AtomicU64::new(1),
+            accepted_origin,
         })
+        .manage(updater_enabled)
         .setup(|app| {
+            if let Ok(Some(urls)) = app.deep_link().get_current() {
+                external::enqueue_deep_links(app.handle(), &urls);
+            }
+            let deep_link_handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                external::enqueue_deep_links(&deep_link_handle, &event.urls());
+                external::focus_main(&deep_link_handle);
+            });
+
             let resource_dir = match app.path().resource_dir() {
                 Ok(path) => path,
                 Err(error) => {
@@ -184,7 +446,7 @@ pub fn run() {
                     return Ok(());
                 }
             };
-            let data_dir = match app.path().app_data_dir() {
+            let default_data_dir = match app.path().app_data_dir() {
                 Ok(path) => path,
                 Err(error) => {
                     show_startup_error(
@@ -192,6 +454,18 @@ pub fn run() {
                         "无法定位数据目录",
                         "织页无法定位本地知识库目录。请重新打开应用。",
                         &error.to_string(),
+                    );
+                    return Ok(());
+                }
+            };
+            let data_dir = match launcher::data_directory(app.handle(), default_data_dir) {
+                Ok(path) => path,
+                Err(error) => {
+                    show_startup_error(
+                        app.handle(),
+                        "无法读取数据目录设置",
+                        "织页无法确认本地知识库位置。请修复桌面启动配置后重试。",
+                        &error,
                     );
                     return Ok(());
                 }
@@ -211,12 +485,37 @@ pub fn run() {
             let static_dir = runtime_dir.join("dist");
             let browsers_dir = runtime_dir.join("browsers");
 
+            #[cfg(debug_assertions)]
+            if let Err(error) = keychain::seed_smoke_api_key() {
+                show_startup_error(
+                    app.handle(),
+                    "无法准备钥匙串测试",
+                    "织页无法准备隔离的测试密钥。",
+                    &error,
+                );
+                return Ok(());
+            }
+
             let command = match app.shell().sidecar("node") {
-                Ok(command) => command
-                    .arg(server_entry)
-                    .env("KB_DATA_DIR", data_dir)
-                    .env("KB_STATIC_DIR", static_dir)
-                    .env("PLAYWRIGHT_BROWSERS_PATH", browsers_dir),
+                Ok(command) => {
+                    let mut command = command
+                        .arg(server_entry)
+                        .env("KB_DATA_DIR", data_dir)
+                        .env("KB_STATIC_DIR", static_dir)
+                        .env("KB_DESKTOP", "1")
+                        .env("PLAYWRIGHT_BROWSERS_PATH", browsers_dir);
+                    for (name, value) in SIDECAR_ENVIRONMENT {
+                        command = command.env(name, value);
+                    }
+                    match keychain::load_credentials() {
+                        Ok(Some(credentials)) => command
+                            .env("ZHIYE_LLM_API_KEY", credentials.api_key)
+                            .env("ZHIYE_LLM_API_ENDPOINT", credentials.endpoint_url),
+                        _ => command
+                            .env("ZHIYE_LLM_API_KEY", "")
+                            .env("ZHIYE_LLM_API_ENDPOINT", ""),
+                    }
+                }
                 Err(error) => {
                     show_startup_error(
                         app.handle(),
@@ -255,10 +554,10 @@ pub fn run() {
                             for line in output.lines() {
                                 if let Some(raw_url) = line.strip_prefix("ZHIYE_READY ") {
                                     match (
-                                        tauri::Url::parse(raw_url.trim()),
+                                        parse_ready_url(raw_url),
                                         handle.get_webview_window("main"),
                                     ) {
-                                        (Ok(url), Some(window)) => {
+                                        (Ok((url, origin)), Some(window)) => {
                                             if handle
                                                 .state::<LocalService>()
                                                 .phase
@@ -270,7 +569,24 @@ pub fn run() {
                                                 )
                                                 .is_ok()
                                             {
+                                                handle
+                                                    .state::<LocalService>()
+                                                    .accepted_origin
+                                                    .lock()
+                                                    .expect("local service state poisoned")
+                                                    .replace(origin);
+                                                #[cfg(debug_assertions)]
+                                                external::write_smoke_stage(
+                                                    &handle,
+                                                    "service-ready",
+                                                );
                                                 if let Err(error) = window.navigate(url) {
+                                                    handle
+                                                        .state::<LocalService>()
+                                                        .accepted_origin
+                                                        .lock()
+                                                        .expect("local service state poisoned")
+                                                        .take();
                                                     fail_service(
                                                         &handle,
                                                         &format!("无法打开本地服务页面：{error}"),
@@ -287,6 +603,12 @@ pub fn run() {
                                         ),
                                         (_, None) => fail_service(&handle, "未找到应用主窗口。"),
                                     }
+                                } else if let Some(raw_attempt) =
+                                    line.strip_prefix("ZHIYE_CLOSE_READY ")
+                                {
+                                    if let Ok(attempt_id) = raw_attempt.trim().parse::<u64>() {
+                                        shutdown_sidecar(&handle, attempt_id);
+                                    }
                                 }
                             }
                         }
@@ -301,7 +623,17 @@ pub fn run() {
                             break;
                         }
                         CommandEvent::Terminated(payload) => {
-                            fail_service(&handle, &format!("本地服务进程已退出：{payload:?}"));
+                            let service = handle.state::<LocalService>();
+                            if service.stopping.load(Ordering::SeqCst) {
+                                service
+                                    .child
+                                    .lock()
+                                    .expect("local service state poisoned")
+                                    .take();
+                                finish_service_exit(&handle);
+                            } else {
+                                fail_service(&handle, &format!("本地服务进程已退出：{payload:?}"));
+                            }
                             break;
                         }
                         _ => {}
@@ -338,12 +670,101 @@ pub fn run() {
 
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("failed to build the Zhiye desktop app");
 
-    app.run(|handle, event| {
-        if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
-            stop_service(handle);
+    app.run(|handle, event| match event {
+        #[cfg(target_os = "macos")]
+        RunEvent::Opened { urls } => external::enqueue_file_urls(handle, &urls),
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }),
+            ..
+        } if label == "main" => external::enqueue_paths(handle, paths),
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { api, .. },
+            ..
+        } if label == "main" => {
+            if request_close(handle, true) {
+                api.prevent_close();
+            }
         }
+        RunEvent::ExitRequested { api, .. } => {
+            if request_close(handle, true) {
+                api.prevent_exit();
+            }
+        }
+        RunEvent::Exit => stop_service(handle),
+        _ => {}
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ready_url_and_navigation_stay_on_the_authenticated_service_origin() {
+        let (ready, origin) =
+            parse_ready_url("http://127.0.0.1:43123/launch?token=single-nonempty-token")
+                .expect("valid READY URL");
+        assert_eq!(origin, "http://127.0.0.1:43123");
+        assert!(navigation_allowed(Some(&origin), &ready));
+        assert!(navigation_allowed(
+            Some(&origin),
+            &tauri::Url::parse("http://127.0.0.1:43123/library?q=local").unwrap()
+        ));
+        assert!(!navigation_allowed(
+            Some(&origin),
+            &tauri::Url::parse("http://127.0.0.1:43124/").unwrap()
+        ));
+        assert!(!navigation_allowed(
+            Some(&origin),
+            &tauri::Url::parse("http://user@127.0.0.1:43123/").unwrap()
+        ));
+        assert!(navigation_allowed(
+            None,
+            &tauri::Url::parse("data:text/html,startup-error").unwrap()
+        ));
+        assert!(!navigation_allowed(
+            Some(&origin),
+            &tauri::Url::parse("data:text/html,untrusted").unwrap()
+        ));
+
+        for invalid in [
+            "https://127.0.0.1:43123/launch?token=x",
+            "http://localhost:43123/launch?token=x",
+            "http://127.0.0.1/launch?token=x",
+            "http://127.0.0.1:0/launch?token=x",
+            "http://127.0.0.1:43123/other?token=x",
+            "http://127.0.0.1:43123/launch?token=",
+            "http://127.0.0.1:43123/launch?token=x&extra=y",
+            "http://user@127.0.0.1:43123/launch?token=x",
+            "http://127.0.0.1:43123/launch?token=x#fragment",
+        ] {
+            assert!(parse_ready_url(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn desktop_sidecar_forces_production_auth_and_random_port() {
+        assert_eq!(
+            SIDECAR_ENVIRONMENT,
+            [
+                ("KB_DEV", "0"),
+                ("KB_TRUST_LOCALHOST", "0"),
+                ("KB_PORT", "0"),
+                ("KB_BOOTSTRAP_TOKEN", ""),
+                ("NODE_ENV", "production"),
+            ]
+        );
+    }
+
+    #[test]
+    fn update_restart_request_is_consumed_once() {
+        let requested = AtomicBool::new(true);
+        assert!(take_restart_request(&requested));
+        assert!(!take_restart_request(&requested));
+    }
 }

@@ -1,0 +1,209 @@
+name: macOS unsigned RC
+
+on:
+  push:
+    tags: ["v0.9.2-rc.1"]
+  workflow_dispatch:
+    inputs:
+      approved_sha:
+        description: Current full main SHA to rehearse without publishing
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-unsigned-rc-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.approved_sha || github.ref }}
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+      - name: Validate immutable RC source
+        env:
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+        run: node scripts/validate-macos-unsigned-rc.mjs
+      - name: Require Apple Silicon runner
+        run: test "$(uname -m)" = arm64
+      - name: Prepare Rust
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --no-self-update
+          rustup default 1.97.1
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install chromium --only-shell
+      - name: Run complete application gates
+        run: pnpm verify
+      - name: Run desktop gates
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+          cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Build application and DMG
+        run: pnpm tauri build --ci --no-sign --config '{"bundle":{"macOS":{"infoPlist":"Info.rc.plist","bundleVersion":"90201"}}}' --bundles app,dmg
+      - name: Extract the application actually shipped in the DMG
+        id: artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          DMG=$(find src-tauri/target/release/bundle/dmg -maxdepth 1 -type f -name '*.dmg' -print -quit)
+          test -s "$DMG"
+          test "$(find src-tauri/target/release/bundle/dmg -maxdepth 1 -type f -name '*.dmg' | wc -l | tr -d ' ')" = 1
+          MOUNT=$(mktemp -d)
+          trap 'hdiutil detach "$MOUNT" >/dev/null 2>&1 || true' EXIT
+          hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT" "$DMG"
+          test "$(find "$MOUNT" -maxdepth 1 -type d -name '*.app' | wc -l | tr -d ' ')" = 1
+          APP=$(find "$MOUNT" -maxdepth 1 -type d -name '*.app' -print -quit)
+          mkdir verified-artifact
+          ditto "$APP" verified-artifact/Zhiye.app
+          hdiutil detach "$MOUNT"
+          trap - EXIT
+          echo "app=verified-artifact/Zhiye.app" >> "$GITHUB_OUTPUT"
+          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+      - name: Verify platform, identity, and absent update channel
+        env:
+          VERIFIED_APP: ${{ steps.artifact.outputs.app }}
+          DMG_PATH: ${{ steps.artifact.outputs.dmg }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$VERIFIED_APP/Contents/Info.plist")" = io.github.sarainoq.zhiye
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$VERIFIED_APP/Contents/Info.plist")" = 0.9.2
+          test "$(plutil -extract CFBundleVersion raw -o - "$VERIFIED_APP/Contents/Info.plist")" = 90201
+          test "$(plutil -extract LSMinimumSystemVersion raw -o - "$VERIFIED_APP/Contents/Info.plist")" = 13.5
+          test -x "$VERIFIED_APP/Contents/MacOS/zhiye"
+          test -x "$VERIFIED_APP/Contents/MacOS/node"
+          CHROMIUM=$(find "$VERIFIED_APP/Contents/Resources/runtime/browsers" -type f -name chrome-headless-shell -print -quit)
+          test -x "$CHROMIUM"
+          test "$(lipo -archs "$VERIFIED_APP/Contents/MacOS/zhiye")" = arm64
+          test "$(lipo -archs "$VERIFIED_APP/Contents/MacOS/node")" = arm64
+          test "$(lipo -archs "$CHROMIUM")" = arm64
+          MACH_O_COUNT=0
+          while IFS= read -r -d '' PATHNAME; do
+            if file -b "$PATHNAME" | grep -q Mach-O; then
+              test "$(lipo -archs "$PATHNAME")" = arm64
+              MACH_O_COUNT=$((MACH_O_COUNT + 1))
+            fi
+          done < <(find "$VERIFIED_APP" -type f -print0)
+          test "$MACH_O_COUNT" -gt 2
+          APP_IDENTITY=$(codesign -dv --verbose=4 "$VERIFIED_APP/Contents/MacOS/zhiye" 2>&1 || true)
+          printf '%s\n' "$APP_IDENTITY" | grep -Eq '^(Signature=adhoc|.*code object is not signed at all)'
+          test -z "$(printf '%s\n' "$APP_IDENTITY" | sed -n '/^Authority=/p')"
+          TEAM=$(printf '%s\n' "$APP_IDENTITY" | sed -n 's/^TeamIdentifier=//p')
+          test -z "$TEAM" || test "$TEAM" = "not set"
+          BUNDLE_IDENTITY=$(codesign -dv --verbose=4 "$VERIFIED_APP" 2>&1 || true)
+          test -z "$(printf '%s\n' "$BUNDLE_IDENTITY" | sed -n '/^Authority=/p')"
+          BUNDLE_TEAM=$(printf '%s\n' "$BUNDLE_IDENTITY" | sed -n 's/^TeamIdentifier=//p')
+          test -z "$BUNDLE_TEAM" || test "$BUNDLE_TEAM" = "not set"
+          if codesign --verify --strict --verbose=2 "$DMG_PATH" >/tmp/zhiye-codesign-dmg.txt 2>&1; then
+            echo "Unexpected valid DMG signature" >&2
+            exit 1
+          fi
+          if spctl --assess --type execute --verbose=2 "$VERIFIED_APP" >/tmp/zhiye-spctl.txt 2>&1; then
+            echo "Unexpected Gatekeeper acceptance" >&2
+            exit 1
+          fi
+          if xcrun stapler validate "$VERIFIED_APP" >/tmp/zhiye-stapler-app.txt 2>&1; then
+            echo "Unexpected Apple ticket on preview application" >&2
+            exit 1
+          fi
+          if xcrun stapler validate "$DMG_PATH" >/tmp/zhiye-stapler.txt 2>&1; then
+            echo "Unexpected Apple ticket on preview DMG" >&2
+            exit 1
+          fi
+          if find src-tauri/target/release/bundle -type f \( -name '*.tar.gz' -o -name '*.sig' -o -name 'latest.*' \) -print | grep -q .; then
+            echo "Unexpected update-channel artifact" >&2
+            exit 1
+          fi
+      - name: Exercise the application actually shipped in the DMG
+        env:
+          VERIFIED_APP: ${{ steps.artifact.outputs.app }}
+        run: |
+          scripts/macos-desktop-smoke.sh "$VERIFIED_APP" release
+          node scripts/macos-browser-security-smoke.mjs "$VERIFIED_APP/Contents/Resources/runtime"
+      - name: Build audited release assets
+        env:
+          VERIFIED_APP: ${{ steps.artifact.outputs.app }}
+          DMG_PATH: ${{ steps.artifact.outputs.dmg }}
+        run: |
+          set -euo pipefail
+          curl --fail --location --proto '=https' --tlsv1.2 --output /tmp/syft.tar.gz https://github.com/anchore/syft/releases/download/v1.51.0/syft_1.51.0_darwin_arm64.tar.gz
+          echo "4f37f4c7fefce0a68e4cf71ba3f5f9829a99e65d89b29f7ee41b8c2c10ea8c59  /tmp/syft.tar.gz" | shasum -a 256 --check
+          tar -xzf /tmp/syft.tar.gz -C /tmp syft
+          /tmp/syft scan dir:. --output cyclonedx-json=/tmp/source.cdx.json
+          /tmp/syft scan "dir:$VERIFIED_APP" --output cyclonedx-json=/tmp/macos-app.cdx.json
+          mkdir release-assets
+          cp "$DMG_PATH" release-assets/Zhiye_0.9.2-rc.1_aarch64_unsigned.dmg
+          cp /tmp/source.cdx.json /tmp/macos-app.cdx.json release-assets/
+          cp LICENSE release-assets/LICENSE.txt
+          cp docs/THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.txt release-assets/
+          cp docs/PRIVACY.md release-assets/PRIVACY.md
+          cp docs/SUPPORT.md release-assets/SUPPORT.md
+          cp docs/RELEASE_NOTES_0.9.2-rc.1.md release-assets/RELEASE_NOTES.md
+          test "$(find release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" = 9
+          (cd release-assets && find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256 > SHA256SUMS)
+          test "$(find release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" = 10
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zhiye-0.9.2-rc.1-unsigned-${{ github.sha }}
+          path: release-assets/
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/tags/v0.9.2-rc.1'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: zhiye-0.9.2-rc.1-unsigned-${{ github.sha }}
+          path: release-assets
+      - name: Create draft, download, verify, then publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APPROVED_UNSIGNED_RC_SHA: ${{ vars.APPROVED_UNSIGNED_RC_SHA }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = v0.9.2-rc.1
+          test "$APPROVED_UNSIGNED_RC_SHA" = "$GITHUB_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)" = "$GITHUB_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$GITHUB_SHA"
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists; tags and RC releases are immutable" >&2
+            exit 1
+          fi
+          EXPECTED=$(printf '%s\n' LICENSE.txt PRIVACY.md RELEASE_NOTES.md SHA256SUMS SUPPORT.md THIRD_PARTY_LICENSES.txt THIRD_PARTY_NOTICES.md Zhiye_0.9.2-rc.1_aarch64_unsigned.dmg macos-app.cdx.json source.cdx.json | LC_ALL=C sort)
+          ACTUAL=$(find release-assets -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort)
+          test "$ACTUAL" = "$EXPECTED"
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --prerelease --latest=false --verify-tag --title "织页 0.9.2-rc.1（Apple Silicon 未签名预览版）" --notes-file release-assets/RELEASE_NOTES.md release-assets/*
+          mkdir downloaded-assets
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir downloaded-assets
+          DOWNLOADED=$(find downloaded-assets -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort)
+          test "$DOWNLOADED" = "$EXPECTED"
+          cmp release-assets/SHA256SUMS downloaded-assets/SHA256SUMS
+          (cd downloaded-assets && sha256sum -c SHA256SUMS)
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)" = "$GITHUB_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$GITHUB_SHA"
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          test "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft,isImmutable,isPrerelease --jq '[.isDraft,.isImmutable,.isPrerelease] | @tsv')" = $'false\ttrue\ttrue'

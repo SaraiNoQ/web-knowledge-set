@@ -1,21 +1,25 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
-    <title>本地知识库实践</title>
-    <meta name="author" content="测试作者">
+    <title>Building a Local-First Knowledge Base</title>
+    <meta name="author" content="Ada Example">
     <meta property="article:published_time" content="2026-08-09T08:00:00+08:00">
     <link rel="canonical" href="/articles/local-knowledge">
   </head>
   <body>
-    <nav>首页 文章 关于</nav>
+    <nav>Home Articles About</nav>
     <article>
-      <h1>本地知识库实践</h1>
-      <p>一个可靠的本地知识库应当先保留来源，再将网页正文转换为可编辑的 Markdown。</p>
-      <p>数据库保存用户编辑的内容，原始网页快照则用于未来重新提取，两者不应互相覆盖。</p>
-      <h2>示例</h2>
+      <h1>Building a Local-First Knowledge Base</h1>
+      <p>A reliable local knowledge base preserves its sources before turning article content into editable Markdown.</p>
+      <p>The database keeps human edits while an immutable HTML snapshot supports future extraction without overwriting either copy.</p>
+      <h2>GitHub-flavored Markdown</h2>
+      <p><del>A cloud-only archive</del> A local-first archive remains useful when the network is unavailable.</p>
+      <table><thead><tr><th>Field</th><th>Purpose</th></tr></thead><tbody><tr><td>markdown</td><td>Human editing</td></tr></tbody></table>
+      <h2>Math source</h2>
+      <p>The inline relation $E = mc^2$ and the display source $$\sum_{i=1}^{n} i = n(n+1)/2$$ must remain editable.</p>
+      <h2>Code sample</h2>
       <pre><code class="language-js">const source = "https://example.com";</code></pre>
-      <table><thead><tr><th>字段</th><th>用途</th></tr></thead><tbody><tr><td>markdown</td><td>人工编辑</td></tr></tbody></table>
     </article>
-    <footer>版权信息</footer>
+    <footer>Copyright notice</footer>
   </body>
 </html>

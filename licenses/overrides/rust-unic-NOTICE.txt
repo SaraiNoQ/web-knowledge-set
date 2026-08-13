@@ -1,0 +1,8 @@
+* Copyright 2011-2015 The Rust Project developers.
+* Copyright 2013-2016 The rust-url developers.
+* Copyright 2015-2017 The Servo Project developers.
+* Copyright 2017 The UNIC Project developers.
+
+Licensed under the Apache License, Version 2.0 or the MIT license, at your option. The complete MIT and Apache-2.0 terms are included elsewhere in this aggregate.
+
+Source: https://github.com/open-i18n/rust-unic/tree/5878605364af97a3358368a6eaef02104af2e016

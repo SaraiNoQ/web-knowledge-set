@@ -1,7 +1,10 @@
 import { Defuddle } from "defuddle/node";
 import { parseHTML } from "linkedom";
 
+export const EXTRACTOR_VERSION = "defuddle@0.19.2";
+
 export interface ExtractedPage {
+  extractorVersion: string;
   title: string;
   author: string | null;
   publishedAt: string | null;
@@ -42,6 +45,7 @@ export async function extractHtml(html: string, sourceUrl: string): Promise<Extr
     }
   }
   return {
+    extractorVersion: EXTRACTOR_VERSION,
     title: optionalText(result.title) ?? optionalText(document.title) ?? new URL(sourceUrl).hostname,
     author: optionalText(result.author),
     publishedAt: optionalText(result.published),

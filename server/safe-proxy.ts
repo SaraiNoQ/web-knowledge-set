@@ -38,18 +38,42 @@ export interface SafeProxy {
   close(): Promise<void>;
 }
 
-export async function createSafeProxy(): Promise<SafeProxy> {
+export async function createSafeProxy(
+  resolveTarget: typeof resolvePublicTarget = resolvePublicTarget,
+  maxBytes = MAX_PROXY_BYTES,
+): Promise<SafeProxy> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_PROXY_BYTES) {
+    throw new RangeError("proxy byte limit must be a positive integer up to 25 MiB");
+  }
   let transferred = 0;
   let exceeded = false;
+  let closing = false;
+  let closePromise: Promise<void> | undefined;
+  const sockets = new Set<Duplex>();
+  const trackSocket = (socket: Duplex) => {
+    if (closing) socket.destroy();
+    else {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+    }
+  };
   const consume = (size: number) => {
     transferred += size;
-    if (transferred > MAX_PROXY_BYTES) exceeded = true;
+    if (transferred > maxBytes) exceeded = true;
     return !exceeded;
   };
   const server = http.createServer(async (request, response) => {
     try {
       if (!request.url) throw new CapturePipelineError("INVALID_URL", "代理请求缺少 URL");
-      const target = await resolvePublicTarget(request.url);
+      const declared = Number(request.headers["content-length"] ?? 0);
+      if (Number.isFinite(declared) && declared > maxBytes - transferred) {
+        exceeded = true;
+        response.writeHead(413, { "Content-Length": "0", Connection: "close" });
+        response.end();
+        request.destroy();
+        return;
+      }
+      const target = await resolveTarget(request.url);
       if (target.url.protocol !== "http:") {
         throw new CapturePipelineError("INVALID_URL", "HTTPS 请求必须使用 CONNECT 隧道");
       }
@@ -62,10 +86,18 @@ export async function createSafeProxy(): Promise<SafeProxy> {
         path: `${target.url.pathname}${target.url.search}`,
         headers: cleanHeaders(request.headers, target.url.host),
       });
+      upstream.once("socket", (socket) => trackSocket(socket));
+      request.on("data", (chunk: Buffer) => {
+        if (!consume(chunk.length)) {
+          request.destroy();
+          upstream.destroy();
+          response.destroy();
+        }
+      });
       upstream.setTimeout(15_000, () => upstream.destroy(new Error("proxy upstream timeout")));
       upstream.on("response", (upstreamResponse) => {
         const declared = Number(upstreamResponse.headers["content-length"] ?? 0);
-        if (Number.isFinite(declared) && declared > MAX_PROXY_BYTES - transferred) {
+        if (Number.isFinite(declared) && declared > maxBytes - transferred) {
           exceeded = true;
           upstreamResponse.destroy();
           response.destroy(new Error("proxy byte limit exceeded"));
@@ -84,6 +116,7 @@ export async function createSafeProxy(): Promise<SafeProxy> {
         upstreamResponse.pipe(response);
       });
       upstream.on("error", () => {
+        if (response.destroyed) return;
         if (!response.headersSent) response.writeHead(502);
         response.end();
       });
@@ -97,10 +130,16 @@ export async function createSafeProxy(): Promise<SafeProxy> {
   server.on("connect", async (request, client, head) => {
     try {
       const authority = request.url ?? "";
-      const target = await resolvePublicTarget(`https://${authority}`);
+      const target = await resolveTarget(`https://${authority}`);
       const port = Number(target.url.port || 443);
       const upstream = net.connect({ host: target.address, family: target.family, port });
+      trackSocket(upstream);
       upstream.setTimeout(15_000, () => upstream.destroy());
+      if (!consume(head.length)) {
+        upstream.destroy();
+        client.destroy();
+        return;
+      }
       upstream.once("connect", () => {
         client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
         if (head.length) upstream.write(head);
@@ -125,6 +164,7 @@ export async function createSafeProxy(): Promise<SafeProxy> {
       fail(client, 403, "Forbidden");
     }
   });
+  server.on("connection", (socket) => trackSocket(socket));
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -139,6 +179,14 @@ export async function createSafeProxy(): Promise<SafeProxy> {
   return {
     url: `http://127.0.0.1:${address.port}`,
     limitExceeded: () => exceeded,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    close: () => {
+      if (closePromise) return closePromise;
+      closing = true;
+      closePromise = new Promise<void>((resolve) => {
+        server.close(() => resolve());
+        for (const socket of sockets) socket.destroy();
+      });
+      return closePromise;
+    },
   };
 }

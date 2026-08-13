@@ -1,7 +1,7 @@
 import { fetchWithBrowser } from "./browser.js";
 import { extractHtml, type ExtractedPage } from "./extract.js";
 import { safeFetchHtml } from "./safe-fetch.js";
-import { CapturePipelineError, validateUrl } from "./url-security.js";
+import { CapturePipelineError, resolvePublicTarget, validateUrl } from "./url-security.js";
 
 export interface CaptureResult extends ExtractedPage {
   finalUrl: string;
@@ -34,13 +34,17 @@ function candidate(
   };
 }
 
-export async function captureUrl(input: string): Promise<CaptureResult> {
+export async function captureUrl(
+  input: string,
+  options: { resolveTarget?: typeof resolvePublicTarget } = {},
+): Promise<CaptureResult> {
   const url = validateUrl(input).href;
+  const resolveTarget = options.resolveTarget ?? resolvePublicTarget;
   let staticCandidate: Candidate | null = null;
   let staticError: unknown;
 
   try {
-    const fetched = await safeFetchHtml(url);
+    const fetched = await safeFetchHtml(url, { resolveTarget });
     staticCandidate = candidate(
       await extractHtml(fetched.html, fetched.finalUrl),
       fetched.html,
@@ -60,7 +64,7 @@ export async function captureUrl(input: string): Promise<CaptureResult> {
   }
 
   try {
-    const fetched = await fetchWithBrowser(url);
+    const fetched = await fetchWithBrowser(url, { resolveTarget });
     const browserCandidate = candidate(
       await extractHtml(fetched.html, fetched.finalUrl),
       fetched.html,
@@ -76,6 +80,7 @@ export async function captureUrl(input: string): Promise<CaptureResult> {
       return result;
     }
   } catch (cause) {
+    if (staticCandidate?.length) staticCandidate.warning = "正文可能不完整；浏览器回退失败";
     if (!staticCandidate?.length) {
       if (cause instanceof CapturePipelineError) throw cause;
       if (staticError instanceof CapturePipelineError) throw staticError;

@@ -1,0 +1,35 @@
+[Unit]
+Description=Zhiye localhost Web preview
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zhiye-preview
+Group=zhiye-preview
+WorkingDirectory=/opt/zhiye-preview/current
+Environment=HOME=/var/lib/zhiye-preview
+Environment=NODE_ENV=production
+Environment=KB_DESKTOP=0
+Environment=KB_DEV=0
+Environment=KB_TRUST_LOCALHOST=1
+Environment=KB_PORT=4301
+Environment=KB_BOOTSTRAP_TOKEN=
+Environment=KB_DATA_DIR=/var/lib/zhiye-preview/data
+Environment=KB_STATIC_DIR=/opt/zhiye-preview/current/dist
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/zhiye-preview/current/browsers
+Environment=ZHIYE_LLM_API_KEY=
+Environment=ZHIYE_LLM_API_ENDPOINT=
+ExecStart=/opt/zhiye-preview/current/node /opt/zhiye-preview/current/dist-server/server/index.js
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/zhiye-preview
+
+[Install]
+WantedBy=multi-user.target

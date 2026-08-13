@@ -1,0 +1,5 @@
+Copyright The Servo Project Developers
+
+selectors 0.36.1 is licensed under the Mozilla Public License, Version 2.0. The complete MPL-2.0 terms are included elsewhere in this aggregate.
+
+Source: https://github.com/servo/stylo/tree/635e1a19d02960588a00e189bd4bd5bdb150ec3d
