@@ -36,8 +36,28 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Prepare desktop runtime
         run: pnpm desktop:prepare
-      - name: Build DMG
-        run: pnpm tauri build --ci --no-sign --config '{"bundle":{"macOS":{"infoPlist":"Info.rc.plist","bundleVersion":"90202"}}}' --bundles dmg
+      - name: Build application
+        run: pnpm tauri build --ci --no-sign --config '{"bundle":{"macOS":{"infoPlist":"Info.rc.plist","bundleVersion":"90202"}}}' --bundles app
+      - name: Ad-hoc sign application and build DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=$(find src-tauri/target/release/bundle/macos -maxdepth 1 -type d -name '*.app' -print -quit)
+          test -n "$APP"
+          while IFS= read -r -d '' PATHNAME; do
+            if [[ -f "$PATHNAME" ]] && file -b "$PATHNAME" | grep -q Mach-O; then
+              codesign --force --sign - --entitlements src-tauri/entitlements.chromium.plist "$PATHNAME"
+            elif [[ -d "$PATHNAME" && "$PATHNAME" =~ \.(app|framework|xpc)$ ]]; then
+              codesign --force --sign - "$PATHNAME"
+            fi
+          done < <(find "$APP/Contents" -depth -print0)
+          codesign --force --sign - "$APP"
+          codesign --verify --deep --strict "$APP"
+          mkdir -p dmg-root src-tauri/target/release/bundle/dmg
+          ditto "$APP" "dmg-root/织页.app"
+          ln -s /Applications dmg-root/Applications
+          hdiutil create -volname "织页" -srcfolder dmg-root -ov -format UDZO \
+            src-tauri/target/release/bundle/dmg/织页_0.9.2-rc.2_aarch64.dmg
       - name: Upload DMG
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
