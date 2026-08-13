@@ -90,6 +90,7 @@ jobs:
           test "$(plutil -extract CFBundleShortVersionString raw -o - "$VERIFIED_APP/Contents/Info.plist")" = 0.9.2
           test "$(plutil -extract CFBundleVersion raw -o - "$VERIFIED_APP/Contents/Info.plist")" = 90202
           test "$(plutil -extract LSMinimumSystemVersion raw -o - "$VERIFIED_APP/Contents/Info.plist")" = 13.5
+          echo "verified plist"
           test -x "$VERIFIED_APP/Contents/MacOS/zhiye"
           test -x "$VERIFIED_APP/Contents/MacOS/node"
           CHROMIUM=$(find "$VERIFIED_APP/Contents/Resources/runtime/browsers" -type f -name chrome-headless-shell -print -quit)
@@ -105,31 +106,38 @@ jobs:
             fi
           done < <(find "$VERIFIED_APP" -type f -print0)
           test "$MACH_O_COUNT" -gt 2
+          echo "verified arm64 Mach-O files: $MACH_O_COUNT"
           APP_IDENTITY=$(codesign -dv --verbose=4 "$VERIFIED_APP/Contents/MacOS/zhiye" 2>&1 || true)
           printf '%s\n' "$APP_IDENTITY" | grep -Eq '^(Signature=adhoc|.*code object is not signed at all)'
           test -z "$(printf '%s\n' "$APP_IDENTITY" | sed -n '/^Authority=/p')"
           TEAM=$(printf '%s\n' "$APP_IDENTITY" | sed -n 's/^TeamIdentifier=//p')
           test -z "$TEAM" || test "$TEAM" = "not set"
+          echo "verified main executable identity"
           BUNDLE_IDENTITY=$(codesign -dv --verbose=4 "$VERIFIED_APP" 2>&1 || true)
           test -z "$(printf '%s\n' "$BUNDLE_IDENTITY" | sed -n '/^Authority=/p')"
           BUNDLE_TEAM=$(printf '%s\n' "$BUNDLE_IDENTITY" | sed -n 's/^TeamIdentifier=//p')
           test -z "$BUNDLE_TEAM" || test "$BUNDLE_TEAM" = "not set"
+          echo "verified app bundle identity"
           if codesign --verify --strict --verbose=2 "$DMG_PATH" >/tmp/zhiye-codesign-dmg.txt 2>&1; then
             echo "Unexpected valid DMG signature" >&2
             exit 1
           fi
+          echo "verified unsigned DMG"
           if spctl --assess --type execute --verbose=2 "$VERIFIED_APP" >/tmp/zhiye-spctl.txt 2>&1; then
             echo "Unexpected Gatekeeper acceptance" >&2
             exit 1
           fi
+          echo "verified Gatekeeper rejection"
           if xcrun stapler validate "$VERIFIED_APP" >/tmp/zhiye-stapler-app.txt 2>&1; then
             echo "Unexpected Apple ticket on preview application" >&2
             exit 1
           fi
+          echo "verified app has no ticket"
           if xcrun stapler validate "$DMG_PATH" >/tmp/zhiye-stapler.txt 2>&1; then
             echo "Unexpected Apple ticket on preview DMG" >&2
             exit 1
           fi
+          echo "verified DMG has no ticket"
           if find src-tauri/target/release/bundle -type f \( -name '*.tar.gz' -o -name '*.sig' -o -name 'latest.*' \) -print | grep -q .; then
             echo "Unexpected update-channel artifact" >&2
             exit 1
