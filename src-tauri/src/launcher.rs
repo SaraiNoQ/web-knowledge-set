@@ -176,7 +176,7 @@ fn validate_migration_target(
         .any(|left| protected.iter().any(|right| overlaps(left, right)))
         || candidate
             .iter()
-            .any(|path| overlaps(path, launcher_root) || overlaps(path, legacy_launcher_root))
+            .any(|path| overlaps(path, &launcher_root) || overlaps(path, &legacy_launcher_root))
     {
         return Err("旧版数据目录与正式数据或启动配置目录冲突。".to_string());
     }
