@@ -163,10 +163,12 @@ fn validate_migration_target(
     }
     let launcher_root = launcher
         .parent()
-        .ok_or_else(|| "桌面启动配置路径无效。".to_string())?;
+        .ok_or_else(|| "桌面启动配置路径无效。".to_string())
+        .map(|path| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))?;
     let legacy_launcher_root = legacy_launcher
         .parent()
-        .ok_or_else(|| "旧版桌面启动配置路径无效。".to_string())?;
+        .ok_or_else(|| "旧版桌面启动配置路径无效。".to_string())
+        .map(|path| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))?;
     let candidate = related_paths(target);
     let protected = related_paths(default);
     if candidate
