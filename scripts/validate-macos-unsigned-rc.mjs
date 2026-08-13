@@ -61,7 +61,7 @@ for (const required of [
   "--latest=false",
   'repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME',
   'repos/$GITHUB_REPOSITORY/commits/main',
-  'repos/$GITHUB_REPOSITORY/immutable-releases',
+  'APPROVED_UNSIGNED_RC_SHA',
   "isDraft,isImmutable,isPrerelease",
 ]) {
   if (!workflow.includes(required)) fail(`Unsigned RC workflow is missing: ${required}`);

@@ -181,13 +181,14 @@ jobs:
       - name: Create draft, download, verify, then publish prerelease
         env:
           GH_TOKEN: ${{ github.token }}
+          APPROVED_UNSIGNED_RC_SHA: ${{ vars.APPROVED_UNSIGNED_RC_SHA }}
         shell: bash
         run: |
           set -euo pipefail
           test "$GITHUB_REF_NAME" = v0.9.2-rc.1
+          test "$APPROVED_UNSIGNED_RC_SHA" = "$GITHUB_SHA"
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)" = "$GITHUB_SHA"
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$GITHUB_SHA"
-          gh api -H "X-GitHub-Api-Version: 2026-03-10" "repos/$GITHUB_REPOSITORY/immutable-releases" >/dev/null
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release already exists; tags and RC releases are immutable" >&2
             exit 1
