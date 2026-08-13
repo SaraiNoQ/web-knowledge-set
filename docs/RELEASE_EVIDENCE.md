@@ -33,3 +33,11 @@
 - Rust fmt、Clippy（警告视为错误）和 10 项测试通过；正确性与安全/数据丢失双审均未发现 P0/P1。
 
 三次干净镜像门禁、最终 RC 的 24 小时 soak、受保护 DeepSeek smoke 和未签名资产复验尚未完成，因此“RC 质量与发布证据”台账继续保持未勾选。
+
+### M6：DeepSeek 真实验收自动化（2026-08-13）
+
+- 手动 workflow 只接受完整提交 SHA；先确认触发分支为 `main`、checkout 结果精确匹配且该提交属于 `origin/main`，再进入需人工批准的 `deepseek-smoke` Environment。该 Environment 还必须限制只有 `main` 可部署，并把 `APPROVED_DEEPSEEK_SHA` 变量设为本次精确 SHA；不等时会在密钥注入前失败。
+- 受保护 macOS job 使用 Node 24.19.0 和冻结锁文件构建，先以本地假 OpenAI-compatible 端点自检验收程序，再在唯一真实步骤注入 GitHub Environment 的 `DEEPSEEK_API_KEY`。
+- 真实链路固定为 `https://api.deepseek.com/chat/completions` 和 `deepseek-v4-flash`；先通过连接测试 API 发送非文档探针，再通过 Markdown 导入、派生任务和结果列表 API 翻译仓库内非隐私 fixture。
+- 验收断言列表、链接 URL、行内代码与代码块不变，原文修订和正文未覆盖，译文已从派生结果 API 读回；关闭应用并重开 SQLite 后再次核对原文和译文 ID/正文。程序只输出状态、固定模型、耗时和稳定错误码。
+- 本节目前只记录自动化实现，不记录真实 DeepSeek 通过。仓库管理员仍需创建 `deepseek-smoke` Environment，设置 required reviewer、`main` deployment branch、精确 `APPROVED_DEEPSEEK_SHA` 和 `DEEPSEEK_API_KEY`，然后对 `main` 上已批准 SHA 手动执行并归档结果。

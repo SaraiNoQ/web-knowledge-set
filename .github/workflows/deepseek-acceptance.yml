@@ -1,0 +1,78 @@
+name: DeepSeek acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      approved_sha:
+        description: Full commit SHA already reviewed on main
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deepseek-acceptance
+  cancel-in-progress: false
+
+jobs:
+  validate-source:
+    runs-on: macos-15
+    timeout-minutes: 10
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.approved_sha }}
+      - name: Require an exact SHA from main
+        id: source
+        env:
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = SaraiNoQ/web-knowledge-set
+          test "$DISPATCH_REF" = refs/heads/main
+          test "${#APPROVED_SHA}" = 40
+          case "$APPROVED_SHA" in *[!0-9a-f]*) exit 1;; esac
+          test "$(git rev-parse HEAD)" = "$APPROVED_SHA"
+          git merge-base --is-ancestor "$APPROVED_SHA" refs/remotes/origin/main
+          echo "sha=$APPROVED_SHA" >> "$GITHUB_OUTPUT"
+
+  acceptance:
+    needs: validate-source
+    runs-on: macos-15
+    timeout-minutes: 20
+    environment: deepseek-smoke
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.validate-source.outputs.sha }}
+      - name: Require environment approval for this exact SHA
+        env:
+          EXPECTED_SHA: ${{ needs.validate-source.outputs.sha }}
+          APPROVED_DEEPSEEK_SHA: ${{ vars.APPROVED_DEEPSEEK_SHA }}
+        run: |
+          set -euo pipefail
+          test "${#APPROVED_DEEPSEEK_SHA}" = 40
+          case "$APPROVED_DEEPSEEK_SHA" in *[!0-9a-f]*) exit 1;; esac
+          test "$APPROVED_DEEPSEEK_SHA" = "$EXPECTED_SHA"
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Exercise the acceptance harness without a credential
+        run: node scripts/deepseek-acceptance.mjs --self-test
+      - name: Probe and translate through the application API
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: node scripts/deepseek-acceptance.mjs
