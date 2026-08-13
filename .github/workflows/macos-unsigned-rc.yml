@@ -45,6 +45,7 @@ jobs:
       - name: Prepare Rust
         run: |
           rustup toolchain install 1.97.1 --profile minimal --no-self-update
+          rustup component add rustfmt clippy --toolchain 1.97.1-aarch64-apple-darwin
           rustup default 1.97.1
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install chromium --only-shell
