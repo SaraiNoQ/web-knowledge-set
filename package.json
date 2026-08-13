@@ -18,7 +18,7 @@
     "benchmark:library": "tsx scripts/benchmark-library.ts",
     "notices:generate": "node scripts/generate-notices.mjs",
     "notices:check": "node scripts/generate-notices.mjs --check",
-    "verify": "pnpm check && pnpm test && pnpm test:e2e",
+    "verify": "pnpm check && pnpm test && pnpm benchmark:library && pnpm notices:check && pnpm test:e2e",
     "desktop:prepare": "node scripts/prepare-desktop.mjs",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
@@ -43,6 +43,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.62.1",
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^24.13.3",

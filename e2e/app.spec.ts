@@ -357,11 +357,21 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
 });
 
 test("imports, restores history, trashes, restores, searches, exports, and blocks raw scripts", async ({ page }) => {
+  test.setTimeout(60_000);
   const remoteImageRequests: string[] = [];
   await page.route("https://assets.example.test/**", async (route) => {
     remoteImageRequests.push(route.request().url());
     await route.abort();
   });
+  const onboardingResponse = await page.request.get("/api/settings/onboarding");
+  const onboarding = await onboardingResponse.json() as { completed: boolean; revision: number };
+  if (!onboarding.completed) {
+    const completed = await page.request.put("/api/settings/onboarding", {
+      data: { completed: true, revision: onboarding.revision },
+      headers: { "X-Zhiye-Data-Epoch": onboardingResponse.headers()["x-zhiye-data-epoch"] },
+    });
+    expect(completed.ok()).toBe(true);
+  }
   await page.goto("/");
   await page.getByRole("button", { name: "数据安全" }).click();
   await expect(page.getByRole("heading", { name: "数据安全" })).toBeVisible();
@@ -398,17 +408,44 @@ test("imports, restores history, trashes, restores, searches, exports, and block
     expect(dialog.message()).toContain("不会覆盖当前资料或自动恢复");
     await dialog.accept();
   });
+  const importResponsePromise = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/data-safety/backups/import");
   await page.getByLabel("导入完整留档文件").setInputFiles({
     name: download.suggestedFilename(),
     mimeType: "application/vnd.zhiye.backup+zip",
     buffer: await readFile(downloadPath),
   });
+  const importResponse = await importResponsePromise;
+  expect(importResponse.status()).toBe(201);
+  const importedBackup = await importResponse.json() as { id: string };
   await expect(page.getByText("留档文件已导入并校验；当前资料未更改。")).toBeVisible();
   await expect(backupRows).toHaveCount(backupCount + 1);
   expect(restoreRequests).toEqual([]);
   page.off("request", recordRestore);
   await expect(page.getByRole("heading", { name: "数据安全" })).toBeVisible();
   await page.getByRole("button", { name: "返回资料库" }).click();
+
+  const markerUrl = "https://example.com/full-backup-restore-marker";
+  await page.getByLabel("网页地址").fill(markerUrl);
+  const markerResponsePromise = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/documents");
+  await page.getByRole("button", { name: "收取网页" }).click();
+  const markerResponse = await markerResponsePromise;
+  const marker = await markerResponse.json() as { document: { id: string } };
+  await expect(page.getByLabel("文档标题")).toHaveValue("远端测试文章", { timeout: 8_000 });
+
+  await page.getByRole("button", { name: "数据安全" }).click();
+  const importedRow = page.locator(".backup-row").filter({
+    has: page.locator(`a[href="${`/api/data-safety/backups/${encodeURIComponent(importedBackup.id)}/export.zhiye-backup`}"]`),
+  });
+  await expect(importedRow).toHaveCount(1);
+  page.once("dialog", (dialog) => dialog.accept());
+  const restoredResponsePromise = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === `/api/data-safety/backups/${encodeURIComponent(importedBackup.id)}/restore`);
+  const reloadPromise = page.waitForEvent("framenavigated");
+  await importedRow.getByRole("button", { name: "恢复此留档" }).click();
+  expect((await restoredResponsePromise).ok()).toBe(true);
+  await reloadPromise;
+  expect((await page.request.get(`/api/documents/${encodeURIComponent(marker.document.id)}`)).status()).toBe(404);
+  await expect(page.getByLabel("网页地址")).toBeVisible();
+
   await page.getByLabel("网页地址").fill("https://example.com/requested");
   await page.getByRole("button", { name: "收取网页" }).click();
 
