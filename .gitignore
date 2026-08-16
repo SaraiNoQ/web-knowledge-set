@@ -6,6 +6,8 @@ playwright-report/
 test-results/
 release-evidence/
 .data/
+.wrangler/
+cloud/wrangler.web.jsonc
 src-tauri/target/
 src-tauri/binaries/node-*
 desktop-resources/

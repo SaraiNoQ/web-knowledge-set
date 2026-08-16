@@ -12,7 +12,7 @@
     "dev": "KB_DEV=1 tsx watch server/index.ts",
     "build": "tsc -p tsconfig.server.json && vite build && node scripts/build-extension.mjs",
     "start": "node dist-server/server/index.js",
-    "check": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.test.json --noEmit && tsc -p tsconfig.extension.json --noEmit",
+    "check": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.test.json --noEmit && tsc -p tsconfig.extension.json --noEmit && tsc -p tsconfig.cloud.json --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "test:e2e": "pnpm build && playwright test",
     "benchmark:library": "tsx scripts/benchmark-library.ts",
@@ -22,7 +22,9 @@
     "desktop:prepare": "node scripts/prepare-desktop.mjs",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "cloud:check": "tsx --test tests/cloud-api.test.ts",
+    "cloud:bundle": "wrangler deploy --dry-run --config cloud/wrangler.web.example.jsonc"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",
@@ -52,6 +54,7 @@
     "@vitejs/plugin-react": "^6.0.5",
     "tsx": "^4.23.11",
     "typescript": "^7.0.2",
-    "vite": "^8.2.1"
+    "vite": "^8.2.1",
+    "wrangler": "4.123.0"
   }
 }

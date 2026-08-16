@@ -19,3 +19,7 @@
 - [x] ~~**受限网页手动摘录**：自动抓取被登录或反爬限制拒绝时，保留来源链接与失败历史，并允许转入 Markdown 编辑器手动保存正文。~~
 - [x] ~~**Chrome / Firefox 登录态剪藏扩展**：通过一次性配对码授权扩展读取用户主动打开的当前页面，确认 Markdown 后只写入一个新副本，不读取 Cookie 数据库或上传登录凭证。~~
 - [ ] **RC 质量与发布证据**：完成无障碍、提取样本、完整留档 E2E、三次干净门禁、24 小时 soak、受保护 DeepSeek smoke 与未签名 RC 资产验证。
+
+## 云端 Web 迁移
+
+- [ ] **Cloudflare 云端 Web 核心**：以 Workers Static Assets 托管前端、D1 保存云端核心数据，随后接入 R2 留档资源、Browser Rendering 与 Queues 抓取，并以 Cloudflare Access 保护 Web 应用；现有本地 Node/Tauri 路径在功能等价前继续保留。验收边界见 [CLOUDFLARE.md](./CLOUDFLARE.md)。

@@ -84,7 +84,7 @@ KB_DATA_DIR=/你的/知识库目录 pnpm start
 
 ## 开发
 
-开发环境规则见 [AGENTS.md](../AGENTS.md)，完整路线和发布门槛见 [DEVELOPMENT_PLAN.md](./DEVELOPMENT_PLAN.md)，待开发功能见 [FEATURES.md](./FEATURES.md)。本地目录只用于编辑与同步源码；禁止在本地安装依赖、构建、测试或启动开发服务。所有这些操作都在 `root@campus-server:/root/dev/zhiye` 完成。
+开发环境规则见 [AGENTS.md](../AGENTS.md)，完整路线和发布门槛见 [DEVELOPMENT_PLAN.md](./DEVELOPMENT_PLAN.md)，待开发功能见 [FEATURES.md](./FEATURES.md)，Cloudflare Web 迁移边界见 [CLOUDFLARE.md](./CLOUDFLARE.md)。本地目录只用于编辑与同步源码；禁止在本地安装依赖、构建、测试或启动开发服务。所有这些操作都在 `root@123.207.203.208:/root/dev/zhiye` 完成。
 
 服务器使用固定 Node `24.19.0`：
 
@@ -104,10 +104,10 @@ KB_PORT=4173 KB_DATA_DIR=/root/dev/zhiye/.data npx -y node@24.19.0 /usr/lib/node
 需要从本机浏览器访问时，另开终端建立 SSH 隧道：
 
 ```sh
-ssh -L 4173:127.0.0.1:4173 root@campus-server
+ssh -i /Users/sarainoq/Documents/settings/key1.pem -L 4173:127.0.0.1:4173 root@123.207.203.208
 ```
 
-默认模式打开终端打印的 `ZHIYE_READY` 地址。固定预览服务由 `scripts/deploy-web-preview.sh` 以无登录用户运行，它只绑定服务器 `127.0.0.1:4301`；建立 `ssh -L 4301:127.0.0.1:4301 root@campus-server` 后可打开 `http://127.0.0.1:4301/`。Tauri 外壳、sidecar 和 Chromium 可在服务器完成平台无关及 Linux 检查；最终 macOS 包必须在受控 macOS runner 上生成和验证。
+默认模式打开终端打印的 `ZHIYE_READY` 地址。固定预览服务由 `scripts/deploy-web-preview.sh` 以无登录用户运行，它只绑定服务器 `127.0.0.1:4301`；建立 `ssh -i /Users/sarainoq/Documents/settings/key1.pem -L 4301:127.0.0.1:4301 root@123.207.203.208` 后可打开 `http://127.0.0.1:4301/`。Tauri 外壳、sidecar 和 Chromium 可在服务器完成平台无关及 Linux 检查；最终 macOS 包必须在受控 macOS runner 上生成和验证。
 
 ## 获取帮助
 
