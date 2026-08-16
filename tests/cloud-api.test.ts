@@ -8,12 +8,14 @@ const rows = new Map<string, { value: string; revision: number }>([
   ["onboarding", { value: '{"completed":true}', revision: 2 }],
   ["recent_filters", { value: "[]", revision: 3 }],
 ]);
+let preparedSql: string[] = [];
 
 function environment(): CloudEnv {
   return {
     ASSETS: { fetch: async () => new Response("<main>cloud</main>", { headers: { "Content-Type": "text/html" } }) },
     DB: {
       prepare(sql: string) {
+        preparedSql.push(sql);
         let key = sql.includes("data_epoch") ? "data_epoch" : "";
         const statement = {
           bind(value: unknown) {
@@ -37,6 +39,9 @@ function environment(): CloudEnv {
 }
 
 test("cloud core serves the existing empty-library startup contract", async () => {
+  const health = await handleRequest(new Request("https://app.example.com/health"), environment());
+  assert.deepEqual(await health.json(), { ok: true, mode: "cloud-core" });
+
   const expected = new Map<string, unknown>([
     ["/api/settings/onboarding", { completed: true, revision: 2 }],
     ["/api/data-safety", { mode: "ready", maintenance: false, recoveryError: null, health: null, backups: [], settings: null }],
@@ -65,6 +70,18 @@ test("cloud core serves the existing empty-library startup contract", async () =
   }), environment());
   assert.equal(pairingCode.status, 201);
   assert.match((await pairingCode.json() as { code: string }).code, /^[A-Z2-9]{10}$/u);
+
+  preparedSql = [];
+  const scopedSearch = await handleRequest(
+    new Request("https://app.example.com/api/documents?q=needle&scope=body&page=1"), environment(),
+  );
+  assert.equal(scopedSearch.status, 200);
+  assert.ok(preparedSql.some((sql) => sql.includes("markdown LIKE ?") && !sql.includes("title LIKE ?")));
+  const invalidRange = await handleRequest(
+    new Request("https://app.example.com/api/documents?from=2026-08-20&to=2026-08-10&page=1"), environment(),
+  );
+  assert.equal(invalidRange.status, 400);
+  assert.equal((await invalidRange.json() as { error: { code: string } }).error.code, "INVALID_DATE_RANGE");
 
   const asset = await handleRequest(new Request("https://app.example.com/"), environment());
   assert.equal(asset.headers.get("X-Frame-Options"), "DENY");

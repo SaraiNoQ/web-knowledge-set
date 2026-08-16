@@ -41,10 +41,10 @@ export function BrowserExtension() {
     <h3 id="extension-title">浏览器扩展</h3>
     <p>在已登录网页中提取当前可见正文。扩展不申请 Cookie、历史或全部网页权限，只在点击时读取当前标签页。</p>
     <div className="extension-downloads">
-      <a href="/extensions/zhiye-clipper-chrome.zip" download>下载 Chrome 扩展</a>
-      <a href="/extensions/zhiye-clipper-firefox.zip" download>下载 Firefox 扩展</a>
+      <a href="/extensions/zhiye-clipper-chrome.zip?v=0.2.1" download>下载 Chrome 扩展 0.2.1</a>
+      <a href="/extensions/zhiye-clipper-firefox.zip?v=0.2.1" download>下载 Firefox 扩展 0.2.1</a>
     </div>
-    <p>Chrome：解压后在扩展管理页选择“加载已解压的扩展程序”。Firefox：解压后在 about:debugging 临时加载 manifest.json。</p>
+    <p>升级时请先覆盖旧解压目录并点“重新加载”。Chrome 在扩展管理页加载目录；Firefox 在 about:debugging 临时加载 manifest.json。</p>
     <button type="button" className="guide-button" onClick={() => void generate()} disabled={busy}>生成 5 分钟配对码</button>
     <button type="button" className="guide-button" onClick={() => void load().catch((cause) => setError((cause as Error).message))} disabled={busy}>刷新配对列表</button>
     {code && <output className="extension-code" aria-live="polite"><strong>{code.code}</strong><small>仅可使用一次，{new Date(code.expiresAt).toLocaleTimeString()} 前有效</small></output>}

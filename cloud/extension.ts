@@ -279,10 +279,39 @@ const summaryColumns = `id, source_url AS sourceUrl, final_url AS finalUrl, cano
   title, author, status, revision, created_at AS createdAt, updated_at AS updatedAt`;
 
 export async function listDocuments(db: D1Database, url: URL) {
-  const page = Math.max(1, Number.parseInt(url.searchParams.get("page") || "1", 10) || 1);
+  const pageValue = url.searchParams.get("page") || "1";
+  if (!/^[1-9]\d*$/u.test(pageValue)) throw new CloudHttpError(400, "INVALID_PAGE", "page must be a positive integer");
+  const page = Number.parseInt(pageValue, 10);
   const query = url.searchParams.get("q")?.trim() || "";
-  const where = query ? "WHERE title LIKE ? OR markdown LIKE ? OR source_url LIKE ?" : "";
-  const values = query ? [`%${query}%`, `%${query}%`, `%${query}%`] : [];
+  if (query.length > 500) throw new CloudHttpError(400, "INVALID_QUERY", "query is too long");
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+  if (query) {
+    const scope = url.searchParams.get("scope") || "all";
+    const columns = scope === "title" ? ["title"] : scope === "body" ? ["markdown"] :
+      scope === "source" ? ["source_url"] : scope === "all" ? ["title", "markdown", "source_url"] : null;
+    if (!columns) throw new CloudHttpError(400, "INVALID_SCOPE", "Unknown search scope");
+    conditions.push(`(${columns.map((column) => `${column} LIKE ?`).join(" OR ")})`);
+    values.push(...columns.map(() => `%${query}%`));
+  }
+  const unsupported = (url.searchParams.get("status") && url.searchParams.get("status") !== "ready") ||
+    url.searchParams.get("favorite") === "true" || url.searchParams.get("archived") === "true" ||
+    Boolean(url.searchParams.get("tag") || url.searchParams.get("collectionId") || url.searchParams.get("captureMode")) ||
+    url.searchParams.get("trash") === "only";
+  if (unsupported) conditions.push("0");
+  const from = url.searchParams.get("from");
+  const to = url.searchParams.get("to");
+  for (const [parameter, operator, suffix] of [["from", ">=", "T00:00:00.000Z"], ["to", "<=", "T23:59:59.999Z"]] as const) {
+    const date = url.searchParams.get(parameter);
+    if (!date) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/u.test(date) || new Date(`${date}T00:00:00.000Z`).toISOString().slice(0, 10) !== date) {
+      throw new CloudHttpError(400, "INVALID_DATE", `${parameter} must be a real YYYY-MM-DD date`);
+    }
+    conditions.push(`created_at ${operator} ?`);
+    values.push(`${date}${suffix}`);
+  }
+  if (from && to && from > to) throw new CloudHttpError(400, "INVALID_DATE_RANGE", "from must not be after to");
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const count = await db.prepare(`SELECT COUNT(*) AS count FROM cloud_documents ${where}`)
     .bind(...values).first<{ count: number }>();
   const sort = url.searchParams.get("sort") === "title" ? "title COLLATE NOCASE ASC" :

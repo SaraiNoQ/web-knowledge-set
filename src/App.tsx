@@ -574,6 +574,7 @@ export default function App() {
   const [onboarding, setOnboarding] = useState<OnboardingState | "unavailable" | null>(null);
   const [onboardingDeferred, setOnboardingDeferred] = useState(false);
   const [offline, setOffline] = useState(() => !navigator.onLine);
+  const [runtimeMode, setRuntimeMode] = useState<"local" | "cloud" | null>(null);
   const [safetyRecovery, setSafetyRecovery] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [derivedOpen, setDerivedOpen] = useState(false);
@@ -637,6 +638,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
+    void api.getRuntimeMode(controller.signal)
+      .then(setRuntimeMode)
+      .catch(() => { if (!controller.signal.aborted) setRuntimeMode(location.hostname === "zhiye.sarainoq.cn" ? "cloud" : "local"); });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
     const update = () => setOffline(!navigator.onLine);
     window.addEventListener("online", update);
     window.addEventListener("offline", update);
@@ -673,6 +682,7 @@ export default function App() {
   }, []);
 
   const longArticle = (draft?.markdown.length ?? 0) > 250_000;
+  const cloudMode = runtimeMode === "cloud";
   const longPreviewAllowed = !longArticle || longPreviewDocumentId === currentDoc?.id;
   useEffect(() => {
     if (longArticle) setMode("edit");
@@ -1108,6 +1118,7 @@ export default function App() {
   }, [inTrash]);
 
   useEffect(() => {
+    if (cloudMode) return;
     if (inTrash || (!query.trim() && searchScope === "all" && !tag && !collectionFilter && !status && favoriteFilter === undefined && archivedFilter === undefined && !captureModeFilter && !dateFrom && !dateTo && sortOrder === "updated")) return;
     const timer = window.setTimeout(() => {
       savedFiltersEditedRef.current = true;
@@ -1149,7 +1160,7 @@ export default function App() {
       });
     }, 600);
     return () => window.clearTimeout(timer);
-  }, [archivedFilter, captureModeFilter, collectionFilter, dateFrom, dateTo, favoriteFilter, inTrash, query, searchScope, sortOrder, status, tag, unorganizedFilter]);
+  }, [archivedFilter, captureModeFilter, cloudMode, collectionFilter, dateFrom, dateTo, favoriteFilter, inTrash, query, searchScope, sortOrder, status, tag, unorganizedFilter]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -2926,8 +2937,8 @@ export default function App() {
     }
   }
 
-  if (onboarding === null) {
-    return <main className="onboarding-loading" aria-live="polite"><span className="brand-seal">知</span><p>正在打开本地知识库…</p></main>;
+  if (onboarding === null || runtimeMode === null) {
+    return <main className="onboarding-loading" aria-live="polite"><span className="brand-seal">知</span><p>正在打开知识库…</p></main>;
   }
   if (onboarding !== "unavailable" && !onboarding.completed && !onboardingDeferred) {
     return <Onboarding state={onboarding} onComplete={setOnboarding} onLater={() => setOnboardingDeferred(true)} />;
@@ -2937,17 +2948,17 @@ export default function App() {
     <div className="app-shell">
       <a className="skip-link" href="#library-panel">跳到资料库</a>
       <header className="masthead">
-        <div className="brand" aria-label="织页本地知识库">
+        <div className="brand" aria-label={cloudMode ? "织页云端知识库" : "织页本地知识库"}>
           <span className="brand-seal">织</span>
-          <span><strong>织页</strong><small>ZHIYE · LOCAL KNOWLEDGE</small></span>
+          <span><strong>织页</strong><small>ZHIYE · {cloudMode ? "CLOUD" : "LOCAL"} KNOWLEDGE</small></span>
         </div>
-        <p className="masthead-note">把散落的网页，<br />织成可编辑的知识。</p>
-        <div className="masthead-actions">{onboarding !== "unavailable" && <button type="button" className="guide-button" onClick={() => setGuideOpen(true)} disabled={closing}>使用指南</button>}<button type="button" className="shortcut-help-button" aria-keyshortcuts="?" onClick={() => setShortcutHelp(true)} disabled={closing}>帮助</button>{"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}<button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
+        <p className="masthead-note">把散落的网页，<br />织成可阅读的知识。</p>
+        <div className="masthead-actions">{!cloudMode && onboarding !== "unavailable" && <button type="button" className="guide-button" onClick={() => setGuideOpen(true)} disabled={closing}>使用指南</button>}<button type="button" className="shortcut-help-button" aria-keyshortcuts="?" onClick={() => setShortcutHelp(true)} disabled={closing}>帮助</button>{"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}{!cloudMode && <><button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
           <i />{safetyRecovery ? "恢复模式" : "数据安全"}
-        </button></div>
+        </button></>}</div>
       </header>
 
-      {offline && <div className="offline-banner" role="status">系统报告当前离线；本地阅读、编辑与搜索仍可使用，网页抓取和远程 AI 可能失败。</div>}
+      {offline && <div className="offline-banner" role="status">{cloudMode ? "云端服务当前不可达，请恢复网络后继续。" : "系统报告当前离线；本地阅读、编辑与搜索仍可使用，网页抓取和远程 AI 可能失败。"}</div>}
 
       {guideOpen && onboarding !== "unavailable" && (
         <Onboarding
@@ -2965,19 +2976,19 @@ export default function App() {
             <section aria-labelledby="quick-start-title">
               <span>01 · START HERE</span>
               <h3 id="quick-start-title">快速上手</h3>
-              <p>粘贴公开网页地址完成采集，在资料库中搜索整理，再用 Markdown 编辑与预览；重要变更前先到“数据安全”创建留档。</p>
-              <button type="button" className="guide-button" disabled={onboarding === "unavailable"} onClick={() => { setShortcutHelp(false); setGuideOpen(true); }}>{onboarding === "unavailable" ? "恢复资料后可打开指南" : "重新打开使用指南"}</button>
+              <p>{cloudMode ? "安装浏览器扩展，在已登录网页中提取 Markdown；云端当前支持剪藏、搜索与阅读。" : "粘贴公开网页地址完成采集，在资料库中搜索整理，再用 Markdown 编辑与预览；重要变更前先到“数据安全”创建留档。"}</p>
+              {!cloudMode && <button type="button" className="guide-button" disabled={onboarding === "unavailable"} onClick={() => { setShortcutHelp(false); setGuideOpen(true); }}>{onboarding === "unavailable" ? "恢复资料后可打开指南" : "重新打开使用指南"}</button>}
             </section>
             <dl className="help-meta">
               <div><dt>版本</dt><dd>v{__APP_VERSION__}</dd></div>
-              <div><dt>运行模式</dt><dd>{"__TAURI_INTERNALS__" in window ? "macOS 桌面" : "本地 Web"}{safetyRecovery ? " · 恢复模式" : ""}</dd></div>
+              <div><dt>运行模式</dt><dd>{"__TAURI_INTERNALS__" in window ? "macOS 桌面" : cloudMode ? "Cloudflare Web" : "本地 Web"}{safetyRecovery ? " · 恢复模式" : ""}</dd></div>
               <div><dt>许可</dt><dd>MIT</dd></div>
             </dl>
           </div>
           {safetyRecovery ? <p className="notice warning">恢复资料后才能生成扩展配对码。</p> : <BrowserExtension />}
           <section className="help-shortcuts" aria-labelledby="shortcut-title">
             <h3 id="shortcut-title">快捷键</h3>
-            <dl className="shortcut-list"><div><dt><kbd>⌘</kbd><kbd>K</kbd></dt><dd>聚焦搜索</dd></div><div><dt><kbd>/</kbd></dt><dd>聚焦搜索</dd></div><div><dt><kbd>J</kbd> / <kbd>K</kbd></dt><dd>在列表中移动</dd></div><div><dt><kbd>X</kbd></dt><dd>选中或取消当前行</dd></div><div><dt><kbd>↵</kbd></dt><dd>打开当前行</dd></div><div><dt><kbd>⌘</kbd><kbd>S</kbd></dt><dd>立即保存</dd></div><div><dt><kbd>Esc</kbd></dt><dd>关闭面板或返回列表</dd></div><div><dt><kbd>?</kbd></dt><dd>显示本帮助</dd></div></dl>
+            <dl className="shortcut-list"><div><dt><kbd>⌘</kbd><kbd>K</kbd></dt><dd>聚焦搜索</dd></div><div><dt><kbd>/</kbd></dt><dd>聚焦搜索</dd></div><div><dt><kbd>J</kbd> / <kbd>K</kbd></dt><dd>在列表中移动</dd></div>{!cloudMode && <div><dt><kbd>X</kbd></dt><dd>选中或取消当前行</dd></div>}<div><dt><kbd>↵</kbd></dt><dd>打开当前行</dd></div>{!cloudMode && <div><dt><kbd>⌘</kbd><kbd>S</kbd></dt><dd>立即保存</dd></div>}<div><dt><kbd>Esc</kbd></dt><dd>关闭面板或返回列表</dd></div><div><dt><kbd>?</kbd></dt><dd>显示本帮助</dd></div></dl>
           </section>
           <nav className="help-links" aria-label="项目帮助链接">
             <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/LICENSE" target="_blank" rel="noreferrer noopener">MIT 许可</a>
@@ -3081,6 +3092,14 @@ export default function App() {
         />
       ) : <>
       <section className="capture-band" aria-labelledby="capture-title">
+        {cloudMode ? <>
+          <div className="capture-index" aria-hidden="true">01</div>
+          <div className="capture-copy">
+            <h1 id="capture-title">从浏览器剪藏网页</h1>
+            <p>云端版当前通过 Chrome / Firefox 扩展收取已登录网页；在“帮助”中下载并生成配对码。</p>
+          </div>
+          <button type="button" className="primary-button" onClick={() => setShortcutHelp(true)}>打开扩展与配对</button>
+        </> : <>
         <div className="capture-index" aria-hidden="true">01</div>
         <div className="capture-copy">
           <h1 id="capture-title">收藏一张网页</h1>
@@ -3113,6 +3132,7 @@ export default function App() {
             </div>
           ) : importNotice && <span className="notice-text">{importNotice}</span>}
         </div>
+        </>}
       </section>
 
       <main className={`workspace ${selectedId ? "has-selection" : ""}`}>
@@ -3162,11 +3182,11 @@ export default function App() {
 
           <div className="result-caption"><span>{filteredDescription}</span>{items.some(needsCapturePolling) && <span className="polling-mark"><i />更新中</span>}</div>
 
-          {!!items.length && <div className="bulk-toolbar" aria-label="当前页批量操作">
+          {!!items.length && !cloudMode && <div className="bulk-toolbar" aria-label="当前页批量操作">
             <label><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={items.length > 0 && items.every((item) => selectedIds.has(item.id))} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds(event.target.checked ? new Set(items.map((item) => item.id)) : new Set()); }} />选中当前页 <strong>{selectedIds.size}</strong> 篇</label>
             {!!selectedIds.size && <><select aria-label="批量操作" disabled={listLoading || batchBusy} value={batchAction} onChange={(event) => setBatchAction(event.target.value as BatchDocumentAction | "")}><option value="">选择操作</option><option value="add-tag">添加标签</option><option value="remove-tag">移除标签</option><option value="add-collection">加入集合</option><option value="remove-collection">移出集合</option>{inTrash ? <option value="restore">恢复</option> : <><option value="archive">归档</option><option value="unarchive">取消归档</option><option value="trash">删除（移入回收站）</option></>}</select>{(batchAction === "add-collection" || batchAction === "remove-collection") && <select aria-label="批量操作集合" disabled={listLoading || batchBusy} value={batchCollectionId} onChange={(event) => setBatchCollectionId(event.target.value)}><option value="">选择集合</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</select>}<button type="button" onClick={() => void runBatchAction()} disabled={listLoading || batchBusy || !batchAction}>{batchBusy ? "处理中…" : "应用"}</button></>}
           </div>}
-          {(!inTrash || portableExporting) && <div className="portable-toolbar" aria-label="便携知识包导出">
+          {!cloudMode && (!inTrash || portableExporting) && <div className="portable-toolbar" aria-label="便携知识包导出">
             <div><strong>便携知识包</strong><span>用于迁移与分享，不等同于可恢复数据库的完整留档。</span><button type="button" onClick={() => setSafetyOpen(true)} disabled={Boolean(portableExporting)}>前往完整留档</button></div>
             <div>
               <button type="button" onClick={() => void exportPortable("selected")} disabled={((listLoading || closing) && portableExporting !== "selected") || (portableExporting !== null && portableExporting !== "selected") || ((!selectedIds.size || inTrash) && portableExporting !== "selected")}>{portableExporting === "selected" ? "取消所选导出" : `导出所选${selectedIds.size ? ` ${selectedIds.size} 篇` : ""}`}</button>
@@ -3179,7 +3199,7 @@ export default function App() {
           {batchError && <p className="batch-message error-text" role="alert">{batchError}</p>}
 
           <div ref={libraryListRef} className="document-list" onKeyDown={handleListKeyDown}>
-            {listLoading && !items.length ? <StatePanel kind="loading" title="正在翻阅知识库" /> : listError ? <StatePanel kind="error" title="无法读取列表">{listError}</StatePanel> : !items.length ? <StatePanel kind="empty" title={inTrash ? "回收站是空的" : "还没有找到织片"}>{query || tag || status ? "试试放宽筛选条件。" : inTrash ? "移除的网页会暂存在这里。" : "从上方收藏第一张网页。"}</StatePanel> : items.map((item, index) => (
+            {listLoading && !items.length ? <StatePanel kind="loading" title="正在翻阅知识库" /> : listError ? <StatePanel kind="error" title="无法读取列表">{listError}</StatePanel> : !items.length ? <StatePanel kind="empty" title={inTrash ? "回收站是空的" : "还没有找到织片"}>{query || tag || status ? "试试放宽筛选条件。" : inTrash ? "移除的网页会暂存在这里。" : cloudMode ? "请从帮助页安装浏览器扩展，开始剪藏网页。" : "从上方收藏第一张网页。"}</StatePanel> : items.map((item, index) => (
               <div key={item.id} className={`document-row-wrap ${selectedId === item.id ? "is-selected" : ""}`}>
                 <label className="row-select"><span className="sr-only">选择 {item.title || "未命名网页"}</span><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={selectedIds.has(item.id)} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds((previous) => { const next = new Set(previous); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; }); }} /></label>
                 <button type="button" className={`document-row ${selectedId === item.id ? "is-selected" : ""}`} onClick={() => selectDocument(item.id)} aria-current={selectedId === item.id ? "true" : undefined} aria-keyshortcuts="Enter ArrowUp ArrowDown J K X">
@@ -3210,12 +3230,29 @@ export default function App() {
               <div className="weave-mark" aria-hidden="true"><i /><i /><i /><i /></div>
               <span className="eyebrow">QUIET WORKBENCH</span>
               <h2>在左侧选一张织片</h2>
-              <p>阅读原文、整理标签，或直接修改 Markdown。<br />你的文字会留在本地。</p>
+              <p>{cloudMode ? <>阅读已由浏览器扩展剪藏的 Markdown。<br />云端版当前提供搜索与只读浏览。</> : <>阅读原文、整理标签，或直接修改 Markdown。<br />你的文字会留在本地。</>}</p>
             </div>
           ) : detailLoading && !currentDoc ? (
             <StatePanel kind="loading" title="正在展开织片" />
           ) : detailError && !currentDoc ? (
             <StatePanel kind="error" title="无法打开这篇知识">{detailError}</StatePanel>
+          ) : currentDoc && draft && cloudMode ? (
+            <>
+              <button type="button" className="mobile-back" onClick={closeDocument}><Icon size={16}><path d="m15 18-6-6 6-6" /></Icon>返回知识库</button>
+              <header className="document-head">
+                <div className="document-kicker">
+                  <DocumentStatus status={currentDoc.status} />
+                  <a href={currentDoc.finalUrl || currentDoc.sourceUrl} target="_blank" rel="noreferrer noopener">{sourceName(currentDoc.finalUrl || currentDoc.sourceUrl)}<Icon size={13}><path d="M14 5h5v5M10 14 19 5M19 14v5H5V5h5" /></Icon></a>
+                  <span>{formatDate(currentDoc.updatedAt)}</span>
+                </div>
+                <h2>{currentDoc.title || "未命名网页"}</h2>
+                <p className="notice warning">云端迁移期间，扩展剪藏、搜索和阅读已经可用；编辑、AI、留档与直接抓取将在后续迁移完成后开放。</p>
+              </header>
+              <section className="preview-pane cloud-reader" aria-label="Markdown 预览">
+                <div className="pane-label">READ ONLY · MARKDOWN</div>
+                {currentDoc.markdown.trim() ? <MarkdownPreview markdown={currentDoc.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={[]} /> : <StatePanel kind="empty" title="这张织片没有正文" />}
+              </section>
+            </>
           ) : currentDoc && draft ? (
             <>
               <button type="button" className="mobile-back" onClick={closeDocument}><Icon size={16}><path d="m15 18-6-6 6-6" /></Icon>返回知识库</button>

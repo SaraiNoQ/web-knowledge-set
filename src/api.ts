@@ -143,6 +143,11 @@ export interface CleanupDataResult {
 }
 
 export const api = {
+  async getRuntimeMode(signal?: AbortSignal) {
+    const health = await request<{ mode?: string }>("/health", { signal });
+    return health.mode === "cloud-core" ? "cloud" as const : "local" as const;
+  },
+
   getOnboarding(signal?: AbortSignal) {
     return request<OnboardingState>("/api/settings/onboarding", { signal });
   },

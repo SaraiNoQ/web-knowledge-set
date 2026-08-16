@@ -137,7 +137,7 @@ export async function handleRequest(request: Request, env: CloudEnv) {
   try {
     const url = new URL(request.url);
     if (url.pathname === "/health") return json({ ok: true, mode: "cloud-core" });
-    if (url.pathname.startsWith("/api/")) return api(request, env, url);
+    if (url.pathname.startsWith("/api/")) return await api(request, env, url);
 
     const asset = await env.ASSETS.fetch(request);
     const headers = new Headers(asset.headers);
