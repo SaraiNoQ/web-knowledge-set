@@ -1,4 +1,4 @@
-const API = "http://127.0.0.1:4301";
+const API = "https://clip.sarainoq.cn";
 const browserKind = navigator.userAgent.includes("Firefox") ? "firefox" : "chrome";
 const webext = typeof browser === "undefined" ? chrome : browser;
 

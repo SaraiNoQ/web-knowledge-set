@@ -23,6 +23,12 @@ function environment(): CloudEnv {
           async first<T>() {
             return (rows.get(key) ?? null) as T | null;
           },
+          async all<T>() {
+            return { results: [] as T[], meta: { changes: 0 } };
+          },
+          async run<T>() {
+            return { results: [] as T[], meta: { changes: 1 } };
+          },
         };
         return statement;
       },
@@ -51,6 +57,14 @@ test("cloud core serves the existing empty-library startup contract", async () =
   const pending = await handleRequest(new Request("https://app.example.com/api/documents", { method: "POST" }), environment());
   assert.equal(pending.status, 501);
   assert.equal((await pending.json() as { error: { code: string } }).error.code, "CLOUD_FEATURE_PENDING");
+
+  const pairingCode = await handleRequest(new Request("https://app.example.com/api/settings/browser-extension/pairing-code", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": "cloud-test" },
+    body: "{}",
+  }), environment());
+  assert.equal(pairingCode.status, 201);
+  assert.match((await pairingCode.json() as { code: string }).code, /^[A-Z2-9]{10}$/u);
 
   const asset = await handleRequest(new Request("https://app.example.com/"), environment());
   assert.equal(asset.headers.get("X-Frame-Options"), "DENY");

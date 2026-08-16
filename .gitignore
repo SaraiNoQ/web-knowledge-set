@@ -8,6 +8,7 @@ release-evidence/
 .data/
 .wrangler/
 cloud/wrangler.web.jsonc
+cloud/wrangler.clip.jsonc
 src-tauri/target/
 src-tauri/binaries/node-*
 desktop-resources/

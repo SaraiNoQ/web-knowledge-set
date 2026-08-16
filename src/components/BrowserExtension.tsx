@@ -52,7 +52,7 @@ export function BrowserExtension() {
       <span>{pairing.browser === "chrome" ? "Chrome" : "Firefox"} · {new Date(pairing.createdAt).toLocaleDateString()}</span>
       <button type="button" onClick={() => void revoke(pairing)} disabled={busy}>撤销</button>
     </li>)}</ul>}
-    <p>每次剪藏都会创建新副本；图片只保留原链接，不上传登录凭证、完整 DOM 或登录态图片字节。</p>
+    <p>扩展只连接 clip.sarainoq.cn；每次剪藏都会创建新副本。图片只保留原链接，不上传登录凭证、完整 DOM 或登录态图片字节。</p>
     {error && <p className="form-error" role="alert">{error}</p>}
   </section>;
 }

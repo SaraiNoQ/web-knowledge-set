@@ -1,11 +1,13 @@
-interface D1Statement {
-  bind(...values: unknown[]): D1Statement;
-  first<T>(): Promise<T | null>;
-}
-
-interface D1Database {
-  prepare(sql: string): D1Statement;
-}
+import {
+  CloudHttpError,
+  createPairingCode,
+  getDocument,
+  jsonObject,
+  listDocuments as listCloudDocuments,
+  listPairings,
+  revokePairing,
+  type D1Database,
+} from "./extension";
 
 interface AssetFetcher {
   fetch(request: Request): Promise<Response>;
@@ -67,8 +69,44 @@ async function api(request: Request, env: CloudEnv, url: URL) {
   if (!epoch) {
     return json({ error: { code: "CLOUD_NOT_INITIALIZED", message: "Cloud database migration is required" } }, 503);
   }
+  if (url.pathname === "/api/settings/browser-extension/pairing-code" && request.method === "POST") {
+    if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
+      return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
+    }
+    const body = await jsonObject(request, 4_096);
+    if (Object.keys(body).length) throw new CloudHttpError(400, "INVALID_PAIRING_REQUEST", "Pairing code request accepts no fields");
+    return json(await createPairingCode(env.DB), 201, epoch);
+  }
+  if (url.pathname === "/api/settings/browser-extension/pairings" && request.method === "GET") {
+    return json({ pairings: await listPairings(env.DB) }, 200, epoch);
+  }
+  const pairing = url.pathname.match(/^\/api\/settings\/browser-extension\/pairings\/([^/]+)$/u);
+  if (pairing && request.method === "DELETE") {
+    if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
+      return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
+    }
+    const body = await jsonObject(request, 4_096);
+    if (Object.keys(body).length) throw new CloudHttpError(400, "INVALID_PAIRING_DELETE", "Pairing deletion accepts no fields");
+    let id: string;
+    try { id = decodeURIComponent(pairing[1]); }
+    catch { throw new CloudHttpError(400, "INVALID_PATH", "Invalid pairing identifier"); }
+    if (!await revokePairing(env.DB, id)) throw new CloudHttpError(404, "PAIRING_NOT_FOUND", "Pairing not found");
+    return new Response(null, { status: 204, headers: { ...SECURITY_HEADERS, "Cache-Control": "no-store", [DATA_EPOCH_HEADER]: epoch } });
+  }
   if (request.method !== "GET") {
     return json({ error: { code: "CLOUD_FEATURE_PENDING", message: "This cloud mutation is not migrated yet" } }, 501, epoch);
+  }
+
+  const documentPath = url.pathname.match(/^\/api\/documents\/([^/]+)(?:\/(draft|assets|duplicate|captures))?$/u);
+  if (documentPath) {
+    let id: string;
+    try { id = decodeURIComponent(documentPath[1]); }
+    catch { throw new CloudHttpError(400, "INVALID_PATH", "Invalid document identifier"); }
+    if (documentPath[2] === "draft" || documentPath[2] === "duplicate") return json(null, 200, epoch);
+    if (documentPath[2] === "assets" || documentPath[2] === "captures") return json([], 200, epoch);
+    const document = await getDocument(env.DB, id);
+    if (!document) throw new CloudHttpError(404, "DOCUMENT_NOT_FOUND", "Document not found");
+    return json(document, 200, epoch);
   }
 
   switch (url.pathname) {
@@ -88,8 +126,7 @@ async function api(request: Request, env: CloudEnv, url: URL) {
     case "/api/tags":
       return json([], 200, epoch);
     case "/api/documents": {
-      const page = Math.max(1, Number.parseInt(url.searchParams.get("page") || "1", 10) || 1);
-      return json({ items: [], page, pageSize: 30, total: 0 }, 200, epoch);
+      return json(await listCloudDocuments(env.DB, url), 200, epoch);
     }
     default:
       return json({ error: { code: "CLOUD_FEATURE_PENDING", message: "This cloud API is not migrated yet" } }, 501, epoch);
@@ -97,14 +134,19 @@ async function api(request: Request, env: CloudEnv, url: URL) {
 }
 
 export async function handleRequest(request: Request, env: CloudEnv) {
-  const url = new URL(request.url);
-  if (url.pathname === "/health") return json({ ok: true, mode: "cloud-core" });
-  if (url.pathname.startsWith("/api/")) return api(request, env, url);
+  try {
+    const url = new URL(request.url);
+    if (url.pathname === "/health") return json({ ok: true, mode: "cloud-core" });
+    if (url.pathname.startsWith("/api/")) return api(request, env, url);
 
-  const asset = await env.ASSETS.fetch(request);
-  const headers = new Headers(asset.headers);
-  for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
-  return new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers });
+    const asset = await env.ASSETS.fetch(request);
+    const headers = new Headers(asset.headers);
+    for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
+    return new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers });
+  } catch (error) {
+    const failure = error instanceof CloudHttpError ? error : new CloudHttpError(500, "INTERNAL_ERROR", "Request failed");
+    return json({ error: { code: failure.code, message: failure.message } }, failure.status);
+  }
 }
 
 export default { fetch: handleRequest };
