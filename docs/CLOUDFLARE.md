@@ -2,7 +2,7 @@
 
 ## 状态
 
-Cloudflare Web 已部署在 `https://zhiye.sarainoq.cn`，并由 Access 保护。当前云端支持浏览器扩展剪藏、搜索、阅读和带 revision 冲突保护的 Markdown 编辑；本地 Node/Tauri 仍保留完整功能。
+Cloudflare Web 已部署在 `https://zhiye.sarainoq.cn`，并由 Access 保护。线上已支持扩展剪藏、搜索、阅读、Markdown 编辑、可选 AI、R2 留档与 Queue/Browser Run 公开网页抓取。
 
 ## 目标架构
 
@@ -17,8 +17,8 @@ Cloudflare Web 已部署在 `https://zhiye.sarainoq.cn`，并由 Access 保护�
 ## 分阶段实施
 
 1. **Workers Static Assets + D1 云核心**：已建立 Worker、前端静态资源和 D1 数据模型，支持扩展剪藏、搜索、阅读和标题/Markdown 编辑；从空云端知识库开始，不自动复制本地数据。
-2. **R2 资源与备份**：迁移离线图片、快照和完整留档的对象存储语义，并提供明确的导入、导出与恢复流程。
-3. **Browser Rendering + Queues 抓取**：将公开网页抓取改为异步任务；保留现有安全 URL 校验、失败状态和手动摘录回退。
+2. **R2 资源与留档**：私有 `zhiye-cloud-backups` bucket 已绑定，支持创建、校验、导入导出和明确恢复。
+3. **Browser Run + Queues 抓取**：`zhiye-cloud-capture` 已同时绑定生产者和消费者，消费端使用 Browser Run Markdown Quick Action。
 4. **Access 与扩展迁移**：Web 由 Access 保护；独立的 `clip.sarainoq.cn` Worker 只接受扩展配对和剪藏写入，令牌不能读取、搜索、删除或导出知识库。
 5. **功能等价与切换**：逐项验证编辑、搜索、导入导出、备份恢复、AI 与剪藏后，才允许将 Web 默认入口切到 Cloudflare。
 
@@ -26,7 +26,7 @@ Cloudflare Web 已部署在 `https://zhiye.sarainoq.cn`，并由 Access 保护�
 
 ## 安全与发布前提
 
-- Cloudflare API Token、Access 凭据、AI Key 和用户数据均不提交到仓库；使用 Cloudflare secret 或部署环境变量。
+- Cloudflare API Token、Access 凭据和用户数据均不提交到仓库。云端 AI Key 只保存于当前浏览器页面内存，只随显式测试或生成请求发给 Worker，不写入 D1、R2 或诊断数据。
 - 使用自定义域名且关闭可绕过 Access 的公开 Worker 地址；Access 策略默认拒绝。示例 Wrangler 配置故意不带 route：先创建 Access 应用和所有者 allow 策略，再在未跟踪的 `cloud/wrangler.web.jsonc` 中添加同一域名。
 - 发布门禁必须从未登录浏览器验证 `/` 和 `/api/documents` 都被 Access 拒绝，然后再以所有者身份验证空库首屏。没有这项证据不得添加公开 route。
 - 部署前需要 Cloudflare 账户授权、受管域名、D1/R2/Queues/Browser Rendering 资源标识和 Access 配置。缺少其中任一项时，只能完成源码与配置准备，不能宣称已上线。

@@ -20,5 +20,16 @@
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations"
     }
-  ]
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BACKUPS",
+      "bucket_name": "zhiye-cloud-backups"
+    }
+  ],
+  "browser": { "binding": "BROWSER" },
+  "queues": {
+    "producers": [{ "binding": "CAPTURE_QUEUE", "queue": "zhiye-cloud-capture" }],
+    "consumers": [{ "queue": "zhiye-cloud-capture", "max_batch_size": 3, "max_batch_timeout": 5, "max_retries": 2 }]
+  }
 }

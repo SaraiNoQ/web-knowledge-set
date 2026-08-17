@@ -12,6 +12,7 @@ export interface D1Statement {
 
 export interface D1Database {
   prepare(sql: string): D1Statement;
+  batch?(statements: D1Statement[]): Promise<D1Result[]>;
 }
 
 export type BrowserKind = "chrome" | "firefox";
@@ -23,6 +24,7 @@ export class CloudHttpError extends Error {
 }
 
 const encoder = new TextEncoder();
+export const MAX_CLOUD_ROW_TEXT_BYTES = 1_900_000;
 const unsafeControl = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
 
 export async function jsonObject(request: Request, maxBytes = 2 * 1024 * 1024 + 16_384) {
@@ -193,8 +195,8 @@ function clipInput(body: Record<string, unknown>) {
   if (typeof body.markdown !== "string" || !body.markdown.trim()) {
     throw new CloudHttpError(400, "INVALID_MARKDOWN", "markdown must be non-empty");
   }
-  if (encoder.encode(body.markdown).byteLength > 2 * 1024 * 1024) {
-    throw new CloudHttpError(413, "MARKDOWN_TOO_LARGE", "markdown exceeds 2 MiB");
+  if (encoder.encode(body.markdown).byteLength > MAX_CLOUD_ROW_TEXT_BYTES) {
+    throw new CloudHttpError(413, "MARKDOWN_TOO_LARGE", "markdown exceeds the D1 row budget");
   }
   if (unsafeControl.test(body.title) || unsafeControl.test(body.markdown)) {
     throw new CloudHttpError(400, "INVALID_CONTROL_CHARACTER", "clip text contains a control character");
@@ -214,22 +216,25 @@ function clipInput(body: Record<string, unknown>) {
 export async function createClip(db: D1Database, request: Request) {
   const match = /^Bearer ([A-Za-z0-9_-]{43})$/u.exec(request.headers.get("Authorization") || "");
   if (!match) throw new CloudHttpError(401, "EXTENSION_UNAUTHORIZED", "Extension token required");
+  const tokenHash = await sha256(match[1]);
   const pairing = await db.prepare("SELECT id FROM browser_extension_pairings WHERE token_hash = ?")
-    .bind(await sha256(match[1])).first<{ id: string }>();
+    .bind(tokenHash).first<{ id: string }>();
   if (!pairing) throw new CloudHttpError(401, "EXTENSION_UNAUTHORIZED", "Extension token is invalid or revoked");
 
   const input = clipInput(await jsonObject(request));
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
-  await db.prepare(
+  const inserted = await db.prepare(
     `INSERT INTO cloud_documents(
        id, source_url, final_url, canonical_url, title, author, published_at, markdown,
        status, source_note, revision, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', '浏览器扩展剪藏', 1, ?, ?)`,
+     ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'ready', '浏览器扩展剪藏', 1, ?, ?
+       WHERE EXISTS (SELECT 1 FROM browser_extension_pairings WHERE token_hash = ?)`,
   ).bind(
     id, input.sourceUrl, input.sourceUrl, input.sourceUrl, input.title, input.author,
-    input.publishedAt, input.markdown, now, now,
+    input.publishedAt, input.markdown, now, now, tokenHash,
   ).run();
+  if (changes(inserted) !== 1) throw new CloudHttpError(401, "EXTENSION_UNAUTHORIZED", "Extension token was revoked before save");
   return { documentId: id };
 }
 
@@ -334,7 +339,7 @@ export async function getDocument(db: D1Database, id: string) {
 export async function updateDocument(db: D1Database, id: string, body: Record<string, unknown>) {
   if (Object.keys(body).some((key) => key !== "title" && key !== "markdown" && key !== "revision") ||
     typeof body.title !== "string" || !body.title.trim() || body.title.length > 1_000 ||
-    typeof body.markdown !== "string" || encoder.encode(body.markdown).byteLength > 2 * 1024 * 1024 ||
+    typeof body.markdown !== "string" || encoder.encode(body.markdown).byteLength > MAX_CLOUD_ROW_TEXT_BYTES ||
     typeof body.revision !== "number" || !Number.isInteger(body.revision) || body.revision < 1 ||
     unsafeControl.test(body.title) || unsafeControl.test(body.markdown)) {
     throw new CloudHttpError(400, "INVALID_DOCUMENT_UPDATE", "A title, Markdown body, and positive revision are required");

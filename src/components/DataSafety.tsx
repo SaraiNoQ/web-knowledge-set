@@ -86,11 +86,13 @@ function BackupRow({
 }
 
 export function DataSafety({
+  cloud = false,
   beforeOperation,
   onClose,
   onModeChange,
   onDiagnostics,
 }: {
+  cloud?: boolean;
   beforeOperation: () => Promise<void>;
   onClose: () => void;
   onModeChange: (recovery: boolean) => void;
@@ -139,7 +141,7 @@ export function DataSafety({
   };
 
   const createBackup = () => perform("create", async () => {
-    await beforeOperation();
+    if (!cloud) await beforeOperation();
     await api.createBackup();
   }, "完整留档已创建并校验。");
 
@@ -148,12 +150,14 @@ export function DataSafety({
     const file = input.files?.[0];
     input.value = "";
     if (!file) return;
-    if (!file.name.toLocaleLowerCase().endsWith(".zhiye-backup")) {
-      setError("请选择 .zhiye-backup 完整留档文件。");
+    const extension = cloud ? ".zhiye-cloud-backup" : ".zhiye-backup";
+    if (!file.name.toLocaleLowerCase().endsWith(extension)) {
+      setError(`请选择 ${extension} 完整留档文件。`);
       return;
     }
-    if (file.size > 2 * 1024 * 1024 * 1024) {
-      setError("留档文件超过 2 GiB 安全上限，无法导入。");
+    const maxBytes = cloud ? 8 * 1024 * 1024 : 2 * 1024 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      setError(`留档文件超过 ${cloud ? "8 MiB" : "2 GiB"} 安全上限，无法导入。`);
       return;
     }
     if (!window.confirm("所选文件未加密，可能包含完整知识数据。导入只会创建已校验留档，不会覆盖当前资料或自动恢复。确定继续吗？")) return;
@@ -168,7 +172,7 @@ export function DataSafety({
     setError("");
     setNotice("");
     try {
-      if (status?.mode === "ready") await beforeOperation();
+      if (!cloud && status?.mode === "ready") await beforeOperation();
       let result: RestoreBackupResult;
       try {
         result = await api.restoreBackup(backup.id);
@@ -256,11 +260,11 @@ export function DataSafety({
     <main className="safety-page">
       <header className="safety-head">
         <div>
-          <span className="eyebrow">DATA STEWARDSHIP · 本机</span>
+          <span className="eyebrow">DATA STEWARDSHIP · {cloud ? "R2 CLOUD" : "本机"}</span>
           <h1>数据安全</h1>
-          <p>校验数据库、网页快照与离线资源，创建可恢复的完整留档。</p>
+          <p>{cloud ? "将 D1 文档、AI 设置与派生结果写入私有 R2，创建可恢复的云端留档。" : "校验数据库、网页快照与离线资源，创建可恢复的完整留档。"}</p>
         </div>
-        <div className="safety-head-actions"><button type="button" className="safety-close" onClick={onDiagnostics} disabled={Boolean(busy)}>诊断台</button>{!recovery && <button type="button" className="safety-close" onClick={onClose} disabled={Boolean(busy)}>返回资料库</button>}</div>
+        <div className="safety-head-actions">{!cloud && <button type="button" className="safety-close" onClick={onDiagnostics} disabled={Boolean(busy)}>诊断台</button>}{!recovery && <button type="button" className="safety-close" onClick={onClose} disabled={Boolean(busy)}>返回资料库</button>}</div>
       </header>
 
       {recovery && (
@@ -304,13 +308,13 @@ export function DataSafety({
             <div>
               <span className="eyebrow">ARCHIVE LEDGER</span>
               <h2>完整留档</h2>
-              <p>.zhiye-backup 未加密，包含数据库、网页快照和离线资源；导入只新增已校验留档，不会自动恢复。</p>
+              <p>{cloud ? ".zhiye-cloud-backup 未加密，包含云端文档与 AI 结果，不包含 API Key；导入不会自动恢复。" : ".zhiye-backup 未加密，包含数据库、网页快照和离线资源；导入只新增已校验留档，不会自动恢复。"}</p>
             </div>
             <div className="backup-ledger-actions">
               <label className="backup-import">
                 <input
                   type="file"
-                  accept=".zhiye-backup,application/vnd.zhiye.backup+zip"
+                  accept={cloud ? ".zhiye-cloud-backup,application/vnd.zhiye.cloud-backup+json" : ".zhiye-backup,application/vnd.zhiye.backup+zip"}
                   aria-label="导入完整留档文件"
                   disabled={Boolean(busy) || status.maintenance}
                   onChange={(event) => void importBackup(event)}
@@ -338,7 +342,7 @@ export function DataSafety({
           )}
         </section>
 
-        <aside className="safety-card safety-controls">
+        {!cloud && <aside className="safety-card safety-controls">
           <div><span className="eyebrow">HOUSEKEEPING</span><h2>自动留档</h2></div>
           <p>每日首次启动保留一份完整副本。只自动轮换每日留档，不触及手动、升级前或恢复前留档。</p>
           <form onSubmit={saveRetention}>
@@ -350,7 +354,7 @@ export function DataSafety({
           <h3>文件清理</h3>
           <p>只删除没有任何数据库记录引用的网页快照与离线资源；失败项会留待下次重试。</p>
           <button type="button" onClick={() => void cleanup()} disabled={Boolean(busy) || recovery || status.maintenance}>{busy === "cleanup" ? "正在清理…" : "清理未引用文件"}</button>
-        </aside>
+        </aside>}
       </div>
     </main>
   );

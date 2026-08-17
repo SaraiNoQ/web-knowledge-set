@@ -48,6 +48,14 @@ export type { DataSafetyStatus, DocumentFilters, RecentFilter } from "../shared/
 
 const DATA_EPOCH_HEADER = "X-Zhiye-Data-Epoch";
 let dataEpoch: string | null = null;
+let cloudRuntime = globalThis.location?.hostname === "zhiye.sarainoq.cn";
+let cloudLlmCredential: { apiKey: string; endpointUrl: string } | null = null;
+
+function cloudLlmHeaders(endpointUrl: string): Record<string, string> {
+  return cloudRuntime && cloudLlmCredential?.endpointUrl === endpointUrl
+    ? { "X-Zhiye-LLM-Key": cloudLlmCredential.apiKey }
+    : {};
+}
 
 export class ApiRequestError extends Error {
   constructor(
@@ -145,7 +153,8 @@ export interface CleanupDataResult {
 export const api = {
   async getRuntimeMode(signal?: AbortSignal) {
     const health = await request<{ mode?: string }>("/health", { signal });
-    return health.mode === "cloud-core" ? "cloud" as const : "local" as const;
+    cloudRuntime = health.mode === "cloud-core";
+    return cloudRuntime ? "cloud" as const : "local" as const;
   },
 
   getOnboarding(signal?: AbortSignal) {
@@ -173,17 +182,20 @@ export const api = {
     return { blob: await response.blob(), fileName };
   },
 
-  getLlmSettings(signal?: AbortSignal) {
-    return request<LlmSettings>("/api/settings/llm", { signal });
+  async getLlmSettings(signal?: AbortSignal) {
+    const value = await request<LlmSettings>("/api/settings/llm", { signal });
+    return cloudRuntime ? { ...value, apiKeyConfigured: cloudLlmCredential?.endpointUrl === value.remote.endpointUrl } : value;
   },
 
   getLlmApiKeyStatus(signal?: AbortSignal) {
+    if (cloudRuntime) return Promise.resolve({ configured: Boolean(cloudLlmCredential), endpointUrl: cloudLlmCredential?.endpointUrl ?? null });
     return request<LlmApiKeyStatus>("/api/settings/llm/key", { signal });
   },
 
   testLlmConnection(input: LlmConnectionTestInput, signal?: AbortSignal) {
     return request<LlmConnectionTestResult>("/api/settings/llm/test", {
       method: "POST",
+      headers: cloudLlmHeaders(input.endpointUrl),
       body: JSON.stringify(input),
       signal,
     });
@@ -197,6 +209,11 @@ export const api = {
   },
 
   setLlmApiKey(apiKey: string, endpointUrl: string) {
+    if (cloudRuntime) {
+      const normalized = new URL(endpointUrl.trim()).href;
+      cloudLlmCredential = { apiKey: apiKey.trim(), endpointUrl: normalized };
+      return Promise.resolve({ configured: true, endpointUrl: normalized });
+    }
     return request<LlmApiKeyStatus>("/api/settings/llm/key", {
       method: "PUT",
       body: JSON.stringify({ apiKey, endpointUrl }),
@@ -204,6 +221,10 @@ export const api = {
   },
 
   deleteLlmApiKey() {
+    if (cloudRuntime) {
+      cloudLlmCredential = null;
+      return Promise.resolve({ configured: false, endpointUrl: null });
+    }
     return request<LlmApiKeyStatus>("/api/settings/llm/key", {
       method: "DELETE",
       body: "{}",
@@ -227,6 +248,7 @@ export const api = {
   startDerivedTask(documentId: string, preview: DerivedPreview) {
     return request<DerivedTask>(`/api/documents/${encodeURIComponent(documentId)}/derived-task`, {
       method: "POST",
+      headers: cloudLlmHeaders(preview.target.url),
       body: JSON.stringify({
         type: preview.type,
         revision: preview.revision,
@@ -359,7 +381,7 @@ export const api = {
   importBackup(file: File) {
     return request<BackupRecord>("/api/data-safety/backups/import", {
       method: "POST",
-      headers: { "Content-Type": "application/vnd.zhiye.backup+zip" },
+      headers: { "Content-Type": cloudRuntime ? "application/vnd.zhiye.cloud-backup+json" : "application/vnd.zhiye.backup+zip" },
       body: file,
     });
   },

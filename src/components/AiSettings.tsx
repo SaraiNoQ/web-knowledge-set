@@ -6,6 +6,7 @@ import { api } from "../api";
 import { isAbortError, userErrorFrom } from "../error-messages";
 
 interface AiSettingsProps {
+  cloud?: boolean;
   onClose: () => void;
 }
 
@@ -31,7 +32,7 @@ function endpointValue(value: string) {
   }
 }
 
-export function AiSettings({ onClose }: AiSettingsProps) {
+export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
   const [settings, setSettings] = useState<LlmSettings | null>(null);
   const [target, setTarget] = useState<LlmSettings["target"]>("remote");
   const [remoteUrl, setRemoteUrl] = useState("");
@@ -62,7 +63,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
 
   const install = (value: LlmSettings) => {
     setSettings(value);
-    setTarget(value.target);
+    setTarget(cloud ? "remote" : value.target);
     setRemoteUrl(value.remote.endpointUrl || REMOTE_PROVIDERS[0][2]);
     setRemoteModel(value.remote.model);
     setLocalUrl(value.local.endpointUrl);
@@ -143,7 +144,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
         }
       }
       setApiKey("");
-      setNotice(desktop ? "密钥已立即生效，并保存到 macOS 钥匙串。" : "密钥已立即生效；本地服务重启后需重新输入。");
+      setNotice(desktop ? "密钥已立即生效，并保存到 macOS 钥匙串。" : cloud ? "密钥已加载到当前页面内存；刷新页面后需重新输入。" : "密钥已立即生效；本地服务重启后需重新输入。");
     } catch (cause) {
       setError(userErrorFrom(cause, "密钥保存失败，请检查输入后重试。"));
     } finally {
@@ -170,7 +171,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
           return;
         }
       }
-      setNotice(desktop ? "密钥已从当前进程和 macOS 钥匙串删除。" : "密钥已从当前本地服务进程删除。");
+      setNotice(desktop ? "密钥已从当前进程和 macOS 钥匙串删除。" : cloud ? "密钥已从当前浏览器页面删除。" : "密钥已从当前本地服务进程删除。");
     } catch (cause) {
       setError(userErrorFrom(cause, `当前进程密钥清除失败，${desktop ? "未改动 macOS 钥匙串。" : "请重试。"}`));
     } finally {
@@ -251,7 +252,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
         <button type="button" onClick={onClose}>返回资料库</button>
       </header>
 
-      {loading ? <div className="ai-settings-state" role="status">正在读取本地设置…</div> : !settings ? <div className="ai-settings-state is-error" role="alert">{error || "无法读取 AI 设置。"}</div> : (
+      {loading ? <div className="ai-settings-state" role="status">正在读取 AI 设置…</div> : !settings ? <div className="ai-settings-state is-error" role="alert">{error || "无法读取 AI 设置。"}</div> : (
         <div className="ai-settings-grid">
           <section className="ai-settings-card">
             <div className="ai-setting-lead"><span>01</span><div><h2>明确开启</h2><p>开启设置本身不会发送正文；生成前仍需逐篇确认。</p></div></div>
@@ -260,11 +261,11 @@ export function AiSettings({ onClose }: AiSettingsProps) {
 
           <section className="ai-settings-card">
             <div className="ai-setting-lead"><span>02</span><div><h2>网络目标</h2><p>远程端点必须使用 HTTPS；本地端点仅允许本机地址。</p></div></div>
-            <fieldset className="ai-endpoint-kind" disabled={locked}>
+            {!cloud && <fieldset className="ai-endpoint-kind" disabled={locked}>
               <legend className="sr-only">端点类型</legend>
               <button type="button" aria-pressed={target === "remote"} onClick={() => { setTarget("remote"); clearTestResult(); }}>远程 HTTPS</button>
               <button type="button" aria-pressed={target === "local"} onClick={() => { setTarget("local"); clearTestResult(); }}>可信本地端点</button>
-            </fieldset>
+            </fieldset>}
             {target === "remote" ? <>
               <label>
                 <span>AI 平台</span>
@@ -275,7 +276,7 @@ export function AiSettings({ onClose }: AiSettingsProps) {
                   disabled={locked}
                 >
                   {REMOTE_PROVIDERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                  <option value="other">其他（手动输入）</option>
+                  {!cloud && <option value="other">其他（手动输入）</option>}
                 </select>
               </label>
               {remoteProvider === "other" && <label>
@@ -288,12 +289,12 @@ export function AiSettings({ onClose }: AiSettingsProps) {
                   <input aria-label="远程模型 API 密钥" type="password" value={apiKey} onChange={(event) => { setApiKey(event.target.value); clearTestResult(); }} autoComplete="new-password" spellCheck={false} placeholder={processKeyConfigured ? "当前平台已配置；输入新值可替换" : "粘贴当前平台的 API Key"} disabled={locked} />
                 </label>
                 <div>
-                  <span>{desktop ? (keychainEndpoint === undefined ? "正在检查 macOS 钥匙串…" : keychainEndpoint ? (endpointValue(keychainEndpoint) === currentRemoteEndpoint ? "当前平台密钥已保存到 macOS 钥匙串" : "钥匙串内有其他平台密钥；当前平台需重新输入") : "将保存到 macOS 钥匙串") : "仅保存于当前本地服务进程"}</span>
+                  <span>{desktop ? (keychainEndpoint === undefined ? "正在检查 macOS 钥匙串…" : keychainEndpoint ? (endpointValue(keychainEndpoint) === currentRemoteEndpoint ? "当前平台密钥已保存到 macOS 钥匙串" : "钥匙串内有其他平台密钥；当前平台需重新输入") : "将保存到 macOS 钥匙串") : cloud ? "仅保存于当前浏览器页面内存" : "仅保存于当前本地服务进程"}</span>
                   <button type="button" onClick={() => void storeApiKey()} disabled={locked || !apiKey.trim() || !remoteUrl.trim()}>保存密钥</button>
                   {(processKeyEndpoint || keychainEndpoint) && <button type="button" className="danger" onClick={() => void deleteApiKey()} disabled={locked}>删除密钥</button>}
                 </div>
               </div>
-              <div className={`ai-key-state ${processKeyConfigured ? "is-ready" : ""}`}><i />{processKeyConfigured ? "当前进程已加载当前平台密钥；密钥不会返回浏览器。" : "当前平台未加载密钥。切换平台后需重新输入。"}</div>
+              <div className={`ai-key-state ${processKeyConfigured ? "is-ready" : ""}`}><i />{processKeyConfigured ? (cloud ? "当前页面已加载当前平台密钥；Worker 不会将密钥写入 D1 或留档。" : "当前进程已加载当前平台密钥；密钥不会返回浏览器。") : "当前平台未加载密钥。切换平台后需重新输入。"}</div>
               <label><span>远程模型</span><input aria-label="AI 远程模型" value={remoteModel} onChange={(event) => { setRemoteModel(event.target.value); clearTestResult(); }} placeholder="model-name" disabled={locked} /></label>
             </> : <>
               <label><span>OpenAI-compatible 本机地址</span><input aria-label="AI 本地端点地址" type="url" value={localUrl} onChange={(event) => { setLocalUrl(event.target.value); setLocalTrusted(false); clearTestResult(); }} placeholder="http://127.0.0.1:11434/v1/chat/completions" disabled={locked} /></label>

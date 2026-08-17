@@ -1,0 +1,384 @@
+import { fromMarkdown, type Options as FromMarkdownOptions } from "mdast-util-from-markdown";
+import remarkGfm from "remark-gfm";
+
+import { TRANSLATION_LANGUAGES } from "../shared/types";
+import type {
+  DerivedPreview,
+  DerivedResult,
+  DerivedResultType,
+  LlmConnectionTestInput,
+  LlmSettings,
+  TranslationLanguage,
+} from "../shared/types";
+import { CloudHttpError, getDocument, jsonObject, type D1Database } from "./extension";
+
+const encoder = new TextEncoder();
+const MAX_INPUT_CHARS = 40_000;
+const MAX_RESPONSE_BYTES = 256 * 1024;
+const API_KEY_HEADER = "X-Zhiye-LLM-Key";
+const PROVIDERS = new Set([
+  "https://api.openai.com/v1/chat/completions",
+  "https://api.deepseek.com/chat/completions",
+  "https://api.moonshot.cn/v1/chat/completions",
+  "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+  "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+  "https://api.siliconflow.cn/v1/chat/completions",
+  "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+  "https://api.minimaxi.com/v1/chat/completions",
+  "https://openrouter.ai/api/v1/chat/completions",
+]);
+const TYPES = new Set<DerivedResultType>(["summary", "outline", "keywords", "translation"]);
+const gfmData: { micromarkExtensions?: unknown[]; fromMarkdownExtensions?: unknown[] } = {};
+(remarkGfm as unknown as (this: { data: () => typeof gfmData }) => void).call({ data: () => gfmData });
+const markdownOptions: FromMarkdownOptions = {
+  extensions: gfmData.micromarkExtensions as FromMarkdownOptions["extensions"],
+  mdastExtensions: gfmData.fromMarkdownExtensions as FromMarkdownOptions["mdastExtensions"],
+};
+
+interface MarkdownNode {
+  type: string;
+  value?: string;
+  url?: string;
+  title?: string | null;
+  depth?: number;
+  ordered?: boolean;
+  start?: number | null;
+  align?: Array<string | null>;
+  identifier?: string;
+  children?: MarkdownNode[];
+}
+
+interface LlmSettingsValue extends Omit<LlmSettings, "revision" | "apiKeyConfigured"> {}
+
+interface CloudReply { status?: number; body: unknown }
+
+function changes(result: { meta: { changes?: number } }) {
+  return result.meta.changes ?? 0;
+}
+
+async function sha256(value: string) {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value)));
+  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function endpointId(url: string) {
+  return sha256(url).then((hash) => `endpoint-${hash.slice(0, 16)}`);
+}
+
+function endpoint(value: unknown) {
+  if (typeof value !== "string" || !PROVIDERS.has(value)) {
+    throw new CloudHttpError(400, "INVALID_LLM_ENDPOINT", "Cloud AI requires a supported HTTPS provider");
+  }
+  return value;
+}
+
+function model(value: unknown, required = true) {
+  if (typeof value !== "string" || (required && !value.trim()) || value.length > 200 || /\p{Cc}/u.test(value)) {
+    throw new CloudHttpError(400, "INVALID_LLM_SETTINGS", "Model must be 1-200 characters without controls");
+  }
+  return value.trim();
+}
+
+function key(request: Request) {
+  const value = request.headers.get(API_KEY_HEADER)?.trim() || "";
+  if (!value || encoder.encode(value).byteLength > 16 * 1024 || /\p{Cc}/u.test(value)) {
+    throw new CloudHttpError(409, "LLM_KEY_MISSING", "A page-scoped API key is required");
+  }
+  return value;
+}
+
+export function validateStoredLlmSettings(value: string): LlmSettingsValue {
+  let body: unknown;
+  try { body = JSON.parse(value); } catch { throw new CloudHttpError(400, "INVALID_LLM_SETTINGS", "Stored AI settings are invalid"); }
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new CloudHttpError(400, "INVALID_LLM_SETTINGS", "Stored AI settings are invalid");
+  const settings = body as Record<string, unknown>;
+  const remote = settings.remote as Record<string, unknown> | undefined;
+  const local = settings.local as Record<string, unknown> | undefined;
+  if (Object.keys(settings).some((name) => !["enabled", "target", "remote", "local"].includes(name)) ||
+    typeof settings.enabled !== "boolean" || settings.target !== "remote" || !remote || !local ||
+    Object.keys(remote).some((name) => name !== "endpointUrl" && name !== "model") ||
+    Object.keys(local).some((name) => !["endpointUrl", "model", "trusted"].includes(name)) ||
+    !PROVIDERS.has(String(remote.endpointUrl)) || typeof remote.model !== "string" || remote.model.length > 200) {
+    throw new CloudHttpError(400, "INVALID_LLM_SETTINGS", "Stored AI settings are invalid");
+  }
+  return {
+    enabled: settings.enabled,
+    target: "remote",
+    remote: { endpointUrl: String(remote.endpointUrl), model: remote.model },
+    local: { endpointUrl: "", model: "", trusted: false },
+  };
+}
+
+async function settingsRow(db: D1Database) {
+  const row = await db.prepare("SELECT value, revision FROM app_settings WHERE key = 'llm_settings'")
+    .first<{ value: string; revision: number }>();
+  if (!row) throw new CloudHttpError(503, "CLOUD_NOT_INITIALIZED", "Cloud AI migration is required");
+  return { value: validateStoredLlmSettings(row.value), revision: row.revision };
+}
+
+function publicSettings(row: Awaited<ReturnType<typeof settingsRow>>): LlmSettings {
+  return { ...row.value, revision: row.revision, apiKeyConfigured: false };
+}
+
+function settingsInput(body: Record<string, unknown>, revision: number): LlmSettingsValue {
+  if (Object.keys(body).some((name) => !["enabled", "target", "remote", "local", "revision"].includes(name)) ||
+    typeof body.enabled !== "boolean" || body.target !== "remote" || body.revision !== revision ||
+    !body.remote || typeof body.remote !== "object" || Array.isArray(body.remote)) {
+    throw new CloudHttpError(body.revision === revision ? 400 : 409, body.revision === revision ? "INVALID_LLM_SETTINGS" : "LLM_SETTINGS_CONFLICT", "Cloud AI settings are invalid or stale");
+  }
+  const remote = body.remote as Record<string, unknown>;
+  if (Object.keys(remote).some((name) => name !== "endpointUrl" && name !== "model")) {
+    throw new CloudHttpError(400, "INVALID_LLM_SETTINGS", "Remote settings contain an unknown field");
+  }
+  return {
+    enabled: body.enabled,
+    target: "remote",
+    remote: { endpointUrl: endpoint(remote.endpointUrl), model: model(remote.model, body.enabled) },
+    local: { endpointUrl: "", model: "", trusted: false },
+  };
+}
+
+function frontMatter(markdown: string) {
+  if (!markdown.startsWith("---\n") && !markdown.startsWith("---\r\n")) return "";
+  const match = /\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/u.exec(markdown.slice(markdown.indexOf("\n") + 1));
+  return match ? markdown.slice(0, markdown.indexOf("\n") + 1 + (match.index ?? 0) + match[0].length) : "";
+}
+
+function skeleton(node: MarkdownNode): unknown {
+  if (node.type === "text") return { type: "text" };
+  if (node.type === "code" || node.type === "inlineCode" || node.type === "html") return { type: node.type, value: node.value };
+  return {
+    type: node.type,
+    ...(node.url !== undefined ? { url: node.url, title: node.title ?? null } : {}),
+    ...(node.identifier !== undefined ? { identifier: node.identifier } : {}),
+    ...(node.depth !== undefined ? { depth: node.depth } : {}),
+    ...(node.ordered !== undefined ? { ordered: node.ordered, start: node.start ?? null } : {}),
+    ...(node.align !== undefined ? { align: node.align } : {}),
+    ...(node.children ? { children: node.children.map(skeleton) } : {}),
+  };
+}
+
+function verifyTranslation(source: string, output: string) {
+  if (frontMatter(source) !== frontMatter(output) || JSON.stringify(skeleton(fromMarkdown(source, markdownOptions) as MarkdownNode)) !== JSON.stringify(skeleton(fromMarkdown(output, markdownOptions) as MarkdownNode))) {
+    throw new CloudHttpError(502, "LLM_TRANSLATION_STRUCTURE_CHANGED", "The model changed protected Markdown structure");
+  }
+}
+
+function previewSource(title: string, markdown: string, type: DerivedResultType) {
+  const source = type === "translation" ? markdown : `# ${title}\n\n${markdown}`;
+  if (type === "translation" && source.length > MAX_INPUT_CHARS) {
+    throw new CloudHttpError(413, "LLM_TRANSLATION_TOO_LARGE", "Cloud translation currently supports up to 40000 characters");
+  }
+  if (source.length <= MAX_INPUT_CHARS) return { sent: source, truncated: false };
+  const marker = "\n\n[... omitted ...]\n\n";
+  const side = Math.floor((MAX_INPUT_CHARS - marker.length) / 2);
+  return { sent: `${source.slice(0, side)}${marker}${source.slice(-side)}`, truncated: true };
+}
+
+function systemPrompt(type: DerivedResultType, language: TranslationLanguage | null) {
+  if (type === "translation") return `Translate the supplied Markdown into ${TRANSLATION_LANGUAGES[language!]} and return only Markdown. Preserve front matter, headings, lists, tables, links, image targets, HTML, inline code and code blocks exactly except for natural-language text.`;
+  if (type === "outline") return "Create a concise hierarchical Markdown outline from the supplied document. Return only Markdown.";
+  if (type === "keywords") return "Return 5-12 concise keywords from the supplied document, one per line, without commentary.";
+  return "Create a concise faithful Markdown summary from the supplied document. Return only the summary.";
+}
+
+async function limitedText(response: Response) {
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new CloudHttpError(502, "LLM_RESPONSE_TOO_LARGE", "LLM response exceeds 256 KiB");
+      }
+      chunks.push(value);
+    }
+  } finally { reader.releaseLock(); }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder().decode(bytes);
+}
+
+async function complete(endpointUrl: string, modelName: string, apiKey: string, system: string, user: string, maxTokens = 4096) {
+  let response: Response;
+  try {
+    response = await fetch(endpointUrl, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: modelName, temperature: 0, max_tokens: maxTokens, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (error) {
+    throw new CloudHttpError(502, (error as Error).name === "TimeoutError" ? "LLM_TIMEOUT" : "LLM_NETWORK_ERROR", "LLM request failed");
+  }
+  const text = await limitedText(response);
+  if (response.status === 401 || response.status === 403) throw new CloudHttpError(401, "LLM_AUTH_FAILED", "LLM credentials were rejected");
+  if (response.status === 429) throw new CloudHttpError(429, "LLM_RATE_LIMITED", "LLM rate limit reached");
+  if (!response.ok) throw new CloudHttpError(502, "LLM_PROTOCOL_REJECTED", "LLM endpoint rejected the request");
+  let payload: { choices?: Array<{ message?: { content?: unknown } }>; usage?: Record<string, number> };
+  try { payload = JSON.parse(text) as typeof payload; }
+  catch { throw new CloudHttpError(502, "LLM_INVALID_RESPONSE", "LLM response is not JSON"); }
+  const output = payload.choices?.[0]?.message?.content;
+  if (typeof output !== "string" || !output.trim()) throw new CloudHttpError(502, "LLM_INVALID_RESPONSE", "LLM response has no text content");
+  if (output.includes(apiKey)) throw new CloudHttpError(502, "LLM_SECRET_ECHO", "LLM response contained the API key");
+  return { output: output.trim(), usage: payload.usage ?? null };
+}
+
+function resultRow(row: Record<string, unknown>, revision: number): DerivedResult {
+  return {
+    id: String(row.id), documentId: String(row.documentId), type: row.type as DerivedResultType,
+    targetLanguage: (row.targetLanguage || null) as TranslationLanguage | null, model: String(row.model), endpointId: String(row.endpointId),
+    promptVersion: String(row.promptVersion), inputHash: String(row.inputHash), output: String(row.output), durationMs: Number(row.durationMs),
+    usage: row.usageJson ? JSON.parse(String(row.usageJson)) as DerivedResult["usage"] : null,
+    sourceChars: Number(row.sourceChars), sentChars: Number(row.sentChars), truncated: Boolean(row.truncated), pinned: Boolean(row.pinned),
+    stale: Number(row.sourceRevision) !== revision, createdAt: String(row.createdAt),
+  };
+}
+
+const resultColumns = `id, document_id AS documentId, type, target_language AS targetLanguage, model, endpoint_id AS endpointId,
+  prompt_version AS promptVersion, input_hash AS inputHash, output, duration_ms AS durationMs, usage_json AS usageJson,
+  source_chars AS sourceChars, sent_chars AS sentChars, truncated, pinned, source_revision AS sourceRevision, created_at AS createdAt`;
+
+export async function handleAiApi(request: Request, db: D1Database, url: URL): Promise<CloudReply | null> {
+  if (!url.pathname.includes("/llm") && !url.pathname.includes("/derived-")) return null;
+  const row = await settingsRow(db);
+  if (url.pathname === "/api/settings/llm" && request.method === "GET") return { body: publicSettings(row) };
+  if (url.pathname === "/api/settings/llm/key" && request.method === "GET") return { body: { configured: false, endpointUrl: null } };
+  if (url.pathname === "/api/settings/llm" && request.method === "PUT") {
+    const value = settingsInput(await jsonObject(request, 16_384), row.revision);
+    const result = await db.prepare("UPDATE app_settings SET value = ?, revision = revision + 1, updated_at = ? WHERE key = 'llm_settings' AND revision = ?")
+      .bind(JSON.stringify(value), new Date().toISOString(), row.revision).run();
+    if (changes(result) !== 1) throw new CloudHttpError(409, "LLM_SETTINGS_CONFLICT", "LLM settings changed elsewhere");
+    return { body: publicSettings({ value, revision: row.revision + 1 }) };
+  }
+  if (url.pathname === "/api/settings/llm/test" && request.method === "POST") {
+    const body = await jsonObject(request, 8_192) as unknown as LlmConnectionTestInput;
+    if (body.target !== "remote") throw new CloudHttpError(400, "INVALID_LLM_TEST", "Cloud AI only supports remote providers");
+    const endpointUrl = endpoint(body.endpointUrl);
+    const modelName = model(body.model);
+    const started = Date.now();
+    const value = await complete(endpointUrl, modelName, key(request), "This is a connection test. Reply with exactly ZHIYE_OK.", "ZHIYE_OK", 16);
+    if (value.output !== "ZHIYE_OK") throw new CloudHttpError(502, "LLM_INVALID_RESPONSE", "LLM connection probe returned unexpected content");
+    return { body: { ok: true, target: "remote", model: modelName, endpointId: await endpointId(endpointUrl), durationMs: Date.now() - started } };
+  }
+  if (url.pathname === "/api/settings/llm/disable" && request.method === "POST") {
+    const body = await jsonObject(request, 4_096);
+    if (body.revision !== row.revision || body.deleteResults !== true) throw new CloudHttpError(409, "LLM_SETTINGS_CONFLICT", "LLM settings changed elsewhere");
+    const value = { ...row.value, enabled: false };
+    const disabled = await db.prepare("UPDATE app_settings SET value = ?, revision = revision + 1, updated_at = ? WHERE key = 'llm_settings' AND revision = ?")
+      .bind(JSON.stringify(value), new Date().toISOString(), row.revision).run();
+    if (changes(disabled) !== 1) throw new CloudHttpError(409, "LLM_SETTINGS_CONFLICT", "LLM settings changed elsewhere");
+    const deleted = await db.prepare("DELETE FROM cloud_derived_results").run();
+    return { body: { settings: publicSettings({ value, revision: row.revision + 1 }), deletedResults: changes(deleted) } };
+  }
+
+  const previewPath = /^\/api\/documents\/([^/]+)\/derived-preview$/u.exec(url.pathname);
+  if (previewPath && request.method === "POST") {
+    if (!row.value.enabled) throw new CloudHttpError(409, "LLM_DISABLED", "Cloud AI is disabled");
+    const document = await getDocument(db, decodeURIComponent(previewPath[1]));
+    if (!document) throw new CloudHttpError(404, "DOCUMENT_NOT_FOUND", "Document not found");
+    const body = await jsonObject(request, 8_192);
+    if (!TYPES.has(body.type as DerivedResultType) || body.revision !== document.revision) throw new CloudHttpError(409, "DOCUMENT_CHANGED", "Document changed before preview");
+    const type = body.type as DerivedResultType;
+    const language = type === "translation" && typeof body.targetLanguage === "string" && body.targetLanguage in TRANSLATION_LANGUAGES
+      ? body.targetLanguage as TranslationLanguage : null;
+    if (type === "translation" && !language) throw new CloudHttpError(400, "INVALID_TRANSLATION_LANGUAGE", "Translation target language is required");
+    const source = previewSource(document.title, document.markdown, type);
+    const inputHash = await sha256(`${document.revision}\0${document.title}\0${document.markdown}`);
+    const sentTexts = [source.sent];
+    const settings = row.value.remote;
+    const preview: DerivedPreview = {
+      type, targetLanguage: language, revision: document.revision, inputHash,
+      promptVersion: type === "translation" ? `cloud-translation-v1-p${MAX_INPUT_CHARS}:${language}` : `cloud-${type}-v1-p${MAX_INPUT_CHARS}`,
+      settingsRevision: row.revision, model: settings.model, endpointId: await endpointId(settings.endpointUrl),
+      target: { kind: "remote", url: settings.endpointUrl },
+      coverage: { sourceChars: document.markdown.length, sentChars: source.sent.length, truncated: source.truncated },
+      sentTexts, sendHash: await sha256(JSON.stringify(sentTexts)),
+    };
+    return { body: preview };
+  }
+
+  const taskPath = /^\/api\/documents\/([^/]+)\/derived-task$/u.exec(url.pathname);
+  if (taskPath && request.method === "GET") return { body: null };
+  if (taskPath && request.method === "POST") {
+    if (!row.value.enabled) throw new CloudHttpError(409, "LLM_DISABLED", "Cloud AI is disabled");
+    const document = await getDocument(db, decodeURIComponent(taskPath[1]));
+    if (!document) throw new CloudHttpError(404, "DOCUMENT_NOT_FOUND", "Document not found");
+    const body = await jsonObject(request, 16_384);
+    if (!TYPES.has(body.type as DerivedResultType) || body.revision !== document.revision || body.settingsRevision !== row.revision) {
+      throw new CloudHttpError(409, "DOCUMENT_CHANGED", "Document or AI settings changed before generation");
+    }
+    const type = body.type as DerivedResultType;
+    const language = type === "translation" && typeof body.targetLanguage === "string" && body.targetLanguage in TRANSLATION_LANGUAGES
+      ? body.targetLanguage as TranslationLanguage : null;
+    const source = previewSource(document.title, document.markdown, type);
+    const inputHash = await sha256(`${document.revision}\0${document.title}\0${document.markdown}`);
+    const sentTexts = [source.sent];
+    const epoch = await db.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'").first<{ value: string }>();
+    if (!epoch) throw new CloudHttpError(503, "CLOUD_NOT_INITIALIZED", "Cloud data epoch is missing");
+    if (body.inputHash !== inputHash || body.sendHash !== await sha256(JSON.stringify(sentTexts))) throw new CloudHttpError(409, "DOCUMENT_CHANGED", "Confirmed AI payload is stale");
+    const started = Date.now();
+    const completed = await complete(row.value.remote.endpointUrl, row.value.remote.model, key(request), systemPrompt(type, language), source.sent);
+    if (type === "translation") verifyTranslation(source.sent, completed.output);
+    const result: DerivedResult = {
+      id: crypto.randomUUID(), documentId: document.id, type, targetLanguage: language, model: row.value.remote.model,
+      endpointId: await endpointId(row.value.remote.endpointUrl), promptVersion: type === "translation" ? `cloud-translation-v1-p${MAX_INPUT_CHARS}:${language}` : `cloud-${type}-v1-p${MAX_INPUT_CHARS}`,
+      inputHash, output: completed.output, durationMs: Date.now() - started,
+      usage: completed.usage ? { inputTokens: completed.usage.prompt_tokens, outputTokens: completed.usage.completion_tokens, totalTokens: completed.usage.total_tokens } : null,
+      sourceChars: document.markdown.length, sentChars: source.sent.length, truncated: source.truncated,
+      pinned: false, stale: false, createdAt: new Date().toISOString(),
+    };
+    const inserted = await db.prepare(`INSERT INTO cloud_derived_results(
+      id, document_id, type, target_language, model, endpoint_id, prompt_version, input_hash, output, duration_ms,
+      usage_json, source_chars, sent_chars, truncated, pinned, source_revision, created_at
+    ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?
+      WHERE EXISTS (
+        SELECT 1 FROM app_settings
+        WHERE key = 'llm_settings' AND revision = ? AND json_extract(value, '$.enabled') = 1
+      ) AND EXISTS (SELECT 1 FROM app_settings WHERE key = 'data_epoch' AND value = ?)`).bind(
+      result.id, result.documentId, result.type, result.targetLanguage, result.model, result.endpointId, result.promptVersion,
+      result.inputHash, result.output, result.durationMs, result.usage ? JSON.stringify(result.usage) : null,
+      result.sourceChars, result.sentChars, result.truncated ? 1 : 0, document.revision, result.createdAt, row.revision, epoch.value,
+    ).run();
+    if (changes(inserted) !== 1) throw new CloudHttpError(409, "LLM_SETTINGS_CONFLICT", "AI settings changed before the result could be saved");
+    return { status: 201, body: {
+      id: crypto.randomUUID(), documentId: document.id, type, targetLanguage: language, status: "succeeded",
+      preview: { type, targetLanguage: language, revision: document.revision, inputHash, promptVersion: result.promptVersion, settingsRevision: row.revision, model: result.model, endpointId: result.endpointId, target: { kind: "remote", url: row.value.remote.endpointUrl }, coverage: { sourceChars: result.sourceChars, sentChars: result.sentChars, truncated: result.truncated }, sendHash: body.sendHash },
+      progress: { completedBatches: 1, totalBatches: 1 }, result, error: null, createdAt: result.createdAt, finishedAt: result.createdAt,
+    } };
+  }
+
+  const resultsPath = /^\/api\/documents\/([^/]+)\/derived-results(?:\/([^/]+))?$/u.exec(url.pathname);
+  if (resultsPath) {
+    const document = await getDocument(db, decodeURIComponent(resultsPath[1]));
+    if (!document) throw new CloudHttpError(404, "DOCUMENT_NOT_FOUND", "Document not found");
+    if (!resultsPath[2] && request.method === "GET") {
+      const page = Math.max(1, Number.parseInt(url.searchParams.get("page") || "1", 10) || 1);
+      const count = await db.prepare("SELECT COUNT(*) AS count FROM cloud_derived_results WHERE document_id = ?").bind(document.id).first<{ count: number }>();
+      const rows = await db.prepare(`SELECT ${resultColumns} FROM cloud_derived_results WHERE document_id = ? ORDER BY created_at DESC LIMIT 30 OFFSET ?`)
+        .bind(document.id, (page - 1) * 30).all<Record<string, unknown>>();
+      return { body: { items: rows.results.map((value) => resultRow(value, document.revision)), page, pageSize: 30, total: count?.count ?? 0 } };
+    }
+    const resultId = resultsPath[2] ? decodeURIComponent(resultsPath[2]) : "";
+    if (resultId && request.method === "DELETE") {
+      const deleted = await db.prepare("DELETE FROM cloud_derived_results WHERE id = ? AND document_id = ?").bind(resultId, document.id).run();
+      if (changes(deleted) !== 1) throw new CloudHttpError(404, "DERIVED_RESULT_NOT_FOUND", "Derived result not found");
+      return { body: { deleted: true } };
+    }
+    if (resultId && request.method === "PATCH") {
+      const body = await jsonObject(request, 4_096);
+      if (typeof body.pinned !== "boolean" || Object.keys(body).some((name) => name !== "pinned")) throw new CloudHttpError(400, "INVALID_DERIVED_RESULT", "pinned boolean required");
+      await db.prepare("UPDATE cloud_derived_results SET pinned = ? WHERE id = ? AND document_id = ? AND type = 'summary'").bind(body.pinned ? 1 : 0, resultId, document.id).run();
+      const value = await db.prepare(`SELECT ${resultColumns} FROM cloud_derived_results WHERE id = ? AND document_id = ?`).bind(resultId, document.id).first<Record<string, unknown>>();
+      if (!value) throw new CloudHttpError(404, "DERIVED_RESULT_NOT_FOUND", "Derived result not found");
+      return { body: resultRow(value, document.revision) };
+    }
+  }
+  return null;
+}

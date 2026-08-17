@@ -9,14 +9,26 @@ import {
   updateDocument,
   type D1Database,
 } from "./extension";
+import { handleAiApi } from "./ai";
+import { handleBackupApi, type R2Bucket } from "./backup";
+import {
+  captureQueueStatus,
+  createCapture,
+  getCaptureJob,
+  handleCaptureQueue,
+  listCaptureJobs,
+  retryCapture,
+  type CaptureEnv,
+  type QueueBatch,
+} from "./capture";
 
 interface AssetFetcher {
   fetch(request: Request): Promise<Response>;
 }
 
-export interface CloudEnv {
+export interface CloudEnv extends CaptureEnv {
   ASSETS: AssetFetcher;
-  DB: D1Database;
+  BACKUPS: R2Bucket;
 }
 
 const DATA_EPOCH_HEADER = "X-Zhiye-Data-Epoch";
@@ -104,6 +116,41 @@ async function api(request: Request, env: CloudEnv, url: URL) {
     catch { throw new CloudHttpError(400, "INVALID_PATH", "Invalid document identifier"); }
     return json(await updateDocument(env.DB, id, await jsonObject(request)), 200, epoch);
   }
+  if (url.pathname === "/api/documents" && request.method === "POST") {
+    if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
+      return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
+    }
+    return json(await createCapture(request, env), 201, epoch);
+  }
+  const retryPath = /^\/api\/documents\/([^/]+)\/retry$/u.exec(url.pathname);
+  if (retryPath && request.method === "POST") {
+    if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
+      return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
+    }
+    const body = await jsonObject(request, 4_096);
+    if (Object.keys(body).length) throw new CloudHttpError(400, "INVALID_CAPTURE_REQUEST", "Retry accepts an empty JSON object");
+    return json(await retryCapture(decodeURIComponent(retryPath[1]), env), 200, epoch);
+  }
+  const aiPath = url.pathname.includes("/llm") || url.pathname.includes("/derived-");
+  if (aiPath && request.method !== "GET" && request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
+    return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
+  }
+  const ai = await handleAiApi(request, env.DB, url);
+  if (ai) {
+    return json(ai.body, ai.status ?? 200, epoch);
+  }
+  const backupPath = url.pathname.startsWith("/api/data-safety");
+  if (backupPath && request.method !== "GET" && request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
+    return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
+  }
+  const backup = await handleBackupApi(request, env.DB, env.BACKUPS, url);
+  if (backup instanceof Response) {
+    const headers = new Headers(backup.headers);
+    for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
+    headers.set(DATA_EPOCH_HEADER, epoch);
+    return new Response(backup.body, { status: backup.status, statusText: backup.statusText, headers });
+  }
+  if (backup) return json(backup.body, backup.status ?? 200, epoch);
   if (request.method !== "GET") {
     return json({ error: { code: "CLOUD_FEATURE_PENDING", message: "This cloud mutation is not migrated yet" } }, 501, epoch);
   }
@@ -114,7 +161,7 @@ async function api(request: Request, env: CloudEnv, url: URL) {
     catch { throw new CloudHttpError(400, "INVALID_PATH", "Invalid document identifier"); }
     if (documentPath[2] === "draft" || documentPath[2] === "duplicate") return json(null, 200, epoch);
     if (documentPath[2] === "assets" || documentPath[2] === "captures") return json([], 200, epoch);
-    const document = await getDocument(env.DB, id);
+    const document = await getDocument(env.DB, id) ?? await getCaptureJob(env.DB, id);
     if (!document) throw new CloudHttpError(404, "DOCUMENT_NOT_FOUND", "Document not found");
     return json(document, 200, epoch);
   }
@@ -131,12 +178,19 @@ async function api(request: Request, env: CloudEnv, url: URL) {
     case "/api/data-safety":
       return json({ mode: "ready", maintenance: false, recoveryError: null, health: null, backups: [], settings: null }, 200, epoch);
     case "/api/capture-queue":
-      return json({ paused: false, active: 0, queued: 0 }, 200, epoch);
+      return json(await captureQueueStatus(env.DB), 200, epoch);
     case "/api/collections":
     case "/api/tags":
       return json([], 200, epoch);
     case "/api/documents": {
-      return json(await listCloudDocuments(env.DB, url), 200, epoch);
+      const result = await listCloudDocuments(env.DB, url);
+      if (result.page === 1 && !url.searchParams.get("q") && !url.searchParams.get("status")) {
+        const jobs = await listCaptureJobs(env.DB);
+        const ids = new Set(result.items.map((item) => item.id));
+        const pending = jobs.filter((item) => !ids.has(item.id));
+        return json({ ...result, items: [...pending, ...result.items].slice(0, result.pageSize), total: result.total + pending.length }, 200, epoch);
+      }
+      return json(result, 200, epoch);
     }
     default:
       return json({ error: { code: "CLOUD_FEATURE_PENDING", message: "This cloud API is not migrated yet" } }, 501, epoch);
@@ -159,4 +213,7 @@ export async function handleRequest(request: Request, env: CloudEnv) {
   }
 }
 
-export default { fetch: handleRequest };
+export default {
+  fetch: handleRequest,
+  queue: (batch: QueueBatch<{ id: string; url: string; epoch: string }>, env: CloudEnv) => handleCaptureQueue(batch, env),
+};

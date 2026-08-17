@@ -75,6 +75,7 @@ function DerivedOutput({ result, markdown, onLoadMarkdown }: {
 }
 
 interface DerivedKnowledgeProps {
+  cloud?: boolean;
   document: KnowledgeDocument;
   open: boolean;
   preferredType: DerivedResultType;
@@ -84,7 +85,7 @@ interface DerivedKnowledgeProps {
   onAdoptTags: (tags: string[]) => Promise<void>;
 }
 
-export function DerivedKnowledge({ document, open, preferredType: type, onTypeChange, onClose, generationBlockedReason, onAdoptTags }: DerivedKnowledgeProps) {
+export function DerivedKnowledge({ cloud = false, document, open, preferredType: type, onTypeChange, onClose, generationBlockedReason, onAdoptTags }: DerivedKnowledgeProps) {
   const [settings, setSettings] = useState<LlmSettings | null>(null);
   const [results, setResults] = useState<DerivedResult[]>([]);
   const [total, setTotal] = useState(0);
@@ -173,7 +174,7 @@ export function DerivedKnowledge({ document, open, preferredType: type, onTypeCh
       if (started.status === "succeeded") {
         setPreview(null);
         setConfirmed(false);
-        setNotice(`${typeLabel(started.type, started.targetLanguage)}已有相同输入结果，未重复请求模型。`);
+        setNotice(cloud ? `${typeLabel(started.type, started.targetLanguage)}已生成并保存；正文未修改。` : `${typeLabel(started.type, started.targetLanguage)}已有相同输入结果，未重复请求模型。`);
         await loadResults(1);
       }
     } catch (cause) {
@@ -273,7 +274,7 @@ export function DerivedKnowledge({ document, open, preferredType: type, onTypeCh
                 <div className="derived-options">
                   <fieldset disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason)}>
                     <legend className="sr-only">派生类型</legend>
-                    {(Object.entries(TYPE_LABEL) as Array<[DerivedResultType, string]>).map(([value, label]) => <button key={value} type="button" aria-pressed={type === value} onClick={() => { onTypeChange(value); setPreview(null); setPreviewBatch(0); setConfirmed(false); }}>{label}</button>)}
+                    {(Object.entries(TYPE_LABEL) as Array<[DerivedResultType, string]>).filter(([value]) => !cloud || value !== "tag-suggestions").map(([value, label]) => <button key={value} type="button" aria-pressed={type === value} onClick={() => { onTypeChange(value); setPreview(null); setPreviewBatch(0); setConfirmed(false); }}>{label}</button>)}
                   </fieldset>
                   {type === "translation" && <label className="derived-target-language"><span>翻译为</span><select aria-label="翻译目标语言" value={targetLanguage} onChange={(event) => { setTargetLanguage(event.target.value as TranslationLanguage); setPreview(null); setPreviewBatch(0); setConfirmed(false); }} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason)}>{(Object.entries(TRANSLATION_LANGUAGES) as Array<[TranslationLanguage, string]>).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
                 </div>

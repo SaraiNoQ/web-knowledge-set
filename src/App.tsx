@@ -2991,9 +2991,9 @@ export default function App() {
           <span><strong>织页</strong><small>ZHIYE · {cloudMode ? "CLOUD" : "LOCAL"} KNOWLEDGE</small></span>
         </div>
         <p className="masthead-note">把散落的网页，<br />织成可阅读的知识。</p>
-        <div className="masthead-actions">{!cloudMode && onboarding !== "unavailable" && <button type="button" className="guide-button" onClick={() => setGuideOpen(true)} disabled={closing}>使用指南</button>}<button type="button" className="shortcut-help-button" aria-keyshortcuts="?" onClick={() => setShortcutHelp(true)} disabled={closing}>帮助</button>{"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}{!cloudMode && <><button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
+        <div className="masthead-actions">{!cloudMode && onboarding !== "unavailable" && <button type="button" className="guide-button" onClick={() => setGuideOpen(true)} disabled={closing}>使用指南</button>}<button type="button" className="shortcut-help-button" aria-keyshortcuts="?" onClick={() => setShortcutHelp(true)} disabled={closing}>帮助</button>{"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}<button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
           <i />{safetyRecovery ? "恢复模式" : "数据安全"}
-        </button></>}</div>
+        </button></div>
       </header>
 
       {offline && <div className="offline-banner" role="status">{cloudMode ? "云端服务当前不可达，请恢复网络后继续。" : "系统报告当前离线；本地阅读、编辑与搜索仍可使用，网页抓取和远程 AI 可能失败。"}</div>}
@@ -3120,23 +3120,37 @@ export default function App() {
       {diagnosticsOpen ? (
         <Diagnostics onClose={() => { setDiagnosticsOpen(false); setSafetyOpen(true); }} />
       ) : aiSettingsOpen ? (
-        <AiSettings onClose={() => setAiSettingsOpen(false)} />
+        <AiSettings cloud={cloudMode} onClose={() => setAiSettingsOpen(false)} />
       ) : safetyOpen ? (
         <DataSafety
+          cloud={cloudMode}
           beforeOperation={prepareDataSafetyOperation}
           onClose={() => setSafetyOpen(false)}
           onModeChange={setSafetyRecovery}
           onDiagnostics={() => { setSafetyOpen(false); setDiagnosticsOpen(true); }}
         />
       ) : <>
-      {(!cloudMode || browserPairingCount === 0) && <section className="capture-band" aria-labelledby="capture-title">
-        {cloudMode ? <>
+      <section className="capture-band" aria-labelledby="capture-title">
+        {cloudMode ? browserPairingCount === 0 ? <>
           <div className="capture-index" aria-hidden="true">01</div>
           <div className="capture-copy">
             <h1 id="capture-title">从浏览器剪藏网页</h1>
             <p>云端版当前通过 Chrome / Firefox 扩展收取已登录网页；在“帮助”中下载并生成配对码。</p>
           </div>
           <button type="button" className="primary-button" onClick={() => setShortcutHelp(true)}>打开扩展与配对</button>
+        </> : <>
+          <div className="capture-index" aria-hidden="true">01</div>
+          <div className="capture-copy">
+            <h1 id="capture-title">抓取公开网页</h1>
+            <p>公开 HTTP(S) 网址会进入 Cloudflare Queue，再由 Browser Run 转为 Markdown；需要登录的网页仍使用扩展。</p>
+          </div>
+          <form className="capture-form" onSubmit={handleImport}>
+            <label className="sr-only" htmlFor="capture-url">网页地址</label>
+            <span className="url-prefix" aria-hidden="true">URL</span>
+            <input id="capture-url" value={importUrl} onChange={(event) => { setImportUrl(event.target.value); setImportError(""); setImportNotice(""); }} placeholder="https://example.com/article" inputMode="url" autoComplete="url" disabled={importing || closing} />
+            <button className="primary-button" type="submit" disabled={importing || closing || !importUrl.trim()}>{importing ? <><Spinner />入队中</> : "开始抓取"}</button>
+          </form>
+          <div className="form-message" aria-live="polite">{importError ? <span className="error-text">{importError}</span> : importNotice && <span className="notice-text">{importNotice}</span>}</div>
         </> : <>
         <div className="capture-index" aria-hidden="true">01</div>
         <div className="capture-copy">
@@ -3171,7 +3185,7 @@ export default function App() {
           ) : importNotice && <span className="notice-text">{importNotice}</span>}
         </div>
         </>}
-      </section>}
+      </section>
 
       <main className={`workspace ${selectedId ? "has-selection" : ""}`}>
         <aside id="library-panel" className="library-panel" aria-label="知识列表">
@@ -3285,11 +3299,14 @@ export default function App() {
                 </div>
                 {cloudEditing ? <label className="title-field"><span className="sr-only">文档标题</span><textarea rows={2} value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} disabled={saveState === "saving"} /></label> : <h2>{currentDoc.title || "未命名网页"}</h2>}
                 <div className="document-actions">
-                  <button type="button" className="primary-button" onClick={toggleCloudEditing} disabled={saveState === "saving"}>{cloudEditing ? "返回阅读" : "编辑这篇知识"}</button>
+                  <button type="button" className="primary-button" onClick={toggleCloudEditing} disabled={currentDoc.status !== "ready" || saveState === "saving"}>{cloudEditing ? "返回阅读" : "编辑这篇知识"}</button>
+                  <button type="button" className="history-button" onClick={toggleDerived} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen} aria-controls="derived-knowledge">AI 派生</button>
+                  <button type="button" className="history-button translation-button" onClick={openTranslation} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen && derivedPreferredType === "translation"} aria-controls="derived-knowledge">翻译</button>
                 </div>
-                <p className="notice warning">云端已支持扩展剪藏、搜索、阅读和 Markdown 编辑；AI、留档与直接抓取正在继续迁移。</p>
+                <p className="notice warning">云端已支持扩展剪藏、搜索、阅读、Markdown 编辑和 AI 派生；留档与直接抓取正在继续迁移。</p>
               </header>
-              {cloudEditing ? <div className="editor-workbench">
+              <DerivedKnowledge cloud document={currentDoc} open={derivedOpen} preferredType={derivedPreferredType} onTypeChange={setDerivedPreferredType} onClose={() => setDerivedOpen(false)} generationBlockedReason={derivedBlockedReason} onAdoptTags={async () => undefined} />
+              {needsCapturePolling(currentDoc) ? <div className="capture-progress" aria-live="polite"><div className="progress-orbit"><i /><i /><span>织</span></div><h3>{STATUS_LABEL[currentDoc.status]}</h3><p>Cloudflare Queue 与 Browser Run 正在处理，完成后会自动刷新。</p></div> : currentDoc.status === "failed" ? <div className="capture-failed" role="alert"><span className="failure-code">{currentDoc.errorCode || "BROWSER_FAILED"}</span><h3>这张网页没有抓取成功</h3><p>{userErrorMessage(currentDoc.errorCode ?? "BROWSER_FAILED")}</p><button type="button" className="primary-button" onClick={() => void retryCapture()} disabled={retrying}>{retrying ? "重试中…" : "重新抓取"}</button></div> : cloudEditing ? <div className="editor-workbench">
                 <div className="editor-toolbar">
                   <div className="mode-switch" aria-label="编辑器显示模式">{(["edit", "split", "preview"] as EditorMode[]).map((value) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)}>{value === "edit" ? "编辑" : value === "split" ? "对照" : "预览"}</button>)}</div>
                   <div className="editor-stats">{draft.markdown.length.toLocaleString("zh-CN")} 字符</div>
