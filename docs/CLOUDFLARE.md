@@ -2,7 +2,7 @@
 
 ## 状态
 
-Cloudflare Web 已部署在 `https://zhiye.sarainoq.cn`，并由 Access 保护。当前云端仅支持浏览器扩展剪藏、搜索和只读阅读；本地 Node/Tauri 仍保留完整功能，云端未完成的入口不会再展示为可用操作。
+Cloudflare Web 已部署在 `https://zhiye.sarainoq.cn`，并由 Access 保护。当前云端支持浏览器扩展剪藏、搜索、阅读和带 revision 冲突保护的 Markdown 编辑；本地 Node/Tauri 仍保留完整功能。
 
 ## 目标架构
 
@@ -16,7 +16,7 @@ Cloudflare Web 已部署在 `https://zhiye.sarainoq.cn`，并由 Access 保护�
 
 ## 分阶段实施
 
-1. **Workers Static Assets + D1 云核心**：已建立 Worker、前端静态资源和最小 D1 数据模型；从空云端知识库开始，不自动复制本地数据。当前支持扩展剪藏、搜索和只读阅读；普通编辑、采集、AI 和留档入口在云端隐藏，完成迁移前不应用于生产数据。
+1. **Workers Static Assets + D1 云核心**：已建立 Worker、前端静态资源和 D1 数据模型，支持扩展剪藏、搜索、阅读和标题/Markdown 编辑；从空云端知识库开始，不自动复制本地数据。
 2. **R2 资源与备份**：迁移离线图片、快照和完整留档的对象存储语义，并提供明确的导入、导出与恢复流程。
 3. **Browser Rendering + Queues 抓取**：将公开网页抓取改为异步任务；保留现有安全 URL 校验、失败状态和手动摘录回退。
 4. **Access 与扩展迁移**：Web 由 Access 保护；独立的 `clip.sarainoq.cn` Worker 只接受扩展配对和剪藏写入，令牌不能读取、搜索、删除或导出知识库。

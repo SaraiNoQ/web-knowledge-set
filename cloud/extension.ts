@@ -17,7 +17,7 @@ export interface D1Database {
 export type BrowserKind = "chrome" | "firefox";
 
 export class CloudHttpError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string) {
+  constructor(readonly status: number, readonly code: string, message: string, readonly document?: unknown) {
     super(message);
   }
 }
@@ -329,4 +329,25 @@ export async function getDocument(db: D1Database, id: string) {
   )
     .bind(id).first<DocumentRow>();
   return row ? { ...summary(row), publishedAt: row.publishedAt, markdown: row.markdown, captureMode: null, sourceNote: row.sourceNote } : null;
+}
+
+export async function updateDocument(db: D1Database, id: string, body: Record<string, unknown>) {
+  if (Object.keys(body).some((key) => key !== "title" && key !== "markdown" && key !== "revision") ||
+    typeof body.title !== "string" || !body.title.trim() || body.title.length > 1_000 ||
+    typeof body.markdown !== "string" || encoder.encode(body.markdown).byteLength > 2 * 1024 * 1024 ||
+    typeof body.revision !== "number" || !Number.isInteger(body.revision) || body.revision < 1 ||
+    unsafeControl.test(body.title) || unsafeControl.test(body.markdown)) {
+    throw new CloudHttpError(400, "INVALID_DOCUMENT_UPDATE", "A title, Markdown body, and positive revision are required");
+  }
+  const now = new Date().toISOString();
+  const result = await db.prepare(
+    `UPDATE cloud_documents SET title = ?, markdown = ?, revision = revision + 1, updated_at = ?
+     WHERE id = ? AND revision = ?`,
+  ).bind(body.title.trim(), body.markdown, now, id, body.revision).run();
+  if (changes(result) !== 1) {
+    const current = await getDocument(db, id);
+    if (!current) throw new CloudHttpError(404, "DOCUMENT_NOT_FOUND", "Document not found");
+    throw new CloudHttpError(409, "DOCUMENT_CONFLICT", "Document was updated elsewhere", current);
+  }
+  return await getDocument(db, id);
 }

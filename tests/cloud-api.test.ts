@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { handleRequest, type CloudEnv } from "../cloud/worker.js";
+import { CloudHttpError, updateDocument } from "../cloud/extension.js";
 
 const rows = new Map<string, { value: string; revision: number }>([
   ["data_epoch", { value: "cloud-test", revision: 0 }],
@@ -85,4 +86,37 @@ test("cloud core serves the existing empty-library startup contract", async () =
 
   const asset = await handleRequest(new Request("https://app.example.com/"), environment());
   assert.equal(asset.headers.get("X-Frame-Options"), "DENY");
+});
+
+test("cloud editing increments revision and rejects a stale writer", async () => {
+  let row = {
+    id: "doc-1", sourceUrl: "https://example.com/", finalUrl: "https://example.com/", canonicalUrl: "https://example.com/",
+    title: "Old", author: null, status: "ready" as const, revision: 1, createdAt: "2026-08-18T00:00:00.000Z",
+    updatedAt: "2026-08-18T00:00:00.000Z", publishedAt: null, markdown: "Old body", sourceNote: "clip",
+  };
+  const db = {
+    prepare(sql: string) {
+      let bound: unknown[] = [];
+      const statement = {
+        bind(...values: unknown[]) { bound = values; return statement; },
+        async first<T>() { return row as T; },
+        async all<T>() { return { results: [] as T[], meta: { changes: 0 } }; },
+        async run<T>() {
+          if (sql.startsWith("UPDATE cloud_documents") && bound[3] === row.id && bound[4] === row.revision) {
+            row = { ...row, title: String(bound[0]), markdown: String(bound[1]), updatedAt: String(bound[2]), revision: row.revision + 1 };
+            return { results: [] as T[], meta: { changes: 1 } };
+          }
+          return { results: [] as T[], meta: { changes: 0 } };
+        },
+      };
+      return statement;
+    },
+  };
+  const updated = await updateDocument(db, row.id, { title: "New", markdown: "New body", revision: 1 });
+  assert.equal(updated?.revision, 2);
+  assert.equal(updated?.markdown, "New body");
+  await assert.rejects(
+    updateDocument(db, row.id, { title: "Stale", markdown: "Lost", revision: 1 }),
+    (error: unknown) => error instanceof CloudHttpError && error.code === "DOCUMENT_CONFLICT" && error.document !== undefined,
+  );
 });

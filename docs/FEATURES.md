@@ -23,3 +23,8 @@
 ## 云端 Web 迁移
 
 - [ ] **Cloudflare 云端 Web 核心**：以 Workers Static Assets 托管前端、D1 保存云端核心数据，随后接入 R2 留档资源、Browser Rendering 与 Queues 抓取，并以 Cloudflare Access 保护 Web 应用；现有本地 Node/Tauri 路径在功能等价前继续保留。验收边界见 [CLOUDFLARE.md](./CLOUDFLARE.md)。
+- [x] ~~**云端配对状态**：首页仅在没有已配对浏览器时显示扩展配对引导，配对或撤销后及时更新。~~
+- [x] ~~**D1 文档编辑**：云端文档可切换为标题与 Markdown 编辑模式，保存时校验 revision 并防止静默覆盖。~~
+- [ ] **云端 AI**：云端安全保存端点绑定密钥，支持连接测试、摘要与翻译，不向 D1、日志或导出包泄露明文密钥。
+- [ ] **R2 云端留档**：用户可创建、下载、导入并明确恢复云端留档，失败不留半成品。
+- [ ] **云端直接抓取**：公开 HTTP(S) 网址经 Queue 异步抓取，需要脚本时使用 Browser Rendering，继续拒绝私网、回环和越权地址。

@@ -6,6 +6,7 @@ import {
   listDocuments as listCloudDocuments,
   listPairings,
   revokePairing,
+  updateDocument,
   type D1Database,
 } from "./extension";
 
@@ -93,11 +94,20 @@ async function api(request: Request, env: CloudEnv, url: URL) {
     if (!await revokePairing(env.DB, id)) throw new CloudHttpError(404, "PAIRING_NOT_FOUND", "Pairing not found");
     return new Response(null, { status: 204, headers: { ...SECURITY_HEADERS, "Cache-Control": "no-store", [DATA_EPOCH_HEADER]: epoch } });
   }
+  const documentPath = url.pathname.match(/^\/api\/documents\/([^/]+)(?:\/(draft|assets|duplicate|captures))?$/u);
+  if (documentPath && request.method === "PATCH" && !documentPath[2]) {
+    if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
+      return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
+    }
+    let id: string;
+    try { id = decodeURIComponent(documentPath[1]); }
+    catch { throw new CloudHttpError(400, "INVALID_PATH", "Invalid document identifier"); }
+    return json(await updateDocument(env.DB, id, await jsonObject(request)), 200, epoch);
+  }
   if (request.method !== "GET") {
     return json({ error: { code: "CLOUD_FEATURE_PENDING", message: "This cloud mutation is not migrated yet" } }, 501, epoch);
   }
 
-  const documentPath = url.pathname.match(/^\/api\/documents\/([^/]+)(?:\/(draft|assets|duplicate|captures))?$/u);
   if (documentPath) {
     let id: string;
     try { id = decodeURIComponent(documentPath[1]); }
@@ -145,7 +155,7 @@ export async function handleRequest(request: Request, env: CloudEnv) {
     return new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers });
   } catch (error) {
     const failure = error instanceof CloudHttpError ? error : new CloudHttpError(500, "INTERNAL_ERROR", "Request failed");
-    return json({ error: { code: failure.code, message: failure.message } }, failure.status);
+    return json({ error: { code: failure.code, message: failure.message, ...(failure.document ? { document: failure.document } : {}) } }, failure.status);
   }
 }
 

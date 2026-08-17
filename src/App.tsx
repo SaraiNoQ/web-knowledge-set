@@ -575,6 +575,8 @@ export default function App() {
   const [onboardingDeferred, setOnboardingDeferred] = useState(false);
   const [offline, setOffline] = useState(() => !navigator.onLine);
   const [runtimeMode, setRuntimeMode] = useState<"local" | "cloud" | null>(null);
+  const [browserPairingCount, setBrowserPairingCount] = useState<number | null>(null);
+  const [cloudEditing, setCloudEditing] = useState(false);
   const [safetyRecovery, setSafetyRecovery] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [derivedOpen, setDerivedOpen] = useState(false);
@@ -684,6 +686,20 @@ export default function App() {
   const longArticle = (draft?.markdown.length ?? 0) > 250_000;
   const cloudMode = runtimeMode === "cloud";
   const longPreviewAllowed = !longArticle || longPreviewDocumentId === currentDoc?.id;
+  useEffect(() => {
+    if (!cloudMode) return;
+    const controller = new AbortController();
+    const refresh = () => void api.getBrowserExtensionPairings(controller.signal)
+      .then(({ pairings }) => setBrowserPairingCount(pairings.length))
+      .catch(() => undefined);
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => {
+      controller.abort();
+      window.removeEventListener("focus", refresh);
+    };
+  }, [cloudMode]);
+
   useEffect(() => {
     if (longArticle) setMode("edit");
     else setLongPreviewDocumentId(null);
@@ -1170,6 +1186,7 @@ export default function App() {
       setAssetError("");
       return;
     }
+    setCloudEditing(false);
     const controller = new AbortController();
     installCurrentDocument(null);
     setDraft(null);
@@ -1317,6 +1334,7 @@ export default function App() {
   }, [currentDoc?.id, currentDoc?.status, selectedId, updateListItem]);
 
   useEffect(() => {
+    if (cloudMode) return;
     const stored = persistedDraftRef.current;
     if (
       closing || remoteDraftConflict || saveState === "saving" || !dirty || !currentDoc || !draft ||
@@ -1334,9 +1352,10 @@ export default function App() {
       });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [closing, currentDoc, dirty, draft, persistDraft, remoteDraftConflict, saveState]);
+  }, [closing, cloudMode, currentDoc, dirty, draft, persistDraft, remoteDraftConflict, saveState]);
 
   useEffect(() => {
+    if (cloudMode) return;
     const stored = persistedDraftRef.current;
     if (
       closing || remoteDraftConflict || dirty || !currentDoc || !draft ||
@@ -1347,7 +1366,7 @@ export default function App() {
         setDraftError((error as Error).message);
       }
     });
-  }, [closing, currentDoc, dirty, draft, remoteDraftConflict, tombstoneDraft]);
+  }, [closing, cloudMode, currentDoc, dirty, draft, remoteDraftConflict, tombstoneDraft]);
 
   const saveNow = useCallback(async () => {
     if (
@@ -1360,13 +1379,15 @@ export default function App() {
     setSaveState("saving");
     setSaveError("");
     try {
-      await persistDraft(currentDoc, sent);
-      const updated = await api.updateDocument(currentDoc.id, { ...sent, revision: currentDoc.revision });
+      if (!cloudMode) await persistDraft(currentDoc, sent);
+      const updated = await api.updateDocument(currentDoc.id, cloudMode
+        ? { title: sent.title, markdown: sent.markdown, revision: currentDoc.revision }
+        : { ...sent, revision: currentDoc.revision });
       if (selectedIdRef.current !== currentDoc.id) return;
       installCurrentDocument(updated);
       updateListItem(updated);
       setListRefresh((value) => value + 1);
-      refreshKnownTags();
+      if (!cloudMode) refreshKnownTags();
       const unchangedSinceRequest = Boolean(draftRef.current && draftsEqual(draftRef.current, sent));
       if (unchangedSinceRequest) {
         persistedDraftRef.current = null;
@@ -1390,7 +1411,7 @@ export default function App() {
     } finally {
       saveInFlight.current = false;
     }
-  }, [collectionAction, conflict, currentDoc, dirty, draft, metadataDirty, organizationConflict, persistDraft, refreshKnownTags, remoteDraftConflict, updateListItem]);
+  }, [cloudMode, collectionAction, conflict, currentDoc, dirty, draft, metadataDirty, organizationConflict, persistDraft, refreshKnownTags, remoteDraftConflict, updateListItem]);
 
   useEffect(() => {
     if (closing || !dirty || saveState === "conflict" || saveState === "error" || currentDoc?.status !== "ready") return;
@@ -2202,6 +2223,23 @@ export default function App() {
     setSelectedId(id);
   };
 
+  const toggleCloudEditing = () => {
+    if (!currentDoc || !draft) return;
+    if (cloudEditing) {
+      if (dirty && !window.confirm("当前修改尚未保存，确定返回阅读吗？")) return;
+      const readable = conflict ?? currentDoc;
+      if (conflict) {
+        installCurrentDocument(conflict);
+        updateListItem(conflict);
+      }
+      setDraft(draftOf(readable));
+      setConflict(null);
+      setSaveState("idle");
+      setSaveError("");
+    } else setMode("split");
+    setCloudEditing((value) => !value);
+  };
+
   const closeDocument = () => {
     if (closeAttemptRef.current || organizationInFlight.current || lifecycleAction || restoringRevision !== null) return;
     if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
@@ -2985,7 +3023,7 @@ export default function App() {
               <div><dt>许可</dt><dd>MIT</dd></div>
             </dl>
           </div>
-          {safetyRecovery ? <p className="notice warning">恢复资料后才能生成扩展配对码。</p> : <BrowserExtension />}
+          {safetyRecovery ? <p className="notice warning">恢复资料后才能生成扩展配对码。</p> : <BrowserExtension onPairingCountChange={setBrowserPairingCount} />}
           <section className="help-shortcuts" aria-labelledby="shortcut-title">
             <h3 id="shortcut-title">快捷键</h3>
             <dl className="shortcut-list"><div><dt><kbd>⌘</kbd><kbd>K</kbd></dt><dd>聚焦搜索</dd></div><div><dt><kbd>/</kbd></dt><dd>聚焦搜索</dd></div><div><dt><kbd>J</kbd> / <kbd>K</kbd></dt><dd>在列表中移动</dd></div>{!cloudMode && <div><dt><kbd>X</kbd></dt><dd>选中或取消当前行</dd></div>}<div><dt><kbd>↵</kbd></dt><dd>打开当前行</dd></div>{!cloudMode && <div><dt><kbd>⌘</kbd><kbd>S</kbd></dt><dd>立即保存</dd></div>}<div><dt><kbd>Esc</kbd></dt><dd>关闭面板或返回列表</dd></div><div><dt><kbd>?</kbd></dt><dd>显示本帮助</dd></div></dl>
@@ -3091,7 +3129,7 @@ export default function App() {
           onDiagnostics={() => { setSafetyOpen(false); setDiagnosticsOpen(true); }}
         />
       ) : <>
-      <section className="capture-band" aria-labelledby="capture-title">
+      {(!cloudMode || browserPairingCount === 0) && <section className="capture-band" aria-labelledby="capture-title">
         {cloudMode ? <>
           <div className="capture-index" aria-hidden="true">01</div>
           <div className="capture-copy">
@@ -3133,7 +3171,7 @@ export default function App() {
           ) : importNotice && <span className="notice-text">{importNotice}</span>}
         </div>
         </>}
-      </section>
+      </section>}
 
       <main className={`workspace ${selectedId ? "has-selection" : ""}`}>
         <aside id="library-panel" className="library-panel" aria-label="知识列表">
@@ -3245,13 +3283,29 @@ export default function App() {
                   <a href={currentDoc.finalUrl || currentDoc.sourceUrl} target="_blank" rel="noreferrer noopener">{sourceName(currentDoc.finalUrl || currentDoc.sourceUrl)}<Icon size={13}><path d="M14 5h5v5M10 14 19 5M19 14v5H5V5h5" /></Icon></a>
                   <span>{formatDate(currentDoc.updatedAt)}</span>
                 </div>
-                <h2>{currentDoc.title || "未命名网页"}</h2>
-                <p className="notice warning">云端迁移期间，扩展剪藏、搜索和阅读已经可用；编辑、AI、留档与直接抓取将在后续迁移完成后开放。</p>
+                {cloudEditing ? <label className="title-field"><span className="sr-only">文档标题</span><textarea rows={2} value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} disabled={saveState === "saving"} /></label> : <h2>{currentDoc.title || "未命名网页"}</h2>}
+                <div className="document-actions">
+                  <button type="button" className="primary-button" onClick={toggleCloudEditing} disabled={saveState === "saving"}>{cloudEditing ? "返回阅读" : "编辑这篇知识"}</button>
+                </div>
+                <p className="notice warning">云端已支持扩展剪藏、搜索、阅读和 Markdown 编辑；AI、留档与直接抓取正在继续迁移。</p>
               </header>
-              <section className="preview-pane cloud-reader" aria-label="Markdown 预览">
+              {cloudEditing ? <div className="editor-workbench">
+                <div className="editor-toolbar">
+                  <div className="mode-switch" aria-label="编辑器显示模式">{(["edit", "split", "preview"] as EditorMode[]).map((value) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)}>{value === "edit" ? "编辑" : value === "split" ? "对照" : "预览"}</button>)}</div>
+                  <div className="editor-stats">{draft.markdown.length.toLocaleString("zh-CN")} 字符</div>
+                  <div className={`save-indicator save-${saveState}`} aria-live="polite">{saveState === "saving" ? <><Spinner />正在保存</> : saveState === "saved" ? "已保存" : saveState === "error" ? "保存失败" : saveState === "conflict" ? "版本冲突" : dirty ? "未保存" : "已同步"}</div>
+                  <button type="button" className="text-button save-button" aria-keyshortcuts="Meta+S Control+S" onClick={() => void saveNow()} disabled={!dirty || saveState === "saving" || saveState === "conflict"}>保存</button>
+                </div>
+                {saveState === "error" && <div className="inline-error" role="alert">{saveError}</div>}
+                {conflict && <div className="conflict-banner" role="alert"><div><strong>这篇知识已在别处更新</strong><span>你的文字仍保留在编辑器中。请复制需要保留的内容，然后载入最新版。</span></div><button type="button" onClick={() => { installCurrentDocument(conflict); updateListItem(conflict); setDraft(draftOf(conflict)); setConflict(null); setSaveState("idle"); }}>载入最新版</button></div>}
+                <div className={`editor-grid mode-${mode}`}>
+                  {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><div className="pane-label">MARKDOWN</div><MarkdownEditor value={draft.markdown} onChange={(markdown) => setDraft((value) => value ? { ...value, markdown } : value)} readOnly={saveState === "saving"} /></section>}
+                  {mode !== "edit" && <section className="preview-pane" aria-label="Markdown 预览"><div className="pane-label">PREVIEW</div>{draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={[]} /> : <StatePanel kind="empty" title="这里还没有文字" />}</section>}
+                </div>
+              </div> : <section className="preview-pane cloud-reader" aria-label="Markdown 预览">
                 <div className="pane-label">READ ONLY · MARKDOWN</div>
                 {currentDoc.markdown.trim() ? <MarkdownPreview markdown={currentDoc.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={[]} /> : <StatePanel kind="empty" title="这张织片没有正文" />}
-              </section>
+              </section>}
             </>
           ) : currentDoc && draft ? (
             <>

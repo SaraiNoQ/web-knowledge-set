@@ -2,14 +2,17 @@ import { useEffect, useState } from "react";
 import type { BrowserExtensionPairing, BrowserExtensionPairingCode } from "../../shared/types";
 import { api } from "../api";
 
-export function BrowserExtension() {
+export function BrowserExtension({ onPairingCountChange }: { onPairingCountChange?: (count: number) => void }) {
   const [pairings, setPairings] = useState<BrowserExtensionPairing[]>([]);
   const [code, setCode] = useState<BrowserExtensionPairingCode | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const load = (signal?: AbortSignal) => api.getBrowserExtensionPairings(signal)
-    .then(({ pairings: value }) => setPairings(value));
+    .then(({ pairings: value }) => {
+      setPairings(value);
+      onPairingCountChange?.(value.length);
+    });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -31,7 +34,11 @@ export function BrowserExtension() {
     setError("");
     try {
       await api.revokeBrowserExtensionPairing(pairing.id);
-      setPairings((current) => current.filter(({ id }) => id !== pairing.id));
+      setPairings((current) => {
+        const next = current.filter(({ id }) => id !== pairing.id);
+        onPairingCountChange?.(next.length);
+        return next;
+      });
     } catch (cause) { setError((cause as Error).message); }
     finally { setBusy(false); }
   };
