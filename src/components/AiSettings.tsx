@@ -112,6 +112,18 @@ export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
   }, []);
 
   useEffect(() => {
+    if (!cloud) return;
+    const refresh = () => {
+      void Promise.all([api.getLlmSettings(), api.getLlmApiKeyStatus()]).then(([value, status]) => {
+        install(value);
+        setProcessKeyEndpoint(status.endpointUrl);
+      }).catch((cause) => setError(userErrorFrom(cause, "无法刷新云端密钥状态。")));
+    };
+    window.addEventListener("storage", refresh);
+    return () => window.removeEventListener("storage", refresh);
+  }, [cloud]);
+
+  useEffect(() => {
     if (!desktop) return;
     void invoke<KeychainStatus>("llm_keychain_status")
       .then((status) => setKeychainEndpoint(status.endpointUrl))
@@ -146,7 +158,7 @@ export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
         }
       }
       setApiKey("");
-      setNotice(desktop ? "密钥已立即生效，并保存到 macOS 钥匙串。" : cloud ? "密钥已加载到当前页面内存；刷新页面后需重新输入。" : "密钥已立即生效；本地服务重启后需重新输入。");
+      setNotice(desktop ? "密钥已立即生效，并保存到 macOS 钥匙串。" : cloud ? "密钥已保存到当前浏览器；刷新后仍可使用，可随时在这里删除。" : "密钥已立即生效；本地服务重启后需重新输入。");
     } catch (cause) {
       setError(userErrorFrom(cause, "密钥保存失败，请检查输入后重试。"));
     } finally {
@@ -173,7 +185,7 @@ export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
           return;
         }
       }
-      setNotice(desktop ? "密钥已从当前进程和 macOS 钥匙串删除。" : cloud ? "密钥已从当前浏览器页面删除。" : "密钥已从当前本地服务进程删除。");
+      setNotice(desktop ? "密钥已从当前进程和 macOS 钥匙串删除。" : cloud ? "密钥已从当前浏览器站点存储删除。" : "密钥已从当前本地服务进程删除。");
     } catch (cause) {
       setError(userErrorFrom(cause, `当前进程密钥清除失败，${desktop ? "未改动 macOS 钥匙串。" : "请重试。"}`));
     } finally {
@@ -293,7 +305,7 @@ export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
                   <input aria-label="远程模型 API 密钥" type="password" value={apiKey} onChange={(event) => { setApiKey(event.target.value); clearTestResult(); }} autoComplete="new-password" spellCheck={false} placeholder={processKeyConfigured ? "当前平台已配置；输入新值可替换" : "粘贴当前平台的 API Key"} disabled={locked} />
                 </label>
                 <div>
-                  <span>{desktop ? (keychainEndpoint === undefined ? "正在检查 macOS 钥匙串…" : keychainEndpoint ? (endpointValue(keychainEndpoint) === currentRemoteEndpoint ? "当前平台密钥已保存到 macOS 钥匙串" : "钥匙串内有其他平台密钥；当前平台需重新输入") : "将保存到 macOS 钥匙串") : cloud ? "仅保存于当前浏览器页面内存" : "仅保存于当前本地服务进程"}</span>
+                  <span>{desktop ? (keychainEndpoint === undefined ? "正在检查 macOS 钥匙串…" : keychainEndpoint ? (endpointValue(keychainEndpoint) === currentRemoteEndpoint ? "当前平台密钥已保存到 macOS 钥匙串" : "钥匙串内有其他平台密钥；当前平台需重新输入") : "将保存到 macOS 钥匙串") : cloud ? "保存于当前浏览器站点存储；共享设备用完请删除" : "仅保存于当前本地服务进程"}</span>
                   <button type="button" onClick={() => void storeApiKey()} disabled={locked || !apiKey.trim() || !remoteUrl.trim()}>保存密钥</button>
                   {(processKeyEndpoint || keychainEndpoint) && <button type="button" className="danger" onClick={() => void deleteApiKey()} disabled={locked}>删除密钥</button>}
                 </div>

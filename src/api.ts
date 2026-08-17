@@ -43,18 +43,30 @@ import type {
   UpdateLlmSettingsInput,
 } from "../shared/types";
 import { isAbortError, userErrorMessage } from "./error-messages";
+import {
+  cloudLlmCredentialHeaders,
+  cloudLlmCredentialMatches,
+  deleteCloudLlmCredential,
+  loadCloudLlmCredential,
+  saveCloudLlmCredential,
+} from "./cloud-llm-credential";
 
 export type { DataSafetyStatus, DocumentFilters, RecentFilter } from "../shared/types";
 
 const DATA_EPOCH_HEADER = "X-Zhiye-Data-Epoch";
 let dataEpoch: string | null = null;
 let cloudRuntime = globalThis.location?.hostname === "zhiye.sarainoq.cn";
-let cloudLlmCredential: { apiKey: string; endpointUrl: string } | null = null;
+function cloudCredentialStorage() {
+  if (globalThis.location?.hostname !== "zhiye.sarainoq.cn") return null;
+  try { return globalThis.localStorage; } catch { return null; }
+}
+function currentCloudLlmCredential() {
+  const storage = cloudCredentialStorage();
+  return storage ? loadCloudLlmCredential(storage) : null;
+}
 
 function cloudLlmHeaders(endpointUrl: string): Record<string, string> {
-  return cloudRuntime && cloudLlmCredential?.endpointUrl === endpointUrl
-    ? { "X-Zhiye-LLM-Key": cloudLlmCredential.apiKey }
-    : {};
+  return cloudRuntime ? cloudLlmCredentialHeaders(currentCloudLlmCredential(), endpointUrl) : {};
 }
 
 export class ApiRequestError extends Error {
@@ -184,11 +196,14 @@ export const api = {
 
   async getLlmSettings(signal?: AbortSignal) {
     const value = await request<LlmSettings>("/api/settings/llm", { signal });
-    return cloudRuntime ? { ...value, apiKeyConfigured: cloudLlmCredential?.endpointUrl === value.remote.endpointUrl } : value;
+    return cloudRuntime ? { ...value, apiKeyConfigured: cloudLlmCredentialMatches(currentCloudLlmCredential(), value.remote.endpointUrl) } : value;
   },
 
   getLlmApiKeyStatus(signal?: AbortSignal) {
-    if (cloudRuntime) return Promise.resolve({ configured: Boolean(cloudLlmCredential), endpointUrl: cloudLlmCredential?.endpointUrl ?? null });
+    if (cloudRuntime) {
+      const credential = currentCloudLlmCredential();
+      return Promise.resolve({ configured: Boolean(credential), endpointUrl: credential?.endpointUrl ?? null });
+    }
     return request<LlmApiKeyStatus>("/api/settings/llm/key", { signal });
   },
 
@@ -210,9 +225,15 @@ export const api = {
 
   setLlmApiKey(apiKey: string, endpointUrl: string) {
     if (cloudRuntime) {
-      const normalized = new URL(endpointUrl.trim()).href;
-      cloudLlmCredential = { apiKey: apiKey.trim(), endpointUrl: normalized };
-      return Promise.resolve({ configured: true, endpointUrl: normalized });
+      const storage = cloudCredentialStorage();
+      if (!storage) return Promise.reject(new ApiRequestError(userErrorMessage("LLM_KEY_STORAGE_FAILED"), 0, "LLM_KEY_STORAGE_FAILED"));
+      try {
+        const credential = saveCloudLlmCredential(storage, apiKey, endpointUrl);
+        return Promise.resolve({ configured: true, endpointUrl: credential.endpointUrl });
+      } catch (cause) {
+        const code = cause instanceof TypeError ? "INVALID_LLM_API_KEY" : "LLM_KEY_STORAGE_FAILED";
+        return Promise.reject(new ApiRequestError(userErrorMessage(code), 0, code));
+      }
     }
     return request<LlmApiKeyStatus>("/api/settings/llm/key", {
       method: "PUT",
@@ -222,8 +243,13 @@ export const api = {
 
   deleteLlmApiKey() {
     if (cloudRuntime) {
-      cloudLlmCredential = null;
-      return Promise.resolve({ configured: false, endpointUrl: null });
+      try {
+        const storage = cloudCredentialStorage();
+        if (storage) deleteCloudLlmCredential(storage);
+        return Promise.resolve({ configured: false, endpointUrl: null });
+      } catch {
+        return Promise.reject(new ApiRequestError(userErrorMessage("LLM_KEY_STORAGE_FAILED"), 0, "LLM_KEY_STORAGE_FAILED"));
+      }
     }
     return request<LlmApiKeyStatus>("/api/settings/llm/key", {
       method: "DELETE",

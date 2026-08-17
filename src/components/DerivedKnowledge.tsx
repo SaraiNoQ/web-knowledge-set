@@ -101,6 +101,7 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const cloudKeyMissing = Boolean(cloud && settings?.target === "remote" && !settings.apiKeyConfigured);
 
   const loadResults = useCallback(async (resultPage = page, signal?: AbortSignal) => {
     const response = await api.listDerivedResults(document.id, resultPage, signal);
@@ -131,6 +132,21 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
   }, [document.id, document.revision]);
 
   useEffect(() => {
+    if (!open || !cloud) return;
+    const controller = new AbortController();
+    setError("");
+    const refresh = () => void api.getLlmSettings(controller.signal).then(setSettings).catch((cause) => {
+      if ((cause as Error).name !== "AbortError") setError((cause as Error).message);
+    });
+    refresh();
+    window.addEventListener("storage", refresh);
+    return () => {
+      controller.abort();
+      window.removeEventListener("storage", refresh);
+    };
+  }, [cloud, open]);
+
+  useEffect(() => {
     if (task?.status !== "running") return;
     const timer = window.setInterval(() => {
       void api.getDerivedTaskById(task.id).then((updated) => {
@@ -147,7 +163,7 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
   }, [loadResults, task?.id, task?.status]);
 
   const prepare = async () => {
-    if (generationBlockedReason) return;
+    if (generationBlockedReason || cloudKeyMissing) return;
     setBusy(true);
     setError("");
     setNotice("");
@@ -272,15 +288,16 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
               <section className="derived-generator" aria-labelledby="derived-generator-title">
                 <div><span>01 · GENERATE</span><h4 id="derived-generator-title">选择一项，再核对发送范围</h4></div>
                 <div className="derived-options">
-                  <fieldset disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason)}>
+                  <fieldset disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing}>
                     <legend className="sr-only">派生类型</legend>
                     {(Object.entries(TYPE_LABEL) as Array<[DerivedResultType, string]>).filter(([value]) => !cloud || value !== "tag-suggestions").map(([value, label]) => <button key={value} type="button" aria-pressed={type === value} onClick={() => { onTypeChange(value); setPreview(null); setPreviewBatch(0); setConfirmed(false); }}>{label}</button>)}
                   </fieldset>
-                  {type === "translation" && <label className="derived-target-language"><span>翻译为</span><select aria-label="翻译目标语言" value={targetLanguage} onChange={(event) => { setTargetLanguage(event.target.value as TranslationLanguage); setPreview(null); setPreviewBatch(0); setConfirmed(false); }} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason)}>{(Object.entries(TRANSLATION_LANGUAGES) as Array<[TranslationLanguage, string]>).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
+                  {type === "translation" && <label className="derived-target-language"><span>翻译为</span><select aria-label="翻译目标语言" value={targetLanguage} onChange={(event) => { setTargetLanguage(event.target.value as TranslationLanguage); setPreview(null); setPreviewBatch(0); setConfirmed(false); }} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing}>{(Object.entries(TRANSLATION_LANGUAGES) as Array<[TranslationLanguage, string]>).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
                 </div>
                 {!settings?.enabled && <p className="derived-boundary">AI 当前关闭。历史结果仍可查看；请先到页首“AI 设置”中启用。</p>}
+                {cloudKeyMissing && <p className="derived-boundary">当前浏览器没有此平台的 AI 密钥。历史结果仍可查看；请先到页首“AI 设置”保存密钥。</p>}
                 {generationBlockedReason && <p className="derived-boundary">{generationBlockedReason}</p>}
-                <button type="button" className="primary-button" onClick={() => void prepare()} disabled={busy || !settings?.enabled || task?.status === "running" || Boolean(generationBlockedReason)}>{busy && !preview ? "准备中…" : `预览${TYPE_LABEL[type]}发送范围`}</button>
+                <button type="button" className="primary-button" onClick={() => void prepare()} disabled={busy || !settings?.enabled || task?.status === "running" || Boolean(generationBlockedReason) || cloudKeyMissing}>{busy && !preview ? "准备中…" : `预览${TYPE_LABEL[type]}发送范围`}</button>
               </section>
 
               {preview && (

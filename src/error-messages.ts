@@ -33,6 +33,7 @@ const ERROR_MESSAGES: Readonly<Record<string, string>> = {
   INVALID_LLM_TEST: "AI 连接测试设置无效，请检查端点、模型和本地信任选项。",
   LLM_DISABLED: "AI 派生知识当前已关闭，请先在 AI 设置中启用。",
   LLM_KEY_MISSING: "当前远程 AI 端点没有可用密钥，请先保存密钥。",
+  LLM_KEY_STORAGE_FAILED: "浏览器无法保存或删除云端 AI 密钥，请检查站点存储权限后重试。",
   LLM_NOT_CONFIGURED: "所选 AI 端点尚未完成配置。",
   LLM_BUSY: "另一个 AI 任务正在运行，请等待完成后重试。",
   LLM_TASK_RUNNING: "当前 AI 任务仍在运行，无法重试。",
