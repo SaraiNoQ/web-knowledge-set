@@ -3014,7 +3014,7 @@ export default function App() {
             <section aria-labelledby="quick-start-title">
               <span>01 · START HERE</span>
               <h3 id="quick-start-title">快速上手</h3>
-              <p>{cloudMode ? "安装浏览器扩展，在已登录网页中提取 Markdown；云端当前支持剪藏、搜索与阅读。" : "粘贴公开网页地址完成采集，在资料库中搜索整理，再用 Markdown 编辑与预览；重要变更前先到“数据安全”创建留档。"}</p>
+              <p>{cloudMode ? "安装浏览器扩展剪藏登录页，或直接抓取公开网页；再搜索、编辑 Markdown、生成 AI 派生内容，并用 R2 留档保护数据。" : "粘贴公开网页地址完成采集，在资料库中搜索整理，再用 Markdown 编辑与预览；重要变更前先到“数据安全”创建留档。"}</p>
               {!cloudMode && <button type="button" className="guide-button" disabled={onboarding === "unavailable"} onClick={() => { setShortcutHelp(false); setGuideOpen(true); }}>{onboarding === "unavailable" ? "恢复资料后可打开指南" : "重新打开使用指南"}</button>}
             </section>
             <dl className="help-meta">
@@ -3282,7 +3282,7 @@ export default function App() {
               <div className="weave-mark" aria-hidden="true"><i /><i /><i /><i /></div>
               <span className="eyebrow">QUIET WORKBENCH</span>
               <h2>在左侧选一张织片</h2>
-              <p>{cloudMode ? <>阅读已由浏览器扩展剪藏的 Markdown。<br />云端版当前提供搜索与只读浏览。</> : <>阅读原文、整理标签，或直接修改 Markdown。<br />你的文字会留在本地。</>}</p>
+              <p>{cloudMode ? <>选择一篇知识后可阅读、编辑 Markdown、翻译或生成 AI 派生内容。<br />重要变更前可在“数据安全”创建 R2 留档。</> : <>阅读原文、整理标签，或直接修改 Markdown。<br />你的文字会留在本地。</>}</p>
             </div>
           ) : detailLoading && !currentDoc ? (
             <StatePanel kind="loading" title="正在展开织片" />
@@ -3303,7 +3303,6 @@ export default function App() {
                   <button type="button" className="history-button" onClick={toggleDerived} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen} aria-controls="derived-knowledge">AI 派生</button>
                   <button type="button" className="history-button translation-button" onClick={openTranslation} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen && derivedPreferredType === "translation"} aria-controls="derived-knowledge">翻译</button>
                 </div>
-                <p className="notice warning">云端已支持扩展剪藏、搜索、阅读、Markdown 编辑和 AI 派生；留档与直接抓取正在继续迁移。</p>
               </header>
               <DerivedKnowledge cloud document={currentDoc} open={derivedOpen} preferredType={derivedPreferredType} onTypeChange={setDerivedPreferredType} onClose={() => setDerivedOpen(false)} generationBlockedReason={derivedBlockedReason} onAdoptTags={async () => undefined} />
               {needsCapturePolling(currentDoc) ? <div className="capture-progress" aria-live="polite"><div className="progress-orbit"><i /><i /><span>织</span></div><h3>{STATUS_LABEL[currentDoc.status]}</h3><p>Cloudflare Queue 与 Browser Run 正在处理，完成后会自动刷新。</p></div> : currentDoc.status === "failed" ? <div className="capture-failed" role="alert"><span className="failure-code">{currentDoc.errorCode || "BROWSER_FAILED"}</span><h3>这张网页没有抓取成功</h3><p>{userErrorMessage(currentDoc.errorCode ?? "BROWSER_FAILED")}</p><button type="button" className="primary-button" onClick={() => void retryCapture()} disabled={retrying}>{retrying ? "重试中…" : "重新抓取"}</button></div> : cloudEditing ? <div className="editor-workbench">
