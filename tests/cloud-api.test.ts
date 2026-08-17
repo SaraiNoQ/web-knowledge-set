@@ -192,7 +192,10 @@ test("cloud translation disables DeepSeek thinking and reserves a complete outpu
   let requestBody: Record<string, unknown> = {};
   globalThis.fetch = async (_input, init) => {
     requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "# 你好\n\n阅读[文档](https://example.com/docs)。" } }] }), {
+    const messages = requestBody.messages as Array<{ content: string }>;
+    const pieces = JSON.parse(messages[1]!.content) as Array<{ id: string; text: string }>;
+    const content = JSON.stringify(pieces.map(({ id, text }) => ({ id, text: `译${text}` })));
+    return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content } }] }), {
       headers: { "Content-Type": "application/json" },
     });
   };
@@ -207,6 +210,8 @@ test("cloud translation disables DeepSeek thinking and reserves a complete outpu
     });
     const result = await handleAiApi(taskRequest, db, new URL(taskRequest.url));
     assert.equal(result?.status, 201);
+    assert.match(String((result?.body as { result: { output: string } }).result.output), /^# 译Hello/mu);
+    assert.match(String((result?.body as { result: { output: string } }).result.output), /\]\(https:\/\/example\.com\/docs\)/u);
     assert.equal(requestBody.max_tokens, 16_384);
     assert.deepEqual(requestBody.thinking, { type: "disabled" });
   } finally {

@@ -28,6 +28,7 @@ const PROVIDERS = new Set([
   "https://openrouter.ai/api/v1/chat/completions",
 ]);
 const TYPES = new Set<DerivedResultType>(["summary", "outline", "keywords", "translation"]);
+const HTML_VOID_ELEMENTS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
 const gfmData: { micromarkExtensions?: unknown[]; fromMarkdownExtensions?: unknown[] } = {};
 (remarkGfm as unknown as (this: { data: () => typeof gfmData }) => void).call({ data: () => gfmData });
 const markdownOptions: FromMarkdownOptions = {
@@ -45,7 +46,17 @@ interface MarkdownNode {
   start?: number | null;
   align?: Array<string | null>;
   identifier?: string;
+  position?: { start: { offset?: number }; end: { offset?: number } };
   children?: MarkdownNode[];
+}
+
+interface TranslationSegment {
+  id: string;
+  start: number;
+  end: number;
+  leading: string;
+  trailing: string;
+  text: string;
 }
 
 interface LlmSettingsValue extends Omit<LlmSettings, "revision" | "apiKeyConfigured"> {}
@@ -158,10 +169,75 @@ function skeleton(node: MarkdownNode): unknown {
   };
 }
 
-function verifyTranslation(source: string, output: string) {
-  if (frontMatter(source) !== frontMatter(output) || JSON.stringify(skeleton(fromMarkdown(source, markdownOptions) as MarkdownNode)) !== JSON.stringify(skeleton(fromMarkdown(output, markdownOptions) as MarkdownNode))) {
-    throw new CloudHttpError(502, "LLM_TRANSLATION_STRUCTURE_CHANGED", "The model changed protected Markdown structure");
+function translationPlan(markdown: string) {
+  const protectedUntil = frontMatter(markdown).length;
+  const segments: TranslationSegment[] = [];
+  const visit = (node: MarkdownNode, parent?: MarkdownNode, protectedByHtml = false) => {
+    if (!protectedByHtml && node.type === "text" && typeof node.value === "string") {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      const autolink = parent?.type === "link" && parent.position?.start.offset === start && parent.position?.end.offset === end;
+      const bareLink = parent?.type === "link" && (parent.url === node.value || parent.url === `mailto:${node.value}` || autolink);
+      const leading = /^\s*/u.exec(node.value)?.[0] ?? "";
+      const trailing = /\s*$/u.exec(node.value)?.[0] ?? "";
+      const text = node.value.slice(leading.length, node.value.length - trailing.length);
+      if (!bareLink && text && Number.isSafeInteger(start) && Number.isSafeInteger(end) && start! >= protectedUntil && end! > start! && end! <= markdown.length) {
+        if (segments.length >= 5_000) throw new CloudHttpError(413, "LLM_TRANSLATION_TOO_LARGE", "Document contains too many translation segments");
+        segments.push({ id: `s${segments.length + 1}`, start: start!, end: end!, leading, trailing, text });
+      }
+    }
+    let htmlDepth = 0;
+    for (const child of node.children ?? []) {
+      if (child.type === "html" && typeof child.value === "string") {
+        const closing = /^\s*<\/\s*([a-z][\w:-]*)[^>]*>/iu.exec(child.value);
+        if (closing) htmlDepth = Math.max(0, htmlDepth - 1);
+        visit(child, node, protectedByHtml || htmlDepth > 0);
+        const opening = /^\s*<\s*([a-z][\w:-]*)(?:\s|\/?>)/iu.exec(child.value);
+        const name = opening?.[1]?.toLowerCase();
+        if (name && !HTML_VOID_ELEMENTS.has(name) && !/\/\s*>\s*$/u.test(child.value) && !closing) htmlDepth += 1;
+      } else {
+        visit(child, node, protectedByHtml || htmlDepth > 0);
+      }
+    }
+  };
+  visit(fromMarkdown(markdown, markdownOptions) as MarkdownNode);
+  if (!segments.length) throw new CloudHttpError(400, "LLM_TRANSLATION_EMPTY", "Document contains no translatable Markdown text");
+  const sentText = JSON.stringify(segments.map(({ id, text }) => ({ id, text })));
+  if (encoder.encode(sentText).byteLength > 128 * 1024) throw new CloudHttpError(413, "LLM_TRANSLATION_TOO_LARGE", "Translation payload exceeds the cloud request limit");
+  return { segments, sentText };
+}
+
+function escapedMarkdownText(value: string) {
+  return value.replace(/&/gu, "&amp;").replace(/[\\`*{}\[\]()<>#+\-.!_|]/gu, "\\$&");
+}
+
+function applyTranslation(markdown: string, plan: ReturnType<typeof translationPlan>, responseText: string) {
+  let parsed: unknown;
+  try { parsed = JSON.parse(responseText); }
+  catch { throw new CloudHttpError(502, "LLM_INVALID_TRANSLATION", "Translation response is not JSON"); }
+  if (!Array.isArray(parsed) || parsed.length !== plan.segments.length) {
+    throw new CloudHttpError(502, "LLM_INVALID_TRANSLATION", "Translation response did not contain every segment");
   }
+  const expected = new Set(plan.segments.map(({ id }) => id));
+  const translated = new Map<string, string>();
+  for (const item of parsed) {
+    const record = item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : {};
+    if (Object.keys(record).some((key) => key !== "id" && key !== "text") || typeof record.id !== "string" || typeof record.text !== "string" || !expected.has(record.id) || translated.has(record.id)) {
+      throw new CloudHttpError(502, "LLM_INVALID_TRANSLATION", "Translation response changed a segment identifier");
+    }
+    const text = record.text.replace(/\r\n?/gu, "\n").trim();
+    if (!text || text.includes("\n") || text.length > 20_000) throw new CloudHttpError(502, "LLM_INVALID_TRANSLATION", "Translation segment is invalid");
+    translated.set(record.id, text);
+  }
+  let output = markdown;
+  for (const segment of [...plan.segments].reverse()) {
+    const text = `${segment.leading}${escapedMarkdownText(translated.get(segment.id)!)}${segment.trailing}`;
+    output = `${output.slice(0, segment.start)}${text}${output.slice(segment.end)}`;
+  }
+  if (frontMatter(markdown) !== frontMatter(output) || JSON.stringify(skeleton(fromMarkdown(markdown, markdownOptions) as MarkdownNode)) !== JSON.stringify(skeleton(fromMarkdown(output, markdownOptions) as MarkdownNode))) {
+    throw new CloudHttpError(502, "LLM_INVALID_TRANSLATION", "Translated text changed protected Markdown structure");
+  }
+  return output;
 }
 
 function previewSource(title: string, markdown: string, type: DerivedResultType) {
@@ -176,7 +252,7 @@ function previewSource(title: string, markdown: string, type: DerivedResultType)
 }
 
 function systemPrompt(type: DerivedResultType, language: TranslationLanguage | null) {
-  if (type === "translation") return `Translate the supplied Markdown into ${TRANSLATION_LANGUAGES[language!]} and return only Markdown. Preserve front matter, headings, lists, tables, links, image targets, HTML, inline code and code blocks exactly except for natural-language text.`;
+  if (type === "translation") return `Translate only each text field into ${TRANSLATION_LANGUAGES[language!]}. Input is a JSON array of {id,text}. Return only a JSON array with every original id exactly once and translated single-line plain text. Do not add Markdown.`;
   if (type === "outline") return "Create a concise hierarchical Markdown outline from the supplied document. Return only Markdown.";
   if (type === "keywords") return "Return 5-12 concise keywords from the supplied document, one per line, without commentary.";
   return "Create a concise faithful Markdown summary from the supplied document. Return only the summary.";
@@ -295,7 +371,7 @@ export async function handleAiApi(request: Request, db: D1Database, url: URL): P
     if (type === "translation" && !language) throw new CloudHttpError(400, "INVALID_TRANSLATION_LANGUAGE", "Translation target language is required");
     const source = previewSource(document.title, document.markdown, type);
     const inputHash = await sha256(`${document.revision}\0${document.title}\0${document.markdown}`);
-    const sentTexts = [source.sent];
+    const sentTexts = [type === "translation" ? translationPlan(document.markdown).sentText : source.sent];
     const settings = row.value.remote;
     const preview: DerivedPreview = {
       type, targetLanguage: language, revision: document.revision, inputHash,
@@ -323,7 +399,8 @@ export async function handleAiApi(request: Request, db: D1Database, url: URL): P
       ? body.targetLanguage as TranslationLanguage : null;
     const source = previewSource(document.title, document.markdown, type);
     const inputHash = await sha256(`${document.revision}\0${document.title}\0${document.markdown}`);
-    const sentTexts = [source.sent];
+    const translation = type === "translation" ? translationPlan(document.markdown) : null;
+    const sentTexts = [translation ? translation.sentText : source.sent];
     const epoch = await db.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'").first<{ value: string }>();
     if (!epoch) throw new CloudHttpError(503, "CLOUD_NOT_INITIALIZED", "Cloud data epoch is missing");
     if (body.inputHash !== inputHash || body.sendHash !== await sha256(JSON.stringify(sentTexts))) throw new CloudHttpError(409, "DOCUMENT_CHANGED", "Confirmed AI payload is stale");
@@ -333,7 +410,7 @@ export async function handleAiApi(request: Request, db: D1Database, url: URL): P
       row.value.remote.model,
       key(request),
       systemPrompt(type, language),
-      source.sent,
+      sentTexts[0]!,
       type === "translation" ? 16_384 : 4_096,
       type === "translation",
       type === "translation" ? 120_000 : 30_000,
@@ -341,11 +418,11 @@ export async function handleAiApi(request: Request, db: D1Database, url: URL): P
     if (type === "translation" && completed.finishReason === "length") {
       throw new CloudHttpError(502, "LLM_RESPONSE_TRUNCATED", "The translation exceeded the model output limit");
     }
-    if (type === "translation") verifyTranslation(source.sent, completed.output);
+    const output = translation ? applyTranslation(document.markdown, translation, completed.output) : completed.output;
     const result: DerivedResult = {
       id: crypto.randomUUID(), documentId: document.id, type, targetLanguage: language, model: row.value.remote.model,
       endpointId: await endpointId(row.value.remote.endpointUrl), promptVersion: type === "translation" ? `cloud-translation-v1-p${MAX_INPUT_CHARS}:${language}` : `cloud-${type}-v1-p${MAX_INPUT_CHARS}`,
-      inputHash, output: completed.output, durationMs: Date.now() - started,
+      inputHash, output, durationMs: Date.now() - started,
       usage: completed.usage ? { inputTokens: completed.usage.prompt_tokens, outputTokens: completed.usage.completion_tokens, totalTokens: completed.usage.total_tokens } : null,
       sourceChars: document.markdown.length, sentChars: source.sent.length, truncated: source.truncated,
       pinned: false, stale: false, createdAt: new Date().toISOString(),
