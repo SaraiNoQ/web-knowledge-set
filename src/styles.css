@@ -1634,7 +1634,12 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .ai-connection-test { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 7px 11px; padding-top: 4px; }
 .ai-connection-test button { min-height: 34px; padding: 0 12px; color: var(--ink-soft); background: transparent; border: 1px solid var(--line-strong); font-size: var(--font-small); }
 .ai-connection-test small { color: var(--ink-faint); font-size: var(--font-caption); line-height: 1.55; }
-.ai-connection-test p { grid-column: 1 / -1; margin: 0; padding: 9px 10px; color: #465040; background: rgba(101,112,90,.06); border: 1px solid rgba(101,112,90,.3); font-size: var(--font-caption); line-height: 1.55; }
+.ai-test-result { grid-column: 1 / -1; display: grid; gap: 5px; margin-top: 5px; padding: 15px 17px; border: 2px solid; font-size: var(--font-ui); line-height: 1.55; }
+.ai-test-result strong { font: 650 20px/1.25 var(--font-sans); }
+.ai-test-result span { font-weight: 550; }
+.ai-test-result small { font-size: var(--font-caption); }
+.ai-test-result.is-success { color: #384431; background: rgba(101,112,90,.12); border-color: #65705a; }
+.ai-test-result.is-error { color: #982f20; background: rgba(189,65,44,.09); border-color: var(--vermilion); }
 .ai-privacy-note { grid-column: 1 / -1; display: grid; grid-template-columns: 150px minmax(180px,.5fr) minmax(300px,1fr); align-items: start; gap: 20px; background: #ebe4d4; border-color: var(--line-strong); }
 .ai-privacy-note > span { color: var(--vermilion-dark); font: 600 var(--font-caption)/1.4 var(--font-mono); letter-spacing: .08em; }
 .ai-privacy-note p { margin: 0; color: var(--ink-soft); font-size: var(--font-small); line-height: 1.75; }
@@ -1753,7 +1758,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   .derived-options fieldset button:last-child { border-bottom: 0; }
   .derived-preview dl { grid-template-columns: 1fr; }
   .ai-connection-test { grid-template-columns: 1fr; }
-  .ai-connection-test p { grid-column: auto; }
+  .ai-test-result { grid-column: auto; }
   .derived-task { align-items: stretch; flex-direction: column; }
   .derived-task button, .derived-preview > div:last-child button { min-height: 34px; }
 }

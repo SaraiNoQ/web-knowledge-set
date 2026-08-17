@@ -221,10 +221,13 @@ async function complete(endpointUrl: string, modelName: string, apiKey: string, 
   if (response.status === 401 || response.status === 403) throw new CloudHttpError(401, "LLM_AUTH_FAILED", "LLM credentials were rejected");
   if (response.status === 429) throw new CloudHttpError(429, "LLM_RATE_LIMITED", "LLM rate limit reached");
   if (!response.ok) throw new CloudHttpError(502, "LLM_PROTOCOL_REJECTED", "LLM endpoint rejected the request");
-  let payload: { choices?: Array<{ message?: { content?: unknown } }>; usage?: Record<string, number> };
+  let payload: { choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown } }>; usage?: Record<string, number> };
   try { payload = JSON.parse(text) as typeof payload; }
   catch { throw new CloudHttpError(502, "LLM_INVALID_RESPONSE", "LLM response is not JSON"); }
-  const output = payload.choices?.[0]?.message?.content;
+  const message = payload.choices?.[0]?.message;
+  const output = typeof message?.content === "string" && message.content.trim()
+    ? message.content
+    : message?.reasoning_content;
   if (typeof output !== "string" || !output.trim()) throw new CloudHttpError(502, "LLM_INVALID_RESPONSE", "LLM response has no text content");
   if (output.includes(apiKey)) throw new CloudHttpError(502, "LLM_SECRET_ECHO", "LLM response contained the API key");
   return { output: output.trim(), usage: payload.usage ?? null };
@@ -263,8 +266,7 @@ export async function handleAiApi(request: Request, db: D1Database, url: URL): P
     const endpointUrl = endpoint(body.endpointUrl);
     const modelName = model(body.model);
     const started = Date.now();
-    const value = await complete(endpointUrl, modelName, key(request), "This is a connection test. Reply with exactly ZHIYE_OK.", "ZHIYE_OK", 16);
-    if (value.output !== "ZHIYE_OK") throw new CloudHttpError(502, "LLM_INVALID_RESPONSE", "LLM connection probe returned unexpected content");
+    await complete(endpointUrl, modelName, key(request), "This is a connection test. Reply briefly.", "ZHIYE_OK", 16);
     return { body: { ok: true, target: "remote", model: modelName, endpointId: await endpointId(endpointUrl), durationMs: Date.now() - started } };
   }
   if (url.pathname === "/api/settings/llm/disable" && request.method === "POST") {

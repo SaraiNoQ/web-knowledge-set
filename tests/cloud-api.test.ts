@@ -133,7 +133,7 @@ test("cloud AI probe uses a page-scoped key without echoing it", async () => {
   let authorization = "";
   globalThis.fetch = async (_input, init) => {
     authorization = new Headers(init?.headers).get("Authorization") || "";
-    return new Response(JSON.stringify({ choices: [{ message: { content: "ZHIYE_OK" } }] }), {
+    return new Response(JSON.stringify({ choices: [{ message: { content: "Connection is working." } }] }), {
       headers: { "Content-Type": "application/json" },
     });
   };

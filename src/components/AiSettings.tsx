@@ -45,6 +45,7 @@ export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<LlmConnectionTestResult | null>(null);
+  const [testError, setTestError] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -58,6 +59,7 @@ export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
   const locked = saving || testing;
   const clearTestResult = () => {
     setTestResult(null);
+    setTestError("");
     setError("");
   };
 
@@ -185,6 +187,7 @@ export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
     setError("");
     setNotice("");
     setTestResult(null);
+    setTestError("");
     try {
       const updated = await api.updateLlmSettings({
         enabled,
@@ -213,13 +216,14 @@ export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
     setError("");
     setNotice("");
     setTestResult(null);
+    setTestError("");
     try {
       setTestResult(await api.testLlmConnection(
         target === "remote" ? { target, endpointUrl, model } : { target, endpointUrl, model, trusted: true },
         controller.signal,
       ));
     } catch (cause) {
-      if (!isAbortError(cause)) setError(userErrorFrom(cause, "AI 连接测试失败，请检查端点、模型和网络。"));
+      if (!isAbortError(cause)) setTestError(userErrorFrom(cause, "AI 连接测试失败，请检查密钥、模型和网络。"));
     } finally {
       if (testController.current === controller) {
         testController.current = null;
@@ -304,7 +308,8 @@ export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
             <div className="ai-connection-test">
               <button type="button" onClick={() => void testConnection()} disabled={locked || (target === "remote" ? !remoteUrl.trim() || !remoteModel.trim() || !processKeyConfigured || Boolean(apiKey.trim()) : !localUrl.trim() || !localModel.trim() || !localTrusted)}>{testing ? "测试中…" : "测试连接"}</button>
               <small>{target === "remote" && apiKey.trim() ? "先保存密钥，再测试该密钥与当前端点。" : "只发送固定探针，不发送文档；远程供应商可能收取小额费用。"}</small>
-              {testResult && <p role="status">固定探针连接成功 · {testResult.target === "remote" ? "远程" : "本机"} · {testResult.model} · {testResult.durationMs} ms。未发送正文，也未保存或启用当前设置；远程测试可能产生小额费用。</p>}
+              {testResult && <div className="ai-test-result is-success" role="status"><strong>连接成功</strong><span>{testResult.target === "remote" ? "远程" : "本机"} · {testResult.model} · {testResult.durationMs} ms</span><small>固定探针未发送正文；远程供应商可能收取小额费用。</small></div>}
+              {testError && <div className="ai-test-result is-error" role="alert"><strong>连接失败</strong><span>{testError}</span><small>密钥不会因测试失败而写入 D1 或留档。</small></div>}
             </div>
           </section>
 
