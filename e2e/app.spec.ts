@@ -180,6 +180,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   });
   await page.goto("/");
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  await deferSetup.or(page.getByLabel("网页地址")).first().waitFor();
   if (await deferSetup.isVisible()) await deferSetup.click();
   await page.getByLabel("网页地址").fill("https://example.com/ai-lifecycle");
   await page.getByRole("button", { name: "收取网页" }).click();
@@ -200,6 +201,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(page.getByText("当前进程已加载当前平台密钥", { exact: false })).toBeVisible();
   await page.reload();
   const deferAfterReload = page.getByRole("button", { name: "稍后设置" });
+  await deferAfterReload.or(page.getByRole("button", { name: "AI 设置", exact: true })).first().waitFor();
   if (await deferAfterReload.isVisible()) await deferAfterReload.click();
   await page.getByRole("button", { name: "AI 设置", exact: true }).click();
   await expect(page.getByText("当前进程已加载当前平台密钥", { exact: false })).toBeVisible();
@@ -243,8 +245,8 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
     model: "fake-e2e-model",
     trusted: true,
   });
-  await expect(page.getByText("固定探针连接成功", { exact: false })).toBeVisible({ timeout: 8_000 });
-  await expect(page.getByText("未发送正文，也未保存或启用当前设置", { exact: false })).toBeVisible();
+  await expect(page.getByRole("status").getByText("连接成功", { exact: true })).toBeVisible({ timeout: 8_000 });
+  await expect(page.getByText("固定探针未发送正文", { exact: false })).toBeVisible();
   const persistedBeforeSave = await page.evaluate(() => fetch("/api/settings/llm").then((response) => response.json())) as {
     enabled: boolean;
     local: { model: string };
@@ -253,7 +255,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   expect(persistedBeforeSave.local.model).not.toBe("fake-e2e-model");
 
   await page.getByLabel("AI 本地端点地址").fill("http://127.0.0.1:4176/v1/chat/completions");
-  await expect(page.getByText("固定探针连接成功", { exact: false })).toHaveCount(0);
+  await expect(page.getByRole("status").getByText("连接成功", { exact: true })).toHaveCount(0);
   await page.getByText("我信任这个本机端点", { exact: false }).click();
   const failedProbe = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/settings/llm/test");
   await page.getByRole("button", { name: "测试连接" }).click();
@@ -274,8 +276,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await panel.getByRole("button", { name: "预览摘要发送范围" }).click();
   await expect(panel.getByLabel("将发送给模型的准确文本")).toContainText("AI 生命周期文章");
   await expect(panel.getByText("http://127.0.0.1:4175/v1/chat/completions")).toBeVisible();
-  await panel.getByText("我已核对上方准确文本", { exact: false }).click();
-  await panel.getByRole("button", { name: "确认发送并生成" }).click();
+  await panel.getByRole("button", { name: "发送并生成" }).click();
   await expect(panel.getByText("摘要正在生成")).toBeVisible();
   await panel.getByRole("button", { name: "取消任务" }).click();
   await expect(panel.getByText("摘要已取消")).toBeVisible();
@@ -293,8 +294,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await page.getByRole("button", { name: "AI 派生", exact: true }).click();
   await panel.getByRole("button", { name: "标签建议", exact: true }).click();
   await panel.getByRole("button", { name: "预览标签建议发送范围" }).click();
-  await panel.getByText("我已核对上方准确文本", { exact: false }).click();
-  await panel.getByRole("button", { name: "确认发送并生成" }).click();
+  await panel.getByRole("button", { name: "发送并生成" }).click();
   const suggested = panel.getByLabel("#人工智能");
   await expect(suggested).toBeVisible({ timeout: 5_000 });
   await expect(suggested).not.toBeChecked();
@@ -325,7 +325,6 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(panel.getByLabel("将发送给模型的准确文本")).toContainText("超长原文");
   const nextBatch = panel.getByRole("button", { name: "下一批" });
   await expect(nextBatch).toBeEnabled();
-  await expect(panel.getByText("我已核对上方准确文本", { exact: false })).toHaveCount(0);
   let reviewedBatches = 1;
   while (await nextBatch.isEnabled()) {
     await nextBatch.click();
@@ -334,9 +333,8 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   expect(reviewedBatches).toBeGreaterThanOrEqual(2);
   await panel.getByRole("button", { name: "上一批" }).click();
   await nextBatch.click();
-  await panel.getByText("我已核对上方准确文本", { exact: false }).click();
   const translationRequest = page.waitForRequest((request) => request.method() === "POST" && /\/derived-task$/u.test(new URL(request.url()).pathname));
-  await panel.getByRole("button", { name: "确认发送并生成" }).click();
+  await panel.getByRole("button", { name: "发送并生成" }).click();
   expect((await translationRequest).postDataJSON()).toMatchObject({ sendHash: expect.any(String) });
   await expect(panel.getByText("翻译 · English正在生成")).toBeVisible();
   await expect(panel.getByText(/批次进度 [1-9]\d* \/ \d+/u)).toBeVisible({ timeout: 8_000 });

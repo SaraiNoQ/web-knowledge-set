@@ -205,14 +205,16 @@ async function limitedText(response: Response) {
   return new TextDecoder().decode(bytes);
 }
 
-async function complete(endpointUrl: string, modelName: string, apiKey: string, system: string, user: string, maxTokens = 4096) {
+async function complete(endpointUrl: string, modelName: string, apiKey: string, system: string, user: string, maxTokens = 4096, disableThinking = false, timeoutMs = 30_000) {
   let response: Response;
   try {
+    const body: Record<string, unknown> = { model: modelName, temperature: 0, max_tokens: maxTokens, messages: [{ role: "system", content: system }, { role: "user", content: user }] };
+    if (disableThinking && endpointUrl === "https://api.deepseek.com/chat/completions") body.thinking = { type: "disabled" };
     response = await fetch(endpointUrl, {
       method: "POST",
       headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: modelName, temperature: 0, max_tokens: maxTokens, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
-      signal: AbortSignal.timeout(30_000),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     throw new CloudHttpError(502, (error as Error).name === "TimeoutError" ? "LLM_TIMEOUT" : "LLM_NETWORK_ERROR", "LLM request failed");
@@ -221,7 +223,7 @@ async function complete(endpointUrl: string, modelName: string, apiKey: string, 
   if (response.status === 401 || response.status === 403) throw new CloudHttpError(401, "LLM_AUTH_FAILED", "LLM credentials were rejected");
   if (response.status === 429) throw new CloudHttpError(429, "LLM_RATE_LIMITED", "LLM rate limit reached");
   if (!response.ok) throw new CloudHttpError(502, "LLM_PROTOCOL_REJECTED", "LLM endpoint rejected the request");
-  let payload: { choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown } }>; usage?: Record<string, number> };
+  let payload: { choices?: Array<{ finish_reason?: unknown; message?: { content?: unknown; reasoning_content?: unknown } }>; usage?: Record<string, number> };
   try { payload = JSON.parse(text) as typeof payload; }
   catch { throw new CloudHttpError(502, "LLM_INVALID_RESPONSE", "LLM response is not JSON"); }
   const message = payload.choices?.[0]?.message;
@@ -230,7 +232,7 @@ async function complete(endpointUrl: string, modelName: string, apiKey: string, 
     : message?.reasoning_content;
   if (typeof output !== "string" || !output.trim()) throw new CloudHttpError(502, "LLM_INVALID_RESPONSE", "LLM response has no text content");
   if (output.includes(apiKey)) throw new CloudHttpError(502, "LLM_SECRET_ECHO", "LLM response contained the API key");
-  return { output: output.trim(), usage: payload.usage ?? null };
+  return { output: output.trim(), usage: payload.usage ?? null, finishReason: typeof payload.choices?.[0]?.finish_reason === "string" ? payload.choices[0].finish_reason : null };
 }
 
 function resultRow(row: Record<string, unknown>, revision: number): DerivedResult {
@@ -326,7 +328,19 @@ export async function handleAiApi(request: Request, db: D1Database, url: URL): P
     if (!epoch) throw new CloudHttpError(503, "CLOUD_NOT_INITIALIZED", "Cloud data epoch is missing");
     if (body.inputHash !== inputHash || body.sendHash !== await sha256(JSON.stringify(sentTexts))) throw new CloudHttpError(409, "DOCUMENT_CHANGED", "Confirmed AI payload is stale");
     const started = Date.now();
-    const completed = await complete(row.value.remote.endpointUrl, row.value.remote.model, key(request), systemPrompt(type, language), source.sent);
+    const completed = await complete(
+      row.value.remote.endpointUrl,
+      row.value.remote.model,
+      key(request),
+      systemPrompt(type, language),
+      source.sent,
+      type === "translation" ? 16_384 : 4_096,
+      type === "translation",
+      type === "translation" ? 120_000 : 30_000,
+    );
+    if (type === "translation" && completed.finishReason === "length") {
+      throw new CloudHttpError(502, "LLM_RESPONSE_TRUNCATED", "The translation exceeded the model output limit");
+    }
     if (type === "translation") verifyTranslation(source.sent, completed.output);
     const result: DerivedResult = {
       id: crypto.randomUUID(), documentId: document.id, type, targetLanguage: language, model: row.value.remote.model,

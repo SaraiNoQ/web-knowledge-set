@@ -94,7 +94,6 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
   const [targetLanguage, setTargetLanguage] = useState<TranslationLanguage>("zh-CN");
   const [preview, setPreview] = useState<DerivedPreview | null>(null);
   const [previewBatch, setPreviewBatch] = useState(0);
-  const [confirmed, setConfirmed] = useState(false);
   const [markdownResults, setMarkdownResults] = useState<Set<string>>(() => new Set());
   const [selectedTags, setSelectedTags] = useState<{ resultId: string; tags: string[] }>({ resultId: "", tags: [] });
   const [busy, setBusy] = useState(false);
@@ -115,7 +114,6 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
     setLoading(true);
     setPreview(null);
     setPreviewBatch(0);
-    setConfirmed(false);
     setMarkdownResults(new Set());
     setSelectedTags({ resultId: "", tags: [] });
     setError("");
@@ -153,7 +151,6 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
         setTask(updated);
         if (updated.status === "succeeded") {
           setPreview(null);
-          setConfirmed(false);
           setNotice(`${typeLabel(updated.type, updated.targetLanguage)}已生成，正文与标签均未修改。`);
           void loadResults(1);
         }
@@ -171,7 +168,6 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
       const value = await api.previewDerivedResult(document.id, type, document.revision, type === "translation" ? targetLanguage : undefined);
       setPreview(value);
       setPreviewBatch(0);
-      setConfirmed(false);
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
@@ -180,7 +176,7 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
   };
 
   const start = async () => {
-    if (!preview || !confirmed) return;
+    if (!preview) return;
     setBusy(true);
     setError("");
     setNotice("");
@@ -189,7 +185,6 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
       setTask(started);
       if (started.status === "succeeded") {
         setPreview(null);
-        setConfirmed(false);
         setNotice(cloud ? `${typeLabel(started.type, started.targetLanguage)}已生成并保存；正文未修改。` : `${typeLabel(started.type, started.targetLanguage)}已有相同输入结果，未重复请求模型。`);
         await loadResults(1);
       }
@@ -290,9 +285,9 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
                 <div className="derived-options">
                   <fieldset disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing}>
                     <legend className="sr-only">派生类型</legend>
-                    {(Object.entries(TYPE_LABEL) as Array<[DerivedResultType, string]>).filter(([value]) => !cloud || value !== "tag-suggestions").map(([value, label]) => <button key={value} type="button" aria-pressed={type === value} onClick={() => { onTypeChange(value); setPreview(null); setPreviewBatch(0); setConfirmed(false); }}>{label}</button>)}
+                    {(Object.entries(TYPE_LABEL) as Array<[DerivedResultType, string]>).filter(([value]) => !cloud || value !== "tag-suggestions").map(([value, label]) => <button key={value} type="button" aria-pressed={type === value} onClick={() => { onTypeChange(value); setPreview(null); setPreviewBatch(0); }}>{label}</button>)}
                   </fieldset>
-                  {type === "translation" && <label className="derived-target-language"><span>翻译为</span><select aria-label="翻译目标语言" value={targetLanguage} onChange={(event) => { setTargetLanguage(event.target.value as TranslationLanguage); setPreview(null); setPreviewBatch(0); setConfirmed(false); }} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing}>{(Object.entries(TRANSLATION_LANGUAGES) as Array<[TranslationLanguage, string]>).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
+                  {type === "translation" && <label className="derived-target-language"><span>翻译为</span><select aria-label="翻译目标语言" value={targetLanguage} onChange={(event) => { setTargetLanguage(event.target.value as TranslationLanguage); setPreview(null); setPreviewBatch(0); }} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing}>{(Object.entries(TRANSLATION_LANGUAGES) as Array<[TranslationLanguage, string]>).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
                 </div>
                 {!settings?.enabled && <p className="derived-boundary">AI 当前关闭。历史结果仍可查看；请先到页首“AI 设置”中启用。</p>}
                 {cloudKeyMissing && <p className="derived-boundary">当前浏览器没有此平台的 AI 密钥。历史结果仍可查看；请先到页首“AI 设置”保存密钥。</p>}
@@ -306,8 +301,7 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
                   <dl><div><dt>目标</dt><dd>{preview.target.url}</dd></div><div><dt>模型</dt><dd>{preview.model}</dd></div><div><dt>类型</dt><dd>{typeLabel(preview.type, preview.targetLanguage)}</dd></div></dl>
                   <div className="derived-batch-nav" aria-label="发送批次导航"><button type="button" onClick={() => setPreviewBatch((value) => Math.max(0, value - 1))} disabled={previewBatch === 0}>上一批</button><strong>第 {previewBatch + 1} / {previewBatchCount} 批</strong><button type="button" onClick={() => setPreviewBatch((value) => Math.min(previewBatchCount - 1, value + 1))} disabled={lastPreviewBatch}>下一批</button></div>
                   <pre aria-label="将发送给模型的准确文本">{preview.sentTexts[previewBatch]}</pre>
-                  {lastPreviewBatch && <label className="derived-confirm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /><span>我已核对上方准确文本与网络目标，共 {previewBatchCount} 批，确认本次发送。</span></label>}
-                  <div><button type="button" onClick={() => { setPreview(null); setPreviewBatch(0); setConfirmed(false); }}>取消</button>{lastPreviewBatch && <button type="button" className="primary-button" onClick={() => void start()} disabled={!confirmed || busy}>{busy ? "提交中…" : "确认发送并生成"}</button>}</div>
+                  <div><button type="button" onClick={() => { setPreview(null); setPreviewBatch(0); }}>取消</button>{lastPreviewBatch && <button type="button" className="primary-button" onClick={() => void start()} disabled={busy}>{busy ? "提交中…" : "发送并生成"}</button>}</div>
                 </section>
               )}
 

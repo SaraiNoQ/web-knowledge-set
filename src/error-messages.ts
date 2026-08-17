@@ -46,6 +46,7 @@ const ERROR_MESSAGES: Readonly<Record<string, string>> = {
   LLM_REDIRECT_REJECTED: "AI 端点返回了不允许的重定向，已停止请求。",
   LLM_COMPRESSION_REJECTED: "AI 端点返回了不支持的压缩内容。",
   LLM_RESPONSE_TOO_LARGE: "AI 返回内容超出安全大小限制，已丢弃。",
+  LLM_RESPONSE_TRUNCATED: "AI 返回的译文被模型截断，请缩短正文或更换支持更长输出的模型。",
   LLM_AUTH_FAILED: "AI 端点拒绝了密钥，请检查密钥与端点是否匹配。",
   LLM_RATE_LIMITED: "AI 端点暂时限流，请稍后重试。",
   LLM_HTTP_ERROR: "AI 端点返回错误，请检查模型名称和平台状态。",

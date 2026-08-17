@@ -163,6 +163,57 @@ test("cloud AI probe uses a page-scoped key without echoing it", async () => {
   }
 });
 
+test("cloud translation disables DeepSeek thinking and reserves a complete output budget", async () => {
+  const originalFetch = globalThis.fetch;
+  const settings = {
+    value: JSON.stringify({ enabled: true, target: "remote", remote: { endpointUrl: "https://api.deepseek.com/chat/completions", model: "deepseek-v4-flash" }, local: { endpointUrl: "", model: "", trusted: false } }),
+    revision: 4,
+  };
+  const document = {
+    id: "translation-doc", sourceUrl: "https://example.com/", finalUrl: "https://example.com/", canonicalUrl: "https://example.com/",
+    title: "Hello", author: null, status: "ready", revision: 2, createdAt: "2026-08-18T00:00:00.000Z",
+    updatedAt: "2026-08-18T00:00:00.000Z", publishedAt: null, markdown: "# Hello\n\nRead [the docs](https://example.com/docs).", sourceNote: "test",
+  };
+  const db = {
+    prepare(sql: string) {
+      return {
+        bind() { return this; },
+        async first<T>() {
+          if (sql.includes("llm_settings")) return settings as T;
+          if (sql.includes("cloud_documents")) return document as T;
+          if (sql.includes("data_epoch")) return { value: "cloud-test" } as T;
+          return null;
+        },
+        async all<T>() { return { results: [] as T[], meta: { changes: 0 } }; },
+        async run<T>() { return { results: [] as T[], meta: { changes: 1 } }; },
+      };
+    },
+  };
+  let requestBody: Record<string, unknown> = {};
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "# 你好\n\n阅读[文档](https://example.com/docs)。" } }] }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    const previewRequest = new Request("https://app.example.com/api/documents/translation-doc/derived-preview", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "translation", revision: 2, targetLanguage: "zh-CN" }),
+    });
+    const preview = (await handleAiApi(previewRequest, db, new URL(previewRequest.url)))?.body as Record<string, unknown>;
+    const taskRequest = new Request("https://app.example.com/api/documents/translation-doc/derived-task", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Zhiye-LLM-Key": "test-key" },
+      body: JSON.stringify({ type: "translation", revision: 2, targetLanguage: "zh-CN", inputHash: preview.inputHash, sendHash: preview.sendHash, settingsRevision: 4 }),
+    });
+    const result = await handleAiApi(taskRequest, db, new URL(taskRequest.url));
+    assert.equal(result?.status, 201);
+    assert.equal(requestBody.max_tokens, 16_384);
+    assert.deepEqual(requestBody.thinking, { type: "disabled" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("cloud capture resolves a public target before queueing", async () => {
   const originalFetch = globalThis.fetch;
   let queued: unknown = null;

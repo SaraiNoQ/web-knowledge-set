@@ -1684,8 +1684,6 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .derived-batch-nav strong { color: var(--ink-faint); font: 500 var(--font-caption)/1 var(--font-mono); text-align: center; }
 .derived-batch-nav button { min-height: 30px; padding: 0 10px; color: var(--ink-soft); background: transparent; border: 1px solid var(--line-strong); font-size: var(--font-caption); }
 .derived-preview pre { max-height: 280px; margin: 0; padding: 15px; overflow: auto; color: var(--ink-soft); background: #ece6da; border: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; font: var(--font-small)/1.7 var(--font-mono); }
-.derived-confirm { display: flex; align-items: start; gap: 8px; margin-top: 13px; color: var(--ink-soft); font-size: var(--font-caption); line-height: 1.5; }
-.derived-confirm input { accent-color: var(--vermilion); }
 .derived-preview > div:last-child { display: flex; justify-content: flex-end; gap: 9px; margin-top: 13px; }
 .derived-preview > div:last-child > button:not(.primary-button) { padding: 0 12px; color: var(--ink-soft); background: transparent; border: 1px solid var(--line-strong); font-size: var(--font-caption); }
 .derived-task { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; padding: 13px 16px; color: var(--ink-soft); background: rgba(101,112,90,.07); border-left: 2px solid var(--moss); }
