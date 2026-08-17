@@ -144,9 +144,12 @@ a { color: inherit; }
 .extension-help > p { color: var(--ink-soft); font-size: var(--font-body); }
 .extension-downloads { display: flex; flex-wrap: wrap; gap: 10px; }
 .extension-downloads a { padding: 9px 13px; color: var(--paper); background: var(--ink); text-decoration: none; font-size: var(--font-ui); }
+.extension-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; }
+.extension-actions .primary-button { min-height: 40px; padding: 0 14px; }
 .extension-code { display: flex; align-items: baseline; gap: 14px; margin-top: 14px; padding: 12px; background: rgba(194,60,38,.08); }
 .extension-code strong { color: var(--vermilion-dark); font: 700 24px/1 var(--font-mono); letter-spacing: .15em; }
 .extension-code small { color: var(--ink-soft); }
+.extension-code-empty { margin: 12px 0 0; padding: 10px 12px; border: 1px dashed var(--line-strong); }
 .extension-pairings { margin: 14px 0 0; padding: 0; list-style: none; }
 .extension-pairings li { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
 .extension-pairings button { border: 0; color: var(--vermilion-dark); background: transparent; cursor: pointer; }

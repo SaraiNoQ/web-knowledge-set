@@ -83,7 +83,9 @@ test("opens one keyboard-accessible help and about dialog in normal and recovery
   await expect(help.getByRole("heading", { name: "快速上手" })).toBeVisible();
   await expect(help.getByText(/^v\d+\.\d+\.\d+(?:-[\w.]+)?$/u)).toBeVisible();
   await expect(help.getByText("本地 Web", { exact: true })).toBeVisible();
-  for (const link of await help.getByRole("link").all()) {
+  await help.getByRole("button", { name: "生成 5 分钟配对码" }).click();
+  await expect(help.getByRole("status")).toContainText(/[A-Z2-9]{10}/u);
+  for (const link of await help.getByRole("navigation", { name: "项目帮助链接" }).getByRole("link").all()) {
     await expect(link).toHaveAttribute("target", "_blank");
     await expect(link).toHaveAttribute("rel", /noopener/u);
   }

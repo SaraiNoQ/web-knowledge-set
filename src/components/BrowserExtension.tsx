@@ -45,9 +45,11 @@ export function BrowserExtension() {
       <a href="/extensions/zhiye-clipper-firefox.zip?v=0.2.1" download>下载 Firefox 扩展 0.2.1</a>
     </div>
     <p>升级时请先覆盖旧解压目录并点“重新加载”。Chrome 在扩展管理页加载目录；Firefox 在 about:debugging 临时加载 manifest.json。</p>
-    <button type="button" className="guide-button" onClick={() => void generate()} disabled={busy}>生成 5 分钟配对码</button>
-    <button type="button" className="guide-button" onClick={() => void load().catch((cause) => setError((cause as Error).message))} disabled={busy}>刷新配对列表</button>
-    {code && <output className="extension-code" aria-live="polite"><strong>{code.code}</strong><small>仅可使用一次，{new Date(code.expiresAt).toLocaleTimeString()} 前有效</small></output>}
+    <div className="extension-actions">
+      <button type="button" className="primary-button" onClick={() => void generate()} disabled={busy}>{busy ? "生成中…" : "生成 5 分钟配对码"}</button>
+      <button type="button" className="guide-button" onClick={() => void load().catch((cause) => setError((cause as Error).message))} disabled={busy}>刷新已配对浏览器</button>
+    </div>
+    {code ? <div className="extension-code" role="status" aria-live="polite"><strong>{code.code}</strong><small>仅可使用一次，{new Date(code.expiresAt).toLocaleTimeString()} 前有效</small></div> : <p className="extension-code-empty">点击上方红色按钮后，配对码会显示在这里。</p>}
     {pairings.length > 0 && <ul className="extension-pairings">{pairings.map((pairing) => <li key={pairing.id}>
       <span>{pairing.browser === "chrome" ? "Chrome" : "Firefox"} · {new Date(pairing.createdAt).toLocaleDateString()}</span>
       <button type="button" onClick={() => void revoke(pairing)} disabled={busy}>撤销</button>
