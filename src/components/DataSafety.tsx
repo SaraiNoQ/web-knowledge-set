@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import type { BackupReason, BackupRecord, BackupStatus } from "../../shared/types";
 import { api, ApiRequestError, type DataSafetyStatus, type RestoreBackupResult } from "../api";
 import { userErrorMessage } from "../error-messages";
+import { useDialogs } from "./ui/Feedback";
 
 const reasonLabels: Record<BackupReason, string> = {
   manual: "手动留档",
@@ -47,12 +48,14 @@ function BackupRow({
   busy,
   recovery,
   onVerify,
+  onExport,
   onRestore,
 }: {
   backup: BackupRecord;
   busy: boolean;
   recovery: boolean;
   onVerify: () => void;
+  onExport: () => void;
   onRestore: () => void;
 }) {
   const restorable = backup.status === "verified" && Boolean(backup.directoryName);
@@ -70,15 +73,7 @@ function BackupRow({
       {(backup.errorCode || backup.errorMessage) && <p className="backup-error">{userErrorMessage(backup.errorCode ?? "BACKUP_FAILED")}</p>}
       <div className="backup-actions">
         <button type="button" onClick={onVerify} disabled={busy || recovery || !backup.directoryName}>重新校验</button>
-        {restorable && !busy ? (
-          <a
-            href={api.backupExportUrl(backup.id)}
-            download
-            onClick={(event) => {
-              if (!window.confirm("导出文件未加密，包含完整知识数据。确定继续下载吗？")) event.preventDefault();
-            }}
-          >导出文件</a>
-        ) : <button type="button" disabled>导出文件</button>}
+        <button type="button" onClick={onExport} disabled={busy || !restorable}>导出文件</button>
         <button className="restore-button" type="button" onClick={onRestore} disabled={busy || !restorable}>恢复此留档</button>
       </div>
     </li>
@@ -98,11 +93,16 @@ export function DataSafety({
   onModeChange: (recovery: boolean) => void;
   onDiagnostics: () => void;
 }) {
+  const dialogs = useDialogs();
   const [status, setStatus] = useState<DataSafetyStatus | null>(null);
   const [retention, setRetention] = useState(7);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const statusRef = useRef(status);
+  const busyRef = useRef(busy);
+  statusRef.current = status;
+  busyRef.current = busy;
 
   const refresh = useCallback(async () => {
     const next = await api.getDataSafety();
@@ -125,6 +125,8 @@ export function DataSafety({
   }, [refresh, status]);
 
   const perform = async (name: string, work: () => Promise<unknown>, message: string) => {
+    if (busyRef.current) return;
+    busyRef.current = name;
     setBusy(name);
     setError("");
     setNotice("");
@@ -136,6 +138,7 @@ export function DataSafety({
       setError((cause as Error).message);
       await refresh().catch(() => undefined);
     } finally {
+      busyRef.current = "";
       setBusy("");
     }
   };
@@ -160,37 +163,67 @@ export function DataSafety({
       setError(`留档文件超过 ${cloud ? "8 MiB" : "2 GiB"} 安全上限，无法导入。`);
       return;
     }
-    if (!window.confirm("所选文件未加密，可能包含完整知识数据。导入只会创建已校验留档，不会覆盖当前资料或自动恢复。确定继续吗？")) return;
+    if (!await dialogs.confirm(
+      "所选文件未加密，可能包含完整知识数据。导入只会创建已校验留档，不会覆盖当前资料或自动恢复。确定继续吗？",
+      { title: "导入完整留档", confirmLabel: "继续导入", tone: "warning" },
+    ) || busyRef.current) return;
     await perform("import", () => api.importBackup(file), "留档文件已导入并校验；当前资料未更改。如需切换数据，请再选择“恢复此留档”。");
   };
 
   const verify = (backup: BackupRecord) => perform(`verify:${backup.id}`, () => api.verifyBackup(backup.id), "留档校验完成。");
 
+  const exportBackup = async (backup: BackupRecord) => {
+    if (busyRef.current || !await dialogs.confirm(
+      "导出文件未加密，包含完整知识数据。确定继续下载吗？",
+      { title: "导出完整留档", confirmLabel: "继续下载", tone: "warning" },
+    )) return;
+    const current = statusRef.current?.backups.find((value) => value.id === backup.id);
+    if (busyRef.current || statusRef.current?.maintenance || current?.status !== "verified" || !current.directoryName) return;
+    const link = document.createElement("a");
+    link.href = api.backupExportUrl(current.id);
+    link.download = "";
+    link.hidden = true;
+    document.body.append(link);
+    link.click();
+    link.remove();
+  };
+
   const restore = async (backup: BackupRecord) => {
-    if (!window.confirm(`恢复 ${dateTime(backup.createdAt)} 的留档？当前数据会先另行留档，随后应用将重新载入。`)) return;
-    setBusy(`restore:${backup.id}`);
+    if (busyRef.current || !await dialogs.confirm(
+      `恢复 ${dateTime(backup.createdAt)} 的留档？当前数据会先另行留档，随后应用将重新载入。`,
+      { title: "恢复完整留档", confirmLabel: "开始恢复", tone: "danger" },
+    )) return;
+    const current = statusRef.current?.backups.find((value) => value.id === backup.id);
+    if (busyRef.current || !current || current.status !== "verified" || !current.directoryName) return;
+    const operation = `restore:${current.id}`;
+    busyRef.current = operation;
+    setBusy(operation);
     setError("");
     setNotice("");
     try {
-      if (!cloud && status?.mode === "ready") await beforeOperation();
+      if (!cloud && statusRef.current?.mode === "ready") await beforeOperation();
       let result: RestoreBackupResult;
       try {
-        result = await api.restoreBackup(backup.id);
+        result = await api.restoreBackup(current.id);
       } catch (cause) {
         if (!(cause instanceof ApiRequestError) || cause.code !== "QUARANTINE_REQUIRED") throw cause;
-        if (!window.confirm("当前数据无法完成恢复前留档。继续会把当前数据完整隔离保存，再启用所选留档。仍要继续吗？")) return;
-        result = await api.restoreBackup(backup.id, true);
+        if (!await dialogs.confirm(
+          "当前数据无法完成恢复前留档。继续会把当前数据完整隔离保存，再启用所选留档。仍要继续吗？",
+          { title: "隔离当前数据", confirmLabel: "隔离并恢复", tone: "danger" },
+        ) || busyRef.current !== operation || !statusRef.current?.backups.some((value) => value.id === current.id)) return;
+        result = await api.restoreBackup(current.id, true);
       }
       const warnings = [
         result.quarantinedDataPath && `恢复完成；原有数据已隔离保留在 ${result.quarantinedDataPath}。`,
         result.cleanupPending && "恢复完成，但旧数据目录仍待下次启动清理。",
       ].filter(Boolean);
-      if (warnings.length) window.alert(warnings.join("\n"));
+      if (warnings.length) await dialogs.alert(warnings.join("\n"), { title: "恢复完成", tone: "warning" });
       window.location.reload();
     } catch (cause) {
       setError((cause as Error).message);
       await refresh().catch(() => undefined);
     } finally {
+      busyRef.current = "";
       setBusy("");
     }
   };
@@ -205,7 +238,11 @@ export function DataSafety({
   };
 
   const cleanup = async () => {
-    if (!window.confirm("清理未被数据库引用的网页快照与离线资源？仍在使用的文件不会被删除。")) return;
+    if (busyRef.current || !await dialogs.confirm(
+      "清理未被数据库引用的网页快照与离线资源？仍在使用的文件不会被删除。",
+      { title: "清理未引用文件", confirmLabel: "开始清理", tone: "warning" },
+    ) || busyRef.current || statusRef.current?.maintenance || statusRef.current?.mode === "recovery") return;
+    busyRef.current = "cleanup";
     setBusy("cleanup");
     setError("");
     setNotice("");
@@ -226,6 +263,7 @@ export function DataSafety({
       setError((cause as Error).message);
       await refresh().catch(() => undefined);
     } finally {
+      busyRef.current = "";
       setBusy("");
     }
   };
@@ -335,6 +373,7 @@ export function DataSafety({
                   busy={Boolean(busy) || status.maintenance}
                   recovery={recovery}
                   onVerify={() => void verify(backup)}
+                  onExport={() => void exportBackup(backup)}
                   onRestore={() => void restore(backup)}
                 />
               ))}

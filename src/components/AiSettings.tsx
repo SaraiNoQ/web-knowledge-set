@@ -4,6 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type { LlmApiKeyStatus, LlmConnectionTestResult, LlmSettings } from "../../shared/types";
 import { api } from "../api";
 import { isAbortError, userErrorFrom } from "../error-messages";
+import { Select } from "./ui/Controls";
+import { useDialogs } from "./ui/Feedback";
 
 interface AiSettingsProps {
   cloud?: boolean;
@@ -33,6 +35,7 @@ function endpointValue(value: string) {
 }
 
 export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
+  const dialogs = useDialogs();
   const [settings, setSettings] = useState<LlmSettings | null>(null);
   const [target, setTarget] = useState<LlmSettings["target"]>("remote");
   const [remoteUrl, setRemoteUrl] = useState("");
@@ -57,6 +60,10 @@ export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
   const currentRemoteEndpoint = endpointValue(remoteUrl);
   const processKeyConfigured = Boolean(currentRemoteEndpoint && processKeyEndpoint === currentRemoteEndpoint);
   const locked = saving || testing;
+  const settingsRef = useRef(settings);
+  const lockedRef = useRef(locked);
+  settingsRef.current = settings;
+  lockedRef.current = locked;
   const clearTestResult = () => {
     setTestResult(null);
     setTestError("");
@@ -167,7 +174,11 @@ export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
   };
 
   const deleteApiKey = async () => {
-    if (!window.confirm(desktop ? "从当前进程和 macOS 钥匙串删除远程模型密钥？" : "从当前本地服务进程删除远程模型密钥？")) return;
+    if (lockedRef.current || !await dialogs.confirm(
+      desktop ? "从当前进程和 macOS 钥匙串删除远程模型密钥？" : "从当前本地服务进程删除远程模型密钥？",
+      { title: "删除远程模型密钥", confirmLabel: "删除密钥", tone: "danger" },
+    ) || lockedRef.current) return;
+    lockedRef.current = true;
     setSaving(true);
     setError("");
     setNotice("");
@@ -189,6 +200,7 @@ export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
     } catch (cause) {
       setError(userErrorFrom(cause, `当前进程密钥清除失败，${desktop ? "未改动 macOS 钥匙串。" : "请重试。"}`));
     } finally {
+      lockedRef.current = false;
       setSaving(false);
     }
   };
@@ -245,18 +257,25 @@ export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
   };
 
   const disableAndDelete = async () => {
-    if (!settings || !window.confirm("关闭 AI，并删除所有文档的派生结果？此操作无法撤销。")) return;
+    if (!settingsRef.current || lockedRef.current || !await dialogs.confirm(
+      "关闭 AI，并删除所有文档的派生结果？此操作无法撤销。",
+      { title: "关闭 AI 并删除结果", confirmLabel: "关闭并删除", tone: "danger" },
+    )) return;
+    const current = settingsRef.current;
+    if (!current || lockedRef.current) return;
+    lockedRef.current = true;
     setSaving(true);
     setError("");
     setNotice("");
     setTestResult(null);
     try {
-      const response = await api.disableLlm(settings.revision, true);
+      const response = await api.disableLlm(current.revision, true);
       install(response.settings);
       setNotice(`AI 已关闭，并删除 ${response.deletedResults} 条派生结果。`);
     } catch (cause) {
       setError(userErrorFrom(cause, "无法关闭 AI 或删除派生结果，请稍后重试。"));
     } finally {
+      lockedRef.current = false;
       setSaving(false);
     }
   };
@@ -285,7 +304,7 @@ export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
             {target === "remote" ? <>
               <label>
                 <span>AI 平台</span>
-                <select
+                <Select
                   aria-label="AI 远程平台"
                   value={remoteProvider}
                   onChange={(event) => changeRemoteUrl(REMOTE_PROVIDERS.find((provider) => provider[0] === event.target.value)?.[2] ?? "")}
@@ -293,7 +312,7 @@ export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
                 >
                   {REMOTE_PROVIDERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   {!cloud && <option value="other">其他（手动输入）</option>}
-                </select>
+                </Select>
               </label>
               {remoteProvider === "other" && <label>
                 <span>OpenAI-compatible HTTPS 地址</span>

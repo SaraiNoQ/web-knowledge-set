@@ -1,10 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 import type { OnboardingState } from "../../shared/types";
 import { api, ApiRequestError } from "../api";
 import { userErrorFrom } from "../error-messages";
+import { Modal } from "./ui/Modal";
 
 const steps = [
   { mark: "01", title: "只在你的电脑上", eyebrow: "LOCAL BY DEFAULT" },
@@ -25,19 +26,7 @@ export function Onboarding({ state, onComplete, onLater, revisit = false }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [restartRequired, setRestartRequired] = useState(false);
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const desktop = "__TAURI_INTERNALS__" in window;
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!revisit || !dialog) return;
-    const previousFocus = document.activeElement as HTMLElement | null;
-    dialog.showModal();
-    return () => {
-      if (dialog.open) dialog.close();
-      previousFocus?.focus();
-    };
-  }, [revisit]);
 
   const chooseDirectory = async () => {
     setBusy(true);
@@ -171,13 +160,15 @@ export function Onboarding({ state, onComplete, onLater, revisit = false }: {
   );
 
   return revisit ? (
-    <dialog
-      ref={dialogRef}
+    <Modal
+      open
+      panel={false}
       className="onboarding-dialog"
-      aria-labelledby="onboarding-title"
-      onCancel={(event) => { event.preventDefault(); if (!busy) onLater(); }}
+      title="你的知识，先留在本机"
+      dismissible={!busy && !restartRequired}
+      onClose={onLater}
     >
       {page}
-    </dialog>
+    </Modal>
   ) : <main className="onboarding-frame">{page}</main>;
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -14,6 +14,8 @@ import type {
 } from "../../shared/types";
 import { api } from "../api";
 import { userErrorMessage } from "../error-messages";
+import { Select } from "./ui/Controls";
+import { useDialogs } from "./ui/Feedback";
 
 const TYPE_LABEL: Record<DerivedResultType, string> = {
   summary: "摘要",
@@ -86,6 +88,7 @@ interface DerivedKnowledgeProps {
 }
 
 export function DerivedKnowledge({ cloud = false, document, open, preferredType: type, onTypeChange, onClose, generationBlockedReason, onAdoptTags }: DerivedKnowledgeProps) {
+  const dialogs = useDialogs();
   const [settings, setSettings] = useState<LlmSettings | null>(null);
   const [results, setResults] = useState<DerivedResult[]>([]);
   const [total, setTotal] = useState(0);
@@ -100,6 +103,10 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const resultsRef = useRef(results);
+  const busyRef = useRef(busy);
+  resultsRef.current = results;
+  busyRef.current = busy;
   const cloudKeyMissing = Boolean(cloud && settings?.target === "remote" && !settings.apiKeyConfigured);
 
   const loadResults = useCallback(async (resultPage = page, signal?: AbortSignal) => {
@@ -237,15 +244,22 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
   };
 
   const remove = async (result: DerivedResult) => {
-    if (!window.confirm(`删除这条${typeLabel(result.type, result.targetLanguage)}结果？`)) return;
+    if (busyRef.current || !await dialogs.confirm(
+      `删除这条${typeLabel(result.type, result.targetLanguage)}结果？`,
+      { title: "删除派生结果", confirmLabel: "删除结果", tone: "danger" },
+    )) return;
+    const current = resultsRef.current.find((value) => value.id === result.id);
+    if (busyRef.current || !current) return;
+    busyRef.current = true;
     setBusy(true);
     setError("");
     try {
-      await api.deleteDerivedResult(document.id, result.id);
+      await api.deleteDerivedResult(document.id, current.id);
       await loadResults(page);
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
@@ -287,7 +301,7 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
                     <legend className="sr-only">派生类型</legend>
                     {(Object.entries(TYPE_LABEL) as Array<[DerivedResultType, string]>).filter(([value]) => !cloud || value !== "tag-suggestions").map(([value, label]) => <button key={value} type="button" aria-pressed={type === value} onClick={() => { onTypeChange(value); setPreview(null); setPreviewBatch(0); }}>{label}</button>)}
                   </fieldset>
-                  {type === "translation" && <label className="derived-target-language"><span>翻译为</span><select aria-label="翻译目标语言" value={targetLanguage} onChange={(event) => { setTargetLanguage(event.target.value as TranslationLanguage); setPreview(null); setPreviewBatch(0); }} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing}>{(Object.entries(TRANSLATION_LANGUAGES) as Array<[TranslationLanguage, string]>).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
+                  {type === "translation" && <label className="derived-target-language"><span>翻译为</span><Select aria-label="翻译目标语言" value={targetLanguage} onChange={(event) => { setTargetLanguage(event.target.value as TranslationLanguage); setPreview(null); setPreviewBatch(0); }} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing}>{(Object.entries(TRANSLATION_LANGUAGES) as Array<[TranslationLanguage, string]>).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></label>}
                 </div>
                 {!settings?.enabled && <p className="derived-boundary">AI 当前关闭。历史结果仍可查看；请先到页首“AI 设置”中启用。</p>}
                 {cloudKeyMissing && <p className="derived-boundary">当前浏览器没有此平台的 AI 密钥。历史结果仍可查看；请先到页首“AI 设置”保存密钥。</p>}

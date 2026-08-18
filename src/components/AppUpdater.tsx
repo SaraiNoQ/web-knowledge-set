@@ -4,11 +4,11 @@ import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updat
 
 import { api } from "../api";
 import { userErrorFrom } from "../error-messages";
+import { Modal } from "./ui/Modal";
 
 type Phase = "idle" | "checking" | "current" | "available" | "backing-up" | "installing" | "restarting" | "error";
 
 export function AppUpdater({ beforeOperation, disabled }: { beforeOperation: () => Promise<void>; disabled: boolean }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const updateRef = useRef<Update | null>(null);
   const installedRef = useRef(false);
   const [open, setOpen] = useState(false);
@@ -22,17 +22,6 @@ export function AppUpdater({ beforeOperation, disabled }: { beforeOperation: () 
   useEffect(() => {
     void invoke<boolean>("updater_configured").then(setConfigured).catch(() => undefined);
   }, []);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog || !open) return;
-    const previousFocus = document.activeElement as HTMLElement | null;
-    dialog.showModal();
-    return () => {
-      if (dialog.open) dialog.close();
-      previousFocus?.focus();
-    };
-  }, [open]);
 
   useEffect(() => () => {
     void updateRef.current?.close();
@@ -122,7 +111,7 @@ export function AppUpdater({ beforeOperation, disabled }: { beforeOperation: () 
 
   return <>
     <button type="button" className="local-mark update-link" onClick={() => void checkNow()} disabled={disabled}>检查更新</button>
-    {open && <dialog ref={dialogRef} className="shortcut-backdrop" aria-labelledby="update-title" onCancel={(event) => { event.preventDefault(); close(); }} onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+    {open && <Modal open panel={false} className="shortcut-backdrop" title="应用更新" dismissible={!busy} onClose={close}>
       <section className="shortcut-card update-card">
         <header><div><span className="eyebrow">SIGNED UPDATE</span><h2 id="update-title">应用更新</h2></div><button type="button" onClick={close} disabled={busy} aria-label="稍后更新">×</button></header>
         {phase === "checking" && <p role="status">正在通过 GitHub Releases 检查签名更新…</p>}
@@ -139,6 +128,6 @@ export function AppUpdater({ beforeOperation, disabled }: { beforeOperation: () 
           {phase === "error" && <button type="button" className="primary-button" onClick={() => void (installedRef.current ? restart() : updateRef.current ? install() : checkNow())}>{installedRef.current ? "重试重启" : "重试"}</button>}
         </footer>
       </section>
-    </dialog>}
+    </Modal>}
   </>;
 }

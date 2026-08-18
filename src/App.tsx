@@ -41,6 +41,9 @@ import { Diagnostics } from "./components/Diagnostics";
 import { DerivedKnowledge } from "./components/DerivedKnowledge";
 import { MarkdownEditor } from "./components/MarkdownEditor";
 import { Onboarding } from "./components/Onboarding";
+import { Select } from "./components/ui/Controls";
+import { useDialogs } from "./components/ui/Feedback";
+import { Modal } from "./components/ui/Modal";
 import { userErrorFrom, userErrorMessage } from "./error-messages";
 
 declare const __APP_VERSION__: string;
@@ -481,6 +484,7 @@ function CaptureHistoryPanel({
 }
 
 export default function App() {
+  const dialogs = useDialogs();
   const [items, setItems] = useState<DocumentSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [pageSize, setPageSize] = useState(30);
@@ -516,6 +520,7 @@ export default function App() {
   const [knownTags, setKnownTags] = useState<string[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState("");
+  const [discardPromptOpen, setDiscardPromptOpen] = useState(false);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
@@ -607,14 +612,13 @@ export default function App() {
   const organizationInFlight = useRef(false);
   const organizationPromiseRef = useRef<Promise<unknown> | null>(null);
   const organizationConflictRef = useRef<OrganizationConflict | null>(null);
+  const discardConfirmationRef = useRef(false);
   const selectionContextRef = useRef<string | null>(null);
   const listContextRef = useRef("");
   const itemsContextRef = useRef("");
   const savedFiltersEditedRef = useRef(false);
   const recentFiltersStateRef = useRef<{ filters: SavedFilter[]; revision: number }>({ filters: [], revision: 0 });
   const recentFilterSaveChainRef = useRef<Promise<unknown>>(Promise.resolve());
-  const shortcutDialogRef = useRef<HTMLDialogElement>(null);
-  const bulkImportDialogRef = useRef<HTMLDialogElement>(null);
   const bulkImportAbortRef = useRef<AbortController | null>(null);
   const externalIntentHandlerRef = useRef<(intents: ExternalIntent[]) => Promise<void>>(async () => undefined);
   const portableExportAbortRef = useRef<AbortController | null>(null);
@@ -706,28 +710,6 @@ export default function App() {
     else setLongPreviewDocumentId(null);
   }, [longArticle]);
 
-  useEffect(() => {
-    const dialog = shortcutDialogRef.current;
-    if (!dialog || !shortcutHelp) return;
-    const previousFocus = document.activeElement as HTMLElement | null;
-    dialog.showModal();
-    return () => {
-      if (dialog.open) dialog.close();
-      previousFocus?.focus();
-    };
-  }, [shortcutHelp]);
-
-  useEffect(() => {
-    const dialog = bulkImportDialogRef.current;
-    if (!dialog || !bulkImportOpen) return;
-    const previousFocus = document.activeElement as HTMLElement | null;
-    dialog.showModal();
-    return () => {
-      if (dialog.open) dialog.close();
-      previousFocus?.focus();
-    };
-  }, [bulkImportOpen]);
-
   useEffect(() => () => {
     bulkImportAbortRef.current?.abort();
     portableExportAbortRef.current?.abort();
@@ -737,6 +719,40 @@ export default function App() {
   const dirty = Boolean(draft && persistedDraft && !draftsEqual(draft, persistedDraft));
   const metadataDirty = Boolean(sourceMetadata && currentDoc && !sourceMetadataEqual(sourceMetadata, currentDoc));
   const hasUnsavedChanges = dirty || metadataDirty;
+  const confirmDiscardChanges = async (message: string) => {
+    if (!hasUnsavedChanges) return true;
+    if (discardConfirmationRef.current) return false;
+    discardConfirmationRef.current = true;
+    setDiscardPromptOpen(true);
+    const confirmed = await dialogs.confirm(message, {
+      title: "存在未保存修改",
+      confirmLabel: "继续并放弃",
+      tone: "warning",
+    });
+    if (confirmed) {
+      const document = currentDocRef.current;
+      if (document) {
+        const restored = draftOf(document);
+        const metadata = sourceMetadataOf(document);
+        draftRef.current = restored;
+        sourceMetadataRef.current = metadata;
+        setDraft(restored);
+        setTagText(document.tags.join(", "));
+        setSourceMetadata(metadata);
+        setDraftNotice("");
+        setDraftError("");
+        setSaveError("");
+        setSaveState("idle");
+        const stored = persistedDraftRef.current;
+        if (!cloudMode && stored?.documentId === document.id) {
+          void tombstoneDraft(document.id, stored.draftRevision).catch((error) => setDraftError((error as Error).message));
+        }
+      }
+    }
+    discardConfirmationRef.current = false;
+    setDiscardPromptOpen(false);
+    return confirmed;
+  };
   const activeCapture = currentDoc ? ACTIVE_STATUSES.has(currentDoc.status) : false;
   const editorLocked = closing || captureApplying || organizationSaving || batchBusy || Boolean(collectionAction) || Boolean(tagAction) || metadataDirty || Boolean(organizationConflict) || Boolean(lifecycleAction) || restoringRevision !== null || Boolean(conflict && saveState === "saving");
   const organizationLocked = (
@@ -1338,7 +1354,7 @@ export default function App() {
     if (cloudMode) return;
     const stored = persistedDraftRef.current;
     if (
-      closing || remoteDraftConflict || saveState === "saving" || !dirty || !currentDoc || !draft ||
+      closing || discardPromptOpen || remoteDraftConflict || saveState === "saving" || !dirty || !currentDoc || !draft ||
       currentDoc.status !== "ready" ||
       currentDoc.deletedAt ||
       (stored?.documentId === currentDoc.id && draftsEqual(draft, stored))
@@ -1346,6 +1362,7 @@ export default function App() {
     const document = currentDoc;
     const snapshot = { title: draft.title, markdown: draft.markdown, tags: [...draft.tags] };
     const timer = window.setTimeout(() => {
+      if (discardConfirmationRef.current) return;
       void persistDraft(document, snapshot).catch((error) => {
         if (!(error instanceof ApiRequestError) || error.code !== "DRAFT_CONFLICT") {
           setDraftError((error as Error).message);
@@ -1353,7 +1370,7 @@ export default function App() {
       });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [closing, cloudMode, currentDoc, dirty, draft, persistDraft, remoteDraftConflict, saveState]);
+  }, [closing, cloudMode, currentDoc, dirty, discardPromptOpen, draft, persistDraft, remoteDraftConflict, saveState]);
 
   useEffect(() => {
     if (cloudMode) return;
@@ -1372,6 +1389,7 @@ export default function App() {
   const saveNow = useCallback(async () => {
     if (
       closeAttemptRef.current || !currentDoc || !draft || currentDoc.status !== "ready" || !dirty ||
+      discardConfirmationRef.current ||
       saveInFlight.current || organizationInFlight.current || collectionAction || metadataDirty || organizationConflict ||
       conflict || remoteDraftConflict
     ) return;
@@ -1415,10 +1433,10 @@ export default function App() {
   }, [cloudMode, collectionAction, conflict, currentDoc, dirty, draft, metadataDirty, organizationConflict, persistDraft, refreshKnownTags, remoteDraftConflict, updateListItem]);
 
   useEffect(() => {
-    if (closing || !dirty || saveState === "conflict" || saveState === "error" || currentDoc?.status !== "ready") return;
-    const timer = window.setTimeout(saveNow, 800);
+    if (closing || discardPromptOpen || !dirty || saveState === "conflict" || saveState === "error" || currentDoc?.status !== "ready") return;
+    const timer = window.setTimeout(() => { if (!discardConfirmationRef.current) void saveNow(); }, 800);
     return () => window.clearTimeout(timer);
-  }, [closing, currentDoc?.status, dirty, saveNow, saveState]);
+  }, [closing, currentDoc?.status, dirty, discardPromptOpen, saveNow, saveState]);
 
   useEffect(() => {
     if (saveState !== "saved") return;
@@ -1593,7 +1611,8 @@ export default function App() {
     setImportError("");
     setImportNotice("");
     setImportDuplicate(null);
-    if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，继续收取新网页吗？")) return;
+    if (!await confirmDiscardChanges("当前修改尚未保存，继续收取新网页吗？")) return;
+    if (closeAttemptRef.current || lifecycleAction || restoringRevision !== null) return;
     let normalized: string;
     try {
       normalized = normalizeCaptureUrl(value);
@@ -1612,7 +1631,8 @@ export default function App() {
   const openImportedDuplicate = async () => {
     if (!importDuplicate || closeAttemptRef.current || lifecycleAction || restoringRevision !== null) return;
     const prompt = importDuplicate;
-    if (hasUnsavedChanges && prompt.document.id !== currentDoc?.id && !window.confirm("当前修改尚未保存，确定打开已有知识吗？")) return;
+    if (prompt.document.id !== currentDoc?.id && !await confirmDiscardChanges("当前修改尚未保存，确定打开已有知识吗？")) return;
+    if (!importDuplicate || closeAttemptRef.current || lifecycleAction || restoringRevision !== null) return;
     const guard = beginNavigation();
     setImporting(true);
     setImportError("");
@@ -1633,7 +1653,8 @@ export default function App() {
       !importDuplicate || importDuplicate.kind !== "resolved" || closeAttemptRef.current ||
       lifecycleAction || restoringRevision !== null
     ) return;
-    if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，仍要保留为另一篇知识吗？")) return;
+    if (!await confirmDiscardChanges("当前修改尚未保存，仍要保留为另一篇知识吗？")) return;
+    if (!importDuplicate || importDuplicate.kind !== "resolved" || closeAttemptRef.current || lifecycleAction || restoringRevision !== null) return;
     await importDocument(importDuplicate.url, true, beginNavigation());
   };
 
@@ -2053,10 +2074,11 @@ export default function App() {
   };
 
   const deleteCollection = async (collection: KnowledgeCollection) => {
-    if (
-      organizationInFlight.current || closeAttemptRef.current ||
-      !window.confirm(`删除集合“${collection.name}”？它将从 ${collection.documentCount} 篇知识中移除，文档本身不会删除。`)
-    ) return;
+    if (organizationInFlight.current || closeAttemptRef.current || !await dialogs.confirm(
+      `删除集合“${collection.name}”？它将从 ${collection.documentCount} 篇知识中移除，文档本身不会删除。`,
+      { title: "删除集合", confirmLabel: "删除集合", tone: "danger" },
+    )) return;
+    if (organizationInFlight.current || closeAttemptRef.current) return;
     setCollectionAction(collection.id);
     setOrganizationError("");
     setOrganizationNotice("");
@@ -2106,7 +2128,9 @@ export default function App() {
   };
 
   const renameTag = async (tagValue: KnowledgeTag) => {
-    const name = window.prompt(`将标签“${tagValue.name}”重命名为`, tagValue.name)?.trim();
+    const name = (await dialogs.prompt(`将标签“${tagValue.name}”重命名为`, {
+      title: "重命名标签", label: "新标签名称", initialValue: tagValue.name, confirmLabel: "保存名称", maxLength: 100,
+    }))?.trim();
     if (!name || name === tagValue.name || tagAction || organizationInFlight.current) return;
     setTagAction(tagValue.name);
     setOrganizationError("");
@@ -2125,9 +2149,14 @@ export default function App() {
   };
 
   const mergeTag = async (tagValue: KnowledgeTag) => {
-    const targetName = window.prompt(`将标签“${tagValue.name}”合并到哪个标签？`)?.trim();
+    const targetName = (await dialogs.prompt(`将标签“${tagValue.name}”合并到哪个标签？`, {
+      title: "合并标签", label: "目标标签名称", confirmLabel: "继续", maxLength: 100,
+    }))?.trim();
     if (!targetName || targetName === tagValue.name || tagAction || organizationInFlight.current) return;
-    if (!window.confirm(`将影响 ${tagValue.documentCount} 篇知识，源标签将被删除。继续？`)) return;
+    if (!await dialogs.confirm(`将影响 ${tagValue.documentCount} 篇知识，源标签将被删除。继续？`, {
+      title: "确认合并标签", confirmLabel: "合并标签", tone: "danger",
+    })) return;
+    if (tagAction || organizationInFlight.current) return;
     setTagAction(tagValue.name);
     setOrganizationError("");
     try {
@@ -2145,7 +2174,11 @@ export default function App() {
   };
 
   const deleteTag = async (tagValue: KnowledgeTag) => {
-    if (tagAction || organizationInFlight.current || !window.confirm(`从 ${tagValue.documentCount} 篇知识中移除标签“${tagValue.name}”？文档本身不会删除。`)) return;
+    if (tagAction || organizationInFlight.current || !await dialogs.confirm(
+      `从 ${tagValue.documentCount} 篇知识中移除标签“${tagValue.name}”？文档本身不会删除。`,
+      { title: "删除标签", confirmLabel: "删除标签", tone: "danger" },
+    )) return;
+    if (tagAction || organizationInFlight.current) return;
     setTagAction(tagValue.name);
     setOrganizationError("");
     try {
@@ -2163,13 +2196,18 @@ export default function App() {
   };
 
   const mergeCollection = async (collection: KnowledgeCollection) => {
-    const targetName = window.prompt(`将集合“${collection.name}”合并到哪个集合？`)?.trim();
+    const targetName = (await dialogs.prompt(`将集合“${collection.name}”合并到哪个集合？`, {
+      title: "合并集合", label: "目标集合名称", confirmLabel: "继续", maxLength: 100,
+    }))?.trim();
     const target = collections.find((value) => value.name.toLocaleLowerCase() === targetName?.toLocaleLowerCase());
     if (!targetName || !target || target.id === collection.id) {
       if (targetName) setOrganizationError("请输入另一个已有集合的完整名称。");
       return;
     }
-    if (!window.confirm(`将影响 ${collection.documentCount} 篇知识，源集合将被删除。继续？`)) return;
+    if (!await dialogs.confirm(`将影响 ${collection.documentCount} 篇知识，源集合将被删除。继续？`, {
+      title: "确认合并集合", confirmLabel: "合并集合", tone: "danger",
+    })) return;
+    if (collectionAction || organizationInFlight.current) return;
     setCollectionAction(collection.id);
     setOrganizationError("");
     try {
@@ -2188,7 +2226,8 @@ export default function App() {
 
   const openResolvedDuplicate = async () => {
     if (!resolvedDuplicate || closeAttemptRef.current || lifecycleAction || restoringRevision !== null) return;
-    if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，确定打开已有知识吗？")) return;
+    if (!await confirmDiscardChanges("当前修改尚未保存，确定打开已有知识吗？")) return;
+    if (!resolvedDuplicate || closeAttemptRef.current || lifecycleAction || restoringRevision !== null) return;
     const duplicate = resolvedDuplicate;
     const guard = beginNavigation();
     setResolvedDuplicate(null);
@@ -2217,17 +2256,19 @@ export default function App() {
     setDuplicateNotice("已保留两篇知识，当前条目没有被删除。");
   };
 
-  const selectDocument = (id: string) => {
+  const selectDocument = async (id: string) => {
     if (closeAttemptRef.current || organizationInFlight.current || id === selectedId || lifecycleAction || restoringRevision !== null) return;
-    if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
+    if (!await confirmDiscardChanges("当前修改尚未保存，确定离开吗？")) return;
+    if (closeAttemptRef.current || organizationInFlight.current || id === selectedIdRef.current || lifecycleAction || restoringRevision !== null) return;
     invalidateNavigation();
     setSelectedId(id);
   };
 
-  const toggleCloudEditing = () => {
+  const toggleCloudEditing = async () => {
     if (!currentDoc || !draft) return;
     if (cloudEditing) {
-      if (dirty && !window.confirm("当前修改尚未保存，确定返回阅读吗？")) return;
+      if (dirty && !await confirmDiscardChanges("当前修改尚未保存，确定返回阅读吗？")) return;
+      if (!currentDocRef.current || !draftRef.current) return;
       const readable = conflict ?? currentDoc;
       if (conflict) {
         installCurrentDocument(conflict);
@@ -2241,24 +2282,26 @@ export default function App() {
     setCloudEditing((value) => !value);
   };
 
-  const closeDocument = () => {
+  const closeDocument = async () => {
     if (closeAttemptRef.current || organizationInFlight.current || lifecycleAction || restoringRevision !== null) return false;
-    if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，确定离开吗？")) return false;
+    if (!await confirmDiscardChanges("当前修改尚未保存，确定离开吗？")) return false;
+    if (closeAttemptRef.current || organizationInFlight.current || lifecycleAction || restoringRevision !== null) return false;
     invalidateNavigation();
     setSelectedId(null);
     return true;
   };
 
-  const returnToLibrary = () => {
-    if (!closeDocument()) return;
+  const returnToLibrary = async () => {
+    if (!await closeDocument()) return;
     setAiSettingsOpen(false);
     setDiagnosticsOpen(false);
     setSafetyOpen(false);
   };
 
-  const applyLibraryView = (view: LibraryView) => {
+  const applyLibraryView = async (view: LibraryView) => {
     if (closeAttemptRef.current || organizationInFlight.current || lifecycleAction || restoringRevision !== null) return false;
-    if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，确定离开吗？")) return false;
+    if (!await confirmDiscardChanges("当前修改尚未保存，确定离开吗？")) return false;
+    if (closeAttemptRef.current || organizationInFlight.current || lifecycleAction || restoringRevision !== null) return false;
     invalidateNavigation();
     setLibraryView(view);
     setInTrash(view === "trash");
@@ -2281,8 +2324,8 @@ export default function App() {
     return true;
   };
 
-  const applySavedFilter = (saved: SavedFilter) => {
-    if (!applyLibraryView("all")) return;
+  const applySavedFilter = async (saved: SavedFilter) => {
+    if (!await applyLibraryView("all")) return;
     setQuery(saved.query);
     setSearchScope(saved.scope);
     setTag(saved.tag);
@@ -2306,14 +2349,20 @@ export default function App() {
     const requestContext = listContextKey;
     let value: string | undefined;
     if (batchAction === "add-tag" || batchAction === "remove-tag") {
-      value = window.prompt(batchAction === "add-tag" ? "输入要添加的标签" : "输入要移除的标签")?.trim();
+      value = (await dialogs.prompt(batchAction === "add-tag" ? "输入要添加的标签" : "输入要移除的标签", {
+        title: batchAction === "add-tag" ? "批量添加标签" : "批量移除标签",
+        label: "标签名称", confirmLabel: "继续", maxLength: 100,
+      }))?.trim();
       if (!value) return;
     }
     if (batchAction === "add-collection" || batchAction === "remove-collection") {
       value = batchCollectionId;
       if (!value) return;
     }
-    if (batchAction === "trash" && !window.confirm(`将当前页选中的 ${selectedIds.size} 篇知识移入回收站？`)) return;
+    if (batchAction === "trash" && !await dialogs.confirm(`将当前页选中的 ${selectedIds.size} 篇知识移入回收站？`, {
+      title: "批量移入回收站", confirmLabel: "移入回收站", tone: "danger",
+    })) return;
+    if (batchBusy || listLoading || organizationInFlight.current || itemsContextRef.current !== listContextKey) return;
     setBatchBusy(true);
     setBatchError("");
     setBatchNotice("");
@@ -2432,6 +2481,7 @@ export default function App() {
         return;
       }
       const target = event.target as HTMLElement | null;
+      if (target?.closest("dialog")) return;
       const editing = Boolean(target?.closest("input, textarea, select, [contenteditable='true']"));
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -2456,7 +2506,7 @@ export default function App() {
           setCaptureHistoryOpen(false);
           setHistoryOpen(false);
           setDerivedOpen(false);
-        } else if (!editing) closeDocument();
+        } else if (!editing) void closeDocument();
       }
     };
     window.addEventListener("keydown", handleShortcuts);
@@ -2520,11 +2570,16 @@ export default function App() {
   };
 
   const moveToTrash = async () => {
-    if (closeAttemptRef.current || organizationInFlight.current || remoteDraftConflict || organizationConflict || !currentDoc || hasUnsavedChanges || !window.confirm(`把“${currentDoc.title || "未命名网页"}”移入回收站？之后可以恢复。`)) return;
+    if (closeAttemptRef.current || organizationInFlight.current || remoteDraftConflict || organizationConflict || !currentDoc || hasUnsavedChanges) return;
+    const document = currentDoc;
+    if (!await dialogs.confirm(`把“${document.title || "未命名网页"}”移入回收站？之后可以恢复。`, {
+      title: "移入回收站", confirmLabel: "移入回收站", tone: "danger",
+    })) return;
+    if (closeAttemptRef.current || organizationInFlight.current || currentDocRef.current?.id !== document.id || remoteDraftConflict || organizationConflict || hasUnsavedChanges) return;
     setLifecycleAction("delete");
     setDetailError("");
     try {
-      const deleted = await api.deleteDocument(currentDoc.id, currentDoc.revision);
+      const deleted = await api.deleteDocument(document.id, document.revision);
       installCurrentDocument(deleted);
       setDraft(draftOf(deleted));
       setTagText(deleted.tags.join(", "));
@@ -2592,17 +2647,22 @@ export default function App() {
   };
 
   const permanentlyDelete = async () => {
-    if (closeAttemptRef.current || organizationInFlight.current || !currentDoc || hasUnsavedChanges || conflict || organizationConflict || remoteDraftConflict || !window.confirm(`永久删除“${currentDoc.title || "未命名网页"}”？抓取快照和历史版本也会被删除，此操作无法撤销。`)) return;
+    if (closeAttemptRef.current || organizationInFlight.current || !currentDoc || hasUnsavedChanges || conflict || organizationConflict || remoteDraftConflict) return;
+    const document = currentDoc;
+    if (!await dialogs.confirm(`永久删除“${document.title || "未命名网页"}”？抓取快照和历史版本也会被删除，此操作无法撤销。`, {
+      title: "永久删除知识", confirmLabel: "永久删除", tone: "danger",
+    })) return;
+    if (closeAttemptRef.current || organizationInFlight.current || currentDocRef.current?.id !== document.id || hasUnsavedChanges || conflict || organizationConflict || remoteDraftConflict) return;
     setLifecycleAction("permanent");
     setDetailError("");
     try {
       const stored = persistedDraftRef.current;
       await api.permanentlyDeleteDocument(
-        currentDoc.id,
-        currentDoc.revision,
-        stored?.documentId === currentDoc.id ? stored.draftRevision : null,
+        document.id,
+        document.revision,
+        stored?.documentId === document.id ? stored.draftRevision : null,
       );
-      setItems((previous) => previous.filter((item) => item.id !== currentDoc.id));
+      setItems((previous) => previous.filter((item) => item.id !== document.id));
       setTotal((value) => Math.max(0, value - 1));
       setPage(1);
       invalidateNavigation();
@@ -2611,7 +2671,7 @@ export default function App() {
     } catch (error) {
       if (error instanceof ApiRequestError && error.code === "DRAFT_EXISTS") {
         try {
-          await reloadDraftConflict(currentDoc.id);
+          await reloadDraftConflict(document.id);
         } catch (reloadError) {
           setDetailError((reloadError as Error).message);
           return;
@@ -2995,7 +3055,7 @@ export default function App() {
     <div className="app-shell">
       <a className="skip-link" href="#library-panel">跳到资料库</a>
       <header className="masthead">
-        <button type="button" className="brand" aria-label="返回知识库主界面" onClick={returnToLibrary} disabled={closing}>
+        <button type="button" className="brand" aria-label="返回知识库主界面" onClick={() => void returnToLibrary()} disabled={closing}>
           <span className="brand-seal">织</span>
           <span><strong>织页</strong><small>ZHIYE · {cloudMode ? "CLOUD" : "LOCAL"} KNOWLEDGE</small></span>
         </button>
@@ -3016,7 +3076,7 @@ export default function App() {
         />
       )}
 
-      {shortcutHelp && <dialog ref={shortcutDialogRef} className="shortcut-backdrop" aria-labelledby="help-title" onCancel={(event) => { event.preventDefault(); setShortcutHelp(false); }} onClose={() => setShortcutHelp(false)} onMouseDown={(event) => { if (event.target === event.currentTarget) setShortcutHelp(false); }}>
+      {shortcutHelp && <Modal open panel={false} className="shortcut-backdrop" title="帮助与关于" onClose={() => setShortcutHelp(false)}>
         <section className="shortcut-card help-card">
           <header><div><span className="eyebrow">HELP DESK · 本机</span><h2 id="help-title">帮助与关于</h2></div><button type="button" autoFocus onClick={() => setShortcutHelp(false)} aria-label="关闭帮助">×</button></header>
           <div className="help-overview">
@@ -3044,15 +3104,15 @@ export default function App() {
             <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/docs/SECURITY.md" target="_blank" rel="noreferrer noopener">安全</a>
           </nav>
         </section>
-      </dialog>}
+      </Modal>}
 
       {bulkImportOpen && (
-        <dialog
-          ref={bulkImportDialogRef}
+        <Modal
+          open
+          panel={false}
           className="shortcut-backdrop bulk-import-backdrop"
-          aria-labelledby="bulk-import-title"
-          onCancel={(event) => { event.preventDefault(); if (bulkImportTask) cancelBulkImportTask(); else void closeBulkImport(); }}
-          onMouseDown={(event) => { if (event.target === event.currentTarget) void closeBulkImport(); }}
+          title="批量导入"
+          onClose={() => { if (bulkImportTask) cancelBulkImportTask(); else void closeBulkImport(); }}
         >
           <section className="bulk-import-card">
             <header>
@@ -3115,7 +3175,7 @@ export default function App() {
 
               <footer className="bulk-dialog-footer">
                 {!bulkImportResult ? <>
-                  <label><span>遇到重复项</span><select value={bulkImportStrategy} onChange={(event) => setBulkImportStrategy(event.target.value as ImportStrategy)} disabled={bulkImportBusy}><option value="skip">跳过已有（推荐）</option><option value="copy">保留副本</option><option value="update">更新已有（替换内容）</option></select>{bulkImportStrategy === "update" && <small>{bulkImportTouchesDirtyDocument ? "当前打开的重复条目有未保存修改，请先保存或改用其他策略。" : "会用导入内容替换已有正文与组织信息；预检后发生变化的条目会报告冲突。"}</small>}</label>
+                  <label><span>遇到重复项</span><Select value={bulkImportStrategy} onChange={(event) => setBulkImportStrategy(event.target.value as ImportStrategy)} disabled={bulkImportBusy}><option value="skip">跳过已有（推荐）</option><option value="copy">保留副本</option><option value="update">更新已有（替换内容）</option></Select>{bulkImportStrategy === "update" && <small>{bulkImportTouchesDirtyDocument ? "当前打开的重复条目有未保存修改，请先保存或改用其他策略。" : "会用导入内容替换已有正文与组织信息；预检后发生变化的条目会报告冲突。"}</small>}</label>
                   <div><button type="button" onClick={() => void restartBulkImport()} disabled={bulkImportBusy}>重新选择</button><button className="primary-button" type="button" onClick={() => void applyBulkImport()} disabled={bulkImportBusy || bulkImportTouchesDirtyDocument || bulkImportPreview.counts.valid + bulkImportPreview.counts.duplicate === 0}>{bulkImportBusy ? <><Spinner />导入中</> : "确认导入"}</button></div>
                 </> : <button className="primary-button" type="button" onClick={() => void closeBulkImport()}>完成</button>}
               </footer>
@@ -3123,7 +3183,7 @@ export default function App() {
             {bulkImportNotice && <p className="bulk-import-notice" role="status">{bulkImportNotice}</p>}
             {bulkImportError && <p className="bulk-import-error" role="alert">{bulkImportError}</p>}
           </section>
-        </dialog>
+        </Modal>
       )}
 
       {diagnosticsOpen ? (
@@ -3211,7 +3271,7 @@ export default function App() {
               ["all", "全部"], ["recent", "最近"], ["favorites", "收藏"], ["unorganized", "未整理"],
               ["archived", "归档"], ["failed", "失败"], ["trash", "回收站"],
             ] as Array<[LibraryView, string]>).map(([value, label]) => (
-              <button key={value} type="button" aria-pressed={libraryView === value} onClick={() => applyLibraryView(value)} disabled={listLoading || batchBusy}>{label}</button>
+              <button key={value} type="button" aria-pressed={libraryView === value} onClick={() => void applyLibraryView(value)} disabled={listLoading || batchBusy}>{label}</button>
             ))}
           </nav>
 
@@ -3222,25 +3282,25 @@ export default function App() {
               <input ref={searchInputRef} aria-keyshortcuts="Meta+K Control+K /" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="搜索标题与正文" />
               {query && <button type="button" className="clear-search" onClick={() => setQuery("")} aria-label="清空搜索">×</button>}
             </label>
-            <label className="scope-field"><span>搜索范围</span><select value={searchScope} onChange={(event) => { setSearchScope(event.target.value as SearchScope); setPage(1); }}><option value="all">全部字段</option><option value="title">仅标题</option><option value="body">仅正文</option><option value="source">仅来源</option></select></label>
+            <label className="scope-field"><span>搜索范围</span><Select density="compact" value={searchScope} onChange={(event) => { setSearchScope(event.target.value as SearchScope); setPage(1); }}><option value="all">全部字段</option><option value="title">仅标题</option><option value="body">仅正文</option><option value="source">仅来源</option></Select></label>
             <div className="select-row">
-              <label><span className="sr-only">按标签筛选</span><select value={tag} onChange={(event) => { setTag(event.target.value); setPage(1); }}><option value="">全部标签</option>{knownTags.map((value) => <option key={value} value={value}>#{value}</option>)}</select></label>
-              <label><span className="sr-only">按状态筛选</span><select value={status} onChange={(event) => { setStatus(event.target.value as StatusFilter); setPage(1); }}><option value="">全部状态</option><option value="ready">已就绪</option><option value="queued">等待中</option><option value="fetching">抓取中</option><option value="extracting">整理中</option><option value="failed">抓取失败</option></select></label>
+              <label><span className="sr-only">按标签筛选</span><Select density="compact" value={tag} onChange={(event) => { setTag(event.target.value); setPage(1); }}><option value="">全部标签</option>{knownTags.map((value) => <option key={value} value={value}>#{value}</option>)}</Select></label>
+              <label><span className="sr-only">按状态筛选</span><Select density="compact" value={status} onChange={(event) => { setStatus(event.target.value as StatusFilter); setPage(1); }}><option value="">全部状态</option><option value="ready">已就绪</option><option value="queued">等待中</option><option value="fetching">抓取中</option><option value="extracting">整理中</option><option value="failed">抓取失败</option></Select></label>
             </div>
             <div className="select-row">
-              <label><span className="sr-only">按集合筛选</span><select value={collectionFilter} onChange={(event) => { setCollectionFilter(event.target.value); setPage(1); }}><option value="">全部集合</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</select></label>
-              <label><span className="sr-only">排序</span><select value={sortOrder} onChange={(event) => { setSortOrder(event.target.value as SortOrder); setPage(1); }}><option value="updated">最近更新</option><option value="created">最近创建</option><option value="title">标题排序</option></select></label>
+              <label><span className="sr-only">按集合筛选</span><Select density="compact" value={collectionFilter} onChange={(event) => { setCollectionFilter(event.target.value); setPage(1); }}><option value="">全部集合</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</Select></label>
+              <label><span className="sr-only">排序</span><Select density="compact" value={sortOrder} onChange={(event) => { setSortOrder(event.target.value as SortOrder); setPage(1); }}><option value="updated">最近更新</option><option value="created">最近创建</option><option value="title">标题排序</option></Select></label>
             </div>
             <details className="advanced-filters">
               <summary>更多筛选</summary>
               <div className="select-row">
-                <label><span>收藏</span><select value={favoriteFilter === undefined ? "" : String(favoriteFilter)} onChange={(event) => { setFavoriteFilter(event.target.value === "" ? undefined : event.target.value === "true"); setPage(1); }}><option value="">不限</option><option value="true">已收藏</option><option value="false">未收藏</option></select></label>
-                <label><span>归档</span><select value={archivedFilter === undefined ? "" : String(archivedFilter)} onChange={(event) => { setArchivedFilter(event.target.value === "" ? undefined : event.target.value === "true"); setPage(1); }}><option value="">不限</option><option value="true">已归档</option><option value="false">未归档</option></select></label>
+                <label><span>收藏</span><Select density="compact" value={favoriteFilter === undefined ? "" : String(favoriteFilter)} onChange={(event) => { setFavoriteFilter(event.target.value === "" ? undefined : event.target.value === "true"); setPage(1); }}><option value="">不限</option><option value="true">已收藏</option><option value="false">未收藏</option></Select></label>
+                <label><span>归档</span><Select density="compact" value={archivedFilter === undefined ? "" : String(archivedFilter)} onChange={(event) => { setArchivedFilter(event.target.value === "" ? undefined : event.target.value === "true"); setPage(1); }}><option value="">不限</option><option value="true">已归档</option><option value="false">未归档</option></Select></label>
               </div>
-              <label><span>采集方式</span><select value={captureModeFilter} onChange={(event) => { setCaptureModeFilter(event.target.value as CaptureMode | ""); setPage(1); }}><option value="">不限</option><option value="http">直接读取</option><option value="browser">浏览器采集</option></select></label>
+              <label><span>采集方式</span><Select density="compact" value={captureModeFilter} onChange={(event) => { setCaptureModeFilter(event.target.value as CaptureMode | ""); setPage(1); }}><option value="">不限</option><option value="http">直接读取</option><option value="browser">浏览器采集</option></Select></label>
               <div className="date-filter-row"><label><span>起始日期</span><input type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPage(1); }} /></label><label><span>结束日期</span><input type="date" value={dateTo} onChange={(event) => { setDateTo(event.target.value); setPage(1); }} /></label></div>
             </details>
-            {!!savedFilters.length && <div className="recent-filters" aria-label="最近筛选"><span>最近</span>{savedFilters.map((saved, index) => <button type="button" key={`${saved.label}-${index}`} onClick={() => applySavedFilter(saved)}>{saved.label}</button>)}</div>}
+            {!!savedFilters.length && <div className="recent-filters" aria-label="最近筛选"><span>最近</span>{savedFilters.map((saved, index) => <button type="button" key={`${saved.label}-${index}`} onClick={() => void applySavedFilter(saved)}>{saved.label}</button>)}</div>}
             {recentFilterNotice && <p className="batch-message" role="status">{recentFilterNotice}</p>}
           </fieldset>
 
@@ -3248,7 +3308,7 @@ export default function App() {
 
           {!!items.length && !cloudMode && <div className="bulk-toolbar" aria-label="当前页批量操作">
             <label><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={items.length > 0 && items.every((item) => selectedIds.has(item.id))} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds(event.target.checked ? new Set(items.map((item) => item.id)) : new Set()); }} />选中当前页 <strong>{selectedIds.size}</strong> 篇</label>
-            {!!selectedIds.size && <><select aria-label="批量操作" disabled={listLoading || batchBusy} value={batchAction} onChange={(event) => setBatchAction(event.target.value as BatchDocumentAction | "")}><option value="">选择操作</option><option value="add-tag">添加标签</option><option value="remove-tag">移除标签</option><option value="add-collection">加入集合</option><option value="remove-collection">移出集合</option>{inTrash ? <option value="restore">恢复</option> : <><option value="archive">归档</option><option value="unarchive">取消归档</option><option value="trash">删除（移入回收站）</option></>}</select>{(batchAction === "add-collection" || batchAction === "remove-collection") && <select aria-label="批量操作集合" disabled={listLoading || batchBusy} value={batchCollectionId} onChange={(event) => setBatchCollectionId(event.target.value)}><option value="">选择集合</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</select>}<button type="button" onClick={() => void runBatchAction()} disabled={listLoading || batchBusy || !batchAction}>{batchBusy ? "处理中…" : "应用"}</button></>}
+            {!!selectedIds.size && <><Select density="compact" aria-label="批量操作" disabled={listLoading || batchBusy} value={batchAction} onChange={(event) => setBatchAction(event.target.value as BatchDocumentAction | "")}><option value="">选择操作</option><option value="add-tag">添加标签</option><option value="remove-tag">移除标签</option><option value="add-collection">加入集合</option><option value="remove-collection">移出集合</option>{inTrash ? <option value="restore">恢复</option> : <><option value="archive">归档</option><option value="unarchive">取消归档</option><option value="trash">删除（移入回收站）</option></>}</Select>{(batchAction === "add-collection" || batchAction === "remove-collection") && <Select density="compact" aria-label="批量操作集合" disabled={listLoading || batchBusy} value={batchCollectionId} onChange={(event) => setBatchCollectionId(event.target.value)}><option value="">选择集合</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</Select>}<button type="button" onClick={() => void runBatchAction()} disabled={listLoading || batchBusy || !batchAction}>{batchBusy ? "处理中…" : "应用"}</button></>}
           </div>}
           {!cloudMode && (!inTrash || portableExporting) && <div className="portable-toolbar" aria-label="便携知识包导出">
             <div><strong>便携知识包</strong><span>用于迁移与分享，不等同于可恢复数据库的完整留档。</span><button type="button" onClick={() => setSafetyOpen(true)} disabled={Boolean(portableExporting)}>前往完整留档</button></div>
@@ -3266,7 +3326,7 @@ export default function App() {
             {listLoading && !items.length ? <StatePanel kind="loading" title="正在翻阅知识库" /> : listError ? <StatePanel kind="error" title="无法读取列表">{listError}</StatePanel> : !items.length ? <StatePanel kind="empty" title={inTrash ? "回收站是空的" : "还没有找到织片"}>{query || tag || status ? "试试放宽筛选条件。" : inTrash ? "移除的网页会暂存在这里。" : cloudMode ? "请从帮助页安装浏览器扩展，开始剪藏网页。" : "从上方收藏第一张网页。"}</StatePanel> : items.map((item, index) => (
               <div key={item.id} className={`document-row-wrap ${selectedId === item.id ? "is-selected" : ""}`}>
                 <label className="row-select"><span className="sr-only">选择 {item.title || "未命名网页"}</span><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={selectedIds.has(item.id)} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds((previous) => { const next = new Set(previous); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; }); }} /></label>
-                <button type="button" className={`document-row ${selectedId === item.id ? "is-selected" : ""}`} onClick={() => selectDocument(item.id)} aria-current={selectedId === item.id ? "true" : undefined} aria-keyshortcuts="Enter ArrowUp ArrowDown J K X">
+                <button type="button" className={`document-row ${selectedId === item.id ? "is-selected" : ""}`} onClick={() => void selectDocument(item.id)} aria-current={selectedId === item.id ? "true" : undefined} aria-keyshortcuts="Enter ArrowUp ArrowDown J K X">
                 <span className="row-number">{String((page - 1) * pageSize + index + 1).padStart(2, "0")}</span>
                 <span className="row-body">
                   <strong>{item.title || "未命名网页"}</strong>
@@ -3311,7 +3371,7 @@ export default function App() {
                 </div>
                 {cloudEditing ? <label className="title-field"><span className="sr-only">文档标题</span><textarea rows={2} value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} disabled={saveState === "saving"} /></label> : <h2>{currentDoc.title || "未命名网页"}</h2>}
                 <div className="document-actions">
-                  <button type="button" className="primary-button" onClick={toggleCloudEditing} disabled={currentDoc.status !== "ready" || saveState === "saving"}>{cloudEditing ? "返回阅读" : "编辑这篇知识"}</button>
+                  <button type="button" className="primary-button" onClick={() => void toggleCloudEditing()} disabled={currentDoc.status !== "ready" || saveState === "saving"}>{cloudEditing ? "返回阅读" : "编辑这篇知识"}</button>
                   <button type="button" className="history-button" onClick={toggleDerived} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen} aria-controls="derived-knowledge">AI 派生</button>
                   <button type="button" className="history-button translation-button" onClick={openTranslation} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen && derivedPreferredType === "translation"} aria-controls="derived-knowledge">翻译</button>
                 </div>

@@ -94,22 +94,22 @@ test("returns home from the logo and toggles the knowledge sidebar", async ({ pa
   const title = page.getByLabel("文档标题");
   await expect(title).toHaveValue("远端测试文章", { timeout: 8_000 });
   await title.fill("保留这次未保存修改");
-  page.once("dialog", async (dialog) => {
-    expect(dialog.message()).toContain("当前修改尚未保存");
-    await dialog.dismiss();
-  });
   await page.getByRole("button", { name: "返回知识库主界面" }).click();
+  const discardDialog = page.getByRole("alertdialog", { name: "存在未保存修改" });
+  await expect(discardDialog).toContainText("当前修改尚未保存");
+  await discardDialog.getByRole("button", { name: "取消" }).click();
   await expect(title).toHaveValue("保留这次未保存修改");
 
   await title.fill("确认离开未保存修改");
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "返回知识库主界面" }).click();
+  await page.getByRole("alertdialog", { name: "存在未保存修改" }).getByRole("button", { name: "继续并放弃" }).click();
   await expect(page.getByLabel("网页地址")).toBeVisible();
 });
 
 test("opens one keyboard-accessible help and about dialog in normal and recovery modes", async ({ page }) => {
   await page.goto("/");
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
   if (await deferSetup.isVisible()) await deferSetup.click();
 
   const helpButton = page.getByRole("button", { name: "帮助", exact: true });
@@ -264,8 +264,8 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await page.getByRole("button", { name: "保存密钥" }).click();
   await expect(page.getByRole("alert")).toContainText("端点地址无效");
   await expect(page.getByText("当前平台未加载密钥", { exact: false })).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "删除密钥" }).click();
+  await page.getByRole("alertdialog", { name: "删除远程模型密钥" }).getByRole("button", { name: "删除密钥" }).click();
   await expect(page.getByText("当前平台未加载密钥", { exact: false })).toBeVisible();
   await remoteProviderAfterReload.selectOption("openai");
   await page.getByRole("button", { name: "可信本地端点" }).click();
@@ -385,8 +385,8 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(page.getByLabel("Markdown 编辑器")).toHaveText(originalMarkdown || "");
 
   await page.getByRole("button", { name: "AI 设置", exact: true }).click();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "关闭 AI 并删除全部结果" }).click();
+  await page.getByRole("alertdialog", { name: "关闭 AI 并删除结果" }).getByRole("button", { name: "关闭并删除" }).click();
   await expect(page.getByText(/AI 已关闭，并删除 3 条派生结果/u)).toBeVisible();
   await page.getByRole("button", { name: "返回资料库" }).click();
   await page.getByRole("button", { name: "AI 派生", exact: true }).click();
@@ -417,20 +417,12 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect(page.getByText("校验通过").first()).toBeVisible();
   const backupRows = page.locator(".backup-row");
   const backupCount = await backupRows.count();
-  const exportLink = backupRows.first().getByRole("link", { name: "导出文件" });
-  const exportPath = await exportLink.getAttribute("href");
-  expect(exportPath).toMatch(/^\/api\/data-safety\/backups\/[^/]+\/export\.zhiye-backup$/u);
-  if (!exportPath) throw new Error("留档导出地址缺失");
-  const exportResponse = await page.request.get(exportPath);
-  expect(exportResponse.ok()).toBe(true);
-  expect(exportResponse.headers()["content-type"]).toBe("application/vnd.zhiye.backup+zip");
-  expect(exportResponse.headers()["content-disposition"]).toMatch(/attachment; filename="[^"]+\.zhiye-backup"/u);
+  const exportButton = backupRows.first().getByRole("button", { name: "导出文件" });
   const downloadPromise = page.waitForEvent("download");
-  page.once("dialog", async (dialog) => {
-    expect(dialog.message()).toContain("包含完整知识数据");
-    await dialog.accept();
-  });
-  await exportLink.click();
+  await exportButton.click();
+  const exportDialog = page.getByRole("alertdialog", { name: "导出完整留档" });
+  await expect(exportDialog).toContainText("包含完整知识数据");
+  await exportDialog.getByRole("button", { name: "继续下载" }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/\.zhiye-backup$/u);
   const downloadPath = await download.path();
@@ -441,16 +433,15 @@ test("imports, restores history, trashes, restores, searches, exports, and block
     if (/\/api\/data-safety\/backups\/[^/]+\/restore$/u.test(new URL(request.url()).pathname)) restoreRequests.push(request.url());
   };
   page.on("request", recordRestore);
-  page.once("dialog", async (dialog) => {
-    expect(dialog.message()).toContain("不会覆盖当前资料或自动恢复");
-    await dialog.accept();
-  });
   const importResponsePromise = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/data-safety/backups/import");
   await page.getByLabel("导入完整留档文件").setInputFiles({
     name: download.suggestedFilename(),
     mimeType: "application/vnd.zhiye.backup+zip",
     buffer: await readFile(downloadPath),
   });
+  const importDialog = page.getByRole("alertdialog", { name: "导入完整留档" });
+  await expect(importDialog).toContainText("不会覆盖当前资料或自动恢复");
+  await importDialog.getByRole("button", { name: "继续导入" }).click();
   const importResponse = await importResponsePromise;
   expect(importResponse.status()).toBe(201);
   const importedBackup = await importResponse.json() as { id: string };
@@ -470,14 +461,12 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect(page.getByLabel("文档标题")).toHaveValue("远端测试文章", { timeout: 8_000 });
 
   await page.getByRole("button", { name: "数据安全" }).click();
-  const importedRow = page.locator(".backup-row").filter({
-    has: page.locator(`a[href="${`/api/data-safety/backups/${encodeURIComponent(importedBackup.id)}/export.zhiye-backup`}"]`),
-  });
+  const importedRow = backupRows.first();
   await expect(importedRow).toHaveCount(1);
-  page.once("dialog", (dialog) => dialog.accept());
   const restoredResponsePromise = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === `/api/data-safety/backups/${encodeURIComponent(importedBackup.id)}/restore`);
   const reloadPromise = page.waitForEvent("framenavigated");
   await importedRow.getByRole("button", { name: "恢复此留档" }).click();
+  await page.getByRole("alertdialog", { name: "恢复完整留档" }).getByRole("button", { name: "开始恢复" }).click();
   expect((await restoredResponsePromise).ok()).toBe(true);
   await reloadPromise;
   expect((await page.request.get(`/api/documents/${encodeURIComponent(marker.document.id)}`)).status()).toBe(404);
@@ -797,11 +786,10 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await page.getByRole("link", { name: /导出 \.md/ }).click();
   expect((await downloadStarted).suggestedFilename()).toMatch(/\.md$/u);
 
-  page.once("dialog", async (dialog) => {
-    expect(dialog.message()).toContain("移入回收站");
-    await dialog.accept();
-  });
   await page.getByRole("button", { name: "移入回收站" }).click();
+  const trashDialog = page.getByRole("alertdialog", { name: "移入回收站" });
+  await expect(trashDialog).toContainText("之后可以恢复");
+  await trashDialog.getByRole("button", { name: "移入回收站" }).click();
   await expect(page.getByRole("button", { name: "回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("文档标题")).toBeDisabled();
   let releaseTrashRestore!: () => void;
@@ -920,12 +908,11 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect(page.getByText("已加入集合。")).toBeVisible();
   const temporaryCollection = reloadedCollectionManager.getByRole("listitem").filter({ hasText: "临时集合" });
   await expect(temporaryCollection.getByText("1 篇知识")).toBeVisible();
-  page.once("dialog", async (dialog) => {
-    expect(dialog.message()).toContain("临时集合");
-    expect(dialog.message()).toContain("1 篇知识");
-    await dialog.accept();
-  });
   await temporaryCollection.getByRole("button", { name: "删除 临时集合" }).click();
+  const deleteCollectionDialog = page.getByRole("alertdialog", { name: "删除集合" });
+  await expect(deleteCollectionDialog).toContainText("临时集合");
+  await expect(deleteCollectionDialog).toContainText("1 篇知识");
+  await deleteCollectionDialog.getByRole("button", { name: "删除集合" }).click();
   await expect(page.getByText("已删除集合“临时集合”，从 1 篇知识中移除。")).toBeVisible();
   await expect(page.getByRole("group", { name: "集合" }).getByLabel("临时集合")).toHaveCount(0);
 
