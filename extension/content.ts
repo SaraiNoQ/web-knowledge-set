@@ -1,4 +1,5 @@
 import Defuddle from "defuddle/full";
+import { protectRenderedMath, restoreProtectedMath } from "../shared/rendered-math.js";
 
 function text(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -6,10 +7,12 @@ function text(value: unknown) {
 
 async function extract(): Promise<ZhiyeClipResult> {
   const page = document.cloneNode(true) as Document;
+  const protectedMath = protectRenderedMath(page);
   page.querySelectorAll("script, style, noscript, iframe, object, embed, form, input, textarea, select, button, [contenteditable]")
     .forEach((element) => element.remove());
   const result = new Defuddle(page, { url: location.href, markdown: true, useAsync: false }).parse();
-  const markdown = text(result.contentMarkdown) ?? text(result.content);
+  const extracted = text(result.contentMarkdown) ?? text(result.content);
+  const markdown = extracted && restoreProtectedMath(extracted, protectedMath);
   if (!markdown) throw new Error("页面没有可剪藏的正文，请使用织页的手动摘录。");
   const published = text(result.published);
   return {
@@ -22,4 +25,3 @@ async function extract(): Promise<ZhiyeClipResult> {
 }
 
 window.__ZHIYE_CLIP_RESULT__ = extract();
-

@@ -76,7 +76,7 @@ scripts/soak-web-preview.sh --verify-restart rc-0.9.2
 - 查看采集历史中的稳定错误码、HTTP 状态和模式。网络恢复后可手动重试；已有 HTML 快照时可选择“从快照重新提取”并先比较候选内容。
 - 直接读取受 15 秒、5 次重定向、5 MiB 限制；浏览器回退受 30 秒、25 MiB 网络预算和 5 MiB 最终 HTML 限制。超过限制不是可通过重复重试解决的问题。
 - 重新采集、重新提取或 AI 都不会自动覆盖人工正文；只在差异预览中明确采纳需要的字段。
-- 对必须登录后才能阅读的网页，可在云端织页“帮助 → 浏览器扩展”下载 Chrome/Firefox 剪藏扩展并生成一次性配对码。扩展只连接 `https://clip.sarainoq.cn`，读取用户点击时的当前标签页；确认 Markdown 后创建新副本。Chrome 解压后使用“加载已解压的扩展程序”，Firefox 解压后从 `about:debugging` 临时加载 `manifest.json`。Firefox 正式持久安装仍需未来 AMO 签名。
+- 对必须登录后才能阅读的网页，可在云端织页“帮助 → 浏览器扩展”下载 Chrome/Firefox 剪藏扩展并生成一次性配对码。扩展只连接 `https://clip.sarainoq.cn`，读取用户点击时的当前标签页；确认 Markdown 后创建新副本。KaTeX/MathML 渲染的公式会恢复为可编辑的 `$…$` 或 `$$…$$` TeX；保存前仍应在扩展预览中核对正文。Chrome 解压后使用“加载已解压的扩展程序”，Firefox 解压后从 `about:debugging` 临时加载 `manifest.json`。Firefox 正式持久安装仍需未来 AMO 签名。
 - 撤销配对后扩展会在下次保存时报未授权；在扩展中重新输入新配对码即可。扩展无法处理浏览器内部页、PDF 或空正文，此时使用“手动摘录正文”。
 
 ### 文章图片无法离线显示

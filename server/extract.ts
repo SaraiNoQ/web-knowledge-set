@@ -1,5 +1,6 @@
 import { Defuddle } from "defuddle/node";
 import { parseHTML } from "linkedom";
+import { protectRenderedMath, restoreProtectedMath } from "../shared/rendered-math.js";
 
 export const EXTRACTOR_VERSION = "defuddle@0.19.2";
 
@@ -18,6 +19,7 @@ function optionalText(value: unknown): string | null {
 
 export async function extractHtml(html: string, sourceUrl: string): Promise<ExtractedPage> {
   const { document } = parseHTML(html);
+  const protectedMath = protectRenderedMath(document as unknown as Document);
   const canonicalHref = document.querySelector('link[rel~="canonical"]')?.getAttribute("href");
   for (const element of document.querySelectorAll(
     'link[rel~="canonical"][href], meta[property="og:url"][content], meta[property="twitter:url"][content]',
@@ -50,6 +52,6 @@ export async function extractHtml(html: string, sourceUrl: string): Promise<Extr
     author: optionalText(result.author),
     publishedAt: optionalText(result.published),
     canonicalUrl,
-    markdown: optionalText(result.content) ?? "",
+    markdown: restoreProtectedMath(optionalText(result.content) ?? "", protectedMath),
   };
 }
