@@ -518,6 +518,7 @@ export default function App() {
   const [listError, setListError] = useState("");
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const [currentDoc, setCurrentDoc] = useState<KnowledgeDocument | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [tagText, setTagText] = useState("");
@@ -2241,10 +2242,18 @@ export default function App() {
   };
 
   const closeDocument = () => {
-    if (closeAttemptRef.current || organizationInFlight.current || lifecycleAction || restoringRevision !== null) return;
-    if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，确定离开吗？")) return;
+    if (closeAttemptRef.current || organizationInFlight.current || lifecycleAction || restoringRevision !== null) return false;
+    if (hasUnsavedChanges && !window.confirm("当前修改尚未保存，确定离开吗？")) return false;
     invalidateNavigation();
     setSelectedId(null);
+    return true;
+  };
+
+  const returnToLibrary = () => {
+    if (!closeDocument()) return;
+    setAiSettingsOpen(false);
+    setDiagnosticsOpen(false);
+    setSafetyOpen(false);
   };
 
   const applyLibraryView = (view: LibraryView) => {
@@ -2986,10 +2995,10 @@ export default function App() {
     <div className="app-shell">
       <a className="skip-link" href="#library-panel">跳到资料库</a>
       <header className="masthead">
-        <div className="brand" aria-label={cloudMode ? "织页云端知识库" : "织页本地知识库"}>
+        <button type="button" className="brand" aria-label="返回知识库主界面" onClick={returnToLibrary} disabled={closing}>
           <span className="brand-seal">织</span>
           <span><strong>织页</strong><small>ZHIYE · {cloudMode ? "CLOUD" : "LOCAL"} KNOWLEDGE</small></span>
-        </div>
+        </button>
         <p className="masthead-note">把散落的网页，<br />织成可阅读的知识。</p>
         <div className="masthead-actions">{!cloudMode && onboarding !== "unavailable" && <button type="button" className="guide-button" onClick={() => setGuideOpen(true)} disabled={closing}>使用指南</button>}<button type="button" className="shortcut-help-button" aria-keyshortcuts="?" onClick={() => setShortcutHelp(true)} disabled={closing}>帮助</button>{"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}<button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
           <i />{safetyRecovery ? "恢复模式" : "数据安全"}
@@ -3187,8 +3196,11 @@ export default function App() {
         </>}
       </section>
 
-      <main className={`workspace ${selectedId ? "has-selection" : ""}`}>
-        <aside id="library-panel" className="library-panel" aria-label="知识列表">
+      <main className={`workspace ${selectedId ? "has-selection" : ""} ${libraryCollapsed ? "library-collapsed" : ""}`}>
+        <aside id="library-panel" className={`library-panel ${libraryCollapsed ? "is-collapsed" : ""}`} aria-label="知识列表">
+          <button type="button" className="library-toggle" aria-expanded={!libraryCollapsed} aria-controls="library-panel" aria-label={libraryCollapsed ? "展开知识织片" : "收起知识织片"} onClick={() => setLibraryCollapsed((value) => !value)}>
+            <Icon size={17}><path d={libraryCollapsed ? "m9 6 6 6-6 6" : "m15 6-6 6 6 6"} /></Icon>
+          </button>
           <div className="panel-heading">
             <div><span className="eyebrow">02 · {inTrash ? "TRASH" : "LIBRARY"}</span><h2>{inTrash ? "回收站" : "知识织片"}</h2></div>
             <span className="total-count">{total}<small>篇</small></span>

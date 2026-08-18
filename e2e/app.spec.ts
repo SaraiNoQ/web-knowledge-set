@@ -70,6 +70,43 @@ test("keeps the primary workspace keyboard and screen-reader reachable", async (
   await expect(page.getByLabel("网页地址")).toBeFocused();
 });
 
+test("returns home from the logo and toggles the knowledge sidebar", async ({ page }) => {
+  await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
+  if (await deferSetup.isVisible()) await deferSetup.click();
+
+  const collapse = page.getByRole("button", { name: "收起知识织片" });
+  await expect(collapse).toHaveAttribute("aria-expanded", "true");
+  await collapse.click();
+  await expect(page.locator(".workspace")).toHaveClass(/library-collapsed/u);
+  const expand = page.getByRole("button", { name: "展开知识织片" });
+  await expect(expand).toHaveAttribute("aria-expanded", "false");
+  await page.setViewportSize({ width: 800, height: 900 });
+  await expect(page.getByRole("navigation", { name: "资料库视图" })).toBeVisible();
+  await expect.poll(() => page.locator(".library-tabs").evaluate((element) => getComputedStyle(element).display)).toBe("grid");
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expand.click();
+  await expect(page.locator(".workspace")).not.toHaveClass(/library-collapsed/u);
+
+  await page.getByLabel("网页地址").fill("https://example.com/logo-return");
+  await page.getByRole("button", { name: "收取网页" }).click();
+  const title = page.getByLabel("文档标题");
+  await expect(title).toHaveValue("远端测试文章", { timeout: 8_000 });
+  await title.fill("保留这次未保存修改");
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("当前修改尚未保存");
+    await dialog.dismiss();
+  });
+  await page.getByRole("button", { name: "返回知识库主界面" }).click();
+  await expect(title).toHaveValue("保留这次未保存修改");
+
+  await title.fill("确认离开未保存修改");
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "返回知识库主界面" }).click();
+  await expect(page.getByLabel("网页地址")).toBeVisible();
+});
+
 test("opens one keyboard-accessible help and about dialog in normal and recovery modes", async ({ page }) => {
   await page.goto("/");
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
