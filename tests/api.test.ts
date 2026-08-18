@@ -16,6 +16,7 @@ import type {
   CreateDocumentResponse,
   DataSafetyStatus,
   DeleteCollectionResponse,
+  DeleteFolderResponse,
   DocumentAsset,
   DocumentDraft,
   DocumentListResponse,
@@ -27,6 +28,7 @@ import type {
   KnowledgeDocument,
   KnowledgeCollection,
   KnowledgeTag,
+  KnowledgeFolder,
   ImportApplyResult,
   ImportPreview,
   RecentFilter,
@@ -451,6 +453,58 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     assert.equal(afterCollectionDelete.revision, organized.revision + 1);
     assert.deepEqual(afterCollectionDelete.collections, []);
     assert.deepEqual(await (await fetch(`${base}/api/collections`, { headers: { Cookie: cookie } })).json(), []);
+
+    assert.equal((await fetch(`${base}/api/folders`, {
+      method: "POST", headers: jsonHeaders, body: JSON.stringify({ name: " " }),
+    })).status, 400);
+    assert.equal((await fetch(`${base}/api/folders`, {
+      method: "POST", headers: jsonHeaders, body: JSON.stringify({ name: "bad\u0000name" }),
+    })).status, 400);
+    const folderResponse = await fetch(`${base}/api/folders`, {
+      method: "POST", headers: jsonHeaders, body: JSON.stringify({ name: "Projects" }),
+    });
+    assert.equal(folderResponse.status, 201);
+    const folder = (await folderResponse.json()) as KnowledgeFolder;
+    assert.equal((await fetch(`${base}/api/folders`, {
+      method: "POST", headers: jsonHeaders, body: JSON.stringify({ name: "projects" }),
+    })).status, 409);
+    const renamedFolder = (await (await fetch(`${base}/api/folders/${folder.id}`, {
+      method: "PATCH", headers: jsonHeaders, body: JSON.stringify({ name: "Reading" }),
+    })).json()) as KnowledgeFolder;
+    assert.equal(renamedFolder.name, "Reading");
+    const movedResponse = await fetch(`${base}/api/documents/${cancellable.id}`, {
+      method: "PATCH",
+      headers: jsonHeaders,
+      body: JSON.stringify({ revision: afterCollectionDelete.revision, folderId: folder.id }),
+    });
+    assert.equal(movedResponse.status, 200);
+    const moved = (await movedResponse.json()) as KnowledgeDocument;
+    assert.equal(moved.folderId, folder.id);
+    assert.equal(((await (await fetch(`${base}/api/folders`, {
+      headers: { Cookie: cookie },
+    })).json()) as KnowledgeFolder[])[0]?.documentCount, 1);
+    assert.equal(((await (await fetch(`${base}/api/documents?folderId=${folder.id}`, {
+      headers: { Cookie: cookie },
+    })).json()) as DocumentListResponse).total, 1);
+    assert.equal((await fetch(`${base}/api/documents?folderId=${folder.id}&unfiled=false`, {
+      headers: { Cookie: cookie },
+    })).status, 400);
+    const folderExport = await (await fetch(`${base}/api/documents/${cancellable.id}/export.md`, {
+      headers: { Cookie: cookie },
+    })).text();
+    assert.match(folderExport, /folder: "Reading"/u);
+    const folderDelete = await fetch(`${base}/api/folders/${folder.id}`, {
+      method: "DELETE", headers: jsonHeaders, body: "{}",
+    });
+    assert.deepEqual(await folderDelete.json(), {
+      deleted: true,
+      affectedDocuments: 1,
+    } satisfies DeleteFolderResponse);
+    const afterFolderDelete = (await (await fetch(`${base}/api/documents/${cancellable.id}`, {
+      headers: { Cookie: cookie },
+    })).json()) as KnowledgeDocument;
+    assert.equal(afterFolderDelete.folderId, null);
+    assert.equal(afterFolderDelete.revision, moved.revision + 1);
 
     const dataSafety = (await (
       await fetch(`${base}/api/data-safety`, { headers: { Cookie: cookie } })
@@ -881,7 +935,7 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     assert.match(exportedText, /^---\ntitle: "Captured article"\nsource: "https:\/\/example\.com\/article"/u);
     assert.match(
       exportedText,
-      /tags: \["Inbox"\]\ncollections: \[\]\nfavorite: false\narchived_at: null\nsource_note: ""\n---\n\n# Human edit\n$/u,
+      /tags: \["Inbox"\]\ncollections: \[\]\nfolder: null\nfavorite: false\narchived_at: null\nsource_note: ""\n---\n\n# Human edit\n$/u,
     );
     assert.doesNotMatch(exportedText, /DERIVED_ONLY/u);
 

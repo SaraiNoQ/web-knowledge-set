@@ -45,6 +45,19 @@ export interface MergeCollectionResponse {
   affectedDocuments: number;
 }
 
+export interface KnowledgeFolder {
+  id: string;
+  name: string;
+  documentCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DeleteFolderResponse {
+  deleted: true;
+  affectedDocuments: number;
+}
+
 export interface DocumentSummary {
   id: string;
   title: string;
@@ -58,6 +71,7 @@ export interface DocumentSummary {
   errorMessage: string | null;
   tags: string[];
   collections: DocumentCollection[];
+  folderId: string | null;
   favorite: boolean;
   archivedAt: string | null;
   revision: number;
@@ -257,6 +271,8 @@ export interface DocumentFilters {
   scope?: DocumentSearchScope;
   tag?: string;
   collectionId?: string;
+  folderId?: string;
+  unfiled?: boolean;
   status?: CaptureStatus | "";
   favorite?: boolean;
   archived?: boolean;

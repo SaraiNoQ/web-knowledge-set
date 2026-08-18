@@ -1,10 +1,12 @@
 import {
   CloudHttpError,
   createClip,
+  epochGuardedDatabase,
   exchangePairing,
   extensionCors,
   extensionOrigin,
   jsonObject,
+  recoverExpiredRestore,
   type D1Database,
 } from "./extension";
 
@@ -33,11 +35,16 @@ export async function handleClipRequest(request: Request, env: ClipEnv) {
       return new Response(null, { status: 204, headers: cors });
     }
     if (request.method !== "POST") throw new CloudHttpError(405, "METHOD_NOT_ALLOWED", "POST required");
+    const storedEpoch = await env.DB.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'").first<{ value: string }>();
+    if (!storedEpoch) throw new CloudHttpError(503, "CLOUD_NOT_INITIALIZED", "Cloud database migration is required");
+    const epoch = await recoverExpiredRestore(env.DB, storedEpoch.value);
+    if (!epoch || epoch.startsWith("restore:")) throw new CloudHttpError(503, "CLOUD_MAINTENANCE", "Cloud restore is in progress");
+    const db = epochGuardedDatabase(env.DB, epoch);
     if (url.pathname === "/api/browser-extension/pair") {
-      return json(await exchangePairing(env.DB, await jsonObject(request, 4_096), extension.browser), 201, cors);
+      return json(await exchangePairing(db, await jsonObject(request, 4_096), extension.browser), 201, cors);
     }
     if (url.pathname === "/api/browser-extension/clips") {
-      return json(await createClip(env.DB, request), 201, cors);
+      return json(await createClip(db, request), 201, cors);
     }
     throw new CloudHttpError(404, "NOT_FOUND", "Endpoint not found");
   } catch (error) {

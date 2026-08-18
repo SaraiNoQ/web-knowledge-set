@@ -37,9 +37,10 @@ function readyDocument(db: KnowledgeDatabase, markdown: string) {
     httpStatus: 200,
   }, null);
   const collection = db.createCollection("Reading").collection;
+  const folder = db.createFolder("Portable").folder;
   const organized = db.updateDocument(ready.id, ready.revision, {
     tags: ["Research"], collectionIds: [collection.id], favorite: true, archived: true,
-    sourceNote: "Imported from the web",
+    sourceNote: "Imported from the web", folderId: folder.id,
   });
   assert.equal(organized.kind, "updated");
   return organized.document;
@@ -87,8 +88,9 @@ test("portable bundle round-trips documents and images without rewriting links o
     const archive = await createPortableBundle(source, [original.id]);
     const files = unzipSync(archive);
     const manifest = JSON.parse(strFromU8(files["manifest.json"]!)) as {
-      documents: Array<{ path: string; assets: Array<{ path: string; sourceUrl: string; originalUrl: string; sha256: string; mimeType: string; byteSize: number }> }>;
+      documents: Array<{ path: string; folder?: string | null; assets: Array<{ path: string; sourceUrl: string; originalUrl: string; sha256: string; mimeType: string; byteSize: number }> }>;
     };
+    assert.equal(manifest.documents[0]!.folder, "Portable");
     const exported = strFromU8(files[manifest.documents[0]!.path]!);
     assert.doesNotMatch(exported, /DERIVED_RESULTS_ARE_NOT_PORTABLE_V1/u);
     assert.match(exported, /!\[cached\]\(\.\.\/assets\/[a-f0-9-]+\.png\)/u);
@@ -138,6 +140,7 @@ test("portable bundle round-trips documents and images without rewriting links o
     assert.equal(restored.publishedAt, original.publishedAt);
     assert.deepEqual(restored.tags, original.tags);
     assert.deepEqual(restored.collections.map(({ name }) => name), ["Reading"]);
+    assert.equal(target.getFolder(restored.folderId!)?.name, "Portable");
     assert.equal(restored.favorite, true);
     assert.equal(restored.archivedAt, original.archivedAt);
     assert.equal(restored.sourceNote, original.sourceNote);
@@ -145,6 +148,25 @@ test("portable bundle round-trips documents and images without rewriting links o
     assert.deepEqual(target.listDerivedResults(restored.id), { items: [], page: 1, pageSize: 30, total: 0 });
     assert.equal(readFileSync(target.assetFilePath(hash)).equals(png), true);
     assert.deepEqual(target.listDocumentAssets(restored.id)?.map(({ sourceUrl }) => sourceUrl), [assetUrl, relativeAssetUrl, secondAssetUrl]);
+
+    const originalFolderId = restored.folderId;
+    const legacyFiles = unzipSync(archive);
+    const legacyManifest = JSON.parse(strFromU8(legacyFiles["manifest.json"]!)) as { documents: Array<Record<string, unknown>> };
+    delete legacyManifest.documents[0]!.folder;
+    legacyFiles["manifest.json"] = strToU8(JSON.stringify(legacyManifest));
+    const legacyPreview = await stagePortableBundle(target, zipSync(legacyFiles));
+    promotePortableAssets(target, legacyPreview.id);
+    assert.equal(target.applyImportBatch(legacyPreview.id, "update")?.counts.updated, 1);
+    assert.equal(target.getDocument(restored.id)?.folderId, originalFolderId);
+
+    const nullFiles = unzipSync(archive);
+    const nullManifest = JSON.parse(strFromU8(nullFiles["manifest.json"]!)) as { documents: Array<Record<string, unknown>> };
+    nullManifest.documents[0]!.folder = null;
+    nullFiles["manifest.json"] = strToU8(JSON.stringify(nullManifest));
+    const nullPreview = await stagePortableBundle(target, zipSync(nullFiles));
+    promotePortableAssets(target, nullPreview.id);
+    assert.equal(target.applyImportBatch(nullPreview.id, "update")?.counts.updated, 1);
+    assert.equal(target.getDocument(restored.id)?.folderId, null);
 
     skippedTarget.createOrGetDocument(original.sourceUrl);
     const skippedPreview = await stagePortableBundle(skippedTarget, archive);
@@ -178,6 +200,7 @@ test("portable bundle round-trips documents and images without rewriting links o
     const updatePreview = await stagePortableBundle(target, await createPortableBundle(updatedSource, [replacement.id]));
     promotePortableAssets(target, updatePreview.id);
     assert.equal(target.applyImportBatch(updatePreview.id, "update")?.counts.updated, 1);
+    assert.equal(target.getFolder(target.getDocument(restored.id)!.folderId!)?.name, "Portable");
     target.cleanupUnreferencedAssets();
     assert.equal(existsSync(target.assetFilePath(hash)), true);
     assert.equal(existsSync(target.assetFilePath(replacementHash)), true);

@@ -1,10 +1,20 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import { handleRequest, type CloudEnv } from "../cloud/worker.js";
-import { CloudHttpError, updateDocument } from "../cloud/extension.js";
+import {
+  CloudHttpError,
+  epochGuardedDatabase,
+  recoverExpiredRestore,
+  updateDocument,
+  type D1Database,
+  type D1Result,
+  type D1Statement,
+} from "../cloud/extension.js";
 import { handleAiApi } from "../cloud/ai.js";
-import { createCapture } from "../cloud/capture.js";
+import { createCapture, handleCaptureQueue } from "../cloud/capture.js";
 
 const rows = new Map<string, { value: string; revision: number }>([
   ["data_epoch", { value: "cloud-test", revision: 0 }],
@@ -14,6 +24,93 @@ const rows = new Map<string, { value: string; revision: number }>([
 ]);
 let preparedSql: string[] = [];
 let lastBackup = "";
+
+class SqliteD1Statement implements D1Statement {
+  constructor(
+    private readonly database: DatabaseSync,
+    readonly sql: string,
+    private readonly values: unknown[] = [],
+    private readonly shouldFail?: (sql: string) => boolean,
+  ) {}
+
+  bind(...values: unknown[]) {
+    return new SqliteD1Statement(this.database, this.sql, values, this.shouldFail);
+  }
+
+  async first<T>() {
+    return (this.database.prepare(this.sql).get(...this.values as never[]) ?? null) as T | null;
+  }
+
+  async all<T>() {
+    return { results: this.database.prepare(this.sql).all(...this.values as never[]) as T[], meta: { changes: 0 } };
+  }
+
+  async run<T>() {
+    if (this.shouldFail?.(this.sql)) throw new Error("injected D1 failure");
+    const result = this.database.prepare(this.sql).run(...this.values as never[]);
+    return { results: [] as T[], meta: { changes: Number(result.changes) } };
+  }
+
+  async execute(): Promise<D1Result> {
+    return /^\s*(?:SELECT|PRAGMA|WITH)\b/iu.test(this.sql) ? await this.all() : await this.run();
+  }
+}
+
+class SqliteD1Database implements D1Database {
+  failBatchOn: RegExp | null = null;
+
+  constructor(readonly sqlite: DatabaseSync) {}
+
+  prepare(sql: string) {
+    return new SqliteD1Statement(this.sqlite, sql, [], (candidate) => Boolean(this.failBatchOn?.test(candidate)));
+  }
+
+  async batch(statements: D1Statement[]) {
+    this.sqlite.exec("BEGIN IMMEDIATE");
+    try {
+      const results: D1Result[] = [];
+      for (const statement of statements) results.push(await (statement as SqliteD1Statement).execute());
+      this.sqlite.exec("COMMIT");
+      return results;
+    } catch (error) {
+      this.sqlite.exec("ROLLBACK");
+      throw error;
+    }
+  }
+}
+
+function migratedCloudDatabase() {
+  const sqlite = new DatabaseSync(":memory:");
+  sqlite.exec("PRAGMA foreign_keys = ON");
+  for (let version = 1; version <= 6; version += 1) {
+    sqlite.exec(readFileSync(new URL(`../cloud/migrations/${String(version).padStart(4, "0")}_${[
+      "cloud_core", "browser_extension", "cloud_ai", "cloud_backups", "cloud_capture", "cloud_folders",
+    ][version - 1]}.sql`, import.meta.url), "utf8"));
+  }
+  return new SqliteD1Database(sqlite);
+}
+
+function memoryBucket() {
+  const objects = new Map<string, Uint8Array>();
+  return {
+    objects,
+    async put(key: string, value: ArrayBuffer | Uint8Array | string) {
+      objects.set(key, typeof value === "string" ? new TextEncoder().encode(value) : value instanceof Uint8Array ? value : new Uint8Array(value));
+    },
+    async get(key: string) {
+      const bytes = objects.get(key);
+      if (!bytes) return null;
+      return {
+        body: new Response(bytes).body!, size: bytes.byteLength, httpEtag: `"${key}"`,
+        async arrayBuffer() { return bytes.slice().buffer; },
+      };
+    },
+    async head(key: string) {
+      const bytes = objects.get(key);
+      return bytes ? { size: bytes.byteLength } : null;
+    },
+  };
+}
 
 function environment(): CloudEnv {
   return {
@@ -60,6 +157,17 @@ function environment(): CloudEnv {
   };
 }
 
+function sqliteEnvironment(db = migratedCloudDatabase(), bucket = memoryBucket()) {
+  const env: CloudEnv = {
+    ASSETS: { fetch: async () => new Response("<main>cloud</main>", { headers: { "Content-Type": "text/html" } }) },
+    BACKUPS: bucket,
+    CAPTURE_QUEUE: { async send() {} },
+    BROWSER: { async quickAction() { return new Response('{"success":true,"result":"# captured"}'); } },
+    DB: db,
+  };
+  return { env, db, bucket };
+}
+
 test("cloud core serves the existing empty-library startup contract", async () => {
   const health = await handleRequest(new Request("https://app.example.com/health"), environment());
   assert.deepEqual(await health.json(), { ok: true, mode: "cloud-core" });
@@ -75,6 +183,7 @@ test("cloud core serves the existing empty-library startup contract", async () =
     }],
     ["/api/settings/recent-filters", { filters: [], revision: 3 }],
     ["/api/capture-queue", { paused: false, active: 0, queued: 0 }],
+    ["/api/folders", []],
     ["/api/collections", []],
     ["/api/documents?sort=updated&page=1", { items: [], page: 1, pageSize: 30, total: 0 }],
     ["/api/tags", []],
@@ -109,7 +218,10 @@ test("cloud core serves the existing empty-library startup contract", async () =
   }), environment());
   assert.equal(backup.status, 201);
   assert.equal((await backup.json() as { status: string }).status, "verified");
-  assert.equal((JSON.parse(lastBackup) as { format: string }).format, "zhiye-cloud-backup");
+  const backupArchive = JSON.parse(lastBackup) as { format: string; version: number; folders: unknown[] };
+  assert.deepEqual({ format: backupArchive.format, version: backupArchive.version, folders: backupArchive.folders }, {
+    format: "zhiye-cloud-backup", version: 2, folders: [],
+  });
 
   preparedSql = [];
   const scopedSearch = await handleRequest(
@@ -122,9 +234,139 @@ test("cloud core serves the existing empty-library startup contract", async () =
   );
   assert.equal(invalidRange.status, 400);
   assert.equal((await invalidRange.json() as { error: { code: string } }).error.code, "INVALID_DATE_RANGE");
+  const invalidFolderFilter = await handleRequest(
+    new Request("https://app.example.com/api/documents?folderId=folder-1&unfiled=true"), environment(),
+  );
+  assert.equal(invalidFolderFilter.status, 400);
+  assert.equal((await invalidFolderFilter.json() as { error: { code: string } }).error.code, "INVALID_FILTER");
+  preparedSql = [];
+  const filed = await handleRequest(new Request("https://app.example.com/api/documents?unfiled=false"), environment());
+  assert.equal(filed.status, 200);
+  assert.ok(preparedSql.some((sql) => sql.includes("cloud_documents") && sql.includes("folder_id IS NOT NULL")));
+  assert.ok(preparedSql.some((sql) => sql.includes("cloud_capture_jobs") && sql.includes("folder_id IS NOT NULL")));
 
   const asset = await handleRequest(new Request("https://app.example.com/"), environment());
   assert.equal(asset.headers.get("X-Frame-Options"), "DENY");
+});
+
+test("cloud folders create, rename, move documents and jobs, then delete to unfiled", async () => {
+  const { env, db } = sqliteEnvironment();
+  const now = "2026-08-18T00:00:00.000Z";
+  db.sqlite.prepare(`INSERT INTO cloud_documents(
+    id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note,
+    revision, created_at, updated_at, folder_id
+  ) VALUES (?, ?, NULL, NULL, ?, NULL, NULL, ?, 'ready', '', 1, ?, ?, NULL)`)
+    .run("document-1", "https://example.com/document", "Document", "# Document", now, now);
+  db.sqlite.prepare(`INSERT INTO cloud_capture_jobs(
+    id, url, status, error_code, created_at, updated_at, folder_id, revision
+  ) VALUES (?, ?, 'queued', NULL, ?, ?, NULL, 1)`)
+    .run("job-1", "https://example.com/job", now, now);
+  const headers = { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": "cloud-1" };
+  const createdResponse = await handleRequest(new Request("https://app.example.com/api/folders", {
+    method: "POST", headers, body: JSON.stringify({ name: "Research" }),
+  }), env);
+  assert.equal(createdResponse.status, 201);
+  const created = await createdResponse.json() as { id: string };
+  const renamedResponse = await handleRequest(new Request(`https://app.example.com/api/folders/${created.id}`, {
+    method: "PATCH", headers, body: JSON.stringify({ name: "Reading" }),
+  }), env);
+  assert.equal(renamedResponse.status, 200);
+  assert.equal((await renamedResponse.json() as { name: string }).name, "Reading");
+  for (const id of ["document-1", "job-1"]) {
+    const moved = await handleRequest(new Request(`https://app.example.com/api/documents/${id}`, {
+      method: "PATCH", headers, body: JSON.stringify({ revision: 1, folderId: created.id }),
+    }), env);
+    assert.equal(moved.status, 200);
+    assert.equal((await moved.json() as { folderId: string }).folderId, created.id);
+  }
+  const folders = await handleRequest(new Request("https://app.example.com/api/folders"), env);
+  assert.equal((await folders.json() as Array<{ documentCount: number }>)[0]?.documentCount, 2);
+  const deleted = await handleRequest(new Request(`https://app.example.com/api/folders/${created.id}`, {
+    method: "DELETE", headers, body: "{}",
+  }), env);
+  assert.deepEqual(await deleted.json(), { deleted: true, affectedDocuments: 2 });
+  const document = db.sqlite.prepare("SELECT folder_id, revision FROM cloud_documents WHERE id = 'document-1'").get() as
+    { folder_id: string | null; revision: number };
+  const job = db.sqlite.prepare("SELECT folder_id, revision FROM cloud_capture_jobs WHERE id = 'job-1'").get() as
+    { folder_id: string | null; revision: number };
+  assert.deepEqual({ ...document }, { folder_id: null, revision: 3 });
+  assert.deepEqual({ ...job }, { folder_id: null, revision: 3 });
+});
+
+test("cloud backup restores v2 folders, maps v1 documents to unfiled, and rolls back failures", async () => {
+  const { env, db } = sqliteEnvironment();
+  const now = "2026-08-18T00:00:00.000Z";
+  db.sqlite.prepare("INSERT INTO cloud_folders(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)")
+    .run("folder-v2", "Research", now, now);
+  db.sqlite.prepare(`INSERT INTO cloud_documents(
+    id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note,
+    revision, created_at, updated_at, folder_id
+  ) VALUES (?, ?, NULL, NULL, ?, NULL, NULL, ?, 'ready', '', 1, ?, ?, ?)`)
+    .run("document-v2", "https://example.com/v2", "V2", "# V2", now, now, "folder-v2");
+  const epochHeader = () => ({
+    "Content-Type": "application/json",
+    "X-Zhiye-Data-Epoch": String((db.sqlite.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'").get() as { value: string }).value),
+  });
+  const created = await handleRequest(new Request("https://app.example.com/api/data-safety/backups", {
+    method: "POST", headers: epochHeader(), body: "{}",
+  }), env);
+  assert.equal(created.status, 201);
+  const v2BackupId = (await created.json() as { id: string }).id;
+  db.sqlite.exec("DELETE FROM cloud_documents; DELETE FROM cloud_folders;");
+  db.sqlite.prepare(`INSERT INTO cloud_documents(
+    id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note,
+    revision, created_at, updated_at, folder_id
+  ) VALUES ('sentinel', 'https://example.com/sentinel', NULL, NULL, 'Sentinel', NULL, NULL, '# Sentinel', 'ready', '', 1, ?, ?, NULL)`)
+    .run(now, now);
+  const restored = await handleRequest(new Request(`https://app.example.com/api/data-safety/backups/${v2BackupId}/restore`, {
+    method: "POST", headers: epochHeader(), body: "{}",
+  }), env);
+  assert.equal(restored.status, 200);
+  assert.match(restored.headers.get("X-Zhiye-Data-Epoch") || "", /^cloud-/u);
+  assert.deepEqual(
+    db.sqlite.prepare("SELECT id, folder_id FROM cloud_documents ORDER BY id").all().map((row) => ({ ...row })),
+    [{ id: "document-v2", folder_id: "folder-v2" }],
+  );
+  assert.deepEqual(db.sqlite.prepare("SELECT id, name FROM cloud_folders").all().map((row) => ({ ...row })), [{ id: "folder-v2", name: "Research" }]);
+
+  const v1Document = {
+    id: "document-v1", source_url: "https://example.com/v1", final_url: null, canonical_url: null,
+    title: "V1", author: null, published_at: null, markdown: "# V1", status: "ready", source_note: "",
+    revision: 1, created_at: now, updated_at: now,
+  };
+  const imported = await handleRequest(new Request("https://app.example.com/api/data-safety/backups/import", {
+    method: "POST",
+    headers: { ...epochHeader(), "Content-Type": "application/vnd.zhiye.cloud-backup+json" },
+    body: JSON.stringify({
+      format: "zhiye-cloud-backup", version: 1, createdAt: now,
+      documents: [v1Document], derivedResults: [], llmSettings: null,
+    }),
+  }), env);
+  assert.equal(imported.status, 201);
+  const v1BackupId = (await imported.json() as { id: string }).id;
+  const restoredV1 = await handleRequest(new Request(`https://app.example.com/api/data-safety/backups/${v1BackupId}/restore`, {
+    method: "POST", headers: epochHeader(), body: "{}",
+  }), env);
+  assert.equal(restoredV1.status, 200);
+  assert.deepEqual(
+    db.sqlite.prepare("SELECT id, folder_id FROM cloud_documents").all().map((row) => ({ ...row })),
+    [{ id: "document-v1", folder_id: null }],
+  );
+  assert.equal((db.sqlite.prepare("SELECT COUNT(*) AS count FROM cloud_folders").get() as { count: number }).count, 0);
+
+  const rollbackTarget = await handleRequest(new Request("https://app.example.com/api/data-safety/backups", {
+    method: "POST", headers: epochHeader(), body: "{}",
+  }), env);
+  const rollbackId = (await rollbackTarget.json() as { id: string }).id;
+  db.sqlite.prepare("UPDATE cloud_documents SET title = 'Current state'").run();
+  db.failBatchOn = /^\s*INSERT INTO cloud_documents/iu;
+  const failed = await handleRequest(new Request(`https://app.example.com/api/data-safety/backups/${rollbackId}/restore`, {
+    method: "POST", headers: epochHeader(), body: "{}",
+  }), env);
+  db.failBatchOn = null;
+  assert.equal(failed.status, 500);
+  assert.equal((db.sqlite.prepare("SELECT title FROM cloud_documents").get() as { title: string }).title, "Current state");
+  assert.doesNotMatch(String((db.sqlite.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'").get() as { value: string }).value), /^restore:/u);
 });
 
 test("cloud AI probe uses a page-scoped key without echoing it", async () => {
@@ -229,17 +471,77 @@ test("cloud capture resolves a public target before queueing", async () => {
     const request = new Request("https://app.example.com/api/documents", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: '{"url":"https://example.com/article"}',
     });
-    const result = await createCapture(request, env);
+    const result = await createCapture(request, env, "cloud-test");
     assert.equal(result.created, true);
     assert.equal(result.document.status, "queued");
     assert.deepEqual(queued, { id: result.document.id, url: "https://example.com/article", epoch: "cloud-test" });
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("cloud capture publishes the document and removes its job in one D1 batch", async () => {
+  const originalFetch = globalThis.fetch;
+  const runtime = globalThis as typeof globalThis & { HTMLRewriter?: new () => {
+    on(...args: unknown[]): unknown;
+    transform(response: Response): Response;
+  } };
+  const originalRewriter = runtime.HTMLRewriter;
+  runtime.HTMLRewriter = class {
+    on() { return this; }
+    transform(response: Response) { return response; }
+  };
+  globalThis.fetch = async (input) => {
+    const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    return target.startsWith("https://cloudflare-dns.com/")
+      ? new Response(JSON.stringify({ Answer: [{ type: 1, data: "93.184.216.34" }] }))
+      : new Response("<h1>Captured</h1>", { headers: { "Content-Type": "text/html" } });
+  };
+  let batchSql: string[] = [];
+  let acked = false;
+  const env = environment();
+  env.DB = {
+    prepare(sql: string) {
+      const statement = {
+        sql,
+        bind() { return statement; },
+        async first<T>() {
+          return (sql.includes("data_epoch") ? { value: "cloud-test" } : null) as T | null;
+        },
+        async all<T>() { return { results: [] as T[], meta: { changes: 0 } }; },
+        async run<T>() {
+          assert.doesNotMatch(sql, /INSERT INTO cloud_documents|DELETE FROM cloud_capture_jobs/u);
+          return { results: [] as T[], meta: { changes: 1 } };
+        },
+      };
+      return statement;
+    },
+    async batch(statements) {
+      batchSql = statements.map((statement) => (statement as unknown as { sql: string }).sql);
+      return statements.map(() => ({ results: [], meta: { changes: 1 } }));
+    },
+  };
+  env.BROWSER = { async quickAction() { return new Response(JSON.stringify({ success: true, result: "# Captured" })); } };
+  try {
+    await handleCaptureQueue({ messages: [{
+      body: { id: "job-1", url: "https://example.com/article", epoch: "cloud-test" },
+      ack() { acked = true; }, retry() {},
+    }] }, env);
+    assert.equal(acked, true);
+    assert.equal(batchSql.length, 3);
+    assert.match(batchSql[0]!, /data_epoch/u);
+    assert.match(batchSql[1]!, /INSERT INTO cloud_documents/u);
+    assert.match(batchSql[1]!, /job\.revision \+ 1/u);
+    assert.match(batchSql[2]!, /DELETE FROM cloud_capture_jobs/u);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalRewriter) runtime.HTMLRewriter = originalRewriter;
+    else delete runtime.HTMLRewriter;
+  }
+});
+
 test("cloud editing increments revision and rejects a stale writer", async () => {
   let row = {
     id: "doc-1", sourceUrl: "https://example.com/", finalUrl: "https://example.com/", canonicalUrl: "https://example.com/",
-    title: "Old", author: null, status: "ready" as const, revision: 1, createdAt: "2026-08-18T00:00:00.000Z",
+    title: "Old", author: null, status: "ready" as const, folderId: null, revision: 1, createdAt: "2026-08-18T00:00:00.000Z",
     updatedAt: "2026-08-18T00:00:00.000Z", publishedAt: null, markdown: "Old body", sourceNote: "clip",
   };
   const db = {
@@ -247,7 +549,7 @@ test("cloud editing increments revision and rejects a stale writer", async () =>
       let bound: unknown[] = [];
       const statement = {
         bind(...values: unknown[]) { bound = values; return statement; },
-        async first<T>() { return row as T; },
+        async first<T>() { return (sql.includes("cloud_folders") ? null : row) as T | null; },
         async all<T>() { return { results: [] as T[], meta: { changes: 0 } }; },
         async run<T>() {
           if (sql.startsWith("UPDATE cloud_documents") && bound[3] === row.id && bound[4] === row.revision) {
@@ -267,4 +569,151 @@ test("cloud editing increments revision and rejects a stale writer", async () =>
     updateDocument(db, row.id, { title: "Stale", markdown: "Lost", revision: 1 }),
     (error: unknown) => error instanceof CloudHttpError && error.code === "DOCUMENT_CONFLICT" && error.document !== undefined,
   );
+  await assert.rejects(
+    updateDocument(db, row.id, { folderId: "missing-folder", revision: row.revision }),
+    (error: unknown) => error instanceof CloudHttpError && error.code === "INVALID_FOLDER_ID",
+  );
+});
+
+test("cloud folder movement reports revision conflicts before a missing target", async () => {
+  const row = {
+    id: "doc-conflict", sourceUrl: "https://example.com/", finalUrl: null, canonicalUrl: null,
+    title: "Current", author: null, status: "ready" as const, folderId: null, revision: 2,
+    createdAt: "2026-08-18T00:00:00.000Z", updatedAt: "2026-08-18T00:00:00.000Z",
+    publishedAt: null, markdown: "Current", sourceNote: "test",
+  };
+  const db = {
+    prepare(sql: string) {
+      return {
+        bind() { return this; },
+        async first<T>() {
+          if (sql.includes("FROM cloud_folders f WHERE")) return null;
+          if (sql.includes("cloud_documents")) return row as T;
+          return null;
+        },
+        async all<T>() { return { results: [] as T[], meta: { changes: 0 } }; },
+        async run<T>() { return { results: [] as T[], meta: { changes: 0 } }; },
+      };
+    },
+  };
+  await assert.rejects(
+    updateDocument(db, row.id, { revision: 1, folderId: "missing" }),
+    (error: unknown) => error instanceof CloudHttpError && error.code === "DOCUMENT_CONFLICT" && error.document !== undefined,
+  );
+  await assert.rejects(
+    updateDocument(db, row.id, { revision: 2, folderId: "missing" }),
+    (error: unknown) => error instanceof CloudHttpError && error.code === "INVALID_FOLDER_ID",
+  );
+});
+
+test("cloud writes bind their epoch check to the same D1 batch", async () => {
+  let epoch = "cloud-old";
+  let writes = 0;
+  const db = {
+    prepare(sql: string) {
+      let bound: unknown[] = [];
+      const statement = {
+        sql,
+        get bound() { return bound; },
+        bind(...values: unknown[]) { bound = values; return statement; },
+        async first<T>() { return (sql.includes("data_epoch") ? { value: epoch } : null) as T | null; },
+        async all<T>() { return { results: [] as T[], meta: { changes: 0 } }; },
+        async run<T>() { writes += 1; return { results: [] as T[], meta: { changes: 1 } }; },
+      };
+      return statement;
+    },
+    async batch(statements: Array<{ sql: string; bound: unknown[] }>) {
+      if (statements[0]?.bound[0] !== epoch) throw new Error("invalid epoch");
+      for (const statement of statements.slice(1)) {
+        if (/^(?:INSERT|UPDATE|DELETE)/u.test(statement.sql.trim())) writes += 1;
+      }
+      return statements.map(() => ({ results: [], meta: { changes: 1 } }));
+    },
+  };
+  const guarded = epochGuardedDatabase(db, "cloud-old");
+  epoch = "cloud-new";
+  await assert.rejects(
+    guarded.prepare("UPDATE cloud_documents SET title = title").run(),
+    (error: unknown) => error instanceof CloudHttpError && error.code === "STALE_DATA_EPOCH",
+  );
+  assert.equal(writes, 0);
+  epoch = "cloud-old";
+  await guarded.prepare("UPDATE cloud_documents SET title = title").run();
+  assert.equal(writes, 1);
+});
+
+test("expired cloud restore recovery releases the epoch and fails pending capture jobs", async () => {
+  let batchSql: string[] = [];
+  const db = {
+    prepare(sql: string) {
+      const statement = {
+        sql,
+        bind() { return statement; },
+        async first<T>() { return null as T | null; },
+        async all<T>() { return { results: [] as T[], meta: { changes: 0 } }; },
+        async run<T>() { return { results: [] as T[], meta: { changes: 0 } }; },
+      };
+      return statement;
+    },
+    async batch(statements: Array<{ sql: string }>) {
+      batchSql = statements.map(({ sql }) => sql);
+      return statements.map((_, index) => ({ results: [], meta: { changes: index === 1 ? 1 : 2 } }));
+    },
+  };
+  const recovered = await recoverExpiredRestore(db, `restore:${Date.now() - 1}:crashed`);
+  assert.match(String(recovered), /^cloud-/u);
+  assert.match(batchSql[0]!, /status IN \('queued', 'fetching'\)/u);
+  assert.match(batchSql[0]!, /RESTORE_INTERRUPTED/u);
+  assert.match(batchSql[1]!, /value = \?/u);
+});
+
+test("cloud backup reader accepts strict v1 and v2 archives and rejects extra fields", async () => {
+  const base = { format: "zhiye-cloud-backup", createdAt: "2026-08-18T00:00:00.000Z", documents: [], derivedResults: [], llmSettings: null };
+  for (const archive of [{ ...base, version: 1 }, { ...base, version: 2, folders: [] }]) {
+    const response = await handleRequest(new Request("https://app.example.com/api/data-safety/backups/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/vnd.zhiye.cloud-backup+json", "X-Zhiye-Data-Epoch": "cloud-test" },
+      body: JSON.stringify(archive),
+    }), environment());
+    assert.equal(response.status, 201);
+  }
+  const folder = { id: "folder-1", name: "Research", created_at: "2026-08-18T00:00:00.000Z", updated_at: "2026-08-18T00:00:00.000Z" };
+  const document = {
+    id: "document-1", source_url: "https://example.com/article", final_url: null, canonical_url: null,
+    title: "Article", author: null, published_at: null, markdown: "# Article", status: "ready",
+    source_note: "clip", folder_id: folder.id, revision: 1,
+    created_at: "2026-08-18T00:00:00.000Z", updated_at: "2026-08-18T00:00:00.000Z",
+  };
+  const populated = await handleRequest(new Request("https://app.example.com/api/data-safety/backups/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/vnd.zhiye.cloud-backup+json", "X-Zhiye-Data-Epoch": "cloud-test" },
+    body: JSON.stringify({ ...base, version: 2, folders: [folder], documents: [document] }),
+  }), environment());
+  assert.equal(populated.status, 201);
+  const invalid = await handleRequest(new Request("https://app.example.com/api/data-safety/backups/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/vnd.zhiye.cloud-backup+json", "X-Zhiye-Data-Epoch": "cloud-test" },
+    body: JSON.stringify({ ...base, version: 2, folders: [], unexpected: true }),
+  }), environment());
+  assert.equal(invalid.status, 400);
+  assert.equal((await invalid.json() as { error: { code: string } }).error.code, "INVALID_BACKUP_ARCHIVE");
+  const invalidRow = await handleRequest(new Request("https://app.example.com/api/data-safety/backups/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/vnd.zhiye.cloud-backup+json", "X-Zhiye-Data-Epoch": "cloud-test" },
+    body: JSON.stringify({ ...base, version: 2, folders: [null] }),
+  }), environment());
+  assert.equal(invalidRow.status, 400);
+  assert.equal((await invalidRow.json() as { error: { code: string } }).error.code, "INVALID_BACKUP_ARCHIVE");
+  for (const invalidDocument of [
+    { ...document, folder_id: "missing" },
+    { ...document, revision: Number.MAX_SAFE_INTEGER + 1 },
+  ]) {
+    const response = await handleRequest(new Request("https://app.example.com/api/data-safety/backups/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/vnd.zhiye.cloud-backup+json", "X-Zhiye-Data-Epoch": "cloud-test" },
+      body: JSON.stringify({ ...base, version: 2, folders: [folder], documents: [invalidDocument] }),
+    }), environment());
+    assert.equal(response.status, 400);
+    assert.equal((await response.json() as { error: { code: string } }).error.code, "INVALID_BACKUP_ARCHIVE");
+  }
 });

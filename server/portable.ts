@@ -59,6 +59,7 @@ interface PortableDocument {
   capturedAt: string;
   tags: string[];
   collections: string[];
+  folder?: string | null;
   favorite: boolean;
   archivedAt: string | null;
   sourceNote: string;
@@ -253,6 +254,7 @@ export async function createPortableBundle(database: KnowledgeDatabase, document
       capturedAt: document.createdAt,
       tags: document.tags,
       collections: document.collections.map(({ name }) => name),
+      folder: document.folderId ? database.getFolder(document.folderId)?.name ?? null : null,
       favorite: document.favorite,
       archivedAt: document.archivedAt,
       sourceNote: document.sourceNote,
@@ -489,6 +491,15 @@ function namesValue(value: unknown, field: "tags" | "collections") {
   return names;
 }
 
+function folderValue(value: unknown) {
+  if (value === null) return null;
+  const name = stringValue(value, "folder", 100).normalize("NFKC").trim();
+  if (!name || name.length > 100 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(name)) {
+    throw new PortableError(400, "INVALID_MANIFEST", "folder is invalid");
+  }
+  return name;
+}
+
 function hashValue(value: unknown, field: string) {
   if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value)) throw new PortableError(400, "INVALID_MANIFEST", `${field} is invalid`);
   return value;
@@ -570,6 +581,7 @@ async function parseManifest(files: Record<string, Uint8Array>, signal?: AbortSi
     const capturedAt = stringValue(document.capturedAt, "document.capturedAt", 50);
     const archivedAt = nullableString(document.archivedAt, "document.archivedAt", 50);
     const publishedAt = nullableString(document.publishedAt, "document.publishedAt", 50);
+    const folder = Object.hasOwn(document, "folder") ? folderValue(document.folder) : undefined;
     if (!Number.isFinite(Date.parse(capturedAt)) || (archivedAt && !Number.isFinite(Date.parse(archivedAt)))) {
       throw new PortableError(400, "INVALID_MANIFEST", "Document dates are invalid");
     }
@@ -594,6 +606,7 @@ async function parseManifest(files: Record<string, Uint8Array>, signal?: AbortSi
       author: nullableString(document.author, "document.author", 1_000),
       publishedAt, capturedAt,
       tags: namesValue(document.tags, "tags"), collections: namesValue(document.collections, "collections"),
+      ...(folder === undefined ? {} : { folder }),
       favorite: typeof document.favorite === "boolean" ? document.favorite : (() => { throw new PortableError(400, "INVALID_MANIFEST", "favorite is invalid"); })(), archivedAt,
       sourceNote: typeof document.sourceNote === "string" && document.sourceNote.length <= 50_000 ? document.sourceNote : (() => { throw new PortableError(400, "INVALID_MANIFEST", "sourceNote is invalid"); })(),
       assets,
@@ -643,6 +656,7 @@ export async function stagePortableBundle(database: KnowledgeDatabase, archive: 
         capturedAt: document.capturedAt,
         tags: document.tags,
         collections: document.collections,
+        ...(document.folder === undefined ? {} : { folder: document.folder }),
         favorite: document.favorite,
         archivedAt: document.archivedAt,
         sourceNote: document.sourceNote,

@@ -31,6 +31,7 @@ import type {
   DerivedResultUsage,
   KnowledgeDocument,
   KnowledgeCollection,
+  KnowledgeFolder,
   KnowledgeTag,
   ImportApplyResult,
   ImportKind,
@@ -537,6 +538,18 @@ const migrations = [
     SELECT RAISE(ABORT, 'derived results are immutable');
   END;
   `,
+  `
+  CREATE TABLE folders (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  ALTER TABLE documents ADD COLUMN folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL;
+  CREATE INDEX documents_folder_updated
+    ON documents(folder_id, deleted_at, updated_at DESC, id);
+  `,
 ];
 
 export const CURRENT_SCHEMA_VERSION = migrations.length;
@@ -581,6 +594,7 @@ interface DocumentRow {
   favorite: number;
   archived_at: string | null;
   source_note: string;
+  folder_id: string | null;
   revision: number;
   deleted_at: string | null;
   created_at: string;
@@ -588,6 +602,14 @@ interface DocumentRow {
 }
 
 interface CollectionRow {
+  id: string;
+  name: string;
+  document_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface FolderRow {
   id: string;
   name: string;
   document_count: number;
@@ -703,6 +725,7 @@ export interface DocumentPatch {
   favorite?: boolean;
   archived?: boolean;
   collectionIds?: string[];
+  folderId?: string | null;
 }
 
 export type ImportPayload =
@@ -718,6 +741,7 @@ export type ImportPayload =
     capturedAt: string | null;
     tags: string[];
     collections: string[];
+    folder?: string | null;
     favorite: boolean;
     archivedAt: string | null;
     sourceNote: string;
@@ -1623,6 +1647,16 @@ export class KnowledgeDatabase {
     };
   }
 
+  private toFolder(row: FolderRow): KnowledgeFolder {
+    return {
+      id: row.id,
+      name: row.name,
+      documentCount: Number(row.document_count),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
   private toDocument(row: DocumentRow): KnowledgeDocument {
     return {
       id: row.id,
@@ -1640,6 +1674,7 @@ export class KnowledgeDatabase {
       captureMode: row.capture_mode,
       tags: this.tagsFor(row.id),
       collections: this.collectionsFor(row.id),
+      folderId: row.folder_id,
       favorite: Boolean(row.favorite),
       archivedAt: row.archived_at,
       revision: row.revision,
@@ -2263,6 +2298,19 @@ export class KnowledgeDatabase {
     return ids;
   }
 
+  private importFolder(name: string | null, timestamp: string) {
+    if (name === null) return null;
+    let row = this.sql.prepare("SELECT id FROM folders WHERE name = ? COLLATE NOCASE").get(name) as
+      | { id: string }
+      | undefined;
+    if (!row) {
+      row = { id: randomUUID() };
+      this.sql.prepare("INSERT INTO folders(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)")
+        .run(row.id, name, timestamp, timestamp);
+    }
+    return row.id;
+  }
+
   private replaceImportedAssets(
     documentId: string,
     assets: NonNullable<Extract<ImportPayload, { type: "markdown" }>["assets"]>,
@@ -2292,16 +2340,17 @@ export class KnowledgeDatabase {
       ? copy ? `${payload.sourceUrl}#zhiye-copy-${id.slice(0, 8)}` : payload.sourceUrl
       : `zhiye://import/${itemId}`;
     const createdAt = payload.capturedAt ? new Date(payload.capturedAt).toISOString() : timestamp;
+    const folderId = this.importFolder(payload.folder ?? null, timestamp);
     this.sql.prepare(
       `INSERT INTO documents(
          id, source_url, final_url, canonical_url, title, author, published_at, markdown, status,
          title_edited, markdown_edited, author_edited, published_at_edited, favorite, archived_at,
-         source_note, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', 1, 1, 1, 1, ?, ?, ?, ?, ?)`,
+         source_note, folder_id, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', 1, 1, 1, 1, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id, sourceUrl, payload.finalUrl, payload.canonicalUrl, payload.title, payload.author,
       payload.publishedAt, payload.markdown, Number(payload.favorite), payload.archivedAt,
-      payload.sourceNote, createdAt, timestamp,
+      payload.sourceNote, folderId, createdAt, timestamp,
     );
     this.replaceTags(id, payload.tags);
     this.replaceCollections(id, this.importCollections(payload.collections, timestamp));
@@ -2372,14 +2421,17 @@ export class KnowledgeDatabase {
             documentId = current.id;
           } else {
             const timestamp = now();
+            const folderId = payload.folder === undefined ? undefined : this.importFolder(payload.folder, timestamp);
             this.sql.prepare(
               `UPDATE documents SET final_url = ?, canonical_url = ?, title = ?, author = ?, published_at = ?,
                  markdown = ?, status = 'ready', warning = NULL, error_code = NULL, error_message = NULL,
                  title_edited = 1, markdown_edited = 1, author_edited = 1, published_at_edited = 1,
-                 favorite = ?, archived_at = ?, source_note = ?, revision = revision + 1, updated_at = ? WHERE id = ?`,
+                 favorite = ?, archived_at = ?, source_note = ?${folderId === undefined ? "" : ", folder_id = ?"},
+                 revision = revision + 1, updated_at = ? WHERE id = ?`,
             ).run(
               payload.finalUrl, payload.canonicalUrl, payload.title, payload.author, payload.publishedAt,
-              payload.markdown, Number(payload.favorite), payload.archivedAt, payload.sourceNote, timestamp, current.id,
+              payload.markdown, Number(payload.favorite), payload.archivedAt, payload.sourceNote,
+              ...(folderId === undefined ? [] : [folderId]), timestamp, current.id,
             );
             this.replaceTags(current.id, payload.tags);
             this.replaceCollections(current.id, this.importCollections(payload.collections, timestamp));
@@ -2539,6 +2591,13 @@ export class KnowledgeDatabase {
       );
       params.push(filters.collectionId);
     }
+    if (filters.folderId) {
+      where.push("d.folder_id = ?");
+      params.push(filters.folderId);
+    }
+    if (filters.unfiled !== undefined) {
+      where.push(filters.unfiled ? "d.folder_id IS NULL" : "d.folder_id IS NOT NULL");
+    }
     if (filters.status) {
       where.push("d.status = ?");
       params.push(filters.status);
@@ -2582,7 +2641,7 @@ export class KnowledgeDatabase {
         `SELECT d.id, d.source_url, d.final_url, d.canonical_url, d.title, d.author,
                 NULL AS published_at, '' AS markdown, d.status, d.warning,
                 d.error_code, d.error_message, NULL AS capture_mode,
-                d.favorite, d.archived_at, '' AS source_note,
+                d.favorite, d.archived_at, '' AS source_note, d.folder_id,
                 d.revision, d.deleted_at, d.created_at, d.updated_at
          ${from}${condition} ORDER BY ${order} LIMIT ? OFFSET ?`,
       )
@@ -2714,6 +2773,73 @@ export class KnowledgeDatabase {
         kind: "deleted" as const,
         response: { tag: null, affectedDocuments: documentIds.length } satisfies TagMutationResponse,
       };
+    });
+  }
+
+  listFolders(): KnowledgeFolder[] {
+    return (
+      this.sql
+        .prepare(
+          `SELECT f.id, f.name,
+                  count(CASE WHEN d.id IS NOT NULL AND d.deleted_at IS NULL THEN 1 END) AS document_count,
+                  f.created_at, f.updated_at
+           FROM folders f
+           LEFT JOIN documents d ON d.folder_id = f.id
+           GROUP BY f.id
+           ORDER BY lower(f.name), f.name`,
+        )
+        .all() as unknown as FolderRow[]
+    ).map((row) => this.toFolder(row));
+  }
+
+  getFolder(id: string): KnowledgeFolder | null {
+    const row = this.sql
+      .prepare(
+        `SELECT f.id, f.name,
+                count(CASE WHEN d.id IS NOT NULL AND d.deleted_at IS NULL THEN 1 END) AS document_count,
+                f.created_at, f.updated_at
+         FROM folders f
+         LEFT JOIN documents d ON d.folder_id = f.id
+         WHERE f.id = ? GROUP BY f.id`,
+      )
+      .get(id) as FolderRow | undefined;
+    return row ? this.toFolder(row) : null;
+  }
+
+  createFolder(name: string) {
+    return transaction(this.sql, () => {
+      const existing = this.sql.prepare("SELECT id FROM folders WHERE name = ? COLLATE NOCASE").get(name) as
+        | { id: string }
+        | undefined;
+      if (existing) return { kind: "duplicate" as const, folder: this.getFolder(existing.id)! };
+      const id = randomUUID();
+      const timestamp = now();
+      this.sql.prepare("INSERT INTO folders(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)")
+        .run(id, name, timestamp, timestamp);
+      return { kind: "created" as const, folder: this.getFolder(id)! };
+    });
+  }
+
+  renameFolder(id: string, name: string) {
+    return transaction(this.sql, () => {
+      const current = this.getFolder(id);
+      if (!current) return { kind: "missing" as const };
+      const duplicate = this.sql.prepare("SELECT id FROM folders WHERE name = ? COLLATE NOCASE AND id <> ?")
+        .get(name, id) as { id: string } | undefined;
+      if (duplicate) return { kind: "duplicate" as const, folder: this.getFolder(duplicate.id)! };
+      this.sql.prepare("UPDATE folders SET name = ?, updated_at = ? WHERE id = ?").run(name, now(), id);
+      return { kind: "renamed" as const, folder: this.getFolder(id)! };
+    });
+  }
+
+  deleteFolder(id: string) {
+    return transaction(this.sql, () => {
+      if (!this.getFolder(id)) return { kind: "missing" as const };
+      const affectedDocuments = Number(this.sql.prepare(
+        "UPDATE documents SET folder_id = NULL, revision = revision + 1, updated_at = ? WHERE folder_id = ?",
+      ).run(now(), id).changes);
+      this.sql.prepare("DELETE FROM folders WHERE id = ?").run(id);
+      return { kind: "deleted" as const, affectedDocuments };
     });
   }
 
@@ -2956,6 +3082,13 @@ export class KnowledgeDatabase {
       if (patch.archived !== undefined) {
         assignments.push("archived_at = ?");
         values.push(patch.archived ? timestamp : null);
+      }
+      if (patch.folderId !== undefined) {
+        if (patch.folderId !== null && !this.getFolder(patch.folderId)) {
+          return { kind: "invalid_folder" as const, document: current };
+        }
+        assignments.push("folder_id = ?");
+        values.push(patch.folderId);
       }
       if (patch.collectionIds !== undefined) {
         const missingCollectionIds = this.missingCollectionIds(patch.collectionIds);

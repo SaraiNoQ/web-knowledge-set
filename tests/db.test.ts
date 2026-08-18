@@ -24,6 +24,7 @@ import {
   openDatabase,
 } from "../server/db.js";
 import type { BackupRecord, RecentFilter } from "../shared/types.js";
+import { parseImportRequest } from "../server/import.js";
 import { acquireDataLock } from "../server/lock.js";
 
 function database() {
@@ -55,7 +56,7 @@ test("v14 recent filters persist in the local database", () => {
     sort: "updated",
   }];
   try {
-    assert.equal(CURRENT_SCHEMA_VERSION, 15);
+    assert.equal(CURRENT_SCHEMA_VERSION, 16);
     assert.deepEqual(fixture.db.getRecentFilters(), { filters: [], revision: 0 });
     assert.deepEqual(fixture.db.getOnboarding(), { completed: false, revision: 0 });
     assert.deepEqual(fixture.db.setOnboarding(true, 0), {
@@ -426,6 +427,105 @@ test("collections and document metadata update atomically without losing manual 
     assert.equal(summary.favorite, true);
     assert.ok(summary.archivedAt);
     assert.equal("sourceNote" in summary, false);
+  } finally {
+    fixture.close();
+  }
+});
+
+test("folders are single-parent, filterable, revision guarded, and delete to root", () => {
+  const fixture = database();
+  try {
+    const createdFolder = fixture.db.createFolder("Projects");
+    assert.equal(createdFolder.kind, "created");
+    const folder = createdFolder.folder;
+    assert.equal(fixture.db.createFolder("projects").kind, "duplicate");
+    const other = fixture.db.createFolder("Other").folder;
+    assert.equal(fixture.db.renameFolder(other.id, "projects").kind, "duplicate");
+    assert.equal(fixture.db.renameFolder(other.id, "Archive").kind, "renamed");
+
+    const active = fixture.db.createOrGetDocument("https://example.com/folder-active").document;
+    const trash = fixture.db.createOrGetDocument("https://example.com/folder-trash").document;
+    const movedActive = fixture.db.updateDocument(active.id, active.revision, { folderId: folder.id });
+    const movedTrash = fixture.db.updateDocument(trash.id, trash.revision, { folderId: folder.id });
+    assert.equal(movedActive.kind, "updated");
+    assert.equal(movedTrash.kind, "updated");
+    if (movedActive.kind !== "updated" || movedTrash.kind !== "updated") return;
+    const deleted = fixture.db.softDeleteDocument(trash.id, movedTrash.document.revision);
+    assert.equal(deleted.kind, "deleted");
+    if (deleted.kind !== "deleted") return;
+
+    assert.equal(fixture.db.getFolder(folder.id)?.documentCount, 1);
+    assert.equal(fixture.db.listFolders().find(({ id }) => id === folder.id)?.documentCount, 1);
+    assert.deepEqual(fixture.db.listDocuments({ folderId: folder.id }).items.map(({ id }) => id), [active.id]);
+    assert.deepEqual(
+      fixture.db.listDocuments({ folderId: folder.id, trash: "only" }).items.map(({ id }) => id),
+      [trash.id],
+    );
+    assert.equal(fixture.db.listDocuments({ unfiled: false }).total, 1);
+    assert.equal(fixture.db.listDocuments({ unfiled: true }).total, 0);
+    assert.equal(fixture.db.listDocuments().items[0]?.folderId, folder.id);
+
+    const invalid = fixture.db.updateDocument(active.id, movedActive.document.revision, {
+      folderId: "missing",
+      favorite: true,
+    });
+    assert.equal(invalid.kind, "invalid_folder");
+    assert.equal(fixture.db.getDocument(active.id)?.revision, movedActive.document.revision);
+    assert.equal(fixture.db.getDocument(active.id)?.favorite, false);
+
+    const activeBeforeDelete = fixture.db.getDocument(active.id)!;
+    const trashBeforeDelete = fixture.db.getDocument(trash.id)!;
+    assert.deepEqual(fixture.db.deleteFolder(folder.id), { kind: "deleted", affectedDocuments: 2 });
+    const activeAfterDelete = fixture.db.getDocument(active.id)!;
+    const trashAfterDelete = fixture.db.getDocument(trash.id)!;
+    assert.equal(activeAfterDelete.folderId, null);
+    assert.equal(trashAfterDelete.folderId, null);
+    assert.equal(activeAfterDelete.revision, activeBeforeDelete.revision + 1);
+    assert.equal(trashAfterDelete.revision, trashBeforeDelete.revision + 1);
+    assert.equal(fixture.db.getFolder(folder.id), null);
+    assert.equal(fixture.db.listDocuments({ unfiled: true }).total, 1);
+  } finally {
+    fixture.close();
+  }
+});
+
+test("Markdown folder imports distinguish missing, null, and named updates", () => {
+  const fixture = database();
+  try {
+    const sourceUrl = "https://example.com/folder-import";
+    const created = fixture.db.createOrGetDocument(sourceUrl).document;
+    assert.equal(fixture.db.cancelQueuedCapture(created.id).kind, "cancelled");
+    const folder = fixture.db.createFolder("Keep me").folder;
+    const filed = fixture.db.updateDocument(created.id, fixture.db.getDocument(created.id)!.revision, {
+      folderId: folder.id,
+    });
+    assert.equal(filed.kind, "updated");
+
+    const items = (folderLine = "") => parseImportRequest("markdown", {
+      files: [{
+        path: "folder.md",
+        content: `---\ntitle: "Imported"\nsource: ${JSON.stringify(sourceUrl)}\n${folderLine}---\n\nBody`,
+      }],
+    });
+    const missing = items();
+    assert.equal(missing[0]?.payload.type, "markdown");
+    assert.equal(Object.hasOwn(missing[0]!.payload, "folder"), false);
+    const missingPreview = fixture.db.createImportBatch("markdown", missing);
+    assert.equal(fixture.db.applyImportBatch(missingPreview.id, "update")?.counts.updated, 1);
+    assert.equal(fixture.db.getDocument(created.id)?.folderId, folder.id);
+
+    const explicitNull = items("folder: null\n");
+    assert.equal(explicitNull[0]?.payload.type === "markdown" ? explicitNull[0].payload.folder : undefined, null);
+    const nullPreview = fixture.db.createImportBatch("markdown", explicitNull);
+    assert.equal(fixture.db.applyImportBatch(nullPreview.id, "update")?.counts.updated, 1);
+    assert.equal(fixture.db.getDocument(created.id)?.folderId, null);
+
+    const named = items('folder: "  Ａrchive  "\n');
+    assert.equal(named[0]?.payload.type === "markdown" ? named[0].payload.folder : undefined, "Archive");
+    const namedPreview = fixture.db.createImportBatch("markdown", named);
+    assert.equal(fixture.db.applyImportBatch(namedPreview.id, "update")?.counts.updated, 1);
+    const updated = fixture.db.getDocument(created.id)!;
+    assert.equal(fixture.db.getFolder(updated.folderId!)?.name, "Archive");
   } finally {
     fixture.close();
   }
@@ -1192,6 +1292,7 @@ test("current migrations upgrade every released schema without rewriting history
     const upgraded = openDatabase(directory);
     try {
       assert.equal(upgraded.getDocument(documentId)?.markdown, "Legacy edited body");
+      assert.equal(upgraded.getDocument(documentId)?.folderId, null);
       assert.deepEqual(upgraded.getDocument(documentId)?.tags, ["Legacy"]);
       assert.deepEqual(upgraded.listDocumentRevisions(documentId)?.[0], {
         revision: legacyRevision,
@@ -1254,6 +1355,7 @@ test("current migrations upgrade every released schema without rewriting history
         assert.equal(current.getDocument("release-document")?.markdown, "Frozen release schema body.");
         assert.deepEqual(current.getDocument("release-document")?.tags, ["Fixture"]);
         assert.deepEqual(current.getDocument("release-document")?.collections, []);
+        assert.equal(current.getDocument("release-document")?.folderId, null);
         assert.equal(current.getDocument("release-document")?.favorite, false);
         assert.equal(current.getDocument("release-document")?.archivedAt, null);
         assert.equal(current.getDocument("release-document")?.sourceNote, "");
@@ -1333,6 +1435,9 @@ test("schema inspection is read-only and rejects future or incomplete histories"
     const raw = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));
     raw.exec(`
       PRAGMA foreign_keys = OFF;
+      DROP INDEX documents_folder_updated;
+      ALTER TABLE documents DROP COLUMN folder_id;
+      DROP TABLE folders;
       DROP TRIGGER derived_results_immutable;
       DROP INDEX derived_results_one_pinned_summary;
       DROP INDEX derived_results_document_created;
@@ -1365,10 +1470,16 @@ test("schema inspection is read-only and rejects future or incomplete histories"
         UNIQUE(batch_id, item_index)
       );
       CREATE INDEX import_items_batch ON import_items(batch_id, item_index);
-      DELETE FROM schema_migrations WHERE version IN (${CURRENT_SCHEMA_VERSION - 1}, ${CURRENT_SCHEMA_VERSION});
+      DELETE FROM schema_migrations WHERE version IN (
+        ${CURRENT_SCHEMA_VERSION - 2}, ${CURRENT_SCHEMA_VERSION - 1}, ${CURRENT_SCHEMA_VERSION}
+      );
     `);
     raw.close();
-    assert.deepEqual(inspectDatabaseSchema(dataDir).pendingVersions, [CURRENT_SCHEMA_VERSION - 1, CURRENT_SCHEMA_VERSION]);
+    assert.deepEqual(inspectDatabaseSchema(dataDir).pendingVersions, [
+      CURRENT_SCHEMA_VERSION - 2,
+      CURRENT_SCHEMA_VERSION - 1,
+      CURRENT_SCHEMA_VERSION,
+    ]);
     assert.equal(migrateDatabase(dataDir).status, "current");
 
     const future = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));

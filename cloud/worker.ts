@@ -1,12 +1,18 @@
 import {
   CloudHttpError,
+  createFolder,
   createPairingCode,
+  deleteFolder,
+  epochGuardedDatabase,
   getDocument,
   jsonObject,
   listDocuments as listCloudDocuments,
+  listFolders,
   listPairings,
+  recoverExpiredRestore,
   revokePairing,
   updateDocument,
+  updateFolder,
   type D1Database,
 } from "./extension";
 import { handleAiApi } from "./ai";
@@ -18,6 +24,7 @@ import {
   handleCaptureQueue,
   listCaptureJobs,
   retryCapture,
+  updateCaptureJob,
   type CaptureEnv,
   type QueueBatch,
 } from "./capture";
@@ -74,7 +81,8 @@ async function setting<T>(env: CloudEnv, key: string): Promise<{ value: T; revis
 async function dataEpoch(env: CloudEnv) {
   const row = await env.DB.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'")
     .first<{ value: string }>();
-  return row?.value || null;
+  if (!row) return null;
+  return await recoverExpiredRestore(env.DB, row.value);
 }
 
 async function api(request: Request, env: CloudEnv, url: URL) {
@@ -82,13 +90,16 @@ async function api(request: Request, env: CloudEnv, url: URL) {
   if (!epoch) {
     return json({ error: { code: "CLOUD_NOT_INITIALIZED", message: "Cloud database migration is required" } }, 503);
   }
+  if (epoch.startsWith("restore:")) {
+    return json({ error: { code: "CLOUD_MAINTENANCE", message: "Cloud restore is in progress" } }, 503);
+  }
   if (url.pathname === "/api/settings/browser-extension/pairing-code" && request.method === "POST") {
     if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
       return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
     }
     const body = await jsonObject(request, 4_096);
     if (Object.keys(body).length) throw new CloudHttpError(400, "INVALID_PAIRING_REQUEST", "Pairing code request accepts no fields");
-    return json(await createPairingCode(env.DB), 201, epoch);
+    return json(await createPairingCode(epochGuardedDatabase(env.DB, epoch)), 201, epoch);
   }
   if (url.pathname === "/api/settings/browser-extension/pairings" && request.method === "GET") {
     return json({ pairings: await listPairings(env.DB) }, 200, epoch);
@@ -103,8 +114,26 @@ async function api(request: Request, env: CloudEnv, url: URL) {
     let id: string;
     try { id = decodeURIComponent(pairing[1]); }
     catch { throw new CloudHttpError(400, "INVALID_PATH", "Invalid pairing identifier"); }
-    if (!await revokePairing(env.DB, id)) throw new CloudHttpError(404, "PAIRING_NOT_FOUND", "Pairing not found");
+    if (!await revokePairing(epochGuardedDatabase(env.DB, epoch), id)) throw new CloudHttpError(404, "PAIRING_NOT_FOUND", "Pairing not found");
     return new Response(null, { status: 204, headers: { ...SECURITY_HEADERS, "Cache-Control": "no-store", [DATA_EPOCH_HEADER]: epoch } });
+  }
+  if (url.pathname === "/api/folders" && request.method === "POST") {
+    if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
+      return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
+    }
+    return json(await createFolder(epochGuardedDatabase(env.DB, epoch), await jsonObject(request, 4_096)), 201, epoch);
+  }
+  const folderPath = url.pathname.match(/^\/api\/folders\/([^/]+)$/u);
+  if (folderPath && (request.method === "PATCH" || request.method === "DELETE")) {
+    if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
+      return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
+    }
+    let id: string;
+    try { id = decodeURIComponent(folderPath[1]); }
+    catch { throw new CloudHttpError(400, "INVALID_PATH", "Invalid folder identifier"); }
+    const body = await jsonObject(request, 4_096);
+    const db = epochGuardedDatabase(env.DB, epoch);
+    return json(request.method === "PATCH" ? await updateFolder(db, id, body) : await deleteFolder(db, id, body), 200, epoch);
   }
   const documentPath = url.pathname.match(/^\/api\/documents\/([^/]+)(?:\/(draft|assets|duplicate|captures))?$/u);
   if (documentPath && request.method === "PATCH" && !documentPath[2]) {
@@ -114,13 +143,15 @@ async function api(request: Request, env: CloudEnv, url: URL) {
     let id: string;
     try { id = decodeURIComponent(documentPath[1]); }
     catch { throw new CloudHttpError(400, "INVALID_PATH", "Invalid document identifier"); }
-    return json(await updateDocument(env.DB, id, await jsonObject(request)), 200, epoch);
+    const body = await jsonObject(request);
+    const db = epochGuardedDatabase(env.DB, epoch);
+    return json(await getDocument(env.DB, id) ? await updateDocument(db, id, body) : await updateCaptureJob(db, id, body), 200, epoch);
   }
   if (url.pathname === "/api/documents" && request.method === "POST") {
     if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
       return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
     }
-    return json(await createCapture(request, env), 201, epoch);
+    return json(await createCapture(request, { ...env, DB: epochGuardedDatabase(env.DB, epoch) }, epoch), 201, epoch);
   }
   const retryPath = /^\/api\/documents\/([^/]+)\/retry$/u.exec(url.pathname);
   if (retryPath && request.method === "POST") {
@@ -129,13 +160,17 @@ async function api(request: Request, env: CloudEnv, url: URL) {
     }
     const body = await jsonObject(request, 4_096);
     if (Object.keys(body).length) throw new CloudHttpError(400, "INVALID_CAPTURE_REQUEST", "Retry accepts an empty JSON object");
-    return json(await retryCapture(decodeURIComponent(retryPath[1]), env), 200, epoch);
+    return json(await retryCapture(
+      decodeURIComponent(retryPath[1]),
+      { ...env, DB: epochGuardedDatabase(env.DB, epoch) },
+      epoch,
+    ), 200, epoch);
   }
   const aiPath = url.pathname.includes("/llm") || url.pathname.includes("/derived-");
   if (aiPath && request.method !== "GET" && request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
     return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
   }
-  const ai = await handleAiApi(request, env.DB, url);
+  const ai = await handleAiApi(request, aiPath && request.method !== "GET" ? epochGuardedDatabase(env.DB, epoch) : env.DB, url);
   if (ai) {
     return json(ai.body, ai.status ?? 200, epoch);
   }
@@ -143,14 +178,21 @@ async function api(request: Request, env: CloudEnv, url: URL) {
   if (backupPath && request.method !== "GET" && request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
     return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
   }
-  const backup = await handleBackupApi(request, env.DB, env.BACKUPS, url);
+  const restorePath = /\/restore$/u.test(url.pathname) && request.method === "POST";
+  const backup = await handleBackupApi(
+    request,
+    backupPath && request.method !== "GET" && !restorePath ? epochGuardedDatabase(env.DB, epoch) : env.DB,
+    env.BACKUPS,
+    url,
+    restorePath ? epoch : undefined,
+  );
   if (backup instanceof Response) {
     const headers = new Headers(backup.headers);
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
     headers.set(DATA_EPOCH_HEADER, epoch);
     return new Response(backup.body, { status: backup.status, statusText: backup.statusText, headers });
   }
-  if (backup) return json(backup.body, backup.status ?? 200, epoch);
+  if (backup) return json(backup.body, backup.status ?? 200, backup.epoch ?? epoch);
   if (request.method !== "GET") {
     return json({ error: { code: "CLOUD_FEATURE_PENDING", message: "This cloud mutation is not migrated yet" } }, 501, epoch);
   }
@@ -179,13 +221,15 @@ async function api(request: Request, env: CloudEnv, url: URL) {
       return json({ mode: "ready", maintenance: false, recoveryError: null, health: null, backups: [], settings: null }, 200, epoch);
     case "/api/capture-queue":
       return json(await captureQueueStatus(env.DB), 200, epoch);
+    case "/api/folders":
+      return json(await listFolders(env.DB), 200, epoch);
     case "/api/collections":
     case "/api/tags":
       return json([], 200, epoch);
     case "/api/documents": {
       const result = await listCloudDocuments(env.DB, url);
       if (result.page === 1 && !url.searchParams.get("q") && !url.searchParams.get("status")) {
-        const jobs = await listCaptureJobs(env.DB);
+        const jobs = await listCaptureJobs(env.DB, url);
         const ids = new Set(result.items.map((item) => item.id));
         const pending = jobs.filter((item) => !ids.has(item.id));
         return json({ ...result, items: [...pending, ...result.items].slice(0, result.pageSize), total: result.total + pending.length }, 200, epoch);

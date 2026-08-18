@@ -8,7 +8,7 @@ const MAX_URLS = 1_000;
 const MAX_MARKDOWN_FILES = 100;
 const exportedFields = new Set([
   "title", "source", "final_url", "canonical_url", "author", "published_at", "captured_at",
-  "tags", "collections", "favorite", "archived_at", "source_note",
+  "tags", "collections", "folder", "favorite", "archived_at", "source_note",
 ]);
 
 export class ImportParseError extends Error {
@@ -146,6 +146,16 @@ function parseMarkdown(path: string, content: string): PreparedImportItem {
       else if (key === "captured_at") payload.capturedAt = text(value, key);
       else if (key === "tags") payload.tags = stringArray(value, key);
       else if (key === "collections") payload.collections = stringArray(value, key);
+      else if (key === "folder") {
+        if (value === null) payload.folder = null;
+        else {
+          const name = text(value, key, false, 100)!.normalize("NFKC").trim();
+          if (!name || name.length > 100 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(name)) {
+            throw new Error("folder must contain 1 to 100 safe characters or be null");
+          }
+          payload.folder = name;
+        }
+      }
       else if (key === "favorite") {
         if (typeof value !== "boolean") throw new Error("favorite must be boolean");
         payload.favorite = value;

@@ -12,6 +12,7 @@ import type {
   DataSafetyStatus,
   DiagnosticReport,
   DeleteCollectionResponse,
+  DeleteFolderResponse,
   DerivedPreview,
   DerivedResult,
   DerivedResultListResponse,
@@ -30,6 +31,7 @@ import type {
   ImportStrategy,
   KnowledgeCollection,
   KnowledgeDocument,
+  KnowledgeFolder,
   KnowledgeTag,
   LlmConnectionTestInput,
   LlmConnectionTestResult,
@@ -144,6 +146,7 @@ export interface DocumentPatch {
   favorite?: boolean;
   archived?: boolean;
   collectionIds?: string[];
+  folderId?: string | null;
   revision: number;
 }
 
@@ -494,12 +497,39 @@ export const api = {
     });
   },
 
+  listFolders(signal?: AbortSignal) {
+    return request<KnowledgeFolder[]>("/api/folders", { signal });
+  },
+
+  createFolder(name: string) {
+    return request<KnowledgeFolder>("/api/folders", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+  },
+
+  updateFolder(id: string, name: string) {
+    return request<KnowledgeFolder>(`/api/folders/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    });
+  },
+
+  deleteFolder(id: string) {
+    return request<DeleteFolderResponse>(`/api/folders/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      body: JSON.stringify({}),
+    });
+  },
+
   listDocuments(filters: DocumentFilters, signal?: AbortSignal) {
     const query = new URLSearchParams();
     if (filters.q?.trim()) query.set("q", filters.q.trim());
     if (filters.scope) query.set("scope", filters.scope);
     if (filters.tag) query.set("tag", filters.tag);
     if (filters.collectionId) query.set("collectionId", filters.collectionId);
+    if (filters.folderId) query.set("folderId", filters.folderId);
+    if (filters.unfiled !== undefined) query.set("unfiled", String(filters.unfiled));
     if (filters.status) query.set("status", filters.status);
     if (filters.favorite !== undefined) query.set("favorite", String(filters.favorite));
     if (filters.archived !== undefined) query.set("archived", String(filters.archived));

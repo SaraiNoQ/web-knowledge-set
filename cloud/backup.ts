@@ -20,9 +20,9 @@ export interface R2Bucket {
   head(key: string): Promise<{ size: number } | null>;
 }
 
-interface BackupReply { status?: number; body: unknown }
+interface BackupReply { status?: number; body: unknown; epoch?: string }
 
-interface Archive {
+interface ArchiveV1 {
   format: "zhiye-cloud-backup";
   version: 1;
   createdAt: string;
@@ -30,6 +30,13 @@ interface Archive {
   derivedResults: Record<string, unknown>[];
   llmSettings: { value: string; revision: number } | null;
 }
+
+interface ArchiveV2 extends Omit<ArchiveV1, "version"> {
+  version: 2;
+  folders: Record<string, unknown>[];
+}
+
+type Archive = ArchiveV1 | ArchiveV2;
 
 function changes(result: { meta: { changes?: number } }) {
   return result.meta.changes ?? 0;
@@ -45,7 +52,7 @@ function backupRecord(row: Record<string, unknown>) {
     id: String(row.id), directoryName: String(row.objectKey), reason: row.reason,
     status: row.status, createdAt: String(row.createdAt), finishedAt: row.verifiedAt ? String(row.verifiedAt) : null,
     verifiedAt: row.verifiedAt ? String(row.verifiedAt) : null, totalBytes: row.totalBytes == null ? null : Number(row.totalBytes),
-    schemaVersion: 4, errorCode: row.errorCode ? String(row.errorCode) : null, errorMessage: null,
+    schemaVersion: 6, errorCode: row.errorCode ? String(row.errorCode) : null, errorMessage: null,
   };
 }
 
@@ -56,64 +63,140 @@ function parseArchive(bytes: Uint8Array): Archive {
   let value: unknown;
   try { value = JSON.parse(new TextDecoder().decode(bytes)); }
   catch { throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup is not valid JSON"); }
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup must be an object");
-  const archive = value as Partial<Archive>;
-  if (archive.format !== "zhiye-cloud-backup" || archive.version !== 1 || !Array.isArray(archive.documents) ||
-    !Array.isArray(archive.derivedResults) || (archive.llmSettings !== null && archive.llmSettings !== undefined &&
-      (typeof archive.llmSettings !== "object" || typeof archive.llmSettings.value !== "string" || !Number.isInteger(archive.llmSettings.revision)))) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup must be an object");
+  }
+  const raw = value as Record<string, unknown>;
+  const version = raw.version;
+  const topFields = version === 1
+    ? ["format", "version", "createdAt", "documents", "derivedResults", "llmSettings"]
+    : ["format", "version", "createdAt", "folders", "documents", "derivedResults", "llmSettings"];
+  if ((version !== 1 && version !== 2) || !exact(raw, topFields) || raw.format !== "zhiye-cloud-backup" ||
+    !timestamp(raw.createdAt) || !Array.isArray(raw.documents) || !Array.isArray(raw.derivedResults) ||
+    (version === 2 && !Array.isArray(raw.folders))) {
     throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup schema is invalid");
   }
-  const result = archive as Archive;
-  if (result.documents.length + result.derivedResults.length > MAX_ARCHIVE_RECORDS) throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds 32 records");
-  const ids = new Set<string>();
-  const exact = (row: Record<string, unknown>, allowed: string[]) => Object.keys(row).every((name) => allowed.includes(name)) && allowed.every((name) => name in row);
-  const rowBytes = (row: Record<string, unknown>) => Object.values(row).reduce<number>((sum, value) => sum + (typeof value === "string" ? encoder.encode(value).byteLength : 0), 0);
-  const safeUrl = (value: unknown) => {
-    if (typeof value !== "string" || value.length > 8_192) return false;
-    try { const url = new URL(value); return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password; } catch { return false; }
-  };
+  const result = raw as unknown as Archive;
+  const folders = result.version === 2 ? result.folders : [];
+  if (folders.length + result.documents.length + result.derivedResults.length > MAX_ARCHIVE_RECORDS) {
+    throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds 32 records");
+  }
+
+  const folderIds = new Set<string>();
+  const folderNames = new Set<string>();
+  for (const row of folders) {
+    if (!record(row)) throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup folder row is invalid");
+    const id = row.id;
+    const name = row.name;
+    if (!exact(row, ["id", "name", "created_at", "updated_at"]) || !identifier(id) || folderIds.has(id) ||
+      typeof name !== "string" || !name || name.length > 100 || name !== name.normalize("NFKC").trim() || control.test(name) ||
+      folderNames.has(sqliteNoCase(name)) || !timestamp(row.created_at) || !timestamp(row.updated_at)) {
+      throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup folder row is invalid");
+    }
+    folderIds.add(id);
+    folderNames.add(sqliteNoCase(name));
+  }
+
+  const documentIds = new Set<string>();
+  const documentFields = ["id", "source_url", "final_url", "canonical_url", "title", "author", "published_at", "markdown", "status", "source_note", "revision", "created_at", "updated_at"];
   for (const row of result.documents) {
-    const id = field(row, "id");
-    const title = field(row, "title");
-    const markdown = field(row, "markdown");
-    const note = field(row, "source_note");
-    if (!exact(row, ["id", "source_url", "final_url", "canonical_url", "title", "author", "published_at", "markdown", "status", "source_note", "revision", "created_at", "updated_at"]) ||
-      typeof id !== "string" || ids.has(id) || !safeUrl(field(row, "source_url")) ||
-      ![row.final_url, row.canonical_url].every((value) => value == null || safeUrl(value)) || typeof title !== "string" || !title.trim() || title.length > 1_000 ||
-      typeof markdown !== "string" || rowBytes(row) > MAX_CLOUD_ROW_TEXT_BYTES || typeof note !== "string" || note.length > 50_000 ||
-      control.test(title) || control.test(markdown) || control.test(note) || field(row, "status") !== "ready" ||
-      !Number.isInteger(field(row, "revision")) || Number(field(row, "revision")) < 1 || typeof field(row, "created_at") !== "string" ||
-      typeof field(row, "updated_at") !== "string" || [row.final_url, row.canonical_url, row.author, row.published_at].some((value) => value != null && typeof value !== "string")) {
+    if (!record(row)) throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup document row is invalid");
+    const id = row.id;
+    const title = row.title;
+    const markdown = row.markdown;
+    const note = row.source_note;
+    const folderId = result.version === 2 ? row.folder_id : null;
+    if (!exact(row, result.version === 2 ? [...documentFields, "folder_id"] : documentFields) || !identifier(id) || documentIds.has(id) ||
+      !safeUrl(row.source_url) || ![row.final_url, row.canonical_url].every((entry) => entry == null || safeUrl(entry)) ||
+      typeof title !== "string" || !title.trim() || title.length > 1_000 || typeof markdown !== "string" ||
+      rowBytes(row) > MAX_CLOUD_ROW_TEXT_BYTES || typeof note !== "string" || note.length > 50_000 ||
+      control.test(title) || control.test(markdown) || control.test(note) || row.status !== "ready" ||
+      !positiveInteger(row.revision) || !timestamp(row.created_at) || !timestamp(row.updated_at) ||
+      [row.final_url, row.canonical_url, row.author, row.published_at].some((entry) => entry != null && typeof entry !== "string") ||
+      (folderId !== null && (!identifier(folderId) || !folderIds.has(folderId)))) {
       throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup document row is invalid");
     }
-    ids.add(id);
+    documentIds.add(id);
   }
+
   const resultIds = new Set<string>();
   for (const row of result.derivedResults) {
-    const resultId = field(row, "id");
-    const type = String(field(row, "type"));
+    if (!record(row)) throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup AI result row is invalid");
+    const resultId = row.id;
+    const type = row.type;
     const language = row.target_language;
     if (!exact(row, ["id", "document_id", "type", "target_language", "model", "endpoint_id", "prompt_version", "input_hash", "output", "duration_ms", "usage_json", "source_chars", "sent_chars", "truncated", "pinned", "source_revision", "created_at"]) ||
-      typeof resultId !== "string" || resultIds.has(resultId) || !ids.has(String(field(row, "document_id"))) || !["summary", "outline", "keywords", "translation"].includes(type) ||
-      typeof field(row, "model") !== "string" || typeof field(row, "endpoint_id") !== "string" || typeof field(row, "prompt_version") !== "string" ||
-      typeof field(row, "input_hash") !== "string" || typeof field(row, "output") !== "string" || rowBytes(row) > MAX_CLOUD_ROW_TEXT_BYTES || !Number.isInteger(field(row, "duration_ms")) ||
-      !Number.isInteger(field(row, "source_chars")) || !Number.isInteger(field(row, "sent_chars")) || ![0, 1].includes(Number(field(row, "truncated"))) ||
-      ![0, 1].includes(Number(field(row, "pinned"))) || !Number.isInteger(field(row, "source_revision")) || typeof field(row, "created_at") !== "string" ||
-      (type === "translation" ? typeof language !== "string" || !(language in TRANSLATION_LANGUAGES) : language != null) ||
-      (Number(field(row, "pinned")) === 1 && type !== "summary")) {
+      !identifier(resultId) || resultIds.has(resultId) || !identifier(row.document_id) || !documentIds.has(row.document_id) ||
+      typeof type !== "string" || !["summary", "outline", "keywords", "translation"].includes(type) ||
+      ![row.model, row.endpoint_id, row.prompt_version, row.input_hash, row.output].every((entry) => typeof entry === "string") ||
+      rowBytes(row) > MAX_CLOUD_ROW_TEXT_BYTES || !nonNegativeInteger(row.duration_ms) || !nonNegativeInteger(row.source_chars) ||
+      !nonNegativeInteger(row.sent_chars) || (row.truncated !== 0 && row.truncated !== 1) || (row.pinned !== 0 && row.pinned !== 1) ||
+      !positiveInteger(row.source_revision) || !timestamp(row.created_at) ||
+      (type === "translation" ? typeof language !== "string" || !Object.hasOwn(TRANSLATION_LANGUAGES, language) : language != null) ||
+      (row.pinned === 1 && type !== "summary")) {
       throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup AI result row is invalid");
     }
     resultIds.add(resultId);
     if (row.usage_json != null) try {
       const usage = JSON.parse(String(row.usage_json)) as unknown;
-      if (!usage || typeof usage !== "object" || Array.isArray(usage) || Object.entries(usage).some(([name, value]) => !["inputTokens", "outputTokens", "totalTokens"].includes(name) || typeof value !== "number" || value < 0)) throw new Error("invalid");
+      if (!usage || typeof usage !== "object" || Array.isArray(usage) ||
+        Object.entries(usage).some(([name, entry]) => !["inputTokens", "outputTokens", "totalTokens"].includes(name) || !nonNegativeInteger(entry))) {
+        throw new Error("invalid");
+      }
     } catch { throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup usage data is invalid"); }
   }
-  if (result.llmSettings) {
-    if (!Number.isInteger(result.llmSettings.revision) || result.llmSettings.revision < 0) throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup AI settings revision is invalid");
+
+  if (result.llmSettings !== null) {
+    if (!result.llmSettings || typeof result.llmSettings !== "object" ||
+      !exact(result.llmSettings as unknown as Record<string, unknown>, ["value", "revision"]) ||
+      typeof result.llmSettings.value !== "string" || !nonNegativeInteger(result.llmSettings.revision)) {
+      throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup AI settings are invalid");
+    }
     validateStoredLlmSettings(result.llmSettings.value);
   }
   return result;
+}
+
+function exact(row: Record<string, unknown>, fields: string[]) {
+  return Object.keys(row).length === fields.length && fields.every((name) => Object.hasOwn(row, name));
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function identifier(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 200 && value === value.trim() && !control.test(value);
+}
+
+function timestamp(value: unknown) {
+  if (typeof value !== "string") return false;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+}
+
+function positiveInteger(value: unknown) {
+  return Number.isSafeInteger(value) && Number(value) > 0;
+}
+
+function nonNegativeInteger(value: unknown) {
+  return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function sqliteNoCase(value: string) {
+  return value.replace(/[A-Z]/gu, (letter) => letter.toLowerCase());
+}
+
+function rowBytes(row: Record<string, unknown>) {
+  return Object.values(row).reduce<number>((sum, value) => sum + (typeof value === "string" ? encoder.encode(value).byteLength : 0), 0);
+}
+
+function safeUrl(value: unknown) {
+  if (typeof value !== "string" || value.length > 8_192) return false;
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password;
+  } catch { return false; }
 }
 
 async function requestBytes(request: Request) {
@@ -144,13 +227,21 @@ async function requestBytes(request: Request) {
 
 async function snapshot(db: D1Database): Promise<Archive> {
   if (!db.batch) throw new CloudHttpError(503, "CLOUD_BATCH_UNAVAILABLE", "D1 batch API is unavailable");
-  const [documents, derived, settings] = await db.batch([
+  const [folders, documents, derived, settings] = await db.batch([
+    db.prepare("SELECT * FROM cloud_folders ORDER BY created_at"),
     db.prepare("SELECT * FROM cloud_documents ORDER BY created_at"),
     db.prepare("SELECT * FROM cloud_derived_results ORDER BY created_at"),
     db.prepare("SELECT value, revision FROM app_settings WHERE key = 'llm_settings'"),
   ]);
-  if (documents.results.length + derived.results.length > MAX_ARCHIVE_RECORDS) throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds 32 records");
-  return { format: "zhiye-cloud-backup", version: 1, createdAt: new Date().toISOString(), documents: documents.results as Record<string, unknown>[], derivedResults: derived.results as Record<string, unknown>[], llmSettings: settings.results[0] as { value: string; revision: number } | undefined ?? null };
+  if (folders.results.length + documents.results.length + derived.results.length > MAX_ARCHIVE_RECORDS) {
+    throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds 32 records");
+  }
+  return {
+    format: "zhiye-cloud-backup", version: 2, createdAt: new Date().toISOString(),
+    folders: folders.results as Record<string, unknown>[], documents: documents.results as Record<string, unknown>[],
+    derivedResults: derived.results as Record<string, unknown>[],
+    llmSettings: settings.results[0] as { value: string; revision: number } | undefined ?? null,
+  };
 }
 
 async function createBackup(db: D1Database, bucket: R2Bucket, reason: "manual" | "pre-restore" = "manual") {
@@ -183,20 +274,55 @@ function field(row: Record<string, unknown>, name: string) {
   return row[name];
 }
 
-async function restoreArchive(db: D1Database, archive: Archive) {
+async function reserveRestore(db: D1Database, expectedEpoch: string) {
+  const token = `restore:${Date.now() + 15 * 60_000}:${crypto.randomUUID()}`;
+  const reserved = await db.prepare(
+    "UPDATE app_settings SET value = ?, revision = revision + 1, updated_at = ? WHERE key = 'data_epoch' AND value = ?",
+  ).bind(token, new Date().toISOString(), expectedEpoch).run();
+  if (changes(reserved) !== 1) {
+    throw new CloudHttpError(409, "STALE_DATA_EPOCH", "Cloud data changed; reload before restoring");
+  }
+  return token;
+}
+
+async function releaseRestore(db: D1Database, token: string, expectedEpoch: string) {
+  if (!db.batch) throw new CloudHttpError(503, "CLOUD_BATCH_UNAVAILABLE", "D1 batch API is unavailable");
+  const timestamp = new Date().toISOString();
+  const [, released] = await db.batch([
+    db.prepare(`UPDATE cloud_capture_jobs SET status = 'failed', error_code = 'RESTORE_INTERRUPTED',
+      revision = revision + 1, updated_at = ? WHERE status IN ('queued', 'fetching')
+      AND EXISTS (SELECT 1 FROM app_settings WHERE key = 'data_epoch' AND value = ?)`).bind(timestamp, token),
+    db.prepare(
+      "UPDATE app_settings SET value = ?, revision = revision + 1, updated_at = ? WHERE key = 'data_epoch' AND value = ?",
+    ).bind(expectedEpoch, timestamp, token),
+  ]);
+  if (changes(released!) === 1) return expectedEpoch;
+  return (await db.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'").first<{ value: string }>())?.value ?? expectedEpoch;
+}
+
+async function restoreArchive(db: D1Database, archive: Archive, reservation: string, finalEpoch: string) {
   if (!db.batch) throw new CloudHttpError(503, "CLOUD_BATCH_UNAVAILABLE", "D1 batch API is unavailable");
   const statements: D1Statement[] = [
+    db.prepare(`SELECT CASE
+      WHEN EXISTS (SELECT 1 FROM app_settings WHERE key = 'data_epoch' AND value = ?) THEN 1
+      ELSE json('invalid restore reservation')
+    END AS guarded`).bind(reservation),
     db.prepare("DELETE FROM browser_extension_pairing_code"),
     db.prepare("DELETE FROM browser_extension_pairings"),
     db.prepare("DELETE FROM cloud_capture_jobs"),
     db.prepare("DELETE FROM cloud_derived_results"),
     db.prepare("DELETE FROM cloud_documents"),
+    db.prepare("DELETE FROM cloud_folders"),
   ];
+  if (archive.version === 2) for (const row of archive.folders) statements.push(db.prepare(`INSERT INTO cloud_folders(
+    id, name, created_at, updated_at
+  ) VALUES (?, ?, ?, ?)`).bind(field(row, "id"), field(row, "name"), field(row, "created_at"), field(row, "updated_at")));
   for (const row of archive.documents) statements.push(db.prepare(`INSERT INTO cloud_documents(
-    id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note, revision, created_at, updated_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+    id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note, folder_id, revision, created_at, updated_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
     field(row, "id"), field(row, "source_url"), row.final_url ?? null, row.canonical_url ?? null, field(row, "title"), row.author ?? null,
-    row.published_at ?? null, field(row, "markdown"), field(row, "status"), field(row, "source_note"), field(row, "revision"), field(row, "created_at"), field(row, "updated_at"),
+    row.published_at ?? null, field(row, "markdown"), field(row, "status"), field(row, "source_note"), archive.version === 2 ? row.folder_id : null,
+    field(row, "revision"), field(row, "created_at"), field(row, "updated_at"),
   ));
   for (const row of archive.derivedResults) statements.push(db.prepare(`INSERT INTO cloud_derived_results(
     id, document_id, type, target_language, model, endpoint_id, prompt_version, input_hash, output, duration_ms,
@@ -208,12 +334,19 @@ async function restoreArchive(db: D1Database, archive: Archive) {
   ));
   if (archive.llmSettings) statements.push(db.prepare("UPDATE app_settings SET value = ?, revision = ?, updated_at = ? WHERE key = 'llm_settings'")
     .bind(archive.llmSettings.value, archive.llmSettings.revision, new Date().toISOString()));
-  statements.push(db.prepare("UPDATE app_settings SET value = ?, revision = revision + 1, updated_at = ? WHERE key = 'data_epoch'")
-    .bind(`cloud-${crypto.randomUUID()}`, new Date().toISOString()));
+  statements.push(db.prepare(
+    "UPDATE app_settings SET value = ?, revision = revision + 1, updated_at = ? WHERE key = 'data_epoch' AND value = ?",
+  ).bind(finalEpoch, new Date().toISOString(), reservation));
   await db.batch(statements);
 }
 
-export async function handleBackupApi(request: Request, db: D1Database, bucket: R2Bucket, url: URL): Promise<BackupReply | Response | null> {
+export async function handleBackupApi(
+  request: Request,
+  db: D1Database,
+  bucket: R2Bucket,
+  url: URL,
+  expectedEpoch?: string,
+): Promise<BackupReply | Response | null> {
   if (!url.pathname.startsWith("/api/data-safety")) return null;
   if (url.pathname === "/api/data-safety" && request.method === "GET") {
     const rows = await db.prepare(`SELECT ${backupColumns} FROM cloud_backups ORDER BY created_at DESC`).all<Record<string, unknown>>();
@@ -263,9 +396,21 @@ export async function handleBackupApi(request: Request, db: D1Database, bucket: 
       throw new CloudHttpError(400, "INVALID_BACKUP_REQUEST", "Backup restore request is invalid");
     }
     const { bytes } = await archiveBytes(db, bucket, id);
-    const preRestore = await createBackup(db, bucket, "pre-restore");
-    await restoreArchive(db, parseArchive(bytes));
-    return { body: { backupId: id, preRestoreBackupId: preRestore.id, quarantinedDataPath: null, cleanupPending: false } };
+    const archive = parseArchive(bytes);
+    if (!expectedEpoch) throw new CloudHttpError(409, "STALE_DATA_EPOCH", "Cloud restore requires the current data epoch");
+    const reservation = await reserveRestore(db, expectedEpoch);
+    try {
+      const preRestore = await createBackup(db, bucket, "pre-restore");
+      const finalEpoch = `cloud-${crypto.randomUUID()}`;
+      await restoreArchive(db, archive, reservation, finalEpoch);
+      return {
+        body: { backupId: id, preRestoreBackupId: preRestore.id, quarantinedDataPath: null, cleanupPending: false },
+        epoch: finalEpoch,
+      };
+    } catch (cause) {
+      await releaseRestore(db, reservation, expectedEpoch);
+      throw cause;
+    }
   }
   return null;
 }

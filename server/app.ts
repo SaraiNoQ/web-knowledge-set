@@ -87,6 +87,7 @@ const gunzipAsync = promisify(gunzip);
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
 const MAX_COMPRESSED_SNAPSHOT_BYTES = 6 * 1024 * 1024;
 const DATA_EPOCH_HEADER = "X-Zhiye-Data-Epoch";
+const unsafeControl = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
 const JSON_MUTATION_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
 const EXTENSION_PUBLIC_PATHS = new Set(["/api/browser-extension/pair", "/api/browser-extension/clips"]);
 const captureErrorCodes = new Set<CaptureErrorCode>([
@@ -109,7 +110,7 @@ const derivedResultTypes = new Set<DerivedResultType>(["summary", "outline", "ke
 const importKinds = new Set<ImportKind>(["urls", "bookmarks", "markdown"]);
 const importStrategies = new Set<ImportStrategy>(["skip", "copy", "update"]);
 const documentFilterKeys = new Set([
-  "q", "scope", "tag", "collectionId", "status", "favorite", "archived", "unorganized",
+  "q", "scope", "tag", "collectionId", "folderId", "unfiled", "status", "favorite", "archived", "unorganized",
   "from", "to", "captureMode", "sort", "page", "trash",
 ]);
 const batchActions = new Set<BatchDocumentAction>([
@@ -398,6 +399,7 @@ function documentPatch(body: Record<string, unknown>) {
     "favorite",
     "archived",
     "collectionIds",
+    "folderId",
   ]);
   if (Object.keys(body).some((key) => !allowed.has(key))) {
     throw new HttpError(400, "INVALID_DOCUMENT_PATCH", "Document patch contains an unknown field");
@@ -444,6 +446,9 @@ function documentPatch(body: Record<string, unknown>) {
   }
   if (body.collectionIds !== undefined) {
     patch.collectionIds = collectionIdsValue(body.collectionIds);
+  }
+  if (body.folderId !== undefined) {
+    patch.folderId = folderIdValue(body.folderId, true);
   }
   if (!Object.keys(patch).length) {
     throw new HttpError(400, "EMPTY_PATCH", "At least one editable field is required");
@@ -524,6 +529,30 @@ function collectionName(body: Record<string, unknown>) {
   const name = body.name.normalize("NFKC").trim();
   if (!name || name.length > 100) {
     throw new HttpError(400, "INVALID_COLLECTION_NAME", "name must contain 1 to 100 characters");
+  }
+  return name;
+}
+
+function folderIdValue(value: unknown): string;
+function folderIdValue(value: unknown, nullable: true): string | null;
+function folderIdValue(value: unknown, nullable = false) {
+  if (nullable && value === null) return null;
+  if (typeof value !== "string" || !value || value.length > 200 || value !== value.trim() || unsafeControl.test(value)) {
+    throw new HttpError(400, "INVALID_FOLDER_ID", "folderId must be null or contain 1 to 200 characters");
+  }
+  return value;
+}
+
+function folderName(body: Record<string, unknown>) {
+  if (Object.keys(body).some((key) => key !== "name")) {
+    throw new HttpError(400, "INVALID_FOLDER", "name must be the only field");
+  }
+  if (typeof body.name !== "string") {
+    throw new HttpError(400, "INVALID_FOLDER_NAME", "name must contain 1 to 100 characters");
+  }
+  const name = body.name.normalize("NFKC").trim();
+  if (!name || name.length > 100 || unsafeControl.test(name)) {
+    throw new HttpError(400, "INVALID_FOLDER_NAME", "name must contain 1 to 100 characters");
   }
   return name;
 }
@@ -655,6 +684,12 @@ function documentFilters(requestUrl: URL): DocumentFilters {
   const tag = tagValue === null ? undefined : tagNameValue(tagValue);
   const collectionIdValue = requestUrl.searchParams.get("collectionId");
   const collectionId = collectionIdValue === null ? undefined : collectionIdsValue([collectionIdValue])[0];
+  const folderIdInput = requestUrl.searchParams.get("folderId");
+  const folderId = folderIdInput === null ? undefined : folderIdValue(folderIdInput);
+  const unfiled = strictBoolean(requestUrl.searchParams.get("unfiled"), "unfiled");
+  if (folderId !== undefined && unfiled !== undefined) {
+    throw new HttpError(400, "INVALID_FILTER", "folderId and unfiled cannot be combined");
+  }
   const statusValue = requestUrl.searchParams.get("status") ?? undefined;
   if (statusValue && !statuses.has(statusValue as CaptureStatus)) {
     throw new HttpError(400, "INVALID_STATUS", "Unknown capture status");
@@ -680,6 +715,8 @@ function documentFilters(requestUrl: URL): DocumentFilters {
     scope: scopeValue as DocumentSearchScope | undefined,
     tag,
     collectionId,
+    folderId,
+    unfiled,
     status: statusValue as CaptureStatus | undefined,
     favorite: strictBoolean(requestUrl.searchParams.get("favorite"), "favorite"),
     archived: strictBoolean(requestUrl.searchParams.get("archived"), "archived"),
@@ -955,7 +992,7 @@ async function serveAsset(
   }
 }
 
-function exportedMarkdown(document: KnowledgeDocument) {
+function exportedMarkdown(document: KnowledgeDocument, folder: string | null) {
   const frontMatter = [
     "---",
     `title: ${JSON.stringify(document.title)}`,
@@ -969,6 +1006,7 @@ function exportedMarkdown(document: KnowledgeDocument) {
     `captured_at: ${JSON.stringify(document.createdAt)}`,
     `tags: ${JSON.stringify(document.tags)}`,
     `collections: ${JSON.stringify(document.collections.map(({ name }) => name))}`,
+    `folder: ${JSON.stringify(folder)}`,
     `favorite: ${JSON.stringify(document.favorite)}`,
     `archived_at: ${JSON.stringify(document.archivedAt)}`,
     `source_note: ${JSON.stringify(document.sourceNote)}`,
@@ -2125,6 +2163,45 @@ export function createApp(options: AppOptions) {
         return;
       }
 
+      if (pathname === "/api/folders" && request.method === "GET") {
+        sendJson(response, 200, requireDatabase().listFolders());
+        return;
+      }
+
+      if (pathname === "/api/folders" && request.method === "POST") {
+        const result = requireDatabase().createFolder(folderName(await mutationBody(request)));
+        if (result.kind === "duplicate") {
+          throw new HttpError(409, "FOLDER_NAME_CONFLICT", "A folder with this name already exists");
+        }
+        sendJson(response, 201, result.folder);
+        return;
+      }
+
+      const folderMatch = pathname.match(/^\/api\/folders\/([^/]+)$/u);
+      if (folderMatch && request.method === "PATCH") {
+        const result = requireDatabase().renameFolder(
+          decodeId(folderMatch[1]),
+          folderName(await mutationBody(request)),
+        );
+        if (result.kind === "missing") throw new HttpError(404, "FOLDER_NOT_FOUND", "Folder not found");
+        if (result.kind === "duplicate") {
+          throw new HttpError(409, "FOLDER_NAME_CONFLICT", "A folder with this name already exists");
+        }
+        sendJson(response, 200, result.folder);
+        return;
+      }
+
+      if (folderMatch && request.method === "DELETE") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length) {
+          throw new HttpError(400, "INVALID_FOLDER_DELETE", "Folder deletion does not accept options");
+        }
+        const result = requireDatabase().deleteFolder(decodeId(folderMatch[1]));
+        if (result.kind === "missing") throw new HttpError(404, "FOLDER_NOT_FOUND", "Folder not found");
+        sendJson(response, 200, { deleted: true, affectedDocuments: result.affectedDocuments });
+        return;
+      }
+
       if (pathname === "/api/derived-results" && request.method === "DELETE") {
         const body = await mutationBody(request);
         if (body.confirm !== true || Object.keys(body).some((key) => key !== "confirm")) {
@@ -2488,6 +2565,7 @@ export function createApp(options: AppOptions) {
       if (request.method === "GET" && exportMatch) {
         const document = requireDatabase().getDocument(decodeId(exportMatch[1]));
         if (!document) throw new HttpError(404, "NOT_FOUND", "Document not found");
+        const folder = document.folderId ? requireDatabase().getFolder(document.folderId)?.name ?? null : null;
         const filename = encodeURIComponent(Buffer.from((document.title || document.id).slice(0, 150)).toString("utf8"));
         response.writeHead(200, {
           "Content-Type": "text/markdown; charset=utf-8",
@@ -2495,7 +2573,7 @@ export function createApp(options: AppOptions) {
           "Cache-Control": "no-store",
           ...securityHeaders(),
         });
-        response.end(exportedMarkdown(document));
+        response.end(exportedMarkdown(document, folder));
         return;
       }
 
@@ -2566,6 +2644,9 @@ export function createApp(options: AppOptions) {
             },
           });
           return;
+        }
+        if (result.kind === "invalid_folder") {
+          throw new HttpError(400, "INVALID_FOLDER_ID", "The selected folder does not exist");
         }
         sendJson(response, 200, result.document);
         return;

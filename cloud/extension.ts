@@ -110,6 +110,163 @@ function changes(result: D1Result) {
   return result.meta.changes ?? 0;
 }
 
+const epochGuardSql = `SELECT CASE
+  WHEN EXISTS (SELECT 1 FROM app_settings WHERE key = 'data_epoch' AND value = ?) THEN 1
+  ELSE json('invalid epoch')
+END AS guarded`;
+
+async function rethrowEpochError(db: D1Database, expectedEpoch: string, cause: unknown): Promise<never> {
+  const current = await db.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'").first<{ value: string }>();
+  if (current?.value !== expectedEpoch) {
+    throw new CloudHttpError(409, "STALE_DATA_EPOCH", "Cloud data changed; reload before writing");
+  }
+  throw cause;
+}
+
+export function epochGuardedDatabase(db: D1Database, expectedEpoch: string): D1Database {
+  if (!db.batch) throw new CloudHttpError(503, "CLOUD_BATCH_UNAVAILABLE", "D1 batch API is unavailable");
+  const originals = new WeakMap<object, D1Statement>();
+  const guardedBatch = async (statements: D1Statement[]) => {
+    try {
+      const result = await db.batch!([
+        db.prepare(epochGuardSql).bind(expectedEpoch),
+        ...statements.map((statement) => originals.get(statement as object) ?? statement),
+      ]);
+      return result.slice(1);
+    } catch (cause) {
+      return await rethrowEpochError(db, expectedEpoch, cause);
+    }
+  };
+  const wrap = (statement: D1Statement): D1Statement => {
+    const wrapped: D1Statement = {
+      bind(...values) { return wrap(statement.bind(...values)); },
+      first<T>() { return statement.first<T>(); },
+      all<T>() { return statement.all<T>(); },
+      async run<T>() { return (await guardedBatch([statement]))[0] as D1Result<T>; },
+    };
+    originals.set(wrapped as object, statement);
+    return wrapped;
+  };
+  return {
+    prepare(sql) { return wrap(db.prepare(sql)); },
+    batch: guardedBatch,
+  };
+}
+
+export async function recoverExpiredRestore(db: D1Database, epoch: string) {
+  const reservation = /^restore:(\d+):/u.exec(epoch);
+  if (!reservation || Number(reservation[1]) > Date.now()) return epoch;
+  if (!db.batch) throw new CloudHttpError(503, "CLOUD_BATCH_UNAVAILABLE", "D1 batch API is unavailable");
+  const fresh = `cloud-${crypto.randomUUID()}`;
+  const timestamp = new Date().toISOString();
+  const [, released] = await db.batch([
+    db.prepare(`UPDATE cloud_capture_jobs SET status = 'failed', error_code = 'RESTORE_INTERRUPTED',
+      revision = revision + 1, updated_at = ? WHERE status IN ('queued', 'fetching')
+      AND EXISTS (SELECT 1 FROM app_settings WHERE key = 'data_epoch' AND value = ?)`).bind(timestamp, epoch),
+    db.prepare(
+      "UPDATE app_settings SET value = ?, revision = revision + 1, updated_at = ? WHERE key = 'data_epoch' AND value = ?",
+    ).bind(fresh, timestamp, epoch),
+  ]);
+  if ((released?.meta.changes ?? 0) === 1) return fresh;
+  return (await db.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'").first<{ value: string }>())?.value ?? null;
+}
+
+function folderName(body: Record<string, unknown>) {
+  if (Object.keys(body).some((key) => key !== "name") || typeof body.name !== "string") {
+    throw new CloudHttpError(400, "INVALID_FOLDER_NAME", "name must be the only field and contain 1 to 100 characters");
+  }
+  const name = body.name.normalize("NFKC").trim();
+  if (!name || name.length > 100 || unsafeControl.test(name)) {
+    throw new CloudHttpError(400, "INVALID_FOLDER_NAME", "name must contain 1 to 100 safe characters");
+  }
+  return name;
+}
+
+export function folderIdValue(value: unknown) {
+  if (value === null) return null;
+  if (typeof value !== "string" || !value || value.length > 200 || value !== value.trim() || unsafeControl.test(value)) {
+    throw new CloudHttpError(400, "INVALID_FOLDER_ID", "folderId must be null or a valid folder identifier");
+  }
+  return value;
+}
+
+interface FolderRow {
+  id: string;
+  name: string;
+  documentCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const folderColumns = `f.id, f.name,
+  ((SELECT COUNT(*) FROM cloud_documents d WHERE d.folder_id = f.id) +
+   (SELECT COUNT(*) FROM cloud_capture_jobs j WHERE j.folder_id = f.id
+      AND NOT EXISTS (SELECT 1 FROM cloud_documents d WHERE d.id = j.id))) AS documentCount,
+  f.created_at AS createdAt, f.updated_at AS updatedAt`;
+
+async function getFolder(db: D1Database, id: string) {
+  return await db.prepare(`SELECT ${folderColumns} FROM cloud_folders f WHERE f.id = ?`).bind(id).first<FolderRow>();
+}
+
+export async function listFolders(db: D1Database) {
+  const rows = await db.prepare(`SELECT ${folderColumns} FROM cloud_folders f ORDER BY f.name COLLATE NOCASE, f.id`).all<FolderRow>();
+  return rows.results;
+}
+
+export async function createFolder(db: D1Database, body: Record<string, unknown>) {
+  const name = folderName(body);
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const result = await db.prepare(`INSERT INTO cloud_folders(id, name, created_at, updated_at)
+    SELECT ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM cloud_folders WHERE name = ? COLLATE NOCASE)`)
+    .bind(id, name, now, now, name).run();
+  if (changes(result) !== 1) throw new CloudHttpError(409, "FOLDER_NAME_CONFLICT", "A folder with this name already exists");
+  return { id, name, documentCount: 0, createdAt: now, updatedAt: now };
+}
+
+export async function updateFolder(db: D1Database, id: string, body: Record<string, unknown>) {
+  folderIdValue(id);
+  const name = folderName(body);
+  const now = new Date().toISOString();
+  const result = await db.prepare(`UPDATE cloud_folders SET name = ?, updated_at = ?
+    WHERE id = ? AND NOT EXISTS (
+      SELECT 1 FROM cloud_folders WHERE name = ? COLLATE NOCASE AND id <> ?
+    )`).bind(name, now, id, name, id).run();
+  if (changes(result) !== 1) {
+    if (!await getFolder(db, id)) throw new CloudHttpError(404, "FOLDER_NOT_FOUND", "Folder not found");
+    throw new CloudHttpError(409, "FOLDER_NAME_CONFLICT", "A folder with this name already exists");
+  }
+  return await getFolder(db, id);
+}
+
+export async function deleteFolder(db: D1Database, id: string, body: Record<string, unknown>) {
+  folderIdValue(id);
+  if (Object.keys(body).length) throw new CloudHttpError(400, "INVALID_FOLDER_DELETE", "Folder deletion accepts no options");
+  if (!await getFolder(db, id)) throw new CloudHttpError(404, "FOLDER_NOT_FOUND", "Folder not found");
+  if (!db.batch) throw new CloudHttpError(503, "CLOUD_BATCH_UNAVAILABLE", "D1 batch API is unavailable");
+  const now = new Date().toISOString();
+  const [documents, jobs, deleted] = await db.batch([
+    db.prepare("UPDATE cloud_documents SET folder_id = NULL, revision = revision + 1, updated_at = ? WHERE folder_id = ?").bind(now, id),
+    db.prepare("UPDATE cloud_capture_jobs SET folder_id = NULL, revision = revision + 1, updated_at = ? WHERE folder_id = ?").bind(now, id),
+    db.prepare("DELETE FROM cloud_folders WHERE id = ?").bind(id),
+  ]);
+  if (changes(deleted) !== 1) throw new CloudHttpError(404, "FOLDER_NOT_FOUND", "Folder not found");
+  return { deleted: true as const, affectedDocuments: changes(documents) + changes(jobs) };
+}
+
+export function documentFolderFilter(url: URL) {
+  const folderValues = url.searchParams.getAll("folderId");
+  const unfiledValues = url.searchParams.getAll("unfiled");
+  if (folderValues.length > 1 || unfiledValues.length > 1 || (folderValues.length && unfiledValues.length) ||
+    (unfiledValues.length === 1 && unfiledValues[0] !== "true" && unfiledValues[0] !== "false")) {
+    throw new CloudHttpError(400, "INVALID_FILTER", "folderId and unfiled must be valid and cannot be combined");
+  }
+  return {
+    folderId: folderValues.length ? folderIdValue(folderValues[0]) : null,
+    unfiled: unfiledValues.length ? unfiledValues[0] === "true" : null,
+  };
+}
+
 export async function createPairingCode(db: D1Database) {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const bytes = crypto.getRandomValues(new Uint8Array(10));
@@ -246,6 +403,7 @@ interface DocumentSummaryRow {
   title: string;
   author: string | null;
   status: "ready";
+  folderId: string | null;
   revision: number;
   createdAt: string;
   updatedAt: string;
@@ -271,6 +429,7 @@ function summary(row: DocumentSummaryRow) {
     errorMessage: null,
     tags: [],
     collections: [],
+    folderId: row.folderId,
     favorite: false,
     archivedAt: null,
     revision: row.revision,
@@ -281,7 +440,7 @@ function summary(row: DocumentSummaryRow) {
 }
 
 const summaryColumns = `id, source_url AS sourceUrl, final_url AS finalUrl, canonical_url AS canonicalUrl,
-  title, author, status, revision, created_at AS createdAt, updated_at AS updatedAt`;
+  title, author, status, folder_id AS folderId, revision, created_at AS createdAt, updated_at AS updatedAt`;
 
 export async function listDocuments(db: D1Database, url: URL) {
   const pageValue = url.searchParams.get("page") || "1";
@@ -291,6 +450,15 @@ export async function listDocuments(db: D1Database, url: URL) {
   if (query.length > 500) throw new CloudHttpError(400, "INVALID_QUERY", "query is too long");
   const conditions: string[] = [];
   const values: unknown[] = [];
+  const folder = documentFolderFilter(url);
+  if (folder.folderId) {
+    conditions.push("folder_id = ?");
+    values.push(folder.folderId);
+  } else if (folder.unfiled === true) {
+    conditions.push("folder_id IS NULL");
+  } else if (folder.unfiled === false) {
+    conditions.push("folder_id IS NOT NULL");
+  }
   if (query) {
     const scope = url.searchParams.get("scope") || "all";
     const columns = scope === "title" ? ["title"] : scope === "body" ? ["markdown"] :
@@ -337,21 +505,41 @@ export async function getDocument(db: D1Database, id: string) {
 }
 
 export async function updateDocument(db: D1Database, id: string, body: Record<string, unknown>) {
-  if (Object.keys(body).some((key) => key !== "title" && key !== "markdown" && key !== "revision") ||
-    typeof body.title !== "string" || !body.title.trim() || body.title.length > 1_000 ||
-    typeof body.markdown !== "string" || encoder.encode(body.markdown).byteLength > MAX_CLOUD_ROW_TEXT_BYTES ||
-    typeof body.revision !== "number" || !Number.isInteger(body.revision) || body.revision < 1 ||
-    unsafeControl.test(body.title) || unsafeControl.test(body.markdown)) {
-    throw new CloudHttpError(400, "INVALID_DOCUMENT_UPDATE", "A title, Markdown body, and positive revision are required");
+  const keys = Object.keys(body);
+  const hasTitle = Object.hasOwn(body, "title");
+  const hasMarkdown = Object.hasOwn(body, "markdown");
+  const hasFolder = Object.hasOwn(body, "folderId");
+  if (keys.some((key) => !["title", "markdown", "folderId", "revision"].includes(key)) ||
+    typeof body.revision !== "number" || !Number.isSafeInteger(body.revision) || body.revision < 1 ||
+    hasTitle !== hasMarkdown || (!hasTitle && !hasFolder) ||
+    (hasTitle && (typeof body.title !== "string" || !body.title.trim() || body.title.length > 1_000 ||
+      typeof body.markdown !== "string" || encoder.encode(body.markdown).byteLength > MAX_CLOUD_ROW_TEXT_BYTES ||
+      unsafeControl.test(body.title) || unsafeControl.test(body.markdown)))) {
+    throw new CloudHttpError(400, "INVALID_DOCUMENT_UPDATE", "A positive revision and a valid content or folder change are required");
+  }
+  const folderId = hasFolder ? folderIdValue(body.folderId) : undefined;
+  const assignments: string[] = [];
+  const values: unknown[] = [];
+  if (hasTitle) {
+    assignments.push("title = ?", "markdown = ?");
+    values.push((body.title as string).trim(), body.markdown);
+  }
+  if (hasFolder) {
+    assignments.push("folder_id = ?");
+    values.push(folderId);
   }
   const now = new Date().toISOString();
   const result = await db.prepare(
-    `UPDATE cloud_documents SET title = ?, markdown = ?, revision = revision + 1, updated_at = ?
-     WHERE id = ? AND revision = ?`,
-  ).bind(body.title.trim(), body.markdown, now, id, body.revision).run();
+    `UPDATE cloud_documents SET ${assignments.join(", ")}, revision = revision + 1, updated_at = ?
+     WHERE id = ? AND revision = ?${folderId ? " AND EXISTS (SELECT 1 FROM cloud_folders WHERE id = ?)" : ""}`,
+  ).bind(...values, now, id, body.revision, ...(folderId ? [folderId] : [])).run();
   if (changes(result) !== 1) {
     const current = await getDocument(db, id);
     if (!current) throw new CloudHttpError(404, "DOCUMENT_NOT_FOUND", "Document not found");
+    if (current.revision !== body.revision) {
+      throw new CloudHttpError(409, "DOCUMENT_CONFLICT", "Document was updated elsewhere", current);
+    }
+    if (folderId && !await getFolder(db, folderId)) throw new CloudHttpError(400, "INVALID_FOLDER_ID", "folderId does not reference an existing folder");
     throw new CloudHttpError(409, "DOCUMENT_CONFLICT", "Document was updated elsewhere", current);
   }
   return await getDocument(db, id);
