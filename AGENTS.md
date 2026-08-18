@@ -37,6 +37,7 @@
 
 - The canonical Git remote is `git@github.com:SaraiNoQ/web-knowledge-set.git`; verify `origin` before the first push and never rewrite shared history.
 - Treat every milestone in `docs/DEVELOPMENT_PLAN.md` as a review and commit boundary. Keep unrelated work out of the milestone diff.
+- Whenever an independently verifiable stage or feature slice is complete, run its applicable gates and review, then create an immediate focused Conventional Commit; do not accumulate multiple completed slices into one large final commit, and never commit incomplete or unverified code.
 - Before committing a milestone, synchronize its source to `root@123.207.203.208:/root/dev/zhiye` using `key1.pem` and run every gate required by that milestone there. At minimum, run type checks, unit/integration tests, the production build, and relevant end-to-end or packaging checks.
 - After the server gates pass, ask an independent agent to review the complete uncommitted diff for correctness, security, data-loss risk, migrations, tests, and unnecessary complexity. The implementation agent must resolve actionable findings and repeat affected server gates before committing.
 - Commit only a reviewed, passing milestone, using a focused Conventional Commit message. Confirm the committed diff and clean working tree before starting the next milestone; push the milestone commit to the configured GitHub remote when credentials and branch policy allow.
