@@ -115,9 +115,9 @@ test("creates a folder and moves one knowledge item with the accessible dialog",
   await page.getByLabel("网页地址").fill(captureUrl);
   await page.getByRole("button", { name: "收取网页" }).click();
   await expect(page.getByLabel("文档标题")).toHaveValue("远端测试文章", { timeout: 8_000 });
-  const rootBranch = page.locator(".folder-branch").filter({ hasText: "根目录" });
-  const rootRow = rootBranch.locator(".directory-document-row").filter({ has: page.locator(`a[href="${captureUrl}"]`) });
+  const rootRow = page.getByRole("region", { name: "根目录内容" }).locator(".directory-document-row").filter({ has: page.locator(`a[href="${captureUrl}"]`) });
   await expect(rootRow.getByRole("button", { name: "远端测试文章", exact: true })).toBeVisible();
+  await expect(page.locator(".folder-node").filter({ hasText: "根目录" })).toHaveCount(0);
   await expect(page.locator(".result-caption, .document-list")).toHaveCount(0);
   const folderName = `目录-${Date.now()}`;
   await page.getByRole("button", { name: "新建文件夹" }).click();

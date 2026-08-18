@@ -1972,7 +1972,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 /* Compact knowledge directory */
 .directory-document-row.document-row-wrap {
   display: grid;
-  grid-template-columns: 22px 13px 7px minmax(0,1fr) 24px 32px;
+  grid-template-columns: 22px 7px minmax(0,1fr) 24px 32px;
   align-items: center;
   gap: 5px;
   min-height: 35px;
@@ -1985,7 +1985,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .directory-document-row.is-moving { opacity: .5; }
 .directory-document-row .row-select { width: 22px; min-height: 32px; }
 .directory-checkbox-space { width: 22px; }
-.directory-drag { overflow: hidden; color: var(--ink-faint); font-size: 14px; cursor: grab; }
+.directory-document-row[draggable="true"] { cursor: grab; }
 .directory-status { width: 6px; height: 6px; background: var(--ink-faint); border-radius: 50%; }
 .directory-status.is-ready { background: var(--moss); }
 .directory-status.is-failed { background: var(--vermilion); }
@@ -2024,6 +2024,8 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .library-directory h3 { margin: 0; font: 500 16px/1.2 var(--font-serif); }
 .library-directory > header .ui-icon-button { width: 29px; min-height: 29px; }
 .folder-tree { display: grid; gap: 2px; }
+.root-contents { min-height: 8px; }
+.root-contents > p { margin: 0; padding: 10px 8px; color: var(--ink-faint); font-size: var(--font-caption); }
 .folder-branch { min-width: 0; }
 .folder-node { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; min-height: 35px; border: 1px solid transparent; }
 .folder-node:has(button:focus-visible), .folder-node:hover { background: rgba(235,229,215,.52); border-color: var(--line); }
@@ -2040,9 +2042,8 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .folder-pagination button { padding: 4px; color: var(--ink-soft); background: transparent; border: 0; font-size: var(--font-caption); }
 
 @media (max-width: 820px) {
-  .directory-document-row.document-row-wrap { grid-template-columns: 28px 0 7px minmax(0,1fr) 36px 40px; min-height: 44px; padding: 2px 0; gap: 4px; }
+  .directory-document-row.document-row-wrap { grid-template-columns: 28px 7px minmax(0,1fr) 36px 40px; min-height: 44px; padding: 2px 0; gap: 4px; }
   .directory-document-row .row-select { width: 28px; min-height: 40px; }
-  .directory-drag { display: none; }
   .directory-title.document-row { min-height: 40px; padding-block: 9px; font-size: var(--font-body); }
   .directory-external, .directory-document-row > .ui-icon-button { min-height: 40px; }
   .folder-node { min-height: 44px; }
