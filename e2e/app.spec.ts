@@ -106,6 +106,30 @@ test("returns home from the logo and toggles the knowledge sidebar", async ({ pa
   await expect(page.getByLabel("网页地址")).toBeVisible();
 });
 
+test("creates a folder and moves one knowledge item with the accessible dialog", async ({ page }) => {
+  await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
+  if (await deferSetup.isVisible()) await deferSetup.click();
+  await page.getByLabel("网页地址").fill(`https://example.com/folder-${Date.now()}`);
+  await page.getByRole("button", { name: "收取网页" }).click();
+  await expect(page.getByLabel("文档标题")).toHaveValue("远端测试文章", { timeout: 8_000 });
+  const folderName = `目录-${Date.now()}`;
+  await page.getByRole("button", { name: "新建文件夹" }).click();
+  const create = page.getByRole("dialog", { name: "新建文件夹" });
+  await create.getByLabel("文件夹名称").fill(folderName);
+  await create.getByRole("button", { name: "创建" }).click();
+  await expect(page.getByText(`已创建文件夹“${folderName}”。`)).toBeVisible();
+  await page.getByRole("button", { name: /移动 远端测试文章/u }).first().click();
+  const move = page.getByRole("dialog", { name: "移动到文件夹" });
+  await move.getByLabel("目标位置").selectOption({ label: folderName });
+  await move.getByRole("button", { name: "移动", exact: true }).click();
+  await expect(page.getByText(`已移到“${folderName}”。`)).toBeVisible();
+  const folderBranch = page.locator(".folder-branch").filter({ hasText: folderName });
+  await folderBranch.locator(".folder-node > button").first().click();
+  await expect(folderBranch.locator(".folder-contents .directory-title")).toHaveText("远端测试文章");
+});
+
 test("opens one keyboard-accessible help and about dialog in normal and recovery modes", async ({ page }) => {
   await page.goto("/");
   const deferSetup = page.getByRole("button", { name: "稍后设置" });

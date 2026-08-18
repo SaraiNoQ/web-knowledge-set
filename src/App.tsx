@@ -26,6 +26,7 @@ import type {
   ImportStrategy,
   KnowledgeCollection,
   KnowledgeDocument,
+  KnowledgeFolder,
   KnowledgeTag,
   OnboardingState,
   RecentFilter,
@@ -41,8 +42,9 @@ import { Diagnostics } from "./components/Diagnostics";
 import { DerivedKnowledge } from "./components/DerivedKnowledge";
 import { MarkdownEditor } from "./components/MarkdownEditor";
 import { Onboarding } from "./components/Onboarding";
+import { DocumentDirectoryRow, LibraryDirectory, type MoveDocumentTarget } from "./components/LibraryDirectory";
 import { Select } from "./components/ui/Controls";
-import { useDialogs } from "./components/ui/Feedback";
+import { useDialogs, useToast } from "./components/ui/Feedback";
 import { Modal } from "./components/ui/Modal";
 import { userErrorFrom, userErrorMessage } from "./error-messages";
 
@@ -485,6 +487,7 @@ function CaptureHistoryPanel({
 
 export default function App() {
   const dialogs = useDialogs();
+  const toast = useToast();
   const [items, setItems] = useState<DocumentSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [pageSize, setPageSize] = useState(30);
@@ -588,6 +591,7 @@ export default function App() {
   const [derivedOpen, setDerivedOpen] = useState(false);
   const [derivedPreferredType, setDerivedPreferredType] = useState<DerivedResultType>("summary");
   const [collections, setCollections] = useState<KnowledgeCollection[]>([]);
+  const [folders, setFolders] = useState<KnowledgeFolder[]>([]);
   const [collectionsOpen, setCollectionsOpen] = useState(false);
   const [collectionsLoading, setCollectionsLoading] = useState(false);
   const [collectionName, setCollectionName] = useState("");
@@ -832,6 +836,18 @@ export default function App() {
     return () => controller.abort();
   }, [loadCollections, safetyOpen]);
 
+  const loadFolders = useCallback(async (signal?: AbortSignal) => {
+    try { setFolders(await api.listFolders(signal)); }
+    catch (error) { if ((error as Error).name !== "AbortError") toast.error((error as Error).message); }
+  }, [toast]);
+
+  useEffect(() => {
+    if (safetyOpen) return;
+    const controller = new AbortController();
+    void loadFolders(controller.signal);
+    return () => controller.abort();
+  }, [listRefresh, loadFolders, safetyOpen]);
+
   const refreshKnownTags = useCallback((signal?: AbortSignal) => {
     void api.listTags(inTrash ? "only" : undefined, signal).then(setKnownTags).catch(() => {
       // Keep the last complete tag list when this secondary refresh fails.
@@ -852,6 +868,7 @@ export default function App() {
       favorite: document.favorite,
       archivedAt: document.archivedAt,
       collections: document.collections,
+      folderId: document.folderId,
       updatedAt: document.updatedAt,
     } : item));
   }, []);
@@ -895,6 +912,54 @@ export default function App() {
     const value = sourceMetadataRef.current;
     if (!document || !value || sourceMetadataEqual(value, document)) return null;
     return { documentId: document.id, draft: { ...value } };
+  };
+
+  const moveDocumentToFolder = async (target: MoveDocumentTarget, folderId: string | null) => {
+    if (target.folderId === folderId) return;
+    const movingCurrent = selectedIdRef.current === target.id;
+    if (movingCurrent && (currentDirtyDraft() || currentDirtySourceMetadata())) {
+      toast.error("请先保存或放弃当前修改，再移动这篇知识。");
+      return;
+    }
+    const guard = movingCurrent ? beginNavigation() : null;
+    try {
+      const updated = await api.updateDocument(target.id, { revision: target.revision, folderId });
+      updateListItem(updated);
+      if (guard && selectedIdRef.current === updated.id && canApplyNavigation(guard)) installCurrentDocument(updated);
+      setListRefresh((value) => value + 1);
+      await loadFolders();
+      toast.success(`已移到“${folders.find(({ id }) => id === folderId)?.name ?? "未分类"}”。`);
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.document) {
+        updateListItem(error.document);
+        if (guard && selectedIdRef.current === error.document.id && canApplyNavigation(guard)) {
+          installCurrentDocument(error.document);
+          setDraft(draftOf(error.document));
+          setTagText(error.document.tags.join(", "));
+        }
+      }
+      toast.error(error instanceof ApiRequestError && error.status === 409 ? "知识已在别处变化，未移动；请刷新后重试。" : (error as Error).message);
+    }
+  };
+
+  const refreshFoldersAndCurrent = async () => {
+    await loadFolders();
+    const document = currentDocRef.current;
+    if (document && !currentDirtyDraft() && !currentDirtySourceMetadata()) {
+      const guard = beginNavigation();
+      try {
+        const refreshed = await api.getDocument(document.id);
+        if (selectedIdRef.current === refreshed.id && canApplyNavigation(guard)) {
+          installCurrentDocument(refreshed);
+          updateListItem(refreshed);
+          setDraft(draftOf(refreshed));
+          setTagText(refreshed.tags.join(", "));
+        }
+      } catch {
+        // The ordinary detail/list refresh paths retain the last complete state.
+      }
+    }
+    setListRefresh((value) => value + 1);
   };
 
   const beginNavigation = (): NavigationGuard => ({
@@ -3323,29 +3388,32 @@ export default function App() {
           {batchError && <p className="batch-message error-text" role="alert">{batchError}</p>}
 
           <div ref={libraryListRef} className="document-list" onKeyDown={handleListKeyDown}>
-            {listLoading && !items.length ? <StatePanel kind="loading" title="正在翻阅知识库" /> : listError ? <StatePanel kind="error" title="无法读取列表">{listError}</StatePanel> : !items.length ? <StatePanel kind="empty" title={inTrash ? "回收站是空的" : "还没有找到织片"}>{query || tag || status ? "试试放宽筛选条件。" : inTrash ? "移除的网页会暂存在这里。" : cloudMode ? "请从帮助页安装浏览器扩展，开始剪藏网页。" : "从上方收藏第一张网页。"}</StatePanel> : items.map((item, index) => (
-              <div key={item.id} className={`document-row-wrap ${selectedId === item.id ? "is-selected" : ""}`}>
-                <label className="row-select"><span className="sr-only">选择 {item.title || "未命名网页"}</span><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={selectedIds.has(item.id)} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds((previous) => { const next = new Set(previous); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; }); }} /></label>
-                <button type="button" className={`document-row ${selectedId === item.id ? "is-selected" : ""}`} onClick={() => void selectDocument(item.id)} aria-current={selectedId === item.id ? "true" : undefined} aria-keyshortcuts="Enter ArrowUp ArrowDown J K X">
-                <span className="row-number">{String((page - 1) * pageSize + index + 1).padStart(2, "0")}</span>
-                <span className="row-body">
-                  <strong>{item.title || "未命名网页"}</strong>
-                  <span className="row-source">{sourceName(item.sourceUrl)}<b>·</b>{formatDate(item.updatedAt)}</span>
-                  <span className="row-footer">
-                    <DocumentStatus status={item.status} />
-                    {item.favorite && <span className="favorite-mark" aria-label="已收藏">★</span>}
-                    {item.archivedAt && <em className="archived-mark">已归档</em>}
-                    {item.collections.slice(0, 1).map((value) => <em className="collection-mark" key={value.id}>{value.name}</em>)}
-                    {item.tags.slice(0, 2).map((value) => <em key={value}>#{value}</em>)}
-                  </span>
-                </span>
-                <span className="row-arrow" aria-hidden="true">↗</span>
-                </button>
-              </div>
+            {listLoading && !items.length ? <StatePanel kind="loading" title="正在翻阅知识库" /> : listError ? <StatePanel kind="error" title="无法读取列表">{listError}</StatePanel> : !items.length ? <StatePanel kind="empty" title={inTrash ? "回收站是空的" : "还没有找到织片"}>{query || tag || status ? "试试放宽筛选条件。" : inTrash ? "移除的网页会暂存在这里。" : cloudMode ? "请从帮助页安装浏览器扩展，开始剪藏网页。" : "从上方收藏第一张网页。"}</StatePanel> : items.map((item) => (
+              <DocumentDirectoryRow
+                key={item.id}
+                document={item}
+                folders={folders}
+                selected={selectedId === item.id}
+                onOpen={(id) => void selectDocument(id)}
+                onMove={moveDocumentToFolder}
+                checkbox={!cloudMode ? <label className="row-select"><span className="sr-only">选择 {item.title || "未命名网页"}</span><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={selectedIds.has(item.id)} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds((previous) => { const next = new Set(previous); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; }); }} /></label> : undefined}
+              />
             ))}
           </div>
 
           {pageCount > 1 && <nav className="pagination" aria-label="知识列表分页"><button type="button" disabled={listLoading || batchBusy || page <= 1} onClick={() => setPage((value) => value - 1)}>上一页</button><span>{page} / {pageCount}</span><button type="button" disabled={listLoading || batchBusy || page >= pageCount} onClick={() => setPage((value) => value + 1)}>下一页</button></nav>}
+          {!inTrash && <LibraryDirectory
+            folders={folders}
+            filters={{
+              q: query, scope: searchScope, tag, collectionId: collectionFilter, status,
+              favorite: favoriteFilter, archived: archivedFilter, unorganized: unorganizedFilter || undefined,
+              captureMode: captureModeFilter || undefined, from: dateFrom, to: dateTo, sort: sortOrder,
+            }}
+            refreshKey={listRefresh}
+            onFoldersChanged={() => void refreshFoldersAndCurrent()}
+            onOpen={(id) => void selectDocument(id)}
+            onMove={moveDocumentToFolder}
+          />}
         </aside>
 
         <section id="reader-panel" ref={readerPanelRef} className="reader-panel" aria-label="文档工作台" tabIndex={-1}>
