@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { DragEvent, ReactNode } from "react";
+import type { DragEvent, KeyboardEventHandler, ReactNode, Ref } from "react";
 
 import type { DocumentFilters, DocumentSummary, KnowledgeFolder } from "../../shared/types";
 import { api } from "../api";
@@ -46,7 +46,7 @@ export function DocumentDirectoryRow({
   const [targetFolder, setTargetFolder] = useState(document.folderId ?? "");
   const [moving, setMoving] = useState(false);
   const externalUrl = document.finalUrl || document.sourceUrl;
-  const folderName = folders.find(({ id }) => id === document.folderId)?.name ?? "未分类";
+  const folderName = folders.find(({ id }) => id === document.folderId)?.name ?? "根目录";
   const draggable = !document.deletedAt && !matchMedia("(hover: none), (pointer: coarse)").matches;
   const target = { id: document.id, revision: document.revision, folderId: document.folderId };
 
@@ -108,11 +108,12 @@ function ModalMove({ folders, moving, targetFolder, setTargetFolder, onClose, on
   return <Modal open title="移动到文件夹" dismissible={!moving} onClose={onClose} footer={<>
     <Button onClick={onClose} disabled={moving}>取消</Button><Button variant="primary" onClick={onMove} disabled={moving}>{moving ? "移动中…" : "移动"}</Button>
   </>}>
-    <label className="directory-move-field"><span>目标位置</span><Select autoFocus value={targetFolder} onChange={(event) => setTargetFolder(event.target.value)}><option value="">未分类</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</Select></label>
+    <label className="directory-move-field"><span>目标位置</span><Select autoFocus value={targetFolder} onChange={(event) => setTargetFolder(event.target.value)}><option value="">根目录</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</Select></label>
   </Modal>;
 }
 
 interface Branch {
+  context: string;
   error: string;
   items: DocumentSummary[];
   loading: boolean;
@@ -128,6 +129,13 @@ export function LibraryDirectory({
   onFoldersChanged,
   onOpen,
   onMove,
+  selectedId,
+  selectedIds,
+  selectionDisabled,
+  listRef,
+  onListKeyDown,
+  onSelect,
+  activeFolderId,
 }: {
   folders: KnowledgeFolder[];
   filters: Omit<DocumentFilters, "folderId" | "unfiled" | "page" | "trash">;
@@ -135,24 +143,32 @@ export function LibraryDirectory({
   onFoldersChanged: () => void;
   onOpen: (id: string) => void;
   onMove: (document: MoveDocumentTarget, folderId: string | null) => Promise<void>;
+  selectedId?: string | null;
+  selectedIds?: ReadonlySet<string>;
+  selectionDisabled?: boolean;
+  listRef?: Ref<HTMLDivElement>;
+  onListKeyDown?: KeyboardEventHandler<HTMLDivElement>;
+  onSelect?: (document: DocumentSummary, checked: boolean) => void;
+  activeFolderId?: string | null;
 }) {
   const dialogs = useDialogs();
   const toast = useToast();
-  const [expanded, setExpanded] = useState<string[]>([]);
+  const [expanded, setExpanded] = useState<string[]>(["unfiled"]);
   const [branches, setBranches] = useState<Record<string, Branch>>({});
   const controllers = useRef(new Map<string, AbortController>());
   const filterKey = JSON.stringify(filters);
+  const hasFilters = Object.entries(filters).some(([key, value]) => key !== "sort" && key !== "scope" && value !== undefined && value !== "");
 
   const loadBranch = useCallback(async (key: string, page = 1) => {
     controllers.current.get(key)?.abort();
     const controller = new AbortController();
     controllers.current.set(key, controller);
-    setBranches((current) => ({ ...current, [key]: { ...(current[key] ?? { items: [], total: 0, pageSize: 30 }), page, loading: true, error: "" } }));
+    setBranches((current) => ({ ...current, [key]: { ...(current[key] ?? { items: [], total: 0, pageSize: 30 }), context: filterKey, page, loading: true, error: "" } }));
     try {
       const result = await api.listDocuments({ ...filters, page, ...(key === "unfiled" ? { unfiled: true } : { folderId: key }) }, controller.signal);
-      if (!controller.signal.aborted) setBranches((current) => ({ ...current, [key]: { ...result, loading: false, error: "" } }));
+      if (!controller.signal.aborted) setBranches((current) => ({ ...current, [key]: { ...result, context: filterKey, loading: false, error: "" } }));
     } catch (error) {
-      if ((error as Error).name !== "AbortError") setBranches((current) => ({ ...current, [key]: { ...(current[key] ?? { items: [], total: 0, page, pageSize: 30 }), loading: false, error: (error as Error).message } }));
+      if ((error as Error).name !== "AbortError") setBranches((current) => ({ ...current, [key]: { ...(current[key] ?? { items: [], total: 0, page, pageSize: 30 }), context: filterKey, loading: false, error: (error as Error).message } }));
     }
   }, [filterKey]);
 
@@ -193,6 +209,12 @@ export function LibraryDirectory({
     void loadBranch(key, branches[key]?.page ?? 1);
   };
 
+  useEffect(() => {
+    if (!selectedId || activeFolderId === undefined) return;
+    const key = activeFolderId ?? "unfiled";
+    if (!expanded.includes(key)) toggle(key);
+  }, [activeFolderId, selectedId]);
+
   const createFolder = async () => {
     const name = (await dialogs.prompt("创建一个新的一级文件夹。", { title: "新建文件夹", label: "文件夹名称", confirmLabel: "创建", maxLength: 100 }))?.trim();
     if (!name) return;
@@ -208,7 +230,7 @@ export function LibraryDirectory({
   };
 
   const deleteFolder = async (folder: KnowledgeFolder) => {
-    if (!await dialogs.confirm(`删除“${folder.name}”？其中 ${folder.documentCount} 篇知识会保留并移到“未分类”。`, { title: "删除文件夹", confirmLabel: "删除文件夹", tone: "danger" })) return;
+    if (!await dialogs.confirm(`删除“${folder.name}”？其中 ${folder.documentCount} 篇知识会保留并移到“根目录”。`, { title: "删除文件夹", confirmLabel: "删除文件夹", tone: "danger" })) return;
     try { await api.deleteFolder(folder.id); setExpanded((current) => current.filter((key) => key !== folder.id)); toast.success(`已删除“${folder.name}”，知识仍保留。`); onFoldersChanged(); }
     catch (error) { toast.error((error as Error).message); }
   };
@@ -222,21 +244,29 @@ export function LibraryDirectory({
     } catch { toast.error("无法识别拖动的知识，请使用“移动到…”操作。"); }
   };
 
-  const nodes = [{ id: "unfiled", name: "未分类", documentCount: branches.unfiled?.total ?? 0 } as KnowledgeFolder, ...folders];
+  const nodes = [{ id: "unfiled", name: "根目录", documentCount: branches.unfiled?.total ?? 0 } as KnowledgeFolder, ...folders];
   return <section className="library-directory" aria-labelledby="folder-directory-title">
     <header><div><span>FOLDERS</span><h3 id="folder-directory-title">文件夹</h3></div><IconButton label="新建文件夹" onClick={() => void createFolder()}>＋</IconButton></header>
-    <div className="folder-tree">
+    <div ref={listRef} className="folder-tree" onKeyDown={onListKeyDown}>
       {nodes.map((folder) => {
         const key = folder.id;
         const open = expanded.includes(key);
         const branch = branches[key];
         return <section key={key} className={`folder-branch ${open ? "is-open" : ""}`}>
           <div className="folder-node" onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => void drop(event, key === "unfiled" ? null : key)}>
-            <button type="button" aria-expanded={open} onClick={() => toggle(key)}><span aria-hidden="true">{open ? "▾" : "▸"}</span><b aria-hidden="true">▱</b><strong>{folder.name}</strong><em>{key === "unfiled" ? branch?.total ?? "—" : folder.documentCount}</em></button>
+            <button type="button" aria-expanded={open} onClick={() => toggle(key)}><span aria-hidden="true">{open ? "▾" : "▸"}</span><b aria-hidden="true">▱</b><strong>{folder.name}</strong><em>{branch?.total ?? (hasFilters ? "—" : folder.documentCount)}</em></button>
             {key !== "unfiled" && <div><IconButton label={`重命名 ${folder.name}`} onClick={() => void renameFolder(folder)}>✎</IconButton><IconButton label={`删除 ${folder.name}`} onClick={() => void deleteFolder(folder)}>×</IconButton></div>}
           </div>
           {open && <div className="folder-contents">
-            {branch?.loading && !branch.items.length ? <p role="status">正在读取…</p> : branch?.error ? <p role="alert">{branch.error}</p> : !branch?.items.length ? <p>这个文件夹是空的。</p> : branch.items.map((document) => <DocumentDirectoryRow key={document.id} document={document} folders={folders} onOpen={onOpen} onMove={onMove} />)}
+            {branch?.loading && !branch.items.length ? <p role="status">正在读取…</p> : branch?.error ? <p role="alert">{branch.error}</p> : !branch?.items.length ? <p>{hasFilters ? "没有符合筛选条件的知识。" : key === "unfiled" ? "根目录是空的。" : "这个文件夹是空的。"}</p> : branch.items.map((document) => <DocumentDirectoryRow
+              key={document.id}
+              document={document}
+              folders={folders}
+              selected={selectedId === document.id}
+              onOpen={onOpen}
+              onMove={onMove}
+              checkbox={onSelect ? <label className="row-select"><span className="sr-only">选择 {document.title || "未命名网页"}</span><input type="checkbox" disabled={selectionDisabled || branch.loading || branch.context !== filterKey} checked={selectedIds?.has(document.id) ?? false} onChange={(event) => onSelect(document, event.target.checked)} /></label> : undefined}
+            />)}
             {branch && branch.total > branch.pageSize && <nav className="folder-pagination" aria-label={`${folder.name}分页`}><button type="button" disabled={branch.loading || branch.page <= 1} onClick={() => void loadBranch(key, branch.page - 1)}>上一页</button><span>{branch.page} / {Math.ceil(branch.total / branch.pageSize)}</span><button type="button" disabled={branch.loading || branch.page * branch.pageSize >= branch.total} onClick={() => void loadBranch(key, branch.page + 1)}>下一页</button></nav>}
           </div>}
         </section>;

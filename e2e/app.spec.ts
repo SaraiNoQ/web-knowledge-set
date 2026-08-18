@@ -111,23 +111,28 @@ test("creates a folder and moves one knowledge item with the accessible dialog",
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
   await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
   if (await deferSetup.isVisible()) await deferSetup.click();
-  await page.getByLabel("网页地址").fill(`https://example.com/folder-${Date.now()}`);
+  const captureUrl = `https://example.com/folder-${Date.now()}`;
+  await page.getByLabel("网页地址").fill(captureUrl);
   await page.getByRole("button", { name: "收取网页" }).click();
   await expect(page.getByLabel("文档标题")).toHaveValue("远端测试文章", { timeout: 8_000 });
+  const rootBranch = page.locator(".folder-branch").filter({ hasText: "根目录" });
+  const rootRow = rootBranch.locator(".directory-document-row").filter({ has: page.locator(`a[href="${captureUrl}"]`) });
+  await expect(rootRow.getByRole("button", { name: "远端测试文章", exact: true })).toBeVisible();
+  await expect(page.locator(".result-caption, .document-list")).toHaveCount(0);
   const folderName = `目录-${Date.now()}`;
   await page.getByRole("button", { name: "新建文件夹" }).click();
   const create = page.getByRole("dialog", { name: "新建文件夹" });
   await create.getByLabel("文件夹名称").fill(folderName);
   await create.getByRole("button", { name: "创建" }).click();
   await expect(page.getByText(`已创建文件夹“${folderName}”。`)).toBeVisible();
-  await page.getByRole("button", { name: /移动 远端测试文章/u }).first().click();
+  await rootRow.getByRole("button", { name: /移动 远端测试文章/u }).click();
   const move = page.getByRole("dialog", { name: "移动到文件夹" });
   await move.getByLabel("目标位置").selectOption({ label: folderName });
   await move.getByRole("button", { name: "移动", exact: true }).click();
   await expect(page.getByText(`已移到“${folderName}”。`)).toBeVisible();
   const folderBranch = page.locator(".folder-branch").filter({ hasText: folderName });
-  await folderBranch.locator(".folder-node > button").first().click();
-  await expect(folderBranch.locator(".folder-contents .directory-title")).toHaveText("远端测试文章");
+  await expect(folderBranch.locator(".folder-node > button").first()).toHaveAttribute("aria-expanded", "true");
+  await expect(folderBranch.locator(".directory-document-row").filter({ has: page.locator(`a[href="${captureUrl}"]`) })).toBeVisible();
 });
 
 test("opens one keyboard-accessible help and about dialog in normal and recovery modes", async ({ page }) => {
@@ -330,7 +335,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await page.getByRole("button", { name: "保存设置" }).click();
   await expect(page.getByText("AI 派生已启用。", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "返回资料库" }).click();
-  await page.getByRole("button", { name: /AI 生命周期文章/u }).click();
+  await page.getByRole("button", { name: "AI 生命周期文章", exact: true }).click();
 
   await page.getByRole("button", { name: "AI 派生", exact: true }).click();
   const panel = page.getByRole("complementary", { name: "AI 派生知识" });
@@ -574,7 +579,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
     });
   });
   await page.reload();
-  await page.getByRole("button", { name: /远端测试文章/ }).click();
+  await page.getByRole("button", { name: "远端测试文章", exact: true }).click();
   await expect(page.getByText("已恢复上次未正式保存的本地草稿。")).toBeVisible();
   const closeMarker = `close-${Date.now()}`;
   const closeMarkdown = `## 关闭前草稿\n\n${closeMarker}`;
@@ -636,7 +641,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect(titleEditor).toHaveValue("人工整理标题");
   await expect.poll(currentStoredDraft).toBeNull();
   await page.reload();
-  await page.getByRole("button", { name: /人工整理标题/ }).click();
+  await page.getByRole("button", { name: "人工整理标题", exact: true }).click();
   await expect(page.getByText("已恢复上次未正式保存的本地草稿。")).toHaveCount(0);
   await expect(titleEditor).toHaveValue("人工整理标题");
 
@@ -688,7 +693,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect.poll(currentStoredDraft).toBeNull();
   await page.unroute("**/api/documents/*/draft");
   await page.reload();
-  await page.getByRole("button", { name: /人工整理标题/ }).click();
+  await page.getByRole("button", { name: "人工整理标题", exact: true }).click();
   await expect(page.getByText("已恢复上次未正式保存的本地草稿。")).toHaveCount(0);
   await expect(editor).not.toContainText(undoneMarker);
 
@@ -778,7 +783,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await editor.fill(`# 第一版\n\n第一版正文\n\n${conflictMarker}`);
   await expect.poll(currentStoredDraft).toContain(conflictMarker);
   await page.reload();
-  await page.getByRole("button", { name: /另一窗口更新/ }).click();
+  await page.getByRole("button", { name: "另一窗口更新", exact: true }).click();
   await expect(page.getByText("已恢复上次未正式保存的本地草稿。")).toBeVisible();
   await expect(page.getByText("这篇知识在别处被修改过")).toBeVisible();
   await expect(editor).toContainText(conflictMarker);
@@ -835,11 +840,11 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await page.unroute("**/api/documents/*/restore");
 
   await page.reload();
-  await page.getByRole("button", { name: /人工整理标题/ }).click();
+  await page.getByRole("button", { name: "人工整理标题", exact: true }).click();
   await expect(page.getByLabel("文档标题")).toHaveValue("人工整理标题");
   await expect(page.getByRole("heading", { name: "第一版" })).toBeVisible();
   await page.getByPlaceholder("搜索标题与正文").fill("第一版正文");
-  await expect(page.getByRole("button", { name: /人工整理标题/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "人工整理标题", exact: true })).toBeVisible();
 
   const captureBand = page.locator(".capture-band");
   const captureInput = page.getByLabel("网页地址");
@@ -860,12 +865,12 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect(page.getByLabel("文档标题")).toHaveValue("远端测试文章", { timeout: 8_000 });
   await expect(captureBand.getByText("已保留为另一篇知识，两篇内容都不会被删除。")).toBeVisible();
   await expect(page.locator(".duplicate-banner")).toHaveCount(0);
-  await page.getByRole("button", { name: /人工整理标题/ }).click();
-  await page.getByRole("button", { name: /远端测试文章/ }).click();
+  await page.getByRole("button", { name: "人工整理标题", exact: true }).click();
+  await page.getByRole("button", { name: "远端测试文章", exact: true }).click();
   await expect(page.locator(".duplicate-banner")).toHaveCount(0);
 
   await page.reload();
-  await page.getByRole("button", { name: /远端测试文章/ }).click();
+  await page.getByRole("button", { name: "远端测试文章", exact: true }).click();
   const duplicateBanner = page.locator(".duplicate-banner");
   await expect(duplicateBanner.getByText("发现另一篇相同来源的知识")).toBeVisible();
   await expect(duplicateBanner.getByRole("button", { name: "打开已有" })).toBeVisible();
@@ -875,7 +880,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect(page.getByRole("button", { name: "回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
 
   await page.getByRole("button", { name: "全部", exact: true }).click();
-  await page.getByRole("button", { name: /远端测试文章/ }).click();
+  await page.getByRole("button", { name: "远端测试文章", exact: true }).click();
   await expect(duplicateBanner).toHaveCount(0);
 
   await captureBand.getByRole("button", { name: "暂停采集" }).click();
@@ -889,7 +894,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await captureBand.getByRole("button", { name: "继续采集" }).click();
   await expect(captureBand.getByRole("button", { name: "暂停采集" })).toBeVisible();
 
-  await page.getByRole("button", { name: /人工整理标题/ }).click();
+  await page.getByRole("button", { name: "人工整理标题", exact: true }).click();
   await expect(page.getByLabel("文档标题")).toHaveValue("人工整理标题");
   await page.getByLabel("作者", { exact: true }).fill("林舟");
   await page.getByLabel("发布日期").fill("2025-05-06");
@@ -916,7 +921,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect(page.getByText("集合已更名为“研究清单”。")).toBeVisible();
 
   await page.reload();
-  await page.getByRole("button", { name: /人工整理标题/ }).click();
+  await page.getByRole("button", { name: "人工整理标题", exact: true }).click();
   await expect(page.getByLabel("作者", { exact: true })).toHaveValue("林舟");
   await expect(page.getByLabel("发布日期")).toHaveValue("2025-05-06");
   await expect(page.getByLabel("来源备注")).toHaveValue("用于 M3 的来源核验。");
@@ -980,7 +985,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await page.getByRole("button", { name: "关闭分类管理" }).click();
   const libraryViews = page.getByRole("navigation", { name: "资料库视图" });
   await libraryViews.getByRole("button", { name: "收藏", exact: true }).click();
-  const keyboardRow = page.getByRole("button", { name: /人工整理标题/ });
+  const keyboardRow = page.getByRole("button", { name: "人工整理标题", exact: true });
   await expect(keyboardRow).toBeVisible();
   await page.keyboard.press("?");
   await expect(page.getByRole("dialog", { name: "帮助与关于" })).toBeVisible();
@@ -991,7 +996,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await page.getByLabel("批量操作", { exact: true }).selectOption("unarchive");
   await page.getByRole("button", { name: "应用", exact: true }).click();
   await expect(page.getByText("已处理当前页选中的 1 篇知识。")).toBeVisible();
-  await page.getByRole("button", { name: /人工整理标题/ }).click();
+  await page.getByRole("button", { name: "人工整理标题", exact: true }).click();
   await expect(page.getByRole("region", { name: "文档工作台" }).getByRole("button", { name: "归档", exact: true })).toBeVisible();
 
   let releaseMetadataPatch!: () => void;

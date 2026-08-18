@@ -618,6 +618,7 @@ export default function App() {
   const organizationConflictRef = useRef<OrganizationConflict | null>(null);
   const discardConfirmationRef = useRef(false);
   const selectionContextRef = useRef<string | null>(null);
+  const selectedDocumentRevisionsRef = useRef(new Map<string, number>());
   const listContextRef = useRef("");
   const itemsContextRef = useRef("");
   const savedFiltersEditedRef = useRef(false);
@@ -928,7 +929,7 @@ export default function App() {
       if (guard && selectedIdRef.current === updated.id && canApplyNavigation(guard)) installCurrentDocument(updated);
       setListRefresh((value) => value + 1);
       await loadFolders();
-      toast.success(`已移到“${folders.find(({ id }) => id === folderId)?.name ?? "未分类"}”。`);
+      toast.success(`已移到“${folders.find(({ id }) => id === folderId)?.name ?? "根目录"}”。`);
     } catch (error) {
       if (error instanceof ApiRequestError && error.document) {
         updateListItem(error.document);
@@ -1160,7 +1161,7 @@ export default function App() {
   }, [archivedFilter, captureModeFilter, collectionFilter, dateFrom, dateTo, favoriteFilter, inTrash, listRefresh, page, query, refreshKnownTags, searchScope, sortOrder, status, tag, unorganizedFilter]);
 
   useEffect(() => {
-    if (!items.some(needsCapturePolling)) return;
+    if (!inTrash || !items.some(needsCapturePolling)) return;
     const controller = new AbortController();
     const timer = window.setInterval(async () => {
       try {
@@ -1202,11 +1203,16 @@ export default function App() {
   }, [archivedFilter, captureModeFilter, collectionFilter, dateFrom, dateTo, favoriteFilter, inTrash, items, page, query, refreshKnownTags, searchScope, sortOrder, status, tag, unorganizedFilter]);
 
   useEffect(() => {
-    setSelectedIds((previous) => new Set(items.filter((item) => previous.has(item.id)).map((item) => item.id)));
-  }, [items]);
+    if (inTrash) setSelectedIds((previous) => new Set(items.filter((item) => previous.has(item.id)).map((item) => item.id)));
+  }, [inTrash, items]);
+
+  useEffect(() => {
+    for (const id of selectedDocumentRevisionsRef.current.keys()) if (!selectedIds.has(id)) selectedDocumentRevisionsRef.current.delete(id);
+  }, [selectedIds]);
 
   useEffect(() => {
     selectionContextRef.current = null;
+    selectedDocumentRevisionsRef.current.clear();
     setSelectedIds(new Set());
     setBatchAction("");
   }, [listContextKey]);
@@ -2407,8 +2413,8 @@ export default function App() {
 
   const runBatchAction = async () => {
     if (
-      !batchAction || !selectedIds.size || batchBusy || listLoading || hasUnsavedChanges ||
-      organizationInFlight.current || itemsContextRef.current !== listContextKey ||
+      !batchAction || !selectedIds.size || batchBusy || (inTrash && listLoading) || hasUnsavedChanges ||
+      organizationInFlight.current || (inTrash && itemsContextRef.current !== listContextKey) ||
       selectionContextRef.current !== listContextKey
     ) return;
     const requestContext = listContextKey;
@@ -2427,14 +2433,19 @@ export default function App() {
     if (batchAction === "trash" && !await dialogs.confirm(`将当前页选中的 ${selectedIds.size} 篇知识移入回收站？`, {
       title: "批量移入回收站", confirmLabel: "移入回收站", tone: "danger",
     })) return;
-    if (batchBusy || listLoading || organizationInFlight.current || itemsContextRef.current !== listContextKey) return;
+    if (batchBusy || (inTrash && listLoading) || organizationInFlight.current || (inTrash && itemsContextRef.current !== listContextKey)) return;
+    const documents = [...selectedIds].flatMap((id) => {
+      const revision = selectedDocumentRevisionsRef.current.get(id) ?? items.find((item) => item.id === id)?.revision;
+      return revision === undefined ? [] : [{ id, revision }];
+    });
+    if (documents.length !== selectedIds.size) { setBatchError("选中的知识已更新，请重新选择。"); return; }
     setBatchBusy(true);
     setBatchError("");
     setBatchNotice("");
     try {
       await trackOrganizationTask((async () => {
         const result = await api.batchDocuments({
-          documents: items.filter((item) => selectedIds.has(item.id)).map((item) => ({ id: item.id, revision: item.revision })),
+          documents,
           action: batchAction,
           value,
         });
@@ -2474,13 +2485,11 @@ export default function App() {
       portableExportAbortRef.current?.abort();
       return;
     }
-    if (closeAttemptRef.current || listLoading) return;
-    const documentIds = scope === "selected"
-      ? items.filter((item) => selectedIds.has(item.id)).map((item) => item.id)
-      : [];
+    if (closeAttemptRef.current || (inTrash && listLoading)) return;
+    const documentIds = scope === "selected" ? [...selectedIds] : [];
     if (
       inTrash || (scope === "selected" && (
-        !documentIds.length || itemsContextRef.current !== listContextKey || selectionContextRef.current !== listContextKey
+        !documentIds.length || selectionContextRef.current !== listContextKey
       ))
     ) return;
     const controller = new AbortController();
@@ -3046,6 +3055,7 @@ export default function App() {
     }
   };
 
+  const hasActiveFilters = Boolean(query || tag || status || collectionFilter || favoriteFilter !== undefined || archivedFilter !== undefined || unorganizedFilter || captureModeFilter || dateFrom || dateTo);
   const filteredDescription = useMemo(() => {
     const parts = [
       query && `“${query}”`,
@@ -3369,40 +3379,7 @@ export default function App() {
             {recentFilterNotice && <p className="batch-message" role="status">{recentFilterNotice}</p>}
           </fieldset>
 
-          <div className="result-caption"><span>{filteredDescription}</span>{items.some(needsCapturePolling) && <span className="polling-mark"><i />更新中</span>}</div>
-
-          {!!items.length && !cloudMode && <div className="bulk-toolbar" aria-label="当前页批量操作">
-            <label><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={items.length > 0 && items.every((item) => selectedIds.has(item.id))} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds(event.target.checked ? new Set(items.map((item) => item.id)) : new Set()); }} />选中当前页 <strong>{selectedIds.size}</strong> 篇</label>
-            {!!selectedIds.size && <><Select density="compact" aria-label="批量操作" disabled={listLoading || batchBusy} value={batchAction} onChange={(event) => setBatchAction(event.target.value as BatchDocumentAction | "")}><option value="">选择操作</option><option value="add-tag">添加标签</option><option value="remove-tag">移除标签</option><option value="add-collection">加入集合</option><option value="remove-collection">移出集合</option>{inTrash ? <option value="restore">恢复</option> : <><option value="archive">归档</option><option value="unarchive">取消归档</option><option value="trash">删除（移入回收站）</option></>}</Select>{(batchAction === "add-collection" || batchAction === "remove-collection") && <Select density="compact" aria-label="批量操作集合" disabled={listLoading || batchBusy} value={batchCollectionId} onChange={(event) => setBatchCollectionId(event.target.value)}><option value="">选择集合</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</Select>}<button type="button" onClick={() => void runBatchAction()} disabled={listLoading || batchBusy || !batchAction}>{batchBusy ? "处理中…" : "应用"}</button></>}
-          </div>}
-          {!cloudMode && (!inTrash || portableExporting) && <div className="portable-toolbar" aria-label="便携知识包导出">
-            <div><strong>便携知识包</strong><span>用于迁移与分享，不等同于可恢复数据库的完整留档。</span><button type="button" onClick={() => setSafetyOpen(true)} disabled={Boolean(portableExporting)}>前往完整留档</button></div>
-            <div>
-              <button type="button" onClick={() => void exportPortable("selected")} disabled={((listLoading || closing) && portableExporting !== "selected") || (portableExporting !== null && portableExporting !== "selected") || ((!selectedIds.size || inTrash) && portableExporting !== "selected")}>{portableExporting === "selected" ? "取消所选导出" : `导出所选${selectedIds.size ? ` ${selectedIds.size} 篇` : ""}`}</button>
-              <button type="button" onClick={() => void exportPortable("all")} disabled={((listLoading || closing) && portableExporting !== "all") || (inTrash && portableExporting !== "all") || (portableExporting !== null && portableExporting !== "all")}>{portableExporting === "all" ? "取消全部导出" : "导出全部"}</button>
-            </div>
-          </div>}
-          {portableNotice && <p className="batch-message" role="status">{portableNotice}</p>}
-          {portableError && <p className="batch-message error-text" role="alert">{portableError}</p>}
-          {batchNotice && <p className="batch-message" role="status">{batchNotice}</p>}
-          {batchError && <p className="batch-message error-text" role="alert">{batchError}</p>}
-
-          <div ref={libraryListRef} className="document-list" onKeyDown={handleListKeyDown}>
-            {listLoading && !items.length ? <StatePanel kind="loading" title="正在翻阅知识库" /> : listError ? <StatePanel kind="error" title="无法读取列表">{listError}</StatePanel> : !items.length ? <StatePanel kind="empty" title={inTrash ? "回收站是空的" : "还没有找到织片"}>{query || tag || status ? "试试放宽筛选条件。" : inTrash ? "移除的网页会暂存在这里。" : cloudMode ? "请从帮助页安装浏览器扩展，开始剪藏网页。" : "从上方收藏第一张网页。"}</StatePanel> : items.map((item) => (
-              <DocumentDirectoryRow
-                key={item.id}
-                document={item}
-                folders={folders}
-                selected={selectedId === item.id}
-                onOpen={(id) => void selectDocument(id)}
-                onMove={moveDocumentToFolder}
-                checkbox={!cloudMode ? <label className="row-select"><span className="sr-only">选择 {item.title || "未命名网页"}</span><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={selectedIds.has(item.id)} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds((previous) => { const next = new Set(previous); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; }); }} /></label> : undefined}
-              />
-            ))}
-          </div>
-
-          {pageCount > 1 && <nav className="pagination" aria-label="知识列表分页"><button type="button" disabled={listLoading || batchBusy || page <= 1} onClick={() => setPage((value) => value - 1)}>上一页</button><span>{page} / {pageCount}</span><button type="button" disabled={listLoading || batchBusy || page >= pageCount} onClick={() => setPage((value) => value + 1)}>下一页</button></nav>}
-          {!inTrash && <LibraryDirectory
+          {!inTrash ? <><LibraryDirectory
             folders={folders}
             filters={{
               q: query, scope: searchScope, tag, collectionId: collectionFilter, status,
@@ -3413,7 +3390,58 @@ export default function App() {
             onFoldersChanged={() => void refreshFoldersAndCurrent()}
             onOpen={(id) => void selectDocument(id)}
             onMove={moveDocumentToFolder}
-          />}
+            selectedId={selectedId}
+            activeFolderId={currentDoc?.id === selectedId ? currentDoc.folderId : items.find((item) => item.id === selectedId)?.folderId}
+            selectedIds={selectedIds}
+            selectionDisabled={batchBusy}
+            listRef={libraryListRef}
+            onListKeyDown={handleListKeyDown}
+            onSelect={!cloudMode ? (document, checked) => {
+              selectionContextRef.current = listContextKey;
+              if (checked) selectedDocumentRevisionsRef.current.set(document.id, document.revision);
+              else selectedDocumentRevisionsRef.current.delete(document.id);
+              setSelectedIds((previous) => { const next = new Set(previous); if (checked) next.add(document.id); else next.delete(document.id); return next; });
+            } : undefined}
+          />
+            {!!selectedIds.size && !cloudMode && <div className="bulk-toolbar" aria-label="选中知识批量操作">
+              <span className="batch-selection-summary">已选 <strong>{selectedIds.size}</strong> 篇</span>
+              <Select density="compact" aria-label="批量操作" disabled={batchBusy} value={batchAction} onChange={(event) => setBatchAction(event.target.value as BatchDocumentAction | "")}><option value="">选择操作</option><option value="add-tag">添加标签</option><option value="remove-tag">移除标签</option><option value="add-collection">加入集合</option><option value="remove-collection">移出集合</option><option value="archive">归档</option><option value="unarchive">取消归档</option><option value="trash">删除（移入回收站）</option></Select>
+              {(batchAction === "add-collection" || batchAction === "remove-collection") && <Select density="compact" aria-label="批量操作集合" disabled={batchBusy} value={batchCollectionId} onChange={(event) => setBatchCollectionId(event.target.value)}><option value="">选择集合</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</Select>}
+              <button type="button" onClick={() => void runBatchAction()} disabled={batchBusy || !batchAction}>{batchBusy ? "处理中…" : "应用"}</button>
+            </div>}
+          </> : <>
+            <div className="result-caption"><span>{filteredDescription}</span>{items.some(needsCapturePolling) && <span className="polling-mark"><i />更新中</span>}</div>
+            {!!items.length && !cloudMode && <div className="bulk-toolbar" aria-label="当前页批量操作">
+              <label><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={items.length > 0 && items.every((item) => selectedIds.has(item.id))} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds(event.target.checked ? new Set(items.map((item) => item.id)) : new Set()); }} />选中当前页 <strong>{selectedIds.size}</strong> 篇</label>
+              {!!selectedIds.size && <><Select density="compact" aria-label="批量操作" disabled={listLoading || batchBusy} value={batchAction} onChange={(event) => setBatchAction(event.target.value as BatchDocumentAction | "")}><option value="">选择操作</option><option value="add-tag">添加标签</option><option value="remove-tag">移除标签</option><option value="add-collection">加入集合</option><option value="remove-collection">移出集合</option><option value="restore">恢复</option></Select>{(batchAction === "add-collection" || batchAction === "remove-collection") && <Select density="compact" aria-label="批量操作集合" disabled={listLoading || batchBusy} value={batchCollectionId} onChange={(event) => setBatchCollectionId(event.target.value)}><option value="">选择集合</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</Select>}<button type="button" onClick={() => void runBatchAction()} disabled={listLoading || batchBusy || !batchAction}>{batchBusy ? "处理中…" : "应用"}</button></>}
+            </div>}
+            <div ref={libraryListRef} className="document-list" onKeyDown={handleListKeyDown}>
+              {listLoading && !items.length ? <StatePanel kind="loading" title="正在翻阅知识库" /> : listError ? <StatePanel kind="error" title="无法读取列表">{listError}</StatePanel> : !items.length ? <StatePanel kind="empty" title={hasActiveFilters ? "没有符合筛选条件的知识" : "回收站是空的"}>{hasActiveFilters ? "试试放宽筛选条件。" : "移除的网页会暂存在这里。"}</StatePanel> : items.map((item) => (
+                <DocumentDirectoryRow
+                  key={item.id}
+                  document={item}
+                  folders={folders}
+                  selected={selectedId === item.id}
+                  onOpen={(id) => void selectDocument(id)}
+                  onMove={moveDocumentToFolder}
+                  checkbox={!cloudMode ? <label className="row-select"><span className="sr-only">选择 {item.title || "未命名网页"}</span><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={selectedIds.has(item.id)} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds((previous) => { const next = new Set(previous); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; }); }} /></label> : undefined}
+                />
+              ))}
+            </div>
+            {pageCount > 1 && <nav className="pagination" aria-label="知识列表分页"><button type="button" disabled={listLoading || batchBusy || page <= 1} onClick={() => setPage((value) => value - 1)}>上一页</button><span>{page} / {pageCount}</span><button type="button" disabled={listLoading || batchBusy || page >= pageCount} onClick={() => setPage((value) => value + 1)}>下一页</button></nav>}
+          </>}
+          {!cloudMode && (!inTrash || portableExporting) && <div className="portable-toolbar" aria-label="便携知识包导出">
+            <div><strong>便携知识包</strong><span>用于迁移与分享，不等同于可恢复数据库的完整留档。</span><button type="button" onClick={() => setSafetyOpen(true)} disabled={Boolean(portableExporting)}>前往完整留档</button></div>
+            <div>
+              <button type="button" onClick={() => void exportPortable("selected")} disabled={(portableExporting !== null && portableExporting !== "selected") || (!selectedIds.size && portableExporting !== "selected")}>{portableExporting === "selected" ? "取消所选导出" : `导出所选${selectedIds.size ? ` ${selectedIds.size} 篇` : ""}`}</button>
+              <button type="button" onClick={() => void exportPortable("all")} disabled={((listLoading || closing) && portableExporting !== "all") || (inTrash && portableExporting !== "all") || (portableExporting !== null && portableExporting !== "all")}>{portableExporting === "all" ? "取消全部导出" : "导出全部"}</button>
+            </div>
+          </div>}
+          {portableNotice && <p className="batch-message" role="status">{portableNotice}</p>}
+          {portableError && <p className="batch-message error-text" role="alert">{portableError}</p>}
+          {batchNotice && <p className="batch-message" role="status">{batchNotice}</p>}
+          {batchError && <p className="batch-message error-text" role="alert">{batchError}</p>}
+
         </aside>
 
         <section id="reader-panel" ref={readerPanelRef} className="reader-panel" aria-label="文档工作台" tabIndex={-1}>

@@ -594,6 +594,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 
 .bulk-toolbar { display: grid; grid-template-columns: 1fr auto; gap: 7px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); }
 .bulk-toolbar > label { display: flex; gap: 6px; align-items: center; color: var(--ink-soft); font-size: var(--font-caption); }
+.batch-selection-summary { color: var(--ink-soft); font-size: var(--font-caption); }
 .bulk-toolbar select { grid-column: 1 / -1; }
 .bulk-toolbar > .ui-select-wrap { grid-column: 1 / -1; }
 .bulk-toolbar button { padding: 6px 10px; color: #fff9ee; background: var(--ink); border: 0; font-size: var(--font-small); }
