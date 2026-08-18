@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,17 @@ import test from "node:test";
 
 import { createApp } from "../server/app.js";
 import { openDatabase } from "../server/db.js";
+
+test("extension download links match both manifest versions", async () => {
+  const manifests = await Promise.all(["chrome", "firefox"].map(async (browser) => JSON.parse(await readFile(new URL(`../extension/manifest.${browser}.json`, import.meta.url), "utf8")) as { version: string }));
+  assert.equal(manifests[0].version, manifests[1].version);
+  const help = await readFile(new URL("../src/components/BrowserExtension.tsx", import.meta.url), "utf8");
+  for (const [browser, label] of [["chrome", "Chrome"], ["firefox", "Firefox"]]) {
+    assert.ok(help.includes(`href="/extensions/zhiye-clipper-${browser}.zip?v=${manifests[0].version}"`));
+    assert.ok(help.includes(`>下载 ${label} 扩展 ${manifests[0].version}</a>`));
+  }
+  assert.ok((await readFile(new URL("../docs/SUPPORT.md", import.meta.url), "utf8")).includes(`当前 \`${manifests[0].version}\``));
+});
 
 test("browser extension pairs once, creates copies, has no read scope, and revokes", async () => {
   const directory = mkdtempSync(join(tmpdir(), "zhiye-extension-"));
