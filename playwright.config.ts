@@ -24,5 +24,11 @@ export default defineConfig({
       dependencies: ["auth"],
       use: { storageState: "test-results/e2e-auth.json" },
     },
+    {
+      name: "firefox-scrollbar",
+      testMatch: "**/scrollbar-firefox.spec.ts",
+      dependencies: ["auth"],
+      use: { browserName: "firefox", storageState: "test-results/e2e-auth.json" },
+    },
   ],
 });

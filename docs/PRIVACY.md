@@ -50,7 +50,7 @@ Cloudflare Web 的 AI 平台与模型设置保存在 D1。API Key 与规范化�
 
 “数据安全”可把一份已校验完整备份导出为 `.zhiye-backup`。该文件未加密，直接包含数据库、HTML 快照和离线资源；不包含 API 密钥，但仍应当按完整知识数据保管。导入会先限制文件为 2 GiB、50,000 个条目，再严格校验 ZIP 路径、CRC、清单、SHA-256、schema 和可用空间。通过后只新增一份“已校验留档”，不会覆盖当前资料或自动恢复；恢复仍需要用户另行确认。
 
-Cloudflare Web 使用私有 R2 bucket 保存 `.zhiye-cloud-backup`。v2 包含 D1 一级文件夹、文档、AI 设置和派生结果，不包含 API Key 或扩展 Bearer Token；v1 仍可导入，恢复后其中的文档归入“未分类”。文件未加密，当前上限 8 MiB，且文件夹、文档与 AI 结果合计 32 条；恢复前先创建当前副本，再使用 D1 原子 batch 切换并撤销旧扩展配对。
+Cloudflare Web 使用私有 R2 bucket 保存 `.zhiye-cloud-backup`。v3 包含 D1 一级文件夹、文档归属、回收站状态、AI 设置和派生结果，不包含 API Key 或扩展 Bearer Token；v1/v2 仍可导入，旧归档中的文档按未删除状态恢复。文件未加密，当前上限 8 MiB，且文件夹、文档与 AI 结果合计 32 条；恢复前先创建当前副本，再使用 D1 原子 batch 切换并撤销旧扩展配对。
 
 Cloudflare Web 的 D1/R2 数据与本地知识库相互独立，不会自动同步；只有用户明确执行的导出、导入或恢复才会移动数据。
 

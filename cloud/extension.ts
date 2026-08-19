@@ -199,8 +199,9 @@ interface FolderRow {
 }
 
 const folderColumns = `f.id, f.name,
-  ((SELECT COUNT(*) FROM cloud_documents d WHERE d.folder_id = f.id) +
+  ((SELECT COUNT(*) FROM cloud_documents d WHERE d.folder_id = f.id AND d.deleted_at IS NULL) +
    (SELECT COUNT(*) FROM cloud_capture_jobs j WHERE j.folder_id = f.id
+      AND j.deleted_at IS NULL
       AND NOT EXISTS (SELECT 1 FROM cloud_documents d WHERE d.id = j.id))) AS documentCount,
   f.created_at AS createdAt, f.updated_at AS updatedAt`;
 
@@ -265,6 +266,14 @@ export function documentFolderFilter(url: URL) {
     folderId: folderValues.length ? folderIdValue(folderValues[0]) : null,
     unfiled: unfiledValues.length ? unfiledValues[0] === "true" : null,
   };
+}
+
+export function documentTrashFilter(url: URL) {
+  const values = url.searchParams.getAll("trash");
+  if (values.length > 1 || (values.length === 1 && values[0] !== "only")) {
+    throw new CloudHttpError(400, "INVALID_TRASH_FILTER", "trash must be omitted or equal only");
+  }
+  return values[0] === "only";
 }
 
 export async function createPairingCode(db: D1Database) {
@@ -405,6 +414,7 @@ interface DocumentSummaryRow {
   status: "ready";
   folderId: string | null;
   revision: number;
+  deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -433,16 +443,17 @@ function summary(row: DocumentSummaryRow) {
     favorite: false,
     archivedAt: null,
     revision: row.revision,
-    deletedAt: null,
+    deletedAt: row.deletedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
 }
 
 const summaryColumns = `id, source_url AS sourceUrl, final_url AS finalUrl, canonical_url AS canonicalUrl,
-  title, author, status, folder_id AS folderId, revision, created_at AS createdAt, updated_at AS updatedAt`;
+  title, author, status, folder_id AS folderId, revision, deleted_at AS deletedAt,
+  created_at AS createdAt, updated_at AS updatedAt`;
 
-export async function listDocuments(db: D1Database, url: URL) {
+export async function listDocuments(db: D1Database, url: URL, window?: { limit: number; offset: number }) {
   const pageValue = url.searchParams.get("page") || "1";
   if (!/^[1-9]\d*$/u.test(pageValue)) throw new CloudHttpError(400, "INVALID_PAGE", "page must be a positive integer");
   const page = Number.parseInt(pageValue, 10);
@@ -450,6 +461,7 @@ export async function listDocuments(db: D1Database, url: URL) {
   if (query.length > 500) throw new CloudHttpError(400, "INVALID_QUERY", "query is too long");
   const conditions: string[] = [];
   const values: unknown[] = [];
+  conditions.push(documentTrashFilter(url) ? "deleted_at IS NOT NULL" : "deleted_at IS NULL");
   const folder = documentFolderFilter(url);
   if (folder.folderId) {
     conditions.push("folder_id = ?");
@@ -469,8 +481,7 @@ export async function listDocuments(db: D1Database, url: URL) {
   }
   const unsupported = (url.searchParams.get("status") && url.searchParams.get("status") !== "ready") ||
     url.searchParams.get("favorite") === "true" || url.searchParams.get("archived") === "true" ||
-    Boolean(url.searchParams.get("tag") || url.searchParams.get("collectionId") || url.searchParams.get("captureMode")) ||
-    url.searchParams.get("trash") === "only";
+    Boolean(url.searchParams.get("tag") || url.searchParams.get("collectionId") || url.searchParams.get("captureMode"));
   if (unsupported) conditions.push("0");
   const from = url.searchParams.get("from");
   const to = url.searchParams.get("to");
@@ -487,11 +498,11 @@ export async function listDocuments(db: D1Database, url: URL) {
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const count = await db.prepare(`SELECT COUNT(*) AS count FROM cloud_documents ${where}`)
     .bind(...values).first<{ count: number }>();
-  const sort = url.searchParams.get("sort") === "title" ? "title COLLATE NOCASE ASC" :
-    url.searchParams.get("sort") === "created" ? "created_at DESC" : "updated_at DESC";
+  const sort = url.searchParams.get("sort") === "title" ? "lower(title) COLLATE BINARY ASC, id ASC" :
+    url.searchParams.get("sort") === "created" ? "created_at DESC, id ASC" : "updated_at DESC, id ASC";
   const rows = await db.prepare(
-    `SELECT ${summaryColumns} FROM cloud_documents ${where} ORDER BY ${sort} LIMIT 30 OFFSET ?`,
-  ).bind(...values, (page - 1) * 30).all<DocumentSummaryRow>();
+    `SELECT ${summaryColumns} FROM cloud_documents ${where} ORDER BY ${sort} LIMIT ? OFFSET ?`,
+  ).bind(...values, window?.limit ?? 30, window?.offset ?? (page - 1) * 30).all<DocumentSummaryRow>();
   return { items: rows.results.map(summary), page, pageSize: 30, total: count?.count ?? 0 };
 }
 
@@ -502,6 +513,51 @@ export async function getDocument(db: D1Database, id: string) {
   )
     .bind(id).first<DocumentRow>();
   return row ? { ...summary(row), publishedAt: row.publishedAt, markdown: row.markdown, captureMode: null, sourceNote: row.sourceNote } : null;
+}
+
+function documentRevision(body: Record<string, unknown>, permanent = false) {
+  const allowed = permanent ? ["revision", "draftRevision"] : ["revision"];
+  if (Object.keys(body).some((key) => !allowed.includes(key)) ||
+    typeof body.revision !== "number" || !Number.isSafeInteger(body.revision) || body.revision < 1 ||
+    (permanent && body.draftRevision !== null && body.draftRevision !== undefined)) {
+    throw new CloudHttpError(400, "INVALID_DOCUMENT_UPDATE", "A positive revision is required");
+  }
+  return body.revision;
+}
+
+export async function trashDocument(db: D1Database, id: string, body: Record<string, unknown>) {
+  const revision = documentRevision(body);
+  const now = new Date().toISOString();
+  const result = await db.prepare(`UPDATE cloud_documents SET deleted_at = ?, revision = revision + 1, updated_at = ?
+    WHERE id = ? AND revision = ? AND deleted_at IS NULL`).bind(now, now, id, revision).run();
+  if (changes(result) === 1) return await getDocument(db, id);
+  const current = await getDocument(db, id);
+  if (!current) throw new CloudHttpError(404, "DOCUMENT_NOT_FOUND", "Document not found");
+  if (current.revision !== revision) throw new CloudHttpError(409, "DOCUMENT_CONFLICT", "Document was updated elsewhere", current);
+  throw new CloudHttpError(409, "DOCUMENT_DELETED", "Document is already in the trash", current);
+}
+
+export async function restoreDocument(db: D1Database, id: string, body: Record<string, unknown>) {
+  const revision = documentRevision(body);
+  const now = new Date().toISOString();
+  const result = await db.prepare(`UPDATE cloud_documents SET deleted_at = NULL, revision = revision + 1, updated_at = ?
+    WHERE id = ? AND revision = ? AND deleted_at IS NOT NULL`).bind(now, id, revision).run();
+  if (changes(result) === 1) return await getDocument(db, id);
+  const current = await getDocument(db, id);
+  if (!current) throw new CloudHttpError(404, "DOCUMENT_NOT_FOUND", "Document not found");
+  if (current.revision !== revision) throw new CloudHttpError(409, "DOCUMENT_CONFLICT", "Document was updated elsewhere", current);
+  throw new CloudHttpError(409, "NOT_IN_TRASH", "Document is not in the trash", current);
+}
+
+export async function permanentlyDeleteDocument(db: D1Database, id: string, body: Record<string, unknown>) {
+  const revision = documentRevision(body, true);
+  const result = await db.prepare("DELETE FROM cloud_documents WHERE id = ? AND revision = ? AND deleted_at IS NOT NULL")
+    .bind(id, revision).run();
+  if (changes(result) === 1) return;
+  const current = await getDocument(db, id);
+  if (!current) throw new CloudHttpError(404, "DOCUMENT_NOT_FOUND", "Document not found");
+  if (current.revision !== revision) throw new CloudHttpError(409, "DOCUMENT_CONFLICT", "Document was updated elsewhere", current);
+  throw new CloudHttpError(409, "NOT_IN_TRASH", "Document must be in the trash before permanent deletion", current);
 }
 
 export async function updateDocument(db: D1Database, id: string, body: Record<string, unknown>) {
@@ -531,7 +587,7 @@ export async function updateDocument(db: D1Database, id: string, body: Record<st
   const now = new Date().toISOString();
   const result = await db.prepare(
     `UPDATE cloud_documents SET ${assignments.join(", ")}, revision = revision + 1, updated_at = ?
-     WHERE id = ? AND revision = ?${folderId ? " AND EXISTS (SELECT 1 FROM cloud_folders WHERE id = ?)" : ""}`,
+     WHERE id = ? AND revision = ? AND deleted_at IS NULL${folderId ? " AND EXISTS (SELECT 1 FROM cloud_folders WHERE id = ?)" : ""}`,
   ).bind(...values, now, id, body.revision, ...(folderId ? [folderId] : [])).run();
   if (changes(result) !== 1) {
     const current = await getDocument(db, id);
@@ -539,6 +595,7 @@ export async function updateDocument(db: D1Database, id: string, body: Record<st
     if (current.revision !== body.revision) {
       throw new CloudHttpError(409, "DOCUMENT_CONFLICT", "Document was updated elsewhere", current);
     }
+    if (current.deletedAt) throw new CloudHttpError(409, "DOCUMENT_DELETED", "Restore the document before changing it", current);
     if (folderId && !await getFolder(db, folderId)) throw new CloudHttpError(400, "INVALID_FOLDER_ID", "folderId does not reference an existing folder");
     throw new CloudHttpError(409, "DOCUMENT_CONFLICT", "Document was updated elsewhere", current);
   }

@@ -1,6 +1,7 @@
 import {
   CloudHttpError,
   createFolder,
+  permanentlyDeleteDocument,
   createPairingCode,
   deleteFolder,
   epochGuardedDatabase,
@@ -10,7 +11,9 @@ import {
   listFolders,
   listPairings,
   recoverExpiredRestore,
+  restoreDocument,
   revokePairing,
+  trashDocument,
   updateDocument,
   updateFolder,
   type D1Database,
@@ -23,7 +26,10 @@ import {
   getCaptureJob,
   handleCaptureQueue,
   listCaptureJobs,
+  permanentlyDeleteCaptureJob,
   retryCapture,
+  restoreCaptureJob,
+  trashCaptureJob,
   updateCaptureJob,
   type CaptureEnv,
   type QueueBatch,
@@ -39,6 +45,7 @@ export interface CloudEnv extends CaptureEnv {
 }
 
 const DATA_EPOCH_HEADER = "X-Zhiye-Data-Epoch";
+const sortEncoder = new TextEncoder();
 const SECURITY_HEADERS = {
   "Content-Security-Policy": [
     "default-src 'self'",
@@ -68,6 +75,16 @@ function json(body: unknown, status = 200, epoch?: string) {
       ...(epoch ? { [DATA_EPOCH_HEADER]: epoch } : {}),
     },
   });
+}
+
+function sqliteNoCaseCompare(left: string, right: string) {
+  const normalize = (value: string) => sortEncoder.encode(value.replace(/[A-Z]/gu, (letter) => letter.toLowerCase()));
+  const leftBytes = normalize(left);
+  const rightBytes = normalize(right);
+  for (let index = 0; index < Math.min(leftBytes.length, rightBytes.length); index += 1) {
+    if (leftBytes[index] !== rightBytes[index]) return leftBytes[index]! - rightBytes[index]!;
+  }
+  return leftBytes.length - rightBytes.length;
 }
 
 async function setting<T>(env: CloudEnv, key: string): Promise<{ value: T; revision: number } | null> {
@@ -146,6 +163,43 @@ async function api(request: Request, env: CloudEnv, url: URL) {
     const body = await jsonObject(request);
     const db = epochGuardedDatabase(env.DB, epoch);
     return json(await getDocument(env.DB, id) ? await updateDocument(db, id, body) : await updateCaptureJob(db, id, body), 200, epoch);
+  }
+  if (documentPath && request.method === "DELETE" && !documentPath[2]) {
+    if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
+      return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
+    }
+    let id: string;
+    try { id = decodeURIComponent(documentPath[1]); }
+    catch { throw new CloudHttpError(400, "INVALID_PATH", "Invalid document identifier"); }
+    const body = await jsonObject(request, 4_096);
+    const db = epochGuardedDatabase(env.DB, epoch);
+    return json(await getDocument(env.DB, id) ? await trashDocument(db, id, body) : await trashCaptureJob(db, id, body), 200, epoch);
+  }
+  const documentRestorePath = url.pathname.match(/^\/api\/documents\/([^/]+)\/restore$/u);
+  if (documentRestorePath && request.method === "POST") {
+    if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
+      return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
+    }
+    let id: string;
+    try { id = decodeURIComponent(documentRestorePath[1]); }
+    catch { throw new CloudHttpError(400, "INVALID_PATH", "Invalid document identifier"); }
+    const body = await jsonObject(request, 4_096);
+    const db = epochGuardedDatabase(env.DB, epoch);
+    return json(await getDocument(env.DB, id) ? await restoreDocument(db, id, body) : await restoreCaptureJob(db, id, body), 200, epoch);
+  }
+  const documentPermanentPath = url.pathname.match(/^\/api\/documents\/([^/]+)\/permanent$/u);
+  if (documentPermanentPath && request.method === "DELETE") {
+    if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
+      return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
+    }
+    let id: string;
+    try { id = decodeURIComponent(documentPermanentPath[1]); }
+    catch { throw new CloudHttpError(400, "INVALID_PATH", "Invalid document identifier"); }
+    const body = await jsonObject(request, 4_096);
+    const db = epochGuardedDatabase(env.DB, epoch);
+    if (await getDocument(env.DB, id)) await permanentlyDeleteDocument(db, id, body);
+    else await permanentlyDeleteCaptureJob(db, id, body);
+    return new Response(null, { status: 204, headers: { ...SECURITY_HEADERS, "Cache-Control": "no-store", [DATA_EPOCH_HEADER]: epoch } });
   }
   if (url.pathname === "/api/documents" && request.method === "POST") {
     if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
@@ -227,14 +281,29 @@ async function api(request: Request, env: CloudEnv, url: URL) {
     case "/api/tags":
       return json([], 200, epoch);
     case "/api/documents": {
-      const result = await listCloudDocuments(env.DB, url);
-      if (result.page === 1 && !url.searchParams.get("q") && !url.searchParams.get("status")) {
-        const jobs = await listCaptureJobs(env.DB, url);
-        const ids = new Set(result.items.map((item) => item.id));
-        const pending = jobs.filter((item) => !ids.has(item.id));
-        return json({ ...result, items: [...pending, ...result.items].slice(0, result.pageSize), total: result.total + pending.length }, 200, epoch);
+      const pageValue = url.searchParams.get("page") || "1";
+      if (!/^[1-9]\d*$/u.test(pageValue)) throw new CloudHttpError(400, "INVALID_PAGE", "page must be a positive integer");
+      const page = Number.parseInt(pageValue, 10);
+      if (!url.searchParams.get("q") && !url.searchParams.get("status")) {
+        const limit = page * 30;
+        const [documents, jobs] = await Promise.all([
+          listCloudDocuments(env.DB, url, { limit, offset: 0 }),
+          listCaptureJobs(env.DB, url, { limit, offset: 0 }),
+        ]);
+        const offset = (page - 1) * 30;
+        const sort = url.searchParams.get("sort");
+        type ListedDocument = { id: string; title: string; createdAt: string; updatedAt: string };
+        const compare = sort === "title"
+          ? (left: ListedDocument, right: ListedDocument) => sqliteNoCaseCompare(left.title, right.title) || left.id.localeCompare(right.id)
+          : sort === "created"
+            ? (left: ListedDocument, right: ListedDocument) => right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id)
+            : (left: ListedDocument, right: ListedDocument) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id);
+        const items = [...documents.items, ...jobs.items]
+          .sort(compare)
+          .slice(offset, offset + 30);
+        return json({ ...documents, items, total: documents.total + jobs.total }, 200, epoch);
       }
-      return json(result, 200, epoch);
+      return json(await listCloudDocuments(env.DB, url), 200, epoch);
     }
     default:
       return json({ error: { code: "CLOUD_FEATURE_PENDING", message: "This cloud API is not migrated yet" } }, 501, epoch);

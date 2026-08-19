@@ -17,7 +17,7 @@ Cloudflare Web 已部署在 `https://zhiye.sarainoq.cn`，并由 Access 保护�
 ## 分阶段实施
 
 1. **Workers Static Assets + D1 云核心**：已建立 Worker、前端静态资源和 D1 数据模型，支持扩展剪藏、搜索、阅读和标题/Markdown 编辑；本里程碑在同一 D1 核心增加一级文件夹，仍从空云端知识库开始，不自动复制本地数据。完成部署门禁前不得把新增能力描述为已上线。
-2. **R2 资源与留档**：私有 `zhiye-cloud-backups` bucket 已绑定，支持创建、校验、导入导出和明确恢复。`.zhiye-cloud-backup` v2 保存文件夹及文档归属；导入器继续接受 v1，并把其中所有文档恢复为“未分类”。
+2. **R2 资源与留档**：私有 `zhiye-cloud-backups` bucket 已绑定，支持创建、校验、导入导出和明确恢复。`.zhiye-cloud-backup` v3 保存文件夹、文档归属及回收站状态；导入器继续接受 v1/v2，旧归档中的文档按未删除状态恢复。
 3. **Browser Run + Queues 抓取**：`zhiye-cloud-capture` 已同时绑定生产者和消费者，消费端使用 Browser Run Markdown Quick Action。
 4. **Access 与扩展迁移**：Web 由 Access 保护；独立的 `clip.sarainoq.cn` Worker 只接受扩展配对和剪藏写入，令牌不能读取、搜索、删除或导出知识库。
 5. **功能等价与切换**：逐项验证编辑、搜索、导入导出、备份恢复、AI 与剪藏后，才允许将 Web 默认入口切到 Cloudflare。
@@ -25,6 +25,8 @@ Cloudflare Web 已部署在 `https://zhiye.sarainoq.cn`，并由 Access 保护�
 本地 Node 服务和 Tauri 桌面端继续使用本地 SQLite、文件系统与 macOS 钥匙串。它们不是 Cloudflare 迁移的替代品，也不会在云端功能等价前删除。
 
 本地与 Cloudflare Web 都只提供独立一级文件夹：新文档默认进入文件夹树顶层（数据中以空 `folder_id` 表示），顶层本身不是文件夹；删除文件夹会保留文档并移回顶层。文件夹不嵌套，也不支持人工排序；可多选集合继续作为另一套分类。
+
+Cloudflare Web 的正式文档和抓取任务均支持 revision 保护的回收站生命周期。删除抓取中的任务会停止其队列发布；恢复后以失败态保留，由用户明确重试。
 
 两端功能等价不代表云同步。本地 SQLite 与 Cloudflare D1/R2 不会自动互传文件夹或文档，跨端迁移仍必须由用户明确导出和导入。
 

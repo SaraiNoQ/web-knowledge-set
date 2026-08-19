@@ -3,11 +3,15 @@ import ipaddr from "ipaddr.js";
 import {
   CloudHttpError,
   documentFolderFilter,
+  documentTrashFilter,
   epochGuardedDatabase,
   folderIdValue,
   getDocument,
   jsonObject,
   MAX_CLOUD_ROW_TEXT_BYTES,
+  permanentlyDeleteDocument,
+  restoreDocument,
+  trashDocument,
   updateDocument,
   type D1Database,
 } from "./extension";
@@ -57,6 +61,7 @@ interface CaptureJobRow {
   errorCode: string | null;
   folderId: string | null;
   revision: number;
+  deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -65,7 +70,7 @@ function jobDocument(row: CaptureJobRow) {
   return {
     id: row.id, title: row.url, sourceUrl: row.url, finalUrl: null, canonicalUrl: row.url, author: null,
     status: row.status, warning: null, errorCode: row.errorCode, errorMessage: null, tags: [], collections: [], favorite: false,
-    folderId: row.folderId, archivedAt: null, revision: row.revision, deletedAt: null, createdAt: row.createdAt, updatedAt: row.updatedAt,
+    folderId: row.folderId, archivedAt: null, revision: row.revision, deletedAt: row.deletedAt, createdAt: row.createdAt, updatedAt: row.updatedAt,
     publishedAt: null, markdown: "", captureMode: "browser", sourceNote: "Cloudflare Browser Run",
   };
 }
@@ -102,7 +107,7 @@ export async function createCapture(request: Request, env: CaptureEnv, expectedE
   }
   const url = await publicUrl(body.url);
   if (body.force !== true) {
-    const existing = await env.DB.prepare("SELECT id FROM cloud_documents WHERE source_url = ? OR canonical_url = ? LIMIT 1").bind(url, url).first<{ id: string }>();
+    const existing = await env.DB.prepare("SELECT id FROM cloud_documents WHERE deleted_at IS NULL AND (source_url = ? OR canonical_url = ?) LIMIT 1").bind(url, url).first<{ id: string }>();
     if (existing) return { document: await getDocument(env.DB, existing.id), created: false, duplicateKind: "source" };
   }
   const id = crypto.randomUUID();
@@ -115,7 +120,7 @@ export async function createCapture(request: Request, env: CaptureEnv, expectedE
     throw new CloudHttpError(502, "QUEUE_FAILED", "Capture could not be queued");
   }
   return {
-    document: jobDocument({ id, url, status: "queued", errorCode: null, folderId: null, revision: 1, createdAt: now, updatedAt: now }),
+    document: jobDocument({ id, url, status: "queued", errorCode: null, folderId: null, revision: 1, deletedAt: null, createdAt: now, updatedAt: now }),
     created: true,
     duplicateKind: null,
   };
@@ -123,18 +128,44 @@ export async function createCapture(request: Request, env: CaptureEnv, expectedE
 
 export async function getCaptureJob(db: D1Database, id: string) {
   const row = await db.prepare(`SELECT id, url, status, error_code AS errorCode, folder_id AS folderId, revision,
-    created_at AS createdAt, updated_at AS updatedAt FROM cloud_capture_jobs WHERE id = ?`).bind(id).first<CaptureJobRow>();
+    deleted_at AS deletedAt, created_at AS createdAt, updated_at AS updatedAt FROM cloud_capture_jobs WHERE id = ?`).bind(id).first<CaptureJobRow>();
   return row ? jobDocument(row) : null;
 }
 
-export async function listCaptureJobs(db: D1Database, url: URL) {
+export async function listCaptureJobs(db: D1Database, url: URL, window = { limit: 30, offset: 0 }) {
   const folder = documentFolderFilter(url);
-  const where = folder.folderId ? "WHERE folder_id = ?" : folder.unfiled === true ? "WHERE folder_id IS NULL" :
-    folder.unfiled === false ? "WHERE folder_id IS NOT NULL" : "";
-  const rows = await db.prepare(`SELECT id, url, status, error_code AS errorCode, folder_id AS folderId, revision,
-    created_at AS createdAt, updated_at AS updatedAt FROM cloud_capture_jobs ${where} ORDER BY updated_at DESC LIMIT 30`)
-    .bind(...(folder.folderId ? [folder.folderId] : [])).all<CaptureJobRow>();
-  return rows.results.map(jobDocument);
+  const conditions = [documentTrashFilter(url) ? "j.deleted_at IS NOT NULL" : "j.deleted_at IS NULL",
+    "NOT EXISTS (SELECT 1 FROM cloud_documents d WHERE d.id = j.id)"];
+  if (folder.folderId) conditions.push("j.folder_id = ?");
+  else if (folder.unfiled === true) conditions.push("j.folder_id IS NULL");
+  else if (folder.unfiled === false) conditions.push("j.folder_id IS NOT NULL");
+  const captureMode = url.searchParams.get("captureMode");
+  if (url.searchParams.get("favorite") === "true" || url.searchParams.get("archived") === "true" ||
+    url.searchParams.get("tag") || url.searchParams.get("collectionId") || (captureMode && captureMode !== "browser")) conditions.push("0");
+  const dateValues: string[] = [];
+  for (const [parameter, operator, suffix] of [["from", ">=", "T00:00:00.000Z"], ["to", "<=", "T23:59:59.999Z"]] as const) {
+    const date = url.searchParams.get(parameter);
+    if (!date) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/u.test(date) || new Date(`${date}T00:00:00.000Z`).toISOString().slice(0, 10) !== date) {
+      throw new CloudHttpError(400, "INVALID_DATE", `${parameter} must be a real YYYY-MM-DD date`);
+    }
+    conditions.push(`j.created_at ${operator} ?`);
+    dateValues.push(`${date}${suffix}`);
+  }
+  if (url.searchParams.get("from") && url.searchParams.get("to") && url.searchParams.get("from")! > url.searchParams.get("to")!) {
+    throw new CloudHttpError(400, "INVALID_DATE_RANGE", "from must not be after to");
+  }
+  const where = `WHERE ${conditions.join(" AND ")}`;
+  const values = [...(folder.folderId ? [folder.folderId] : []), ...dateValues];
+  const count = await db.prepare(`SELECT COUNT(*) AS count FROM cloud_capture_jobs j ${where}`)
+    .bind(...values).first<{ count: number }>();
+  const sort = url.searchParams.get("sort") === "title" ? "lower(j.url) COLLATE BINARY ASC, j.id" :
+    url.searchParams.get("sort") === "created" ? "j.created_at DESC, j.id" : "j.updated_at DESC, j.id";
+  const rows = await db.prepare(`SELECT j.id, j.url, j.status, j.error_code AS errorCode, j.folder_id AS folderId, j.revision,
+    j.deleted_at AS deletedAt, j.created_at AS createdAt, j.updated_at AS updatedAt FROM cloud_capture_jobs j ${where}
+    ORDER BY ${sort} LIMIT ? OFFSET ?`)
+    .bind(...values, window.limit, window.offset).all<CaptureJobRow>();
+  return { items: rows.results.map(jobDocument), total: count?.count ?? 0 };
 }
 
 export async function updateCaptureJob(db: D1Database, id: string, body: Record<string, unknown>) {
@@ -146,7 +177,7 @@ export async function updateCaptureJob(db: D1Database, id: string, body: Record<
   const now = new Date().toISOString();
   const result = await db.prepare(`UPDATE cloud_capture_jobs
     SET folder_id = ?, revision = revision + 1, updated_at = ?
-    WHERE id = ? AND revision = ?${folderId ? " AND EXISTS (SELECT 1 FROM cloud_folders WHERE id = ?)" : ""}`)
+    WHERE id = ? AND revision = ? AND deleted_at IS NULL${folderId ? " AND EXISTS (SELECT 1 FROM cloud_folders WHERE id = ?)" : ""}`)
     .bind(folderId, now, id, body.revision, ...(folderId ? [folderId] : [])).run();
   if (changes(result) !== 1) {
     const current = await getCaptureJob(db, id);
@@ -157,6 +188,7 @@ export async function updateCaptureJob(db: D1Database, id: string, body: Record<
     if (current.revision !== body.revision) {
       throw new CloudHttpError(409, "DOCUMENT_CONFLICT", "Document was updated elsewhere", current);
     }
+    if (current.deletedAt) throw new CloudHttpError(409, "DOCUMENT_DELETED", "Restore the document before changing it", current);
     if (folderId && !await db.prepare("SELECT id FROM cloud_folders WHERE id = ?").bind(folderId).first()) {
       throw new CloudHttpError(400, "INVALID_FOLDER_ID", "folderId does not reference an existing folder");
     }
@@ -165,26 +197,98 @@ export async function updateCaptureJob(db: D1Database, id: string, body: Record<
   return await getCaptureJob(db, id) ?? await getDocument(db, id);
 }
 
+function captureRevision(body: Record<string, unknown>, permanent = false) {
+  const allowed = permanent ? ["revision", "draftRevision"] : ["revision"];
+  if (Object.keys(body).some((key) => !allowed.includes(key)) ||
+    typeof body.revision !== "number" || !Number.isSafeInteger(body.revision) || body.revision < 1 ||
+    (permanent && body.draftRevision !== null && body.draftRevision !== undefined)) {
+    throw new CloudHttpError(400, "INVALID_DOCUMENT_UPDATE", "A positive revision is required");
+  }
+  return body.revision;
+}
+
+export async function trashCaptureJob(db: D1Database, id: string, body: Record<string, unknown>) {
+  const revision = captureRevision(body);
+  const now = new Date().toISOString();
+  const result = await db.prepare(`UPDATE cloud_capture_jobs SET deleted_at = ?, status = 'failed', error_code = 'TRASHED',
+    revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND deleted_at IS NULL`)
+    .bind(now, now, id, revision).run();
+  if (changes(result) === 1) return await getCaptureJob(db, id);
+  const current = await getCaptureJob(db, id);
+  if (!current) {
+    if (await getDocument(db, id)) return await trashDocument(db, id, body);
+    throw new CloudHttpError(404, "DOCUMENT_NOT_FOUND", "Capture job not found");
+  }
+  if (current.revision !== revision) throw new CloudHttpError(409, "DOCUMENT_CONFLICT", "Document was updated elsewhere", current);
+  throw new CloudHttpError(409, "DOCUMENT_DELETED", "Document is already in the trash", current);
+}
+
+export async function restoreCaptureJob(db: D1Database, id: string, body: Record<string, unknown>) {
+  const revision = captureRevision(body);
+  const now = new Date().toISOString();
+  const result = await db.prepare(`UPDATE cloud_capture_jobs SET deleted_at = NULL, error_code = 'RESTORED_NEEDS_RETRY',
+    revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND deleted_at IS NOT NULL`)
+    .bind(now, id, revision).run();
+  if (changes(result) === 1) return await getCaptureJob(db, id);
+  const current = await getCaptureJob(db, id);
+  if (!current) {
+    if (await getDocument(db, id)) return await restoreDocument(db, id, body);
+    throw new CloudHttpError(404, "DOCUMENT_NOT_FOUND", "Capture job not found");
+  }
+  if (current.revision !== revision) throw new CloudHttpError(409, "DOCUMENT_CONFLICT", "Document was updated elsewhere", current);
+  throw new CloudHttpError(409, "NOT_IN_TRASH", "Document is not in the trash", current);
+}
+
+export async function permanentlyDeleteCaptureJob(db: D1Database, id: string, body: Record<string, unknown>) {
+  const revision = captureRevision(body, true);
+  const result = await db.prepare("DELETE FROM cloud_capture_jobs WHERE id = ? AND revision = ? AND deleted_at IS NOT NULL")
+    .bind(id, revision).run();
+  if (changes(result) === 1) return;
+  const current = await getCaptureJob(db, id);
+  if (!current) {
+    if (await getDocument(db, id)) return await permanentlyDeleteDocument(db, id, body);
+    throw new CloudHttpError(404, "DOCUMENT_NOT_FOUND", "Capture job not found");
+  }
+  if (current.revision !== revision) throw new CloudHttpError(409, "DOCUMENT_CONFLICT", "Document was updated elsewhere", current);
+  throw new CloudHttpError(409, "NOT_IN_TRASH", "Document must be in the trash before permanent deletion", current);
+}
+
 export async function captureQueueStatus(db: D1Database) {
   const row = await db.prepare(`SELECT
     SUM(CASE WHEN status = 'fetching' THEN 1 ELSE 0 END) AS active,
     SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued
-    FROM cloud_capture_jobs`).first<{ active: number | null; queued: number | null }>();
+    FROM cloud_capture_jobs WHERE deleted_at IS NULL`).first<{ active: number | null; queued: number | null }>();
   return { paused: false, active: row?.active ?? 0, queued: row?.queued ?? 0 };
 }
 
 export async function retryCapture(id: string, env: CaptureEnv, expectedEpoch: string) {
   const job = await getCaptureJob(env.DB, id);
   if (!job) throw new CloudHttpError(404, "DOCUMENT_NOT_FOUND", "Capture job not found");
+  if (job.deletedAt) throw new CloudHttpError(409, "DOCUMENT_DELETED", "Restore the document before retrying", job);
   const url = await publicUrl(job.sourceUrl);
   const now = new Date().toISOString();
-  await env.DB.prepare("UPDATE cloud_capture_jobs SET status = 'queued', error_code = NULL, updated_at = ? WHERE id = ?").bind(now, id).run();
+  const queued = await env.DB.prepare(`UPDATE cloud_capture_jobs SET status = 'queued', error_code = NULL,
+    revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND deleted_at IS NULL`)
+    .bind(now, id, job.revision).run();
+  if (changes(queued) !== 1) {
+    const current = await getCaptureJob(env.DB, id) ?? await getDocument(env.DB, id);
+    if (!current) throw new CloudHttpError(404, "DOCUMENT_NOT_FOUND", "Capture job not found");
+    if (current.deletedAt) throw new CloudHttpError(409, "DOCUMENT_DELETED", "Restore the document before retrying", current);
+    throw new CloudHttpError(409, "DOCUMENT_CONFLICT", "Document was updated elsewhere", current);
+  }
   try { await env.CAPTURE_QUEUE.send({ id, url, epoch: expectedEpoch } satisfies CaptureMessage); }
   catch {
-    await env.DB.prepare("UPDATE cloud_capture_jobs SET status = 'failed', error_code = 'QUEUE_FAILED', updated_at = ? WHERE id = ?").bind(new Date().toISOString(), id).run();
+    const failed = await env.DB.prepare(`UPDATE cloud_capture_jobs SET status = 'failed', error_code = 'QUEUE_FAILED',
+      revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND deleted_at IS NULL`)
+      .bind(new Date().toISOString(), id, job.revision + 1).run();
+    if (changes(failed) !== 1) {
+      const current = await getCaptureJob(env.DB, id) ?? await getDocument(env.DB, id);
+      if (current?.deletedAt) throw new CloudHttpError(409, "DOCUMENT_DELETED", "Restore the document before retrying", current);
+      if (current) throw new CloudHttpError(409, "DOCUMENT_CONFLICT", "Document was updated elsewhere", current);
+    }
     throw new CloudHttpError(502, "QUEUE_FAILED", "Capture could not be queued");
   }
-  return { ...job, status: "queued" as const, errorCode: null, updatedAt: now };
+  return await getCaptureJob(env.DB, id) ?? await getDocument(env.DB, id);
 }
 
 async function consume(message: CaptureMessage, env: CaptureEnv) {
@@ -192,14 +296,17 @@ async function consume(message: CaptureMessage, env: CaptureEnv) {
   if (!epoch || epoch.value.startsWith("restore:") || epoch.value !== message.epoch) {
     throw new CloudHttpError(409, "STALE_DATA_EPOCH", "Cloud data changed before capture completion");
   }
+  const job = await getCaptureJob(env.DB, message.id);
+  if (!job || job.deletedAt) return;
   const existing = await getDocument(env.DB, message.id);
   if (existing) {
     await env.DB.prepare("DELETE FROM cloud_capture_jobs WHERE id = ?").bind(message.id).run();
     return;
   }
   let url = await publicUrl(message.url);
-  await env.DB.prepare("UPDATE cloud_capture_jobs SET status = 'fetching', error_code = NULL, updated_at = ? WHERE id = ?")
+  const fetching = await env.DB.prepare("UPDATE cloud_capture_jobs SET status = 'fetching', error_code = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
     .bind(new Date().toISOString(), message.id).run();
+  if (changes(fetching) !== 1) return;
   let html = "";
   for (let redirects = 0; redirects <= 5; redirects += 1) {
     url = await publicUrl(url);
@@ -246,7 +353,7 @@ async function consume(message: CaptureMessage, env: CaptureEnv) {
   await env.DB.batch([env.DB.prepare(`INSERT INTO cloud_documents(
     id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note, folder_id, revision, created_at, updated_at
   ) SELECT ?, ?, ?, ?, ?, NULL, NULL, ?, 'ready', 'Cloudflare Browser Run', job.folder_id, job.revision + 1, ?, ?
-    FROM cloud_capture_jobs job WHERE job.id = ?
+    FROM cloud_capture_jobs job WHERE job.id = ? AND job.deleted_at IS NULL
       AND EXISTS (SELECT 1 FROM app_settings WHERE key = 'data_epoch' AND value = ?)`).bind(
     message.id, url, url, url, title.slice(0, 1_000), markdown, now, now, message.id, message.epoch,
   ), env.DB.prepare(`DELETE FROM cloud_capture_jobs WHERE id = ?
@@ -268,7 +375,7 @@ export async function handleCaptureQueue(batch: QueueBatch<CaptureMessage>, env:
         continue;
       }
       const code = error instanceof CloudHttpError ? error.code : "BROWSER_FAILED";
-      await guardedEnv.DB.prepare("UPDATE cloud_capture_jobs SET status = 'failed', error_code = ?, updated_at = ? WHERE id = ?")
+      await guardedEnv.DB.prepare("UPDATE cloud_capture_jobs SET status = 'failed', error_code = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
         .bind(code, new Date().toISOString(), message.body.id).run();
       message.ack();
     }
