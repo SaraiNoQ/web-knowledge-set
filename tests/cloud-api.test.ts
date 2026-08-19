@@ -101,9 +101,10 @@ function memoryBucket() {
     async get(key: string) {
       const bytes = objects.get(key);
       if (!bytes) return null;
+      const response = new Response(bytes);
       return {
-        body: new Response(bytes).body!, size: bytes.byteLength, httpEtag: `"${key}"`,
-        async arrayBuffer() { return bytes.slice().buffer; },
+        body: response.body!, size: bytes.byteLength, httpEtag: `"${key}"`,
+        async arrayBuffer() { return await response.arrayBuffer(); },
       };
     },
     async head(key: string) {
@@ -406,6 +407,9 @@ test("cloud backup restores v3 trash, maps v1 documents to active unfiled, and r
   }), env);
   assert.equal(created.status, 201);
   const v2BackupId = (await created.json() as { id: string }).id;
+  const exported = await handleRequest(new Request(`https://app.example.com/api/data-safety/backups/${v2BackupId}/export.zhiye-backup`), env);
+  assert.equal(exported.status, 200);
+  assert.equal((await exported.json() as { version: number }).version, 3);
   db.sqlite.exec("DELETE FROM cloud_documents; DELETE FROM cloud_folders;");
   db.sqlite.prepare(`INSERT INTO cloud_documents(
     id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note,

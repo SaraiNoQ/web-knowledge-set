@@ -386,8 +386,8 @@ export async function handleBackupApi(
   if (!match) return null;
   const id = decodeURIComponent(match[1]);
   if (match[2] === "export.zhiye-backup" && request.method === "GET") {
-    const { object } = await archiveBytes(db, bucket, id);
-    return new Response(object.body, { headers: { "Cache-Control": "no-store", "Content-Disposition": `attachment; filename="zhiye-cloud-${id}.zhiye-cloud-backup"`, "Content-Type": "application/vnd.zhiye.cloud-backup+json", "ETag": object.httpEtag } });
+    const { object, bytes } = await archiveBytes(db, bucket, id);
+    return new Response(bytes, { headers: { "Cache-Control": "no-store", "Content-Disposition": `attachment; filename="zhiye-cloud-${id}.zhiye-cloud-backup"`, "Content-Type": "application/vnd.zhiye.cloud-backup+json", "ETag": object.httpEtag } });
   }
   if (match[2] === "verify" && request.method === "POST") {
     const body = await request.json().catch(() => null) as unknown;
