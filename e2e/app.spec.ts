@@ -4,6 +4,29 @@ import { readFile } from "node:fs/promises";
 const readyImageUrl = "https://assets.example.test/ready.png";
 const failedImageUrl = "https://assets.example.test/failed.png";
 
+test("extension content script preserves ChatGPT rendered math in Chromium", async ({ page }) => {
+  await page.route("https://chatgpt.com/**", (route) => route.fulfill({ headers: { "Content-Type": "text/html; charset=utf-8" }, body: `<!doctype html><html><head><title>世界模型入门</title></head><body><main><article><div class="markdown prose">
+    <h1>世界模型与具身智能</h1>
+    <p>这是一个足够长的测试回答，用于验证浏览器扩展会选择完整正文而不是导航或页面装饰。策略接收观察并产生动作，环境再返回下一时刻的观察，从而形成持续交互的闭环。下面的公式必须作为可编辑 TeX 保留下来。</p>
+    <div contenteditable="false"><button type="button" aria-label="复制公式"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math display="block"><semantics><mrow><mi>o</mi></mrow><annotation encoding="application/x-tex">观察 o_t \\to 策略 \\pi \\to 动作 a_t \\to 环境 \\to o_{t+1}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true">视觉公式不得重复</span></span></span></button></div>
+    <button type="button"><span contenteditable="false"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math display="block"><semantics><annotation encoding="application/x-tex">Q(s, a) = r + \\gamma V(s')</annotation></semantics></math></span></span></span></span></button>
+    <form><button type="button" contenteditable="false"><span class="katex"><math><annotation encoding="application/x-tex">FORM_SECRET</annotation></math></span></button></form>
+    <div contenteditable="true"><button type="button"><span class="katex"><math><annotation encoding="application/x-tex">EDITABLE_SECRET</annotation></math></span></button></div>
+    <p>后续段落继续解释模仿学习、强化学习与世界模型的区别，确保公式位于正文中间且前后内容都能被正常提取。</p>
+  </div></article></main></body></html>` }));
+  await page.goto("https://chatgpt.com/c/zhiye-math-fixture");
+  await page.addScriptTag({ content: await readFile("dist/extensions/zhiye-clipper-chrome/content.js", "utf8") });
+  const markdown = await page.evaluate(async () => (await (window as typeof window & { __ZHIYE_CLIP_RESULT__: Promise<{ markdown: string }> }).__ZHIYE_CLIP_RESULT__).markdown);
+  const first = "观察 o_t \\to 策略 \\pi \\to 动作 a_t \\to 环境 \\to o_{t+1}";
+  const second = "Q(s, a) = r + \\gamma V(s')";
+  expect(markdown.split(first)).toHaveLength(2);
+  expect(markdown.split(second)).toHaveLength(2);
+  expect(markdown.indexOf(first)).toBeLessThan(markdown.indexOf(second));
+  expect(markdown).not.toContain("FORM_SECRET");
+  expect(markdown).not.toContain("EDITABLE_SECRET");
+  expect(markdown).not.toContain("视觉公式不得重复");
+});
+
 test("keeps the first-run guide deferrable, reopenable, readable, and durable", async ({ page, context }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /你的知识/u })).toBeVisible();

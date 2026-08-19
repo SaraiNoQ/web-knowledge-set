@@ -8,8 +8,19 @@ function text(value: unknown) {
 async function extract(): Promise<ZhiyeClipResult> {
   const page = document.cloneNode(true) as Document;
   const protectedMath = protectRenderedMath(page);
-  page.querySelectorAll("script, style, noscript, iframe, object, embed, form, input, textarea, select, button, [contenteditable]")
-    .forEach((element) => element.remove());
+  for (const element of page.querySelectorAll("script, style, noscript, iframe, object, embed, form, input, textarea, select, [contenteditable]")) {
+    const presentationOnly = element.getAttribute("contenteditable")?.toLowerCase() === "false"
+      && !element.matches("script, style, noscript, iframe, object, embed, form, input, textarea, select");
+    if (!presentationOnly) element.remove();
+  }
+  for (const element of page.querySelectorAll("button, [contenteditable]")) {
+    if (!page.documentElement.contains(element)) continue;
+    if (element.localName !== "button" && element.getAttribute("contenteditable")?.toLowerCase() !== "false") continue;
+    const content = element.textContent ?? "";
+    const formulas = protectedMath.filter(({ token }) => content.includes(token)).sort((left, right) => content.indexOf(left.token) - content.indexOf(right.token));
+    if (formulas.length) element.replaceWith(page.createTextNode(formulas.map(({ token }) => token).join("\n\n")));
+    else element.remove();
+  }
   const result = new Defuddle(page, { url: location.href, markdown: true, useAsync: false }).parse();
   const extracted = text(result.contentMarkdown) ?? text(result.content);
   const markdown = extracted && restoreProtectedMath(extracted, protectedMath);
