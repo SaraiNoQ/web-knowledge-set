@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { DragEvent, KeyboardEventHandler, ReactNode, Ref } from "react";
 
 import type { DocumentFilters, DocumentSummary, KnowledgeFolder } from "../../shared/types";
@@ -34,6 +34,7 @@ export function DocumentDirectoryRow({
   checkbox,
   onOpen,
   onMove,
+  onTrash,
 }: {
   document: DocumentSummary;
   folders: KnowledgeFolder[];
@@ -41,14 +42,38 @@ export function DocumentDirectoryRow({
   checkbox?: ReactNode;
   onOpen: (id: string) => void;
   onMove: (document: MoveDocumentTarget, folderId: string | null) => Promise<void>;
+  onTrash?: (document: DocumentSummary) => Promise<void>;
 }) {
   const [moveOpen, setMoveOpen] = useState(false);
   const [targetFolder, setTargetFolder] = useState(document.folderId ?? "");
   const [moving, setMoving] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const actionId = useId();
+  const actionButton = useRef<HTMLButtonElement>(null);
+  const actionMenu = useRef<HTMLDivElement>(null);
   const externalUrl = document.finalUrl || document.sourceUrl;
   const folderName = folders.find(({ id }) => id === document.folderId)?.name ?? "根目录";
   const draggable = !document.deletedAt && !matchMedia("(hover: none), (pointer: coarse)").matches;
   const target = { id: document.id, revision: document.revision, folderId: document.folderId };
+
+  useEffect(() => {
+    if (!actionsOpen) return;
+    const close = () => actionMenu.current?.hidePopover();
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [actionsOpen]);
+
+  const positionActions = () => {
+    const trigger = actionButton.current?.getBoundingClientRect();
+    const menu = actionMenu.current;
+    if (!trigger || !menu) return;
+    menu.style.left = `${Math.max(8, Math.min(window.innerWidth - 198, trigger.right - 190))}px`;
+    menu.style.top = `${window.innerHeight - trigger.bottom > 104 ? trigger.bottom + 5 : Math.max(8, trigger.top - 91)}px`;
+  };
 
   const move = async () => {
     const folderId = targetFolder || null;
@@ -83,7 +108,7 @@ export function DocumentDirectoryRow({
       <button type="button" className="directory-title document-row" aria-current={selected ? "true" : undefined} onClick={() => onOpen(document.id)}>{document.title || "未命名网页"}</button>
     </HoverCard>
     {/^(?:https?):/u.test(externalUrl) ? <a className="directory-external" href={externalUrl} target="_blank" rel="noreferrer noopener" aria-label={`打开原网页：${document.title || "未命名网页"}`}>↗</a> : <span className="directory-external-space" aria-hidden="true" />}
-    {!document.deletedAt && <IconButton label={`移动 ${document.title || "未命名网页"}`} onClick={() => { setTargetFolder(document.folderId ?? ""); setMoveOpen(true); }}>•••</IconButton>}
+    {!document.deletedAt && onTrash && <><IconButton ref={actionButton} label={`更多操作：${document.title || "未命名网页"}`} aria-haspopup="dialog" aria-controls={actionId} popoverTarget={actionId} onClick={positionActions}>•••</IconButton><div ref={actionMenu} id={actionId} popover="auto" className="directory-action-menu" role="dialog" aria-label={`操作：${document.title || "未命名网页"}`} onToggle={(event) => { const open = event.currentTarget.matches(":popover-open"); setActionsOpen(open); if (open) event.currentTarget.querySelector("button")?.focus(); else if (event.currentTarget.contains(globalThis.document.activeElement)) actionButton.current?.focus(); }}><button type="button" onClick={() => { actionMenu.current?.hidePopover(); setTargetFolder(document.folderId ?? ""); setMoveOpen(true); }}>移动到文件夹…</button><button type="button" className="danger" onClick={() => { actionMenu.current?.hidePopover(); void onTrash(document); }}>删除（移入回收站）</button></div></>}
     {moveOpen && <ModalMove
       folders={folders}
       moving={moving}
@@ -127,6 +152,7 @@ export function LibraryDirectory({
   onFoldersChanged,
   onOpen,
   onMove,
+  onTrash,
   selectedId,
   selectedIds,
   selectionDisabled,
@@ -141,6 +167,7 @@ export function LibraryDirectory({
   onFoldersChanged: () => void;
   onOpen: (id: string) => void;
   onMove: (document: MoveDocumentTarget, folderId: string | null) => Promise<void>;
+  onTrash: (document: DocumentSummary) => Promise<void>;
   selectedId?: string | null;
   selectedIds?: ReadonlySet<string>;
   selectionDisabled?: boolean;
@@ -256,6 +283,7 @@ export function LibraryDirectory({
           selected={selectedId === document.id}
           onOpen={onOpen}
           onMove={onMove}
+          onTrash={onTrash}
           checkbox={onSelect ? <label className="row-select"><span className="sr-only">选择 {document.title || "未命名网页"}</span><input type="checkbox" disabled={selectionDisabled || root.loading || root.context !== filterKey} checked={selectedIds?.has(document.id) ?? false} onChange={(event) => onSelect(document, event.target.checked)} /></label> : undefined}
         />)}
         {root && root.total > root.pageSize && <nav className="folder-pagination" aria-label="根目录分页"><button type="button" disabled={root.loading || root.page <= 1} onClick={() => void loadBranch("unfiled", root.page - 1)}>上一页</button><span>{root.page} / {Math.ceil(root.total / root.pageSize)}</span><button type="button" disabled={root.loading || root.page * root.pageSize >= root.total} onClick={() => void loadBranch("unfiled", root.page + 1)}>下一页</button></nav>}
@@ -277,6 +305,7 @@ export function LibraryDirectory({
               selected={selectedId === document.id}
               onOpen={onOpen}
               onMove={onMove}
+              onTrash={onTrash}
               checkbox={onSelect ? <label className="row-select"><span className="sr-only">选择 {document.title || "未命名网页"}</span><input type="checkbox" disabled={selectionDisabled || branch.loading || branch.context !== filterKey} checked={selectedIds?.has(document.id) ?? false} onChange={(event) => onSelect(document, event.target.checked)} /></label> : undefined}
             />)}
             {branch && branch.total > branch.pageSize && <nav className="folder-pagination" aria-label={`${folder.name}分页`}><button type="button" disabled={branch.loading || branch.page <= 1} onClick={() => void loadBranch(key, branch.page - 1)}>上一页</button><span>{branch.page} / {Math.ceil(branch.total / branch.pageSize)}</span><button type="button" disabled={branch.loading || branch.page * branch.pageSize >= branch.total} onClick={() => void loadBranch(key, branch.page + 1)}>下一页</button></nav>}

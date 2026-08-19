@@ -2555,7 +2555,7 @@ export default function App() {
         return;
       }
       const target = event.target as HTMLElement | null;
-      if (target?.closest("dialog")) return;
+      if (target?.closest("dialog, [popover]")) return;
       const editing = Boolean(target?.closest("input, textarea, select, [role='combobox'], [contenteditable='true']"));
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -2672,6 +2672,34 @@ export default function App() {
       setDetailError((error as Error).message);
     } finally {
       setLifecycleAction(null);
+    }
+  };
+
+  const trashDirectoryDocument = async (document: DocumentSummary) => {
+    if (currentDocRef.current?.id === document.id) {
+      if (currentDirtyDraft() || currentDirtySourceMetadata() || remoteDraftConflict || organizationConflict) {
+        toast.error("请先保存或放弃当前修改，再删除这篇知识。");
+        return;
+      }
+      await moveToTrash();
+      setListRefresh((value) => value + 1);
+      void loadFolders();
+      return;
+    }
+    if (closeAttemptRef.current || !await dialogs.confirm(`把“${document.title || "未命名网页"}”移入回收站？之后可以恢复。`, {
+      title: "移入回收站", confirmLabel: "移入回收站", tone: "danger",
+    })) return;
+    try {
+      const deleted = await api.deleteDocument(document.id, document.revision);
+      updateListItem(deleted);
+      setListRefresh((value) => value + 1);
+      await loadFolders();
+      toast.success("已移入回收站。");
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.document) updateListItem(error.document);
+      setListRefresh((value) => value + 1);
+      void loadFolders();
+      toast.error(error instanceof ApiRequestError && error.status === 409 ? "知识已在别处变化，未删除；请刷新后重试。" : (error as Error).message);
     }
   };
 
@@ -3390,6 +3418,7 @@ export default function App() {
             onFoldersChanged={() => void refreshFoldersAndCurrent()}
             onOpen={(id) => void selectDocument(id)}
             onMove={moveDocumentToFolder}
+            onTrash={trashDirectoryDocument}
             selectedId={selectedId}
             activeFolderId={currentDoc?.id === selectedId ? currentDoc.folderId : items.find((item) => item.id === selectedId)?.folderId}
             selectedIds={selectedIds}

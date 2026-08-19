@@ -111,7 +111,8 @@ test("keeps the primary workspace keyboard and screen-reader reachable", async (
     probe.remove();
     return result;
   });
-  expect(scrollbar.thumb).toBe("rgb(170, 163, 149)");
+  expect(scrollbar.thumb).toBe("rgb(189, 65, 44)");
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement, "::-webkit-scrollbar-track").backgroundColor)).toBe("rgba(189, 65, 44, 0.08)");
   expect(scrollbar.width).toBe("11px");
   expect(scrollbar.scrollLeft).toBeGreaterThan(0);
   expect(scrollbar.scrollTop).toBeGreaterThan(0);
@@ -130,7 +131,7 @@ test("keeps the primary workspace keyboard and screen-reader reachable", async (
     return result;
   });
   expect(forcedScrollbar.colors).toBe("auto");
-  expect(forcedScrollbar.thumb).not.toBe("rgb(170, 163, 149)");
+  expect(forcedScrollbar.thumb).not.toBe("rgb(189, 65, 44)");
   expect(forcedScrollbar.track).not.toBe("rgba(0, 0, 0, 0)");
   await page.emulateMedia({ forcedColors: "none" });
   await page.getByLabel("网页地址").focus();
@@ -215,7 +216,10 @@ test("creates a folder and moves one knowledge item with the accessible dialog",
   await create.getByLabel("文件夹名称").fill(folderName);
   await create.getByRole("button", { name: "创建" }).click();
   await expect(page.getByText(`已创建文件夹“${folderName}”。`)).toBeVisible();
-  await rootRow.getByRole("button", { name: /移动 远端测试文章/u }).click();
+  await rootRow.getByRole("button", { name: "更多操作：远端测试文章" }).click();
+  const actions = page.getByRole("dialog", { name: "操作：远端测试文章" });
+  await expect(actions).toBeVisible();
+  await actions.getByRole("button", { name: "移动到文件夹…" }).click();
   const move = page.getByRole("dialog", { name: "移动到文件夹" });
   await move.getByRole("combobox", { name: "目标位置" }).click();
   await expect(page.getByRole("listbox")).toBeVisible();
@@ -224,7 +228,18 @@ test("creates a folder and moves one knowledge item with the accessible dialog",
   await expect(page.getByText(`已移到“${folderName}”。`)).toBeVisible();
   const folderBranch = page.locator(".folder-branch").filter({ hasText: folderName });
   await expect(folderBranch.locator(".folder-node > button").first()).toHaveAttribute("aria-expanded", "true");
-  await expect(folderBranch.locator(".directory-document-row").filter({ has: page.locator(`a[href="${captureUrl}"]`) })).toBeVisible();
+  const movedRow = folderBranch.locator(".directory-document-row").filter({ has: page.locator(`a[href="${captureUrl}"]`) });
+  await expect(movedRow).toBeVisible();
+  const moreActions = movedRow.getByRole("button", { name: "更多操作：远端测试文章" });
+  await moreActions.click();
+  await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+  await expect(page.getByRole("dialog", { name: "操作：远端测试文章" })).toHaveCount(0);
+  await expect(moreActions).toBeFocused();
+  await moreActions.click();
+  await page.getByRole("dialog", { name: "操作：远端测试文章" }).getByRole("button", { name: "删除（移入回收站）" }).click();
+  await page.getByRole("alertdialog", { name: "移入回收站" }).getByRole("button", { name: "移入回收站" }).click();
+  await expect(page.getByRole("button", { name: "回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".document-list .directory-document-row").filter({ has: page.locator(`a[href="${captureUrl}"]`) })).toBeVisible();
 });
 
 test("opens one keyboard-accessible help and about dialog in normal and recovery modes", async ({ page }) => {

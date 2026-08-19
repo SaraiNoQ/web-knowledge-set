@@ -16,9 +16,10 @@
   --vermilion-dark: #923221;
   --moss: #65705a;
   --gold: #a17a38;
-  --scrollbar-thumb: var(--ink-faint);
-  --scrollbar-thumb-hover: var(--vermilion);
-  --scrollbar-thumb-active: var(--vermilion-dark);
+  --scrollbar-track: rgba(189, 65, 44, .08);
+  --scrollbar-thumb: var(--vermilion);
+  --scrollbar-thumb-hover: var(--vermilion-dark);
+  --scrollbar-thumb-active: var(--ink);
   --font-serif: "Iowan Old Style", "Baskerville", "Songti SC", "STSong", "Noto Serif CJK SC", serif;
   --font-sans: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   --font-mono: "SFMono-Regular", "Cascadia Code", "Fira Code", "Roboto Mono", monospace;
@@ -33,11 +34,11 @@
 * { box-sizing: border-box; }
 
 @supports not selector(::-webkit-scrollbar) {
-  * { scrollbar-color: var(--scrollbar-thumb) transparent; scrollbar-width: auto; }
+  * { scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); scrollbar-width: auto; }
 }
 
 *::-webkit-scrollbar { width: 11px; height: 11px; }
-*::-webkit-scrollbar-track, *::-webkit-scrollbar-corner { background: transparent; }
+*::-webkit-scrollbar-track, *::-webkit-scrollbar-corner { background: var(--scrollbar-track); }
 *::-webkit-scrollbar-thumb { min-width: 36px; min-height: 36px; background: var(--scrollbar-thumb); background-clip: padding-box; border: 2px solid transparent; border-radius: 999px; }
 *::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); background-clip: padding-box; }
 *::-webkit-scrollbar-thumb:active { background: var(--scrollbar-thumb-active); background-clip: padding-box; }
@@ -2044,6 +2045,10 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .directory-hover-detail strong { font: 500 16px/1.4 var(--font-serif); }
 .directory-hover-detail span { color: var(--ink-soft); overflow-wrap: anywhere; }
 .directory-move-field { display: grid; gap: 7px; color: var(--ink-soft); font-size: var(--font-small); }
+.directory-action-menu[popover] { position: fixed; inset: auto; width: 190px; margin: 0; padding: 5px; color: var(--ink); background: var(--paper-light); border: 1px solid var(--ink); box-shadow: 7px 7px 0 rgba(31,29,25,.13); }
+.directory-action-menu button { display: block; width: 100%; min-height: 36px; padding: 7px 10px; color: var(--ink-soft); text-align: left; background: transparent; border: 0; font-size: var(--font-small); }
+.directory-action-menu button:hover, .directory-action-menu button:focus-visible { color: var(--ink); background: rgba(189,65,44,.08); }
+.directory-action-menu button.danger { color: var(--vermilion-dark); border-top: 1px solid var(--line); }
 
 .library-directory { margin-top: 18px; padding-top: 13px; border-top: 1px solid var(--line-strong); }
 .library-directory > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 7px; }
