@@ -70,6 +70,7 @@ const ERROR_MESSAGES: Readonly<Record<string, string>> = {
 
   BACKUP_FAILED: "完整留档创建失败，请检查存储空间后重试。",
   BACKUP_MISSING: "留档文件已不存在，无法继续校验或恢复。",
+  BACKUP_DELETE_PENDING: "留档删除尚未完成，请重新点击删除。",
   BACKUP_NOT_FOUND: "未找到所选留档，请刷新列表。",
   BACKUP_TOO_LARGE: "留档超出当前安全大小限制。",
   BACKUP_ARCHIVE_REQUIRED: "请选择 .zhiye-backup 完整留档文件。",

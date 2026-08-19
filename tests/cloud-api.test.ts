@@ -499,6 +499,8 @@ test("cloud backup restores v3 trash, maps v1 documents to active unfiled, and r
   }), env);
   assert.equal(failedDelete.status, 500);
   assert.equal((db.sqlite.prepare("SELECT COUNT(*) AS count FROM cloud_backups WHERE id = ?").get(deletableId) as { count: number }).count, 1);
+  assert.equal((db.sqlite.prepare("SELECT status, error_code FROM cloud_backups WHERE id = ?").get(deletableId) as { status: string; error_code: string }).status, "missing");
+  assert.equal(bucket.objects.has(`backups/${deletableId}.zhiye-cloud-backup`), true);
   env.BACKUPS.delete = originalDelete;
   const deleted = await handleRequest(new Request(`https://app.example.com/api/data-safety/backups/${deletableId}`, {
     method: "DELETE", headers: epochHeader(), body: "{}",

@@ -255,22 +255,15 @@ export async function deleteRecordedBackup(
     ? db.getBackupRecord(id)
     : (await listRecoveryBackups(backupRoot)).find((candidate) => candidate.id === id) ?? null;
   if (!record) throw new DataSafetyError(404, "BACKUP_NOT_FOUND", "Backup record not found");
-  const removedFromDatabase = db ? db.deleteBackupRecord(id) : true;
-  if (db && !removedFromDatabase) {
-    throw new DataSafetyError(404, "BACKUP_NOT_FOUND", "Backup record not found");
-  }
-  try {
-    if (record.directoryName) {
-      if (!backupDirectory.test(record.directoryName)) {
-        throw new DataSafetyError(500, "UNSAFE_BACKUP_RECORD", "Backup record contains an unsafe directory name");
-      }
-      const path = join(backupRoot, record.directoryName);
-      if (existsSync(path)) removeBackup(backupRoot, record.directoryName);
+  if (db) db.upsertBackupRecord({ ...record, status: "missing", errorCode: "BACKUP_DELETE_PENDING", errorMessage: "Backup deletion is pending" });
+  if (record.directoryName) {
+    if (!backupDirectory.test(record.directoryName)) {
+      throw new DataSafetyError(500, "UNSAFE_BACKUP_RECORD", "Backup record contains an unsafe directory name");
     }
-  } catch (error) {
-    if (db && removedFromDatabase) db.upsertBackupRecord(record);
-    throw error;
+    const path = join(backupRoot, record.directoryName);
+    if (existsSync(path)) removeBackup(backupRoot, record.directoryName);
   }
+  if (db && !db.deleteBackupRecord(id)) throw new DataSafetyError(404, "BACKUP_NOT_FOUND", "Backup record not found");
   return { deleted: true as const };
 }
 
