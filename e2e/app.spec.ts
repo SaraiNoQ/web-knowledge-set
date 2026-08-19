@@ -94,6 +94,45 @@ test("keeps the primary workspace keyboard and screen-reader reachable", async (
     ];
   });
   expect(issues).toEqual([]);
+  const scrollbar = await page.evaluate(() => {
+    const probe = document.createElement("div");
+    const content = document.createElement("div");
+    Object.assign(probe.style, { width: "48px", height: "48px", overflow: "scroll" });
+    Object.assign(content.style, { width: "160px", height: "160px" });
+    probe.append(content);
+    document.body.append(probe);
+    probe.scrollTo(32, 32);
+    const result = {
+      thumb: getComputedStyle(probe, "::-webkit-scrollbar-thumb").backgroundColor,
+      width: getComputedStyle(probe, "::-webkit-scrollbar").width,
+      scrollLeft: probe.scrollLeft,
+      scrollTop: probe.scrollTop,
+    };
+    probe.remove();
+    return result;
+  });
+  expect(scrollbar.thumb).toBe("rgb(170, 163, 149)");
+  expect(scrollbar.width).toBe("11px");
+  expect(scrollbar.scrollLeft).toBeGreaterThan(0);
+  expect(scrollbar.scrollTop).toBeGreaterThan(0);
+  await page.emulateMedia({ forcedColors: "active" });
+  const forcedScrollbar = await page.evaluate(() => {
+    const probe = document.createElement("div");
+    Object.assign(probe.style, { width: "48px", height: "48px", overflow: "scroll" });
+    probe.append(document.createElement("div"));
+    document.body.append(probe);
+    const result = {
+      colors: getComputedStyle(probe).scrollbarColor,
+      thumb: getComputedStyle(probe, "::-webkit-scrollbar-thumb").backgroundColor,
+      track: getComputedStyle(probe, "::-webkit-scrollbar-track").backgroundColor,
+    };
+    probe.remove();
+    return result;
+  });
+  expect(forcedScrollbar.colors).toBe("auto");
+  expect(forcedScrollbar.thumb).not.toBe("rgb(170, 163, 149)");
+  expect(forcedScrollbar.track).not.toBe("rgba(0, 0, 0, 0)");
+  await page.emulateMedia({ forcedColors: "none" });
   await page.getByLabel("网页地址").focus();
   await expect(page.getByLabel("网页地址")).toBeFocused();
 });

@@ -16,6 +16,9 @@
   --vermilion-dark: #923221;
   --moss: #65705a;
   --gold: #a17a38;
+  --scrollbar-thumb: var(--ink-faint);
+  --scrollbar-thumb-hover: var(--vermilion);
+  --scrollbar-thumb-active: var(--vermilion-dark);
   --font-serif: "Iowan Old Style", "Baskerville", "Songti SC", "STSong", "Noto Serif CJK SC", serif;
   --font-sans: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   --font-mono: "SFMono-Regular", "Cascadia Code", "Fira Code", "Roboto Mono", monospace;
@@ -28,6 +31,16 @@
 }
 
 * { box-sizing: border-box; }
+
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-color: var(--scrollbar-thumb) transparent; scrollbar-width: auto; }
+}
+
+*::-webkit-scrollbar { width: 11px; height: 11px; }
+*::-webkit-scrollbar-track, *::-webkit-scrollbar-corner { background: transparent; }
+*::-webkit-scrollbar-thumb { min-width: 36px; min-height: 36px; background: var(--scrollbar-thumb); background-clip: padding-box; border: 2px solid transparent; border-radius: 999px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:active { background: var(--scrollbar-thumb-active); background-clip: padding-box; }
 
 html { min-width: 320px; background: var(--paper-deep); }
 
@@ -1965,6 +1978,9 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 }
 
 @media (forced-colors: active) {
+  * { scrollbar-color: auto; }
+  *::-webkit-scrollbar-track, *::-webkit-scrollbar-corner { background: Canvas; }
+  *::-webkit-scrollbar-thumb, *::-webkit-scrollbar-thumb:hover, *::-webkit-scrollbar-thumb:active { background: ButtonText; background-clip: padding-box; border-color: Canvas; }
   .ui-button,
   .ui-input,
   .ui-textarea,
