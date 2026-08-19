@@ -171,13 +171,15 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
     return () => window.clearInterval(timer);
   }, [loadResults, task?.id, task?.status]);
 
+  const requestPreview = () => api.previewDerivedResult(document.id, type === "custom" ? "summary" : type, document.revision, type === "translation" ? targetLanguage : undefined, type === "custom" ? customPrompt : undefined);
+
   const prepare = async () => {
     if (generationBlockedReason || cloudKeyMissing) return;
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      const value = await api.previewDerivedResult(document.id, type === "custom" ? "summary" : type, document.revision, type === "translation" ? targetLanguage : undefined, type === "custom" ? customPrompt : undefined);
+      const value = await requestPreview();
       setPreview(value);
       setPreviewBatch(0);
     } catch (cause) {
@@ -187,22 +189,44 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
     }
   };
 
+  const startPreview = async (value: DerivedPreview) => {
+    const started = await api.startDerivedTask(document.id, value);
+    setTask(started);
+    if (started.status === "succeeded") {
+      setPreview(null);
+      setNotice(cloud ? `${typeLabel(started.type, started.targetLanguage, started.preview.promptVersion)}已生成并保存；正文未修改。` : `${typeLabel(started.type, started.targetLanguage, started.preview.promptVersion)}已有相同输入结果，未重复请求模型。`);
+      await loadResults(1);
+    }
+  };
+
   const start = async () => {
-    if (!preview) return;
+    if (!preview || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      const started = await api.startDerivedTask(document.id, preview);
-      setTask(started);
-      if (started.status === "succeeded") {
-        setPreview(null);
-        setNotice(cloud ? `${typeLabel(started.type, started.targetLanguage, started.preview.promptVersion)}已生成并保存；正文未修改。` : `${typeLabel(started.type, started.targetLanguage, started.preview.promptVersion)}已有相同输入结果，未重复请求模型。`);
-        await loadResults(1);
-      }
+      await startPreview(preview);
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+
+  const generate = async () => {
+    if (busyRef.current || type === "custom" || generationBlockedReason || cloudKeyMissing) return;
+    busyRef.current = true;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await startPreview(await requestPreview());
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
@@ -300,7 +324,7 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
           {loading ? <div className="derived-state" role="status">正在翻阅派生记录…</div> : (
             <>
               <section className="derived-generator" aria-labelledby="derived-generator-title">
-                <div><span>01 · GENERATE</span><h4 id="derived-generator-title">选择一项，再核对发送范围</h4></div>
+                <div><span>01 · GENERATE</span><h4 id="derived-generator-title">选择一项，获取结果</h4></div>
                 <div className="derived-options">
                   <fieldset disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing}>
                     <legend className="sr-only">派生类型</legend>
@@ -311,7 +335,7 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
                 {!settings?.enabled && <p className="derived-boundary">AI 当前关闭。历史结果仍可查看；请先到页首“AI 设置”中启用。</p>}
                 {cloudKeyMissing && <p className="derived-boundary">当前浏览器没有此平台的 AI 密钥。历史结果仍可查看；请先到页首“AI 设置”保存密钥。</p>}
                 {generationBlockedReason && <p className="derived-boundary">{generationBlockedReason}</p>}
-                {type !== "custom" && <button type="button" className="primary-button" onClick={() => void prepare()} disabled={busy || !settings?.enabled || task?.status === "running" || Boolean(generationBlockedReason) || cloudKeyMissing}>{busy && !preview ? "准备中…" : `预览${TYPE_LABEL[type]}发送范围`}</button>}
+                {type !== "custom" && <button type="button" className="primary-button" onClick={() => void generate()} disabled={busy || !settings?.enabled || task?.status === "running" || Boolean(generationBlockedReason) || cloudKeyMissing}>{busy ? "获取中…" : "获取"}</button>}
               </section>
 
               {(preview || type === "custom") && (
@@ -325,12 +349,12 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
                 </section>
               )}
 
-              {task && task.status !== "succeeded" && <section className={`derived-task is-${task.status}`} aria-live="polite"><div><span>03 · TASK</span><strong>{taskLabel}{task.status === "running" ? "正在生成" : task.status === "failed" ? "生成失败" : "已取消"}</strong>{task.status === "running" && <div className="derived-task-progress"><progress aria-label="AI 生成批次进度" max={task.progress.totalBatches} value={task.progress.completedBatches} /><small>批次进度 {task.progress.completedBatches} / {task.progress.totalBatches}</small></div>}{task.error && <small>{task.error.code} · {userErrorMessage(task.error.code)}</small>}{task.status !== "running" && task.progress.totalBatches > 1 && <small className="derived-retry-note">重试将从第一批开始，不会复用已完成批次。</small>}</div>{task.status === "running" ? <button type="button" onClick={() => void cancel()} disabled={busy}>取消任务</button> : <button type="button" onClick={() => void retry()} disabled={busy || !settings?.enabled}>重试</button>}</section>}
+              {task && task.status !== "succeeded" && <section className={`derived-task is-${task.status}`} aria-live="polite"><div><span>TASK</span><strong>{taskLabel}{task.status === "running" ? "正在生成" : task.status === "failed" ? "生成失败" : "已取消"}</strong>{task.status === "running" && <div className="derived-task-progress"><progress aria-label="AI 生成批次进度" max={task.progress.totalBatches} value={task.progress.completedBatches} /><small>批次进度 {task.progress.completedBatches} / {task.progress.totalBatches}</small></div>}{task.error && <small>{task.error.code} · {userErrorMessage(task.error.code)}</small>}{task.status !== "running" && task.progress.totalBatches > 1 && <small className="derived-retry-note">重试将从第一批开始，不会复用已完成批次。</small>}</div>{task.status === "running" ? <button type="button" onClick={() => void cancel()} disabled={busy}>取消任务</button> : <button type="button" onClick={() => void retry()} disabled={busy || !settings?.enabled}>重试</button>}</section>}
 
               {(notice || error) && <p className={`derived-message ${error ? "is-error" : ""}`} role={error ? "alert" : "status"}>{error || notice}</p>}
 
               <section className="derived-history" aria-labelledby="derived-history-title">
-                <div className="derived-history-head"><div><span>04 · LEDGER</span><h4 id="derived-history-title">派生历史</h4></div><strong>{total} 条</strong></div>
+                <div className="derived-history-head"><div><span>02 · LEDGER</span><h4 id="derived-history-title">派生历史</h4></div><strong>{total} 条</strong></div>
                 {!results.length ? <p className="derived-empty">还没有派生结果。AI 关闭时，这里也不会产生任何后台请求。</p> : <ol>{results.map((result) => {
                   const tags = result.type === "tag-suggestions" ? stringList(result.output) : [];
                   const checkedTags = selectedTags.resultId === result.id ? selectedTags.tags : [];

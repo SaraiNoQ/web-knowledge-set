@@ -362,10 +362,12 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
 
   await page.getByRole("button", { name: "AI 派生", exact: true }).click();
   const panel = page.getByRole("complementary", { name: "AI 派生知识" });
-  await panel.getByRole("button", { name: "预览摘要发送范围" }).click();
-  await expect(panel.getByLabel("将发送给模型的准确文本")).toContainText("AI 生命周期文章");
-  await expect(panel.getByText("http://127.0.0.1:4175/v1/chat/completions")).toBeVisible();
-  await panel.getByRole("button", { name: "发送并生成" }).click();
+  const summaryPreviewResponse = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/derived-preview"));
+  const summaryTaskRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname.endsWith("/derived-task"));
+  await panel.getByRole("button", { name: "获取", exact: true }).click();
+  const summaryPreview = await (await summaryPreviewResponse).json() as { revision: number; sendHash: string };
+  expect((await summaryTaskRequest).postDataJSON()).toMatchObject({ type: "summary", revision: summaryPreview.revision, sendHash: summaryPreview.sendHash });
+  await expect(panel.getByLabel("模型发送范围预览")).toHaveCount(0);
   await expect(panel.getByText("摘要正在生成")).toBeVisible();
   await panel.getByRole("button", { name: "取消任务" }).click();
   await expect(panel.getByText("摘要已取消")).toBeVisible();
@@ -396,8 +398,12 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(panel.locator(".derived-history li").filter({ hasText: "AI 对话" })).toBeVisible({ timeout: 5_000 });
 
   await panel.getByRole("button", { name: "标签建议", exact: true }).click();
-  await panel.getByRole("button", { name: "预览标签建议发送范围" }).click();
-  await panel.getByRole("button", { name: "发送并生成" }).click();
+  const tagPreviewResponse = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/derived-preview"));
+  const tagTaskRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname.endsWith("/derived-task"));
+  await panel.getByRole("button", { name: "获取", exact: true }).click();
+  const tagPreview = await (await tagPreviewResponse).json() as { revision: number; sendHash: string };
+  expect((await tagTaskRequest).postDataJSON()).toMatchObject({ type: "tag-suggestions", revision: tagPreview.revision, sendHash: tagPreview.sendHash });
+  await expect(panel.getByLabel("模型发送范围预览")).toHaveCount(0);
   const suggested = panel.getByLabel("#人工智能");
   await expect(suggested).toBeVisible({ timeout: 5_000 });
   await expect(suggested).not.toBeChecked();
@@ -423,22 +429,12 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   const language = panel.getByLabel("翻译目标语言");
   await expect(language.locator("option")).toHaveCount(11);
   await language.selectOption("en");
-  await panel.getByRole("button", { name: "预览翻译发送范围" }).click();
-  await expect(panel.getByText("翻译 · English", { exact: true })).toBeVisible();
-  await expect(panel.getByLabel("将发送给模型的准确文本")).toContainText("超长原文");
-  const nextBatch = panel.getByRole("button", { name: "下一批" });
-  await expect(nextBatch).toBeEnabled();
-  let reviewedBatches = 1;
-  while (await nextBatch.isEnabled()) {
-    await nextBatch.click();
-    reviewedBatches += 1;
-  }
-  expect(reviewedBatches).toBeGreaterThanOrEqual(2);
-  await panel.getByRole("button", { name: "上一批" }).click();
-  await nextBatch.click();
+  const translationPreviewResponse = page.waitForResponse((response) => response.request().method() === "POST" && /\/derived-preview$/u.test(new URL(response.url()).pathname));
   const translationRequest = page.waitForRequest((request) => request.method() === "POST" && /\/derived-task$/u.test(new URL(request.url()).pathname));
-  await panel.getByRole("button", { name: "发送并生成" }).click();
-  expect((await translationRequest).postDataJSON()).toMatchObject({ sendHash: expect.any(String) });
+  await panel.getByRole("button", { name: "获取", exact: true }).click();
+  const translationPreview = await (await translationPreviewResponse).json() as { revision: number; sendHash: string };
+  expect((await translationRequest).postDataJSON()).toMatchObject({ type: "translation", revision: translationPreview.revision, sendHash: translationPreview.sendHash });
+  await expect(panel.getByLabel("模型发送范围预览")).toHaveCount(0);
   await expect(panel.getByText("翻译 · English正在生成")).toBeVisible();
   await expect(panel.getByText(/批次进度 [1-9]\d* \/ \d+/u)).toBeVisible({ timeout: 8_000 });
   await expect(panel.getByText("翻译 · English已生成", { exact: false })).toBeVisible({ timeout: 45_000 });
