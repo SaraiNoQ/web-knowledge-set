@@ -1172,7 +1172,9 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 }
 .editor-grid.mode-split { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .editor-grid.mode-edit, .editor-grid.mode-preview { grid-template-columns: minmax(0, 1fr); }
-.editor-pane, .preview-pane { position: relative; min-width: 0; min-height: 0; overflow: auto; }
+.editor-pane, .preview-pane { position: relative; min-width: 0; min-height: 0; }
+.editor-pane { overflow: hidden; }
+.preview-pane { overflow: auto; }
 .editor-pane { border-right: 1px solid var(--line-strong); }
 .mode-edit .editor-pane { border-right: 0; }
 

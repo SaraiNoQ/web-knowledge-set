@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import {
   drawSelection,
   EditorView,
@@ -55,6 +55,7 @@ export function MarkdownEditor({ value, onChange, readOnly = false }: MarkdownEd
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
+  const readOnlyCompartment = useRef(new Compartment());
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -74,7 +75,7 @@ export function MarkdownEditor({ value, onChange, readOnly = false }: MarkdownEd
           markdown(),
           EditorView.lineWrapping,
           EditorState.tabSize.of(2),
-          EditorState.readOnly.of(readOnly),
+          readOnlyCompartment.current.of(EditorState.readOnly.of(readOnly)),
           EditorView.contentAttributes.of({
             "aria-label": "Markdown 编辑器",
             "aria-multiline": "true",
@@ -95,6 +96,10 @@ export function MarkdownEditor({ value, onChange, readOnly = false }: MarkdownEd
     };
     // CodeMirror owns its lifecycle; document changes are synchronized below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: readOnlyCompartment.current.reconfigure(EditorState.readOnly.of(readOnly)) });
   }, [readOnly]);
 
   useEffect(() => {
