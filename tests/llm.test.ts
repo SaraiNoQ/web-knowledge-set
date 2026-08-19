@@ -323,6 +323,7 @@ test("LLM probe HTTP route aborts disconnected clients and pauses before key upd
 test("LLM API requires preview confirmation, reuses results, cancels, and disables atomically", async () => {
   const root = mkdtempSync(join(tmpdir(), "zhiye-llm-"));
   let calls = 0;
+  let lastBody = "";
   let localAuthorization: string | undefined;
   let releaseSlow!: () => void;
   const slow = new Promise<void>((resolve) => { releaseSlow = resolve; });
@@ -331,6 +332,7 @@ test("LLM API requires preview confirmation, reuses results, cancels, and disabl
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     const body = Buffer.concat(chunks).toString("utf8");
+    lastBody = body;
     localAuthorization = request.headers.authorization;
     if (body.includes("CANCEL-ME")) await slow;
     response.writeHead(200, { "Content-Type": "application/json", "Content-Encoding": "identity" });
@@ -452,6 +454,43 @@ test("LLM API requires preview confirmation, reuses results, cancels, and disabl
     assert.equal((await waitForTask(base, cookie, regenerated.id)).status, "succeeded");
     assert.equal(calls, 2);
 
+    const prompt = "列出文章中最值得反驳的三个假设";
+    const maximumPromptResponse = await fetch(`${base}/api/documents/${created.id}/derived-preview`, {
+      method: "POST", headers, body: JSON.stringify({ type: "summary", revision: updated.document.revision, customPrompt: "界".repeat(4_000) }),
+    });
+    assert.equal(maximumPromptResponse.status, 200);
+    assert.equal((await fetch(`${base}/api/documents/${created.id}/derived-preview`, {
+      method: "POST", headers, body: JSON.stringify({ type: "summary", revision: updated.document.revision, customPrompt: `bad\u0085prompt` }),
+    })).status, 400);
+    const customPreview = (await (await fetch(`${base}/api/documents/${created.id}/derived-preview`, {
+      method: "POST", headers, body: JSON.stringify({ type: "summary", revision: updated.document.revision, customPrompt: prompt }),
+    })).json()) as DerivedPreview;
+    assert.equal(customPreview.customPrompt, prompt);
+    assert.match(customPreview.promptVersion, /^custom-v1-[a-f0-9]{64}-p40000$/u);
+    assert.equal((await fetch(`${base}/api/documents/${created.id}/derived-task`, {
+      method: "POST", headers, body: JSON.stringify({
+        type: customPreview.type, customPrompt: `${prompt}。`, revision: customPreview.revision,
+        inputHash: customPreview.inputHash, sendHash: customPreview.sendHash, settingsRevision: customPreview.settingsRevision,
+      }),
+    })).status, 409);
+    const customTask = (await (await fetch(`${base}/api/documents/${created.id}/derived-task`, {
+      method: "POST", headers, body: JSON.stringify({
+        type: customPreview.type, customPrompt: customPreview.customPrompt, revision: customPreview.revision,
+        inputHash: customPreview.inputHash, sendHash: customPreview.sendHash, settingsRevision: customPreview.settingsRevision,
+      }),
+    })).json()) as DerivedTask;
+    const customCompleted = await waitForTask(base, cookie, customTask.id);
+    assert.equal(customCompleted.status, "succeeded");
+    assert.match(customCompleted.result?.promptVersion ?? "", /^custom-v1-/u);
+    assert.equal(database.pinDerivedResult(created.id, customCompleted.result!.id, true).kind, "not_summary");
+    assert.equal(JSON.stringify(database.listDerivedResults(created.id)).includes(prompt), false);
+    assert.match(lastBody, /列出文章中最值得反驳的三个假设/u);
+    assert.equal(calls, 3);
+    const retriedCustom = await fetch(`${base}/api/derived-tasks/${customTask.id}/retry`, { method: "POST", headers, body: "{}" });
+    assert.equal(retriedCustom.status, 200);
+    assert.equal(((await retriedCustom.json()) as DerivedTask).preview.customPrompt, prompt);
+    assert.equal(calls, 3);
+
     const current = database.getDocument(created.id)!;
     const changed = database.updateDocument(created.id, current.revision, { markdown: "CANCEL-ME" });
     assert.equal(changed.kind, "updated");
@@ -470,7 +509,7 @@ test("LLM API requires preview confirmation, reuses results, cancels, and disabl
         settingsRevision: cancelPreview.settingsRevision,
       }),
     })).json()) as DerivedTask;
-    while (calls < 3) await new Promise((resolve) => setTimeout(resolve, 5));
+    while (calls < 4) await new Promise((resolve) => setTimeout(resolve, 5));
     const cancelledResponse = await fetch(`${base}/api/derived-tasks/${cancelling.id}`, {
       method: "DELETE", headers, body: "{}",
     });
@@ -485,7 +524,7 @@ test("LLM API requires preview confirmation, reuses results, cancels, and disabl
     assert.equal(disabledResponse.status, 200);
     const disabled = await disabledResponse.json() as { settings: LlmSettings; deletedResults: number };
     assert.equal(disabled.settings.enabled, false);
-    assert.equal(disabled.deletedResults, 1);
+    assert.equal(disabled.deletedResults, 2);
     assert.equal(database.listDerivedResults(created.id)?.total, 0);
     assert.equal((await fetch(`${base}/api/derived-tasks/${cancelling.id}`, { headers: { Cookie: cookie } })).status, 404);
     assert.equal(await (await fetch(`${base}/api/documents/${created.id}/derived-task`, { headers: { Cookie: cookie } })).json(), null);

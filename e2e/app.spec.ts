@@ -381,6 +381,20 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(page.getByRole("region", { name: "固定摘要" })).toContainText("本地摘要");
 
   await page.getByRole("button", { name: "AI 派生", exact: true }).click();
+  await panel.getByRole("button", { name: "AI 对话", exact: true }).click();
+  const customPrompt = panel.getByLabel("AI 对话 Prompt");
+  await expect(customPrompt).toBeVisible();
+  await customPrompt.fill("找出文章中最值得反驳的假设");
+  const customPreviewRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname.endsWith("/derived-preview"));
+  await panel.getByRole("button", { name: "预览发送范围" }).click();
+  expect((await customPreviewRequest).postDataJSON()).toMatchObject({ type: "summary", customPrompt: "找出文章中最值得反驳的假设" });
+  await expect(panel.getByLabel("将发送给模型的准确文本")).toContainText("AI 生命周期文章");
+  const customTaskRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname.endsWith("/derived-task"));
+  await panel.getByRole("button", { name: "发送并生成" }).click();
+  expect((await customTaskRequest).postDataJSON()).toMatchObject({ type: "summary", customPrompt: "找出文章中最值得反驳的假设" });
+  await expect(panel.getByText("AI 对话正在生成")).toBeVisible();
+  await expect(panel.locator(".derived-history li").filter({ hasText: "AI 对话" })).toBeVisible({ timeout: 5_000 });
+
   await panel.getByRole("button", { name: "标签建议", exact: true }).click();
   await panel.getByRole("button", { name: "预览标签建议发送范围" }).click();
   await panel.getByRole("button", { name: "发送并生成" }).click();
@@ -439,7 +453,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await page.getByRole("button", { name: "AI 设置", exact: true }).click();
   await page.getByRole("button", { name: "关闭 AI 并删除全部结果" }).click();
   await page.getByRole("alertdialog", { name: "关闭 AI 并删除结果" }).getByRole("button", { name: "关闭并删除" }).click();
-  await expect(page.getByText(/AI 已关闭，并删除 3 条派生结果/u)).toBeVisible();
+  await expect(page.getByText(/AI 已关闭，并删除 4 条派生结果/u)).toBeVisible();
   await page.getByRole("button", { name: "返回资料库" }).click();
   await page.getByRole("button", { name: "AI 派生", exact: true }).click();
   await expect(page.getByText("还没有派生结果。", { exact: false })).toBeVisible();

@@ -39,7 +39,7 @@ import { AppUpdater } from "./components/AppUpdater";
 import { BrowserExtension } from "./components/BrowserExtension";
 import { DataSafety } from "./components/DataSafety";
 import { Diagnostics } from "./components/Diagnostics";
-import { DerivedKnowledge } from "./components/DerivedKnowledge";
+import { DerivedKnowledge, type DerivedMode } from "./components/DerivedKnowledge";
 import { MarkdownEditor } from "./components/MarkdownEditor";
 import { Onboarding } from "./components/Onboarding";
 import { DocumentDirectoryRow, LibraryDirectory, type MoveDocumentTarget } from "./components/LibraryDirectory";
@@ -589,7 +589,7 @@ export default function App() {
   const [safetyRecovery, setSafetyRecovery] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [derivedOpen, setDerivedOpen] = useState(false);
-  const [derivedPreferredType, setDerivedPreferredType] = useState<DerivedResultType>("summary");
+  const [derivedPreferredType, setDerivedPreferredType] = useState<DerivedMode>("summary");
   const [collections, setCollections] = useState<KnowledgeCollection[]>([]);
   const [folders, setFolders] = useState<KnowledgeFolder[]>([]);
   const [collectionsOpen, setCollectionsOpen] = useState(false);

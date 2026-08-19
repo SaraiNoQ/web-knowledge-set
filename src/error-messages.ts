@@ -60,6 +60,7 @@ const ERROR_MESSAGES: Readonly<Record<string, string>> = {
   LLM_MODEL_REJECTED: "AI 端点不支持当前模型，请检查模型名称。",
   LLM_INVALID_PROBE: "AI 端点未返回预期的测试结果，请确认兼容性。",
   LLM_INVALID_RESPONSE: "AI 端点返回无效内容，请更换模型或平台后重试。",
+  INVALID_CUSTOM_PROMPT: "AI 对话 Prompt 必须为 1–4,000 个字符，且不能包含控制字符。",
   LLM_INVALID_TRANSLATION: "AI 未按要求保留 Markdown 结构，本次翻译已丢弃，原文未改动。",
   LLM_SECRET_ECHO: "AI 返回内容包含敏感凭据，已丢弃该结果。",
   LLM_CANCELLED: "AI 任务已取消。",

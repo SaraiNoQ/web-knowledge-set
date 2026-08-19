@@ -267,10 +267,10 @@ export const api = {
     });
   },
 
-  previewDerivedResult(documentId: string, type: DerivedResultType, revision: number, targetLanguage?: TranslationLanguage) {
+  previewDerivedResult(documentId: string, type: DerivedResultType, revision: number, targetLanguage?: TranslationLanguage, customPrompt?: string) {
     return request<DerivedPreview>(`/api/documents/${encodeURIComponent(documentId)}/derived-preview`, {
       method: "POST",
-      body: JSON.stringify({ type, revision, ...(targetLanguage ? { targetLanguage } : {}) }),
+      body: JSON.stringify({ type, revision, ...(targetLanguage ? { targetLanguage } : {}), ...(customPrompt ? { customPrompt } : {}) }),
     });
   },
 
@@ -280,6 +280,7 @@ export const api = {
       headers: cloudLlmHeaders(preview.target.url),
       body: JSON.stringify({
         type: preview.type,
+        ...(preview.customPrompt ? { customPrompt: preview.customPrompt } : {}),
         revision: preview.revision,
         inputHash: preview.inputHash,
         sendHash: preview.sendHash,

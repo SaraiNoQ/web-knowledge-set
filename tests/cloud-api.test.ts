@@ -15,6 +15,7 @@ import {
 } from "../cloud/extension.js";
 import { handleAiApi } from "../cloud/ai.js";
 import { createCapture, handleCaptureQueue } from "../cloud/capture.js";
+import type { DerivedPreview } from "../shared/types.js";
 
 const rows = new Map<string, { value: string; revision: number }>([
   ["data_epoch", { value: "cloud-test", revision: 0 }],
@@ -400,6 +401,111 @@ test("cloud AI probe uses a page-scoped key without echoing it", async () => {
     assert.equal((reply?.body as { ok: boolean }).ok, true);
     assert.equal(authorization, `Bearer ${secret}`);
     assert.equal(JSON.stringify(reply).includes(secret), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("cloud AI accepts a confirmed free-form analysis prompt", async () => {
+  const originalFetch = globalThis.fetch;
+  const settings = {
+    value: JSON.stringify({ enabled: true, target: "remote", remote: { endpointUrl: "https://api.openai.com/v1/chat/completions", model: "analysis-model" }, local: { endpointUrl: "", model: "", trusted: false } }),
+    revision: 3,
+  };
+  const document = {
+    id: "custom-doc", sourceUrl: "https://example.com/", finalUrl: "https://example.com/", canonicalUrl: "https://example.com/",
+    title: "Scaling", author: null, status: "ready", revision: 2, createdAt: "2026-08-18T00:00:00.000Z",
+    updatedAt: "2026-08-18T00:00:00.000Z", publishedAt: null, markdown: "# Evidence\n\nA claim and its assumptions.", sourceNote: "test",
+  };
+  const db = {
+    prepare(sql: string) {
+      return {
+        bind() { return this; },
+        async first<T>() {
+          if (sql.includes("llm_settings")) return settings as T;
+          if (sql.includes("cloud_documents")) return document as T;
+          if (sql.includes("data_epoch")) return { value: "cloud-test" } as T;
+          return null;
+        },
+        async all<T>() { return { results: [] as T[], meta: { changes: 0 } }; },
+        async run<T>() { return { results: [] as T[], meta: { changes: 1 } }; },
+      };
+    },
+  };
+  let requestBody: Record<string, unknown> = {};
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "## Analysis\n\nThe assumption is weak." } }] }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    const prompt = "Identify the weakest assumption and explain why.";
+    const maximumPromptRequest = new Request("https://app.example.com/api/documents/custom-doc/derived-preview", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "summary", revision: 2, customPrompt: "界".repeat(4_000) }),
+    });
+    assert.equal(((await handleAiApi(maximumPromptRequest, db, new URL(maximumPromptRequest.url)))?.body as DerivedPreview).customPrompt?.length, 4_000);
+    const invalidPromptRequest = new Request("https://app.example.com/api/documents/custom-doc/derived-preview", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "summary", revision: 2, customPrompt: `bad\u0085prompt` }),
+    });
+    await assert.rejects(handleAiApi(invalidPromptRequest, db, new URL(invalidPromptRequest.url)), /4000 characters/u);
+    const invalidLanguageRequest = new Request("https://app.example.com/api/documents/custom-doc/derived-preview", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "summary", revision: 2, targetLanguage: "zh-CN" }),
+    });
+    await assert.rejects(handleAiApi(invalidLanguageRequest, db, new URL(invalidLanguageRequest.url)), /only for translation/u);
+    const previewRequest = new Request("https://app.example.com/api/documents/custom-doc/derived-preview", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "summary", revision: 2, customPrompt: prompt }),
+    });
+    const preview = (await handleAiApi(previewRequest, db, new URL(previewRequest.url)))?.body as DerivedPreview;
+    assert.equal(preview.customPrompt, prompt);
+    assert.match(preview.promptVersion, /^cloud-custom-v1-[a-f0-9]{64}-p40000$/u);
+    assert.equal(preview.coverage.sourceChars, preview.coverage.sentChars);
+    const staleTaskRequest = new Request("https://app.example.com/api/documents/custom-doc/derived-task", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Zhiye-LLM-Key": "test-key" },
+      body: JSON.stringify({ type: "summary", customPrompt: `${prompt} Changed`, revision: 2, inputHash: preview.inputHash, sendHash: preview.sendHash, settingsRevision: 3 }),
+    });
+    await assert.rejects(handleAiApi(staleTaskRequest, db, new URL(staleTaskRequest.url)), /stale/u);
+    const taskRequest = new Request("https://app.example.com/api/documents/custom-doc/derived-task", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Zhiye-LLM-Key": "test-key" },
+      body: JSON.stringify({ type: "summary", customPrompt: prompt, revision: 2, inputHash: preview.inputHash, sendHash: preview.sendHash, settingsRevision: 3 }),
+    });
+    const result = await handleAiApi(taskRequest, db, new URL(taskRequest.url));
+    assert.equal(result?.status, 201);
+    const messages = requestBody.messages as Array<{ content: string }>;
+    assert.match(messages[0]!.content, /weakest assumption/u);
+    assert.match(messages[1]!.content, /A claim and its assumptions/u);
+    const saved = (result?.body as { result: Record<string, unknown> }).result;
+    assert.match(String(saved.promptVersion), /^cloud-custom-v1-/u);
+    assert.equal(JSON.stringify(saved).includes(prompt), false);
+    const pinRow = { ...saved, usageJson: null, pinned: 0, sourceRevision: 2 };
+    let pinBatchSize = 0;
+    const pinDb = {
+      prepare(sql: string) {
+        return {
+          bind() { return this; },
+          async first<T>() {
+            if (sql.includes("llm_settings")) return settings as T;
+            if (sql.includes("cloud_documents")) return document as T;
+            if (sql.includes("cloud_derived_results")) return pinRow as T;
+            return null;
+          },
+          async all<T>() { return { results: [] as T[], meta: { changes: 0 } }; },
+          async run<T>() { return { results: [] as T[], meta: { changes: 1 } }; },
+        };
+      },
+      async batch(statements: D1Statement[]) { pinBatchSize = statements.length; pinRow.pinned = 1; return []; },
+    };
+    const pinRequest = new Request(`https://app.example.com/api/documents/custom-doc/derived-results/${saved.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pinned: true }),
+    });
+    await assert.rejects(handleAiApi(pinRequest, pinDb, new URL(pinRequest.url)), /Only predefined summaries/u);
+    pinRow.promptVersion = "cloud-summary-v1-p40000";
+    const pinPresetRequest = new Request(`https://app.example.com/api/documents/custom-doc/derived-results/${saved.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pinned: true }),
+    });
+    const pinned = await handleAiApi(pinPresetRequest, pinDb, new URL(pinPresetRequest.url));
+    assert.equal(pinBatchSize, 2);
+    assert.equal((pinned?.body as { pinned: boolean }).pinned, true);
   } finally {
     globalThis.fetch = originalFetch;
   }

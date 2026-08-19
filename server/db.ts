@@ -1858,7 +1858,7 @@ export class KnowledgeDatabase {
         "SELECT * FROM derived_results WHERE id = ? AND document_id = ?",
       ).get(resultId, documentId) as unknown as DerivedResultRow | undefined;
       if (!target) return { kind: "result_missing" as const };
-      if (pinned && target.type !== "summary") return { kind: "not_summary" as const };
+      if (pinned && (target.type !== "summary" || target.prompt_version.startsWith("custom-v1-"))) return { kind: "not_summary" as const };
       if (pinned) {
         this.sql.prepare(
           "UPDATE derived_results SET pinned = 0 WHERE document_id = ? AND type = 'summary' AND pinned = 1",

@@ -875,16 +875,26 @@ function translationLanguage(type: DerivedResultType, value: unknown) {
   return undefined;
 }
 
+function customPrompt(type: DerivedResultType, value: unknown) {
+  if (value === undefined) return undefined;
+  if (type !== "summary" || typeof value !== "string") throw new HttpError(400, "INVALID_CUSTOM_PROMPT", "customPrompt is accepted only for summary");
+  const prompt = value.normalize("NFKC").trim();
+  if (!prompt || prompt.length > 4_000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(prompt)) {
+    throw new HttpError(400, "INVALID_CUSTOM_PROMPT", "customPrompt must be 1 to 4000 characters without control characters");
+  }
+  return prompt;
+}
+
 function derivedPreviewRequest(body: Record<string, unknown>) {
-  if (Object.keys(body).some((key) => !["type", "revision", "targetLanguage"].includes(key))) {
-    throw new HttpError(400, "INVALID_DERIVED_PREVIEW", "Preview accepts only type, revision, and targetLanguage");
+  if (Object.keys(body).some((key) => !["type", "revision", "targetLanguage", "customPrompt"].includes(key))) {
+    throw new HttpError(400, "INVALID_DERIVED_PREVIEW", "Preview request contains an unknown field");
   }
   const type = derivedType(body.type);
-  return { type, revision: bodyRevision(body), targetLanguage: translationLanguage(type, body.targetLanguage) };
+  return { type, revision: bodyRevision(body), targetLanguage: translationLanguage(type, body.targetLanguage), customPrompt: customPrompt(type, body.customPrompt) };
 }
 
 function startDerivedTaskRequest(body: Record<string, unknown>): StartDerivedTaskInput {
-  if (Object.keys(body).some((key) => !["type", "revision", "inputHash", "sendHash", "settingsRevision", "targetLanguage"].includes(key))) {
+  if (Object.keys(body).some((key) => !["type", "revision", "inputHash", "sendHash", "settingsRevision", "targetLanguage", "customPrompt"].includes(key))) {
     throw new HttpError(400, "INVALID_DERIVED_TASK", "Derived task request contains an unknown field");
   }
   if (typeof body.inputHash !== "string" || !/^[a-f0-9]{64}$/u.test(body.inputHash)) {
@@ -897,8 +907,10 @@ function startDerivedTaskRequest(body: Record<string, unknown>): StartDerivedTas
     throw new HttpError(400, "INVALID_DERIVED_TASK", "settingsRevision must be a positive integer");
   }
   const type = derivedType(body.type);
+  const prompt = customPrompt(type, body.customPrompt);
   return {
     type,
+    ...(prompt ? { customPrompt: prompt } : {}),
     ...(translationLanguage(type, body.targetLanguage) ? { targetLanguage: body.targetLanguage as TranslationLanguage } : {}),
     revision: bodyRevision(body),
     inputHash: body.inputHash,
@@ -2225,7 +2237,7 @@ export function createApp(options: AppOptions) {
       if (derivedPreviewMatch && request.method === "POST") {
         const input = derivedPreviewRequest(await mutationBody(request));
         sendJson(response, 200, derivedTasks.preview(
-          decodeId(derivedPreviewMatch[1]), input.type, input.revision, input.targetLanguage,
+          decodeId(derivedPreviewMatch[1]), input.type, input.revision, input.targetLanguage, input.customPrompt,
         ));
         return;
       }

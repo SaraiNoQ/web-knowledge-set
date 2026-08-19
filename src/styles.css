@@ -1703,7 +1703,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .derived-generator > div > span, .derived-coverage > span, .derived-task > div > span, .derived-history-head span { color: var(--vermilion); font: 600 var(--font-caption)/1 var(--font-mono); letter-spacing: .1em; }
 .derived-generator h4, .derived-history h4 { margin: 5px 0 0; font: 500 17px/1.3 var(--font-serif); }
 .derived-options { display: grid; gap: 8px; }
-.derived-options fieldset { display: grid; grid-template-columns: repeat(5,1fr); margin: 0; padding: 0; border: 1px solid var(--line-strong); }
+.derived-options fieldset { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; margin: 0; padding: 0; border: 1px solid var(--line-strong); }
 .derived-options fieldset button { min-height: 36px; padding: 0 7px; color: var(--ink-soft); background: transparent; border: 0; border-right: 1px solid var(--line); font-size: var(--font-caption); }
 .derived-options fieldset button:last-child { border-right: 0; }
 .derived-options fieldset button[aria-pressed="true"] { color: var(--paper-light); background: var(--ink); }
@@ -1723,6 +1723,11 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .derived-batch-nav strong { color: var(--ink-faint); font: 500 var(--font-caption)/1 var(--font-mono); text-align: center; }
 .derived-batch-nav button { min-height: 30px; padding: 0 10px; color: var(--ink-soft); background: transparent; border: 1px solid var(--line-strong); font-size: var(--font-caption); }
 .derived-preview pre { max-height: 280px; margin: 0; padding: 15px; overflow: auto; color: var(--ink-soft); background: #ece6da; border: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; font: var(--font-small)/1.7 var(--font-mono); }
+.derived-custom-prompt { display: grid; gap: 7px; margin-top: 15px; }
+.derived-custom-prompt > span, .derived-custom-prompt > small { color: var(--ink-faint); font-size: var(--font-caption); }
+.derived-custom-prompt textarea { width: 100%; min-height: 118px; padding: 13px 15px; resize: vertical; color: var(--ink); background: #ece6da; border: 1px solid var(--line-strong); outline: 0; font: var(--font-body)/1.7 var(--font-sans); }
+.derived-custom-prompt textarea:focus { border-color: var(--vermilion); }
+.derived-custom-prompt > small { justify-self: end; }
 .derived-preview > div:last-child { display: flex; justify-content: flex-end; gap: 9px; margin-top: 13px; }
 .derived-preview > div:last-child > button:not(.primary-button) { padding: 0 12px; color: var(--ink-soft); background: transparent; border: 1px solid var(--line-strong); font-size: var(--font-caption); }
 .derived-task { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; padding: 13px 16px; color: var(--ink-soft); background: rgba(101,112,90,.07); border-left: 2px solid var(--moss); }
@@ -1790,7 +1795,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   .ai-settings-grid > footer { align-items: stretch; flex-direction: column-reverse; }
   .ai-settings-grid > footer button { width: 100%; }
   .ai-endpoint-kind { grid-template-columns: 1fr 1fr; }
-  .derived-options fieldset { grid-template-columns: 1fr; }
+  .derived-options fieldset { grid-auto-flow: row; grid-auto-columns: auto; grid-template-columns: 1fr; }
   .derived-options fieldset button { border-right: 0; border-bottom: 1px solid var(--line); }
   .derived-options fieldset button:last-child { border-bottom: 0; }
   .derived-preview dl { grid-template-columns: 1fr; }

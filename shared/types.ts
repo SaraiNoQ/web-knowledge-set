@@ -215,6 +215,7 @@ export interface DerivedCoverage {
 
 export interface DerivedPreview {
   type: DerivedResultType;
+  customPrompt?: string;
   targetLanguage: TranslationLanguage | null;
   revision: number;
   inputHash: string;
@@ -232,6 +233,7 @@ export type DerivedTaskPreview = Omit<DerivedPreview, "sentTexts">;
 
 export interface StartDerivedTaskInput {
   type: DerivedResultType;
+  customPrompt?: string;
   targetLanguage?: TranslationLanguage;
   revision: number;
   inputHash: string;
