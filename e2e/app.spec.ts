@@ -520,6 +520,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
       (request.postDataJSON() as { markdown?: string }).markdown === longMarkdown;
   });
   await editor.fill(longMarkdown);
+  await page.getByRole("button", { name: "保存", exact: true }).click();
   await longSave;
   await expect(page.getByText("已保存", { exact: true })).toBeVisible({ timeout: 8_000 });
   const originalMarkdown = await editor.textContent();
@@ -741,7 +742,6 @@ test("imports, restores history, trashes, restores, searches, exports, and block
     window.dispatchEvent(new CustomEvent("zhiye:close-timeout", { detail: { attemptId } }));
   }, closeAttemptId);
   await expect(page.getByLabel("文档标题")).toBeEnabled();
-  await expect(page.getByText("已保存", { exact: true })).toBeVisible({ timeout: 5_000 });
 
   const titleEditor = page.getByLabel("文档标题");
   await titleEditor.fill("  人工整理标题  ");
@@ -750,6 +750,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await editor.press("Control+A");
   await editor.fill("# 第一版\n\n第一版正文");
   await page.getByPlaceholder("用逗号分隔").fill("测试, 本地");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect(page.getByText("已保存", { exact: true })).toBeVisible({ timeout: 5_000 });
   await expect(page.getByText("已同步", { exact: true })).toBeVisible({ timeout: 5_000 });
 
@@ -804,23 +805,23 @@ test("imports, restores history, trashes, restores, searches, exports, and block
     await route.continue();
   });
   await editor.fill(`${firstMarkdown}\n\n${undoneMarker}`);
-  await expect.poll(() => undoPutStarted).toBe(true);
-  await editor.fill(firstMarkdown);
   const undoPutResponse = page.waitForResponse((response) => {
     const request = response.request();
     if (request.method() !== "PUT" || !new URL(request.url()).pathname.endsWith("/draft")) return false;
     return (request.postDataJSON() as { markdown?: string }).markdown?.includes(undoneMarker) ?? false;
   });
+  await expect.poll(() => undoPutStarted).toBe(true);
+  await editor.fill(firstMarkdown);
   releaseUndoPut();
   await undoPutResponse;
+  const undoDeleteResponse = page.waitForResponse((response) =>
+    response.request().method() === "DELETE" && new URL(response.url()).pathname.endsWith("/draft")
+  );
   await expect.poll(() => undoDeleteStarted).toBe(true);
   expect(await page.evaluate(() => {
     const event = new Event("beforeunload", { cancelable: true });
     return { dispatched: window.dispatchEvent(event), prevented: event.defaultPrevented };
   })).toEqual({ dispatched: false, prevented: true });
-  const undoDeleteResponse = page.waitForResponse((response) =>
-    response.request().method() === "DELETE" && new URL(response.url()).pathname.endsWith("/draft")
-  );
   releaseUndoDelete();
   await undoDeleteResponse;
   await expect.poll(currentStoredDraft).toBeNull();
@@ -874,6 +875,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect.poll(currentStoredDraft).toBeNull();
 
   await editor.fill("# 第二版\n\n这段文字会被历史恢复替换。");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect.poll(currentStoredMarkdown).toContain("这段文字会被历史恢复替换。");
   await page.getByRole("button", { name: "修订历史" }).click();
   await expect(page.getByRole("heading", { name: "修订历史" })).toBeVisible();
@@ -939,6 +941,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
       body: JSON.stringify({ revision: list.items[0].revision }),
     });
   });
+  await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect(page.getByText("这篇知识已被移入回收站")).toBeVisible({ timeout: 5_000 });
   await page.getByRole("button", { name: "保留我的修改" }).click();
   await expect(page.getByText("已保存", { exact: true })).toBeVisible({ timeout: 5_000 });
@@ -1356,4 +1359,66 @@ test("desktop updater confirms, verifies a backup, reports progress, and keeps f
   });
   await expect(page.getByText("更新已安装，正在安全保存并重新启动…")).toBeVisible();
   expect(await page.evaluate(() => (window as typeof window & { __UPDATER_TEST__: { calls: string[] } }).__UPDATER_TEST__.calls)).toContain("restart_after_update");
+});
+
+test("debounces automatic document saves until 20 seconds idle", async ({ page }) => {
+  await page.goto("/");
+  const deferOnboarding = page.getByRole("button", { name: "稍后设置" });
+  if (await deferOnboarding.isVisible()) await deferOnboarding.click();
+  await page.getByRole("button", { name: "新建", exact: true }).click();
+  await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文章" }).click();
+  await expect(page.getByLabel("文档标题")).toHaveValue("未命名文章");
+
+  await page.clock.install();
+  const patches: Array<{ title?: string; markdown?: string; tags?: string[] }> = [];
+  page.on("request", (request) => {
+    if (request.method() !== "PATCH" || !/^\/api\/documents\/[^/]+$/u.test(new URL(request.url()).pathname)) return;
+    patches.push(request.postDataJSON() as { title?: string; markdown?: string; tags?: string[] });
+  });
+  const editor = page.getByLabel("Markdown 编辑器");
+  await editor.fill("# 第一版");
+  await expect(page.getByText("未保存", { exact: true })).toBeVisible();
+  await page.clock.runFor(0);
+  await page.clock.fastForward(10_000);
+  expect(patches).toEqual([]);
+
+  await editor.fill("# 第二版");
+  await page.clock.runFor(0);
+  await page.clock.fastForward(9_000);
+  expect(patches).toEqual([]);
+
+  const automaticSave = page.waitForResponse((response) =>
+    response.ok() && response.request().method() === "PATCH" && /^\/api\/documents\/[^/]+$/u.test(new URL(response.url()).pathname) &&
+    (response.request().postDataJSON() as { markdown?: string }).markdown === "# 第二版",
+  );
+  await page.clock.fastForward(1_000);
+  await automaticSave;
+  expect(patches).toHaveLength(1);
+  expect(patches[0]).toMatchObject({ markdown: "# 第二版", tags: [] });
+  await expect(page.getByText("已保存", { exact: true })).toBeVisible();
+
+  const title = page.getByLabel("文档标题");
+  const tags = page.getByPlaceholder("用逗号分隔");
+  const metadataSave = page.waitForResponse((response) => {
+    const body = response.request().postDataJSON() as { title?: string; tags?: string[] };
+    return response.ok() && response.request().method() === "PATCH" && /^\/api\/documents\/[^/]+$/u.test(new URL(response.url()).pathname) &&
+      body.title === "自动标题" && Boolean(body.tags?.includes("自动标签"));
+  });
+  await title.fill("自动标题");
+  await tags.fill("自动标签");
+  await page.clock.runFor(0);
+  await page.clock.fastForward(19_000);
+  expect(patches).toHaveLength(1);
+  await page.clock.fastForward(1_000);
+  await metadataSave;
+  expect(patches).toHaveLength(2);
+
+  const manualSave = page.waitForResponse((response) =>
+    response.ok() && response.request().method() === "PATCH" && /^\/api\/documents\/[^/]+$/u.test(new URL(response.url()).pathname) &&
+    (response.request().postDataJSON() as { markdown?: string }).markdown === "# 手动保存",
+  );
+  await editor.fill("# 手动保存");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await manualSave;
+  expect(patches).toHaveLength(3);
 });

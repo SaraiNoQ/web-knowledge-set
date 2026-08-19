@@ -612,6 +612,8 @@ export default function App() {
   const persistedDraftRef = useRef<DocumentDraft | null>(null);
   const draftSaveChain = useRef<Promise<void>>(Promise.resolve());
   const draftSyncPendingRef = useRef(0);
+  const saveNowRef = useRef<() => Promise<void>>(async () => undefined);
+  const autoSaveDeadlineRef = useRef<number | null>(null);
   const closeAttemptRef = useRef<string | null>(null);
   const saveInFlight = useRef(false);
   const organizationInFlight = useRef(false);
@@ -1090,6 +1092,13 @@ export default function App() {
     if (currentDirtySourceMetadata() || organizationInFlight.current || organizationConflict) {
       throw new Error("请先保存或放弃当前来源信息。");
     }
+    if (cloudMode) {
+      if (currentDirtyDraft()) {
+        await saveNowRef.current();
+        if (currentDirtyDraft()) throw new Error("请先保存当前正文修改。");
+      }
+      return;
+    }
     await draftSaveChain.current;
     const document = currentDocRef.current;
     const value = draftRef.current;
@@ -1097,7 +1106,7 @@ export default function App() {
     if (draftsEqual(value, draftOf(document))) await tombstoneDraft(document.id);
     else await persistDraft(document, value);
     await draftSaveChain.current;
-  }, [organizationConflict, persistDraft, remoteDraftConflict, tombstoneDraft]);
+  }, [cloudMode, organizationConflict, persistDraft, remoteDraftConflict, tombstoneDraft]);
 
   const reloadDraftConflict = useCallback(async (documentId: string) => {
     const [document, stored] = await Promise.all([
@@ -1505,11 +1514,18 @@ export default function App() {
     }
   }, [cloudMode, collectionAction, conflict, currentDoc, dirty, draft, metadataDirty, organizationConflict, persistDraft, refreshKnownTags, remoteDraftConflict, updateListItem]);
 
+  saveNowRef.current = saveNow;
+
   useEffect(() => {
-    if (closing || discardPromptOpen || !dirty || saveState === "conflict" || saveState === "error" || currentDoc?.status !== "ready") return;
-    const timer = window.setTimeout(() => { if (!discardConfirmationRef.current) void saveNow(); }, 800);
+    autoSaveDeadlineRef.current = dirty ? Date.now() + 20_000 : null;
+  }, [currentDoc?.id, dirty, draft]);
+
+  useEffect(() => {
+    if (closing || !dirty || saveState === "saving" || saveState === "conflict" || saveState === "error" || currentDoc?.status !== "ready") return;
+    const remaining = Math.max(0, (autoSaveDeadlineRef.current ?? Date.now() + 20_000) - Date.now());
+    const timer = window.setTimeout(() => { if (!discardConfirmationRef.current) void saveNowRef.current(); }, remaining);
     return () => window.clearTimeout(timer);
-  }, [closing, currentDoc?.status, dirty, discardPromptOpen, saveNow, saveState]);
+  }, [closing, currentDoc?.status, dirty, discardPromptOpen, saveState]);
 
   useEffect(() => {
     if (saveState !== "saved") return;

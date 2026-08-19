@@ -144,7 +144,7 @@ export function DataSafety({
   };
 
   const createBackup = () => perform("create", async () => {
-    if (!cloud) await beforeOperation();
+    await beforeOperation();
     await api.createBackup();
   }, "完整留档已创建并校验。");
 
