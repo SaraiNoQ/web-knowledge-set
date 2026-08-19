@@ -129,6 +129,7 @@ test("returns home from the logo and toggles the knowledge sidebar", async ({ pa
   await expect(page.getByRole("option", { name: "仅正文" })).toHaveClass(/is-active/u);
   await scope.press("Enter");
   await expect(scope).toContainText("仅正文");
+  await expect(scope).toHaveAttribute("aria-valuetext", "仅正文");
   await scope.press("Enter");
   await expect(page.getByRole("listbox")).toBeVisible();
   await page.locator(".filters").evaluate((element: HTMLFieldSetElement) => { element.disabled = true; });

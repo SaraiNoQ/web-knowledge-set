@@ -232,6 +232,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
         aria-haspopup="listbox"
         aria-label={ariaLabel}
         aria-labelledby={ariaLabelledBy}
+        aria-valuetext={options[selectedIndex]?.label}
         className={`ui-select ${className}`.trim()}
         disabled={disabled}
         onClick={() => { setActiveIndex(selectedIndex); setOpen((current) => !current); }}
