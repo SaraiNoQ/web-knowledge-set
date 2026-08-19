@@ -2058,6 +2058,14 @@ export function createApp(options: AppOptions) {
 
       if (pathname === "/api/documents" && request.method === "POST") {
         const body = await mutationBody(request);
+        if (Object.hasOwn(body, "title")) {
+          if (Object.keys(body).length !== 1 || typeof body.title !== "string" || !body.title.trim() || body.title.length > 1000) {
+            throw new HttpError(400, "INVALID_TITLE", "title must be a non-empty string under 1000 characters");
+          }
+          const document = requireDatabase().createArticle(body.title.trim());
+          sendJson(response, 201, { document, created: true, duplicateKind: null });
+          return;
+        }
         if (body.force !== undefined && typeof body.force !== "boolean") {
           throw new HttpError(400, "INVALID_FORCE", "force must be boolean");
         }

@@ -363,6 +363,17 @@ test("documents are queued once, indexed, tagged, and revision guarded", () => {
   }
 });
 
+test("blank articles are ready and start in the top level", () => {
+  const fixture = database();
+  try {
+    const article = fixture.db.createArticle("未命名文章");
+    assert.equal(article.status, "ready");
+    assert.equal(article.markdown, "");
+    assert.equal(article.folderId, null);
+    assert.match(article.sourceUrl, /^zhiye:\/\/article\//u);
+  } finally { fixture.close(); }
+});
+
 test("collections and document metadata update atomically without losing manual source fields", () => {
   const fixture = database();
   try {

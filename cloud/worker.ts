@@ -1,5 +1,6 @@
 import {
   CloudHttpError,
+  createArticle,
   createFolder,
   permanentlyDeleteDocument,
   createPairingCode,
@@ -205,7 +206,15 @@ async function api(request: Request, env: CloudEnv, url: URL) {
     if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
       return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
     }
-    return json(await createCapture(request, { ...env, DB: epochGuardedDatabase(env.DB, epoch) }, epoch), 201, epoch);
+    const body = await jsonObject(request, 8_192);
+    if (Object.hasOwn(body, "title")) {
+      if (Object.keys(body).length !== 1 || typeof body.title !== "string" || !body.title.trim() || body.title.length > 1000) {
+        throw new CloudHttpError(400, "INVALID_TITLE", "title must be a non-empty string under 1000 characters");
+      }
+      const document = await createArticle(epochGuardedDatabase(env.DB, epoch), body.title.trim());
+      return json({ document, created: true, duplicateKind: null }, 201, epoch);
+    }
+    return json(await createCapture(body, { ...env, DB: epochGuardedDatabase(env.DB, epoch) }, epoch), 201, epoch);
   }
   const retryPath = /^\/api\/documents\/([^/]+)\/retry$/u.exec(url.pathname);
   if (retryPath && request.method === "POST") {

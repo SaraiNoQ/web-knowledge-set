@@ -215,7 +215,8 @@ function formatDateTime(value: string) {
 
 function sourceName(url: string) {
   try {
-    return new URL(url).hostname.replace(/^www\./, "");
+    const value = new URL(url);
+    return value.protocol === "zhiye:" ? "本地文章" : value.hostname.replace(/^www\./, "");
   } catch {
     return "网页来源";
   }
@@ -617,6 +618,7 @@ export default function App() {
   const organizationPromiseRef = useRef<Promise<unknown> | null>(null);
   const organizationConflictRef = useRef<OrganizationConflict | null>(null);
   const discardConfirmationRef = useRef(false);
+  const createArticleBusyRef = useRef(false);
   const selectionContextRef = useRef<string | null>(null);
   const selectedDocumentRevisionsRef = useRef(new Map<string, number>());
   const listContextRef = useRef("");
@@ -1697,6 +1699,28 @@ export default function App() {
   const handleImport = async (event: FormEvent) => {
     event.preventDefault();
     await captureUrl(importUrl);
+  };
+
+  const createArticle = async () => {
+    if (importing || createArticleBusyRef.current || closeAttemptRef.current || lifecycleAction || restoringRevision !== null) return;
+    createArticleBusyRef.current = true;
+    try {
+      if (!await confirmDiscardChanges("当前修改尚未保存，仍要新建文章吗？")) return;
+      const guard = beginNavigation();
+      setImporting(true);
+      try {
+        const result = await api.createArticle();
+        if (!await revealDocument(result.document, guard)) return;
+        setMode("edit");
+        toast.success("已在顶层创建文章。");
+      } catch (error) {
+        if (canApplyNavigation(guard)) toast.error((error as Error).message);
+      } finally {
+        setImporting(false);
+      }
+    } finally {
+      createArticleBusyRef.current = false;
+    }
   };
 
   const openImportedDuplicate = async () => {
@@ -3419,6 +3443,7 @@ export default function App() {
             onOpen={(id) => void selectDocument(id)}
             onMove={moveDocumentToFolder}
             onTrash={trashDirectoryDocument}
+            onCreateArticle={createArticle}
             selectedId={selectedId}
             activeFolderId={currentDoc?.id === selectedId ? currentDoc.folderId : items.find((item) => item.id === selectedId)?.folderId}
             selectedIds={selectedIds}
@@ -3491,7 +3516,7 @@ export default function App() {
               <header className="document-head">
                 <div className="document-kicker">
                   <DocumentStatus status={currentDoc.status} />
-                  <a href={currentDoc.finalUrl || currentDoc.sourceUrl} target="_blank" rel="noreferrer noopener">{sourceName(currentDoc.finalUrl || currentDoc.sourceUrl)}<Icon size={13}><path d="M14 5h5v5M10 14 19 5M19 14v5H5V5h5" /></Icon></a>
+                  {/^(?:https?):/u.test(currentDoc.finalUrl || currentDoc.sourceUrl) ? <a href={currentDoc.finalUrl || currentDoc.sourceUrl} target="_blank" rel="noreferrer noopener">{sourceName(currentDoc.finalUrl || currentDoc.sourceUrl)}<Icon size={13}><path d="M14 5h5v5M10 14 19 5M19 14v5H5V5h5" /></Icon></a> : <span>本地文章</span>}
                   <span>{formatDate(currentDoc.updatedAt)}</span>
                 </div>
                 {cloudEditing ? <label className="title-field"><span className="sr-only">文档标题</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} disabled={saveState === "saving"} /></label> : <h2>{currentDoc.title || "未命名网页"}</h2>}
@@ -3526,7 +3551,7 @@ export default function App() {
               <header className="document-head">
                 <div className="document-kicker">
                   <DocumentStatus status={currentDoc.status} />
-                  <a href={currentDoc.finalUrl || currentDoc.sourceUrl} target="_blank" rel="noreferrer noopener">{sourceName(currentDoc.finalUrl || currentDoc.sourceUrl)}<Icon size={13}><path d="M14 5h5v5M10 14 19 5M19 14v5H5V5h5" /></Icon></a>
+                  {/^(?:https?):/u.test(currentDoc.finalUrl || currentDoc.sourceUrl) ? <a href={currentDoc.finalUrl || currentDoc.sourceUrl} target="_blank" rel="noreferrer noopener">{sourceName(currentDoc.finalUrl || currentDoc.sourceUrl)}<Icon size={13}><path d="M14 5h5v5M10 14 19 5M19 14v5H5V5h5" /></Icon></a> : <span>本地文章</span>}
                   <span>{formatDate(currentDoc.updatedAt)}</span>
                   {currentDoc.archivedAt && <span className="archive-stamp">已归档</span>}
                 </div>

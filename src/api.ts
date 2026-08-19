@@ -558,6 +558,13 @@ export const api = {
     });
   },
 
+  createArticle(title = "未命名文章") {
+    return request<CreateDocumentResponse>("/api/documents", {
+      method: "POST",
+      body: JSON.stringify({ title }),
+    });
+  },
+
   getCaptureQueue(signal?: AbortSignal) {
     return request<CaptureQueueStatus>("/api/capture-queue", { signal });
   },

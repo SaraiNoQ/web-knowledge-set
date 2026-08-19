@@ -2189,6 +2189,21 @@ export class KnowledgeDatabase {
     });
   }
 
+  createArticle(title: string) {
+    return transaction(this.sql, () => {
+      const id = randomUUID();
+      const timestamp = now();
+      this.sql.prepare(
+        `INSERT INTO documents(
+           id, source_url, title, markdown, status, title_edited, markdown_edited, source_note, created_at, updated_at
+         ) VALUES (?, ?, ?, '', 'ready', 1, 1, '织页新建文章', ?, ?)`,
+      ).run(id, `zhiye://article/${id}`, title, timestamp, timestamp);
+      const document = this.getDocument(id)!;
+      this.recordRevision(document);
+      return document;
+    });
+  }
+
   createBrowserExtensionClip(input: {
     sourceUrl: string;
     title: string;

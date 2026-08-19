@@ -202,7 +202,8 @@ function safeUrl(value: unknown) {
   if (typeof value !== "string" || value.length > 8_192) return false;
   try {
     const url = new URL(value);
-    return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password;
+    return ((url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password) ||
+      (url.protocol === "zhiye:" && url.hostname === "article" && /^\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(url.pathname));
   } catch { return false; }
 }
 

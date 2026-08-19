@@ -100,8 +100,7 @@ async function publicUrl(input: unknown) {
   return url.href;
 }
 
-export async function createCapture(request: Request, env: CaptureEnv, expectedEpoch: string) {
-  const body = await jsonObject(request, 8_192);
+export async function createCapture(body: Record<string, unknown>, env: CaptureEnv, expectedEpoch: string) {
   if (Object.keys(body).some((name) => name !== "url" && name !== "force") || (body.force !== undefined && body.force !== true)) {
     throw new CloudHttpError(400, "INVALID_CAPTURE_REQUEST", "Capture accepts url and optional force=true");
   }

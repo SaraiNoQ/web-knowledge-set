@@ -211,7 +211,8 @@ test("creates a folder and moves one knowledge item with the accessible dialog",
   await expect(page.locator(".folder-node").filter({ hasText: "根目录" })).toHaveCount(0);
   await expect(page.locator(".result-caption, .document-list")).toHaveCount(0);
   const folderName = `目录-${Date.now()}`;
-  await page.getByRole("button", { name: "新建文件夹" }).click();
+  await page.getByRole("button", { name: "新建", exact: true }).click();
+  await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文件夹" }).click();
   const create = page.getByRole("dialog", { name: "新建文件夹" });
   await create.getByLabel("文件夹名称").fill(folderName);
   await create.getByRole("button", { name: "创建" }).click();
@@ -240,6 +241,19 @@ test("creates a folder and moves one knowledge item with the accessible dialog",
   await page.getByRole("alertdialog", { name: "移入回收站" }).getByRole("button", { name: "移入回收站" }).click();
   await expect(page.getByRole("button", { name: "回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".document-list .directory-document-row").filter({ has: page.locator(`a[href="${captureUrl}"]`) })).toBeVisible();
+});
+
+test("creates a top-level blank article from the directory menu", async ({ page }) => {
+  await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
+  if (await deferSetup.isVisible()) await deferSetup.click();
+  await page.getByRole("button", { name: "新建", exact: true }).click();
+  await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文章" }).click();
+  await expect(page.getByLabel("文档标题")).toHaveValue("未命名文章");
+  await expect(page.locator(".document-kicker").getByText("本地文章", { exact: true })).toBeVisible();
+  await expect(page.locator('.document-kicker a[href^="zhiye:"]')).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "根目录内容" }).getByRole("button", { name: "未命名文章", exact: true })).toHaveAttribute("aria-current", "true");
 });
 
 test("opens one keyboard-accessible help and about dialog in normal and recovery modes", async ({ page }) => {

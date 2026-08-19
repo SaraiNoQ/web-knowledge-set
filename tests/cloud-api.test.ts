@@ -295,6 +295,20 @@ test("cloud folders create, rename, move documents and jobs, then delete to unfi
   assert.deepEqual({ ...job }, { folder_id: null, revision: 3 });
 });
 
+test("cloud creates a ready blank article in the top level", async () => {
+  const { env } = sqliteEnvironment();
+  const response = await handleRequest(new Request("https://app.example.com/api/documents", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": "cloud-1" },
+    body: JSON.stringify({ title: "未命名文章" }),
+  }), env);
+  assert.equal(response.status, 201);
+  const article = (await response.json() as { document: { status: string; folderId: string | null; sourceUrl: string } }).document;
+  assert.equal(article.status, "ready");
+  assert.equal(article.folderId, null);
+  assert.match(article.sourceUrl, /^zhiye:\/\/article\//u);
+});
+
 test("cloud documents and capture jobs round-trip through trash with revision guards", async () => {
   const { env, db } = sqliteEnvironment();
   let queuedMessages = 0;
@@ -674,7 +688,7 @@ test("cloud capture resolves a public target before queueing", async () => {
     const request = new Request("https://app.example.com/api/documents", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: '{"url":"https://example.com/article"}',
     });
-    const result = await createCapture(request, env, "cloud-test");
+    const result = await createCapture(await request.json() as Record<string, unknown>, env, "cloud-test");
     assert.equal(result.created, true);
     assert.equal(result.document.status, "queued");
     assert.deepEqual(queued, { id: result.document.id, url: "https://example.com/article", epoch: "cloud-test" });

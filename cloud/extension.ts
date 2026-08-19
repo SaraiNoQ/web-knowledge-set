@@ -515,6 +515,17 @@ export async function getDocument(db: D1Database, id: string) {
   return row ? { ...summary(row), publishedAt: row.publishedAt, markdown: row.markdown, captureMode: null, sourceNote: row.sourceNote } : null;
 }
 
+export async function createArticle(db: D1Database, title: string) {
+  const id = crypto.randomUUID();
+  const timestamp = new Date().toISOString();
+  await db.prepare(`INSERT INTO cloud_documents(
+    id, source_url, title, markdown, status, source_note, revision, created_at, updated_at
+  ) VALUES (?, ?, ?, '', 'ready', '织页新建文章', 1, ?, ?)`).bind(
+    id, `zhiye://article/${id}`, title, timestamp, timestamp,
+  ).run();
+  return await getDocument(db, id);
+}
+
 function documentRevision(body: Record<string, unknown>, permanent = false) {
   const allowed = permanent ? ["revision", "draftRevision"] : ["revision"];
   if (Object.keys(body).some((key) => !allowed.includes(key)) ||
