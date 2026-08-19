@@ -78,9 +78,8 @@ export function DocumentDirectoryRow({
     }}
   >
     {checkbox ?? <span className="directory-checkbox-space" aria-hidden="true" />}
-    <span className={`directory-status is-${document.status}`} aria-label={STATUS[document.status]} />
     <span className="sr-only">{STATUS[document.status]}</span>
-    <HoverCard content={detail} delay={1_000} disabled={matchMedia("(hover: none), (pointer: coarse)").matches} label="知识详细信息">
+    <HoverCard content={detail} delay={1_000} disabled={matchMedia("(hover: none), (pointer: coarse)").matches} hoverOnly label="知识详细信息">
       <button type="button" className="directory-title document-row" aria-current={selected ? "true" : undefined} onClick={() => onOpen(document.id)}>{document.title || "未命名网页"}</button>
     </HoverCard>
     {/^(?:https?):/u.test(externalUrl) ? <a className="directory-external" href={externalUrl} target="_blank" rel="noreferrer noopener" aria-label={`打开原网页：${document.title || "未命名网页"}`}>↗</a> : <span className="directory-external-space" aria-hidden="true" />}

@@ -11,6 +11,7 @@ interface FloatingProps {
   delay?: number;
   disabled?: boolean;
   interactive: boolean;
+  hoverOnly?: boolean;
   label?: string;
   placement?: FloatingPlacement;
 }
@@ -34,6 +35,7 @@ function Floating({
   delay = 1_000,
   disabled = false,
   interactive,
+  hoverOnly = false,
   label,
   placement: preferredPlacement = "top",
 }: FloatingProps) {
@@ -130,7 +132,7 @@ function Floating({
 
   let trigger = children;
   if (isValidElement<TriggerAria>(children)) {
-    const aria = interactive
+    const aria = interactive && !hoverOnly
       ? { "aria-controls": open ? layerId : undefined, "aria-expanded": open, "aria-haspopup": "dialog" as const }
       : { "aria-describedby": open ? [children.props["aria-describedby"], layerId].filter(Boolean).join(" ") : children.props["aria-describedby"] };
     trigger = cloneElement(children, aria);
@@ -142,7 +144,8 @@ function Floating({
         ref={anchorRef}
         className="ui-floating-anchor"
         onBlurCapture={keepOpenAcrossFocus}
-        onFocusCapture={() => { focusWithin.current = true; openSoon(true); }}
+        onClickCapture={hoverOnly ? () => { clearTimers(); focusWithin.current = false; setOpen(false); } : undefined}
+        onFocusCapture={hoverOnly ? undefined : () => { focusWithin.current = true; openSoon(true); }}
         onKeyDownCapture={onEscape}
         onMouseEnter={() => openSoon()}
         onMouseLeave={closeSoon}
@@ -153,10 +156,10 @@ function Floating({
         <div
           ref={layerRef}
           id={layerId}
-          aria-label={interactive ? label ?? "更多信息" : undefined}
+          aria-label={interactive && !hoverOnly ? label ?? "更多信息" : undefined}
           className={interactive ? "ui-hover-card" : "ui-tooltip"}
           data-placement={position.placement}
-          role={interactive ? "dialog" : "tooltip"}
+          role={interactive && !hoverOnly ? "dialog" : "tooltip"}
           style={{ left: position.left, top: position.top }}
           onBlurCapture={interactive ? keepOpenAcrossFocus : undefined}
           onFocusCapture={interactive ? () => { focusWithin.current = true; openSoon(true); } : undefined}
