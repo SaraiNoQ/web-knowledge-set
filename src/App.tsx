@@ -2556,7 +2556,7 @@ export default function App() {
       }
       const target = event.target as HTMLElement | null;
       if (target?.closest("dialog")) return;
-      const editing = Boolean(target?.closest("input, textarea, select, [contenteditable='true']"));
+      const editing = Boolean(target?.closest("input, textarea, select, [role='combobox'], [contenteditable='true']"));
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         searchInputRef.current?.focus();
@@ -3465,7 +3465,7 @@ export default function App() {
                   <a href={currentDoc.finalUrl || currentDoc.sourceUrl} target="_blank" rel="noreferrer noopener">{sourceName(currentDoc.finalUrl || currentDoc.sourceUrl)}<Icon size={13}><path d="M14 5h5v5M10 14 19 5M19 14v5H5V5h5" /></Icon></a>
                   <span>{formatDate(currentDoc.updatedAt)}</span>
                 </div>
-                {cloudEditing ? <label className="title-field"><span className="sr-only">文档标题</span><textarea rows={2} value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} disabled={saveState === "saving"} /></label> : <h2>{currentDoc.title || "未命名网页"}</h2>}
+                {cloudEditing ? <label className="title-field"><span className="sr-only">文档标题</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} disabled={saveState === "saving"} /></label> : <h2>{currentDoc.title || "未命名网页"}</h2>}
                 <div className="document-actions">
                   <button type="button" className="primary-button" onClick={() => void toggleCloudEditing()} disabled={currentDoc.status !== "ready" || saveState === "saving"}>{cloudEditing ? "返回阅读" : "编辑这篇知识"}</button>
                   <button type="button" className="history-button" onClick={toggleDerived} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen} aria-controls="derived-knowledge">AI 派生</button>
@@ -3501,7 +3501,7 @@ export default function App() {
                   <span>{formatDate(currentDoc.updatedAt)}</span>
                   {currentDoc.archivedAt && <span className="archive-stamp">已归档</span>}
                 </div>
-                <label className="title-field"><span className="sr-only">文档标题</span><textarea rows={2} value={draft.title} onChange={(event) => { if (!closeAttemptRef.current) setDraft({ ...draft, title: event.target.value }); }} disabled={Boolean(currentDoc.deletedAt) || currentDoc.status !== "ready" || editorLocked} /></label>
+                <label className="title-field"><span className="sr-only">文档标题</span><input value={draft.title} onChange={(event) => { if (!closeAttemptRef.current) setDraft({ ...draft, title: event.target.value }); }} disabled={Boolean(currentDoc.deletedAt) || currentDoc.status !== "ready" || editorLocked} /></label>
                 <div className="document-meta">
                   <label className="tag-field"><span>标签</span><input value={tagText} onChange={(event) => { if (!closeAttemptRef.current) { setTagText(event.target.value); setDraft({ ...draft, tags: parseTags(event.target.value) }); } }} placeholder="用逗号分隔" disabled={Boolean(currentDoc.deletedAt) || currentDoc.status !== "ready" || editorLocked} /></label>
                   <fieldset className="collection-picker" disabled={organizationLocked || metadataDirty}>

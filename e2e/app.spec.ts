@@ -1,8 +1,13 @@
-import { expect, test, type Request } from "@playwright/test";
+import { expect, test, type Page, type Request } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 
 const readyImageUrl = "https://assets.example.test/ready.png";
 const failedImageUrl = "https://assets.example.test/failed.png";
+
+async function chooseUiOption(page: Page, name: string, option: string) {
+  await page.getByRole("combobox", { name, exact: true }).click();
+  await page.getByRole("option", { name: option, exact: true }).click();
+}
 
 test("extension content script preserves ChatGPT rendered math in Chromium", async ({ page }) => {
   await page.route("https://chatgpt.com/**", (route) => route.fulfill({ headers: { "Content-Type": "text/html; charset=utf-8" }, body: `<!doctype html><html><head><title>世界模型入门</title></head><body><main><article><div class="markdown prose">
@@ -103,6 +108,8 @@ test("returns home from the logo and toggles the knowledge sidebar", async ({ pa
   await expect(collapse).toHaveAttribute("aria-expanded", "true");
   await collapse.click();
   await expect(page.locator(".workspace")).toHaveClass(/library-collapsed/u);
+  await expect.poll(() => page.locator(".library-panel").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   const expand = page.getByRole("button", { name: "展开知识织片" });
   await expect(expand).toHaveAttribute("aria-expanded", "false");
   await page.setViewportSize({ width: 800, height: 900 });
@@ -112,9 +119,29 @@ test("returns home from the logo and toggles the knowledge sidebar", async ({ pa
   await expand.click();
   await expect(page.locator(".workspace")).not.toHaveClass(/library-collapsed/u);
 
+  const scope = page.getByRole("combobox", { name: "搜索范围" });
+  await scope.click();
+  await expect(page.getByRole("listbox")).toBeVisible();
+  await page.getByRole("option", { name: "仅标题" }).click();
+  await expect(scope).toContainText("仅标题");
+  await scope.press("ArrowDown");
+  await scope.press("ArrowDown");
+  await expect(page.getByRole("option", { name: "仅正文" })).toHaveClass(/is-active/u);
+  await scope.press("Enter");
+  await expect(scope).toContainText("仅正文");
+  await scope.press("Enter");
+  await expect(page.getByRole("listbox")).toBeVisible();
+  await page.locator(".filters").evaluate((element: HTMLFieldSetElement) => { element.disabled = true; });
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await page.locator(".filters").evaluate((element: HTMLFieldSetElement) => { element.disabled = false; });
+  await scope.focus();
+  await scope.press("?");
+  await expect(page.getByRole("dialog", { name: "帮助与关于" })).toHaveCount(0);
+
   await page.getByLabel("网页地址").fill("https://example.com/logo-return");
   await page.getByRole("button", { name: "收取网页" }).click();
   const title = page.getByLabel("文档标题");
+  await expect(title).toHaveJSProperty("tagName", "INPUT");
   await expect(title).toHaveValue("远端测试文章", { timeout: 8_000 });
   await title.fill("保留这次未保存修改");
   await page.getByRole("button", { name: "返回知识库主界面" }).click();
@@ -150,7 +177,9 @@ test("creates a folder and moves one knowledge item with the accessible dialog",
   await expect(page.getByText(`已创建文件夹“${folderName}”。`)).toBeVisible();
   await rootRow.getByRole("button", { name: /移动 远端测试文章/u }).click();
   const move = page.getByRole("dialog", { name: "移动到文件夹" });
-  await move.getByLabel("目标位置").selectOption({ label: folderName });
+  await move.getByRole("combobox", { name: "目标位置" }).click();
+  await expect(page.getByRole("listbox")).toBeVisible();
+  await page.getByRole("option", { name: folderName }).click();
   await move.getByRole("button", { name: "移动", exact: true }).click();
   await expect(page.getByText(`已移到“${folderName}”。`)).toBeVisible();
   const folderBranch = page.locator(".folder-branch").filter({ hasText: folderName });
@@ -276,8 +305,10 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(page.getByLabel("文档标题")).toHaveValue("AI 生命周期文章", { timeout: 8_000 });
 
   await page.getByRole("button", { name: "AI 设置", exact: true }).click();
-  const remoteProvider = page.getByLabel("AI 远程平台");
-  await expect(remoteProvider.locator("option")).toHaveCount(10);
+  const remoteProvider = page.getByRole("combobox", { name: "AI 远程平台" });
+  await remoteProvider.click();
+  await expect(page.getByRole("option")).toHaveCount(10);
+  await remoteProvider.press("Escape");
   await page.getByLabel("AI 远程模型").fill("remote-e2e-model");
   await page.getByLabel("远程模型 API 密钥").fill("e2e-memory-only-key");
   const keyRequest = page.waitForRequest((request) => request.method() === "PUT" && new URL(request.url()).pathname === "/api/settings/llm/key");
@@ -296,11 +327,10 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(page.getByText("当前进程已加载当前平台密钥", { exact: false })).toBeVisible();
   await expect(page.getByRole("button", { name: "删除密钥" })).toBeVisible();
   await page.getByLabel("AI 远程模型").fill("remote-e2e-model");
-  const remoteProviderAfterReload = page.getByLabel("AI 远程平台");
   await page.getByLabel("远程模型 API 密钥").fill("must-not-cross-platforms");
   await expect(page.getByRole("button", { name: "测试连接" })).toBeDisabled();
   await expect(page.getByText("先保存密钥，再测试", { exact: false })).toBeVisible();
-  await remoteProviderAfterReload.selectOption("deepseek");
+  await chooseUiOption(page, "AI 远程平台", "DeepSeek");
   await expect(page.getByText("https://api.deepseek.com/chat/completions", { exact: true })).toBeVisible();
   await expect(page.getByLabel("AI 远程端点地址")).toHaveCount(0);
   await expect(page.getByLabel("远程模型 API 密钥")).toHaveValue("");
@@ -309,7 +339,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await page.getByText("允许 AI 派生知识", { exact: true }).click();
   await expect(page.getByRole("button", { name: "保存设置" })).toBeDisabled();
   await page.getByText("允许 AI 派生知识", { exact: true }).click();
-  await remoteProviderAfterReload.selectOption("other");
+  await chooseUiOption(page, "AI 远程平台", "其他（手动输入）");
   await expect(page.getByLabel("AI 远程端点地址")).toBeVisible();
   await page.getByLabel("AI 远程端点地址").fill("http://insecure.example.test/v1/chat/completions");
   await page.getByLabel("远程模型 API 密钥").fill("must-not-bind-to-insecure-endpoint");
@@ -319,7 +349,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await page.getByRole("button", { name: "删除密钥" }).click();
   await page.getByRole("alertdialog", { name: "删除远程模型密钥" }).getByRole("button", { name: "删除密钥" }).click();
   await expect(page.getByText("当前平台未加载密钥", { exact: false })).toBeVisible();
-  await remoteProviderAfterReload.selectOption("openai");
+  await chooseUiOption(page, "AI 远程平台", "OpenAI");
   await page.getByRole("button", { name: "可信本地端点" }).click();
   await page.getByLabel("AI 本地端点地址").fill("http://127.0.0.1:4175/v1/chat/completions");
   await page.getByLabel("AI 本地模型").fill("fake-e2e-model");
@@ -427,8 +457,9 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await page.getByRole("button", { name: "翻译", exact: true }).click();
   await expect(panel.getByRole("button", { name: "翻译", exact: true })).toHaveAttribute("aria-pressed", "true");
   const language = panel.getByLabel("翻译目标语言");
-  await expect(language.locator("option")).toHaveCount(11);
-  await language.selectOption("en");
+  await language.click();
+  await expect(page.getByRole("option")).toHaveCount(11);
+  await page.getByRole("option", { name: "English", exact: true }).click();
   const translationPreviewResponse = page.waitForResponse((response) => response.request().method() === "POST" && /\/derived-preview$/u.test(new URL(response.url()).pathname));
   const translationRequest = page.waitForRequest((request) => request.method() === "POST" && /\/derived-task$/u.test(new URL(request.url()).pathname));
   await panel.getByRole("button", { name: "获取", exact: true }).click();
@@ -1026,7 +1057,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await keyboardRow.focus();
   await page.keyboard.press("x");
   await expect(page.getByLabel("选择 人工整理标题")).toBeChecked();
-  await page.getByLabel("批量操作", { exact: true }).selectOption("unarchive");
+  await chooseUiOption(page, "批量操作", "取消归档");
   await page.getByRole("button", { name: "应用", exact: true }).click();
   await expect(page.getByText("已处理当前页选中的 1 篇知识。")).toBeVisible();
   await page.getByRole("button", { name: "人工整理标题", exact: true }).click();
