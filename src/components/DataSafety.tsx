@@ -50,6 +50,7 @@ function BackupRow({
   onVerify,
   onExport,
   onRestore,
+  onDelete,
 }: {
   backup: BackupRecord;
   busy: boolean;
@@ -57,6 +58,7 @@ function BackupRow({
   onVerify: () => void;
   onExport: () => void;
   onRestore: () => void;
+  onDelete: () => void;
 }) {
   const restorable = backup.status === "verified" && Boolean(backup.directoryName);
   return (
@@ -75,6 +77,7 @@ function BackupRow({
         <button type="button" onClick={onVerify} disabled={busy || recovery || !backup.directoryName}>重新校验</button>
         <button type="button" onClick={onExport} disabled={busy || !restorable}>导出文件</button>
         <button className="restore-button" type="button" onClick={onRestore} disabled={busy || !restorable}>恢复此留档</button>
+        <button className="delete-button" type="button" onClick={onDelete} disabled={busy}>删除此留档</button>
       </div>
     </li>
   );
@@ -228,6 +231,14 @@ export function DataSafety({
     }
   };
 
+  const deleteBackup = async (backup: BackupRecord) => {
+    if (busyRef.current || !await dialogs.confirm(
+      `删除 ${dateTime(backup.createdAt)} 的留档？删除后无法恢复。`,
+      { title: "删除完整留档", confirmLabel: "删除留档", tone: "danger" },
+    )) return;
+    await perform(`delete:${backup.id}`, () => api.deleteBackup(backup.id), "留档已删除。");
+  };
+
   const saveRetention = (event: FormEvent) => {
     event.preventDefault();
     if (!Number.isInteger(retention) || retention < 1 || retention > 100) {
@@ -340,7 +351,7 @@ export function DataSafety({
         </article>
       </section>
 
-      <div className="safety-columns">
+      <div className={`safety-columns${cloud ? " is-cloud" : ""}`}>
         <section className="safety-card backup-ledger">
           <header>
             <div>
@@ -375,6 +386,7 @@ export function DataSafety({
                   onVerify={() => void verify(backup)}
                   onExport={() => void exportBackup(backup)}
                   onRestore={() => void restore(backup)}
+                  onDelete={() => void deleteBackup(backup)}
                 />
               ))}
             </ol>

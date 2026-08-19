@@ -41,6 +41,7 @@ import {
   createRecordedBackup,
   DataSafetyError,
   dataSafetyHealth,
+  deleteRecordedBackup,
   defaultBackupRoot,
   errorDetails,
   importRecordedBackup,
@@ -1870,6 +1871,23 @@ export function createApp(options: AppOptions) {
           }
         });
         sendJson(response, 200, record);
+        return;
+      }
+
+      const deleteBackupMatch = pathname.match(/^\/api\/data-safety\/backups\/([^/]+)$/u);
+      if (deleteBackupMatch && request.method === "DELETE") {
+        const body = await readJson(request);
+        assertDataEpoch(enteringDataEpoch);
+        if (Object.keys(body).length) throw new HttpError(400, "INVALID_BACKUP_DELETE", "Backup deletion accepts no fields");
+        const result = await runMaintenance("backup deletion", async () => {
+          await worker.pause();
+          try {
+            return await deleteRecordedBackup(db, backupRoot, decodeId(deleteBackupMatch[1]));
+          } finally {
+            worker.resume();
+          }
+        });
+        sendJson(response, 200, result);
         return;
       }
 

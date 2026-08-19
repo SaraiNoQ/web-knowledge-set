@@ -111,6 +111,9 @@ function memoryBucket() {
       const bytes = objects.get(key);
       return bytes ? { size: bytes.byteLength } : null;
     },
+    async delete(key: string) {
+      objects.delete(key);
+    },
   };
 }
 
@@ -124,6 +127,7 @@ function environment(): CloudEnv {
       },
       async get() { return null; },
       async head() { return null; },
+      async delete() {},
     },
     CAPTURE_QUEUE: { async send() {} },
     BROWSER: { async quickAction() { return new Response('{"success":true,"result":"# captured"}'); } },
@@ -224,6 +228,11 @@ test("cloud core serves the existing empty-library startup contract", async () =
   assert.deepEqual({ format: backupArchive.format, version: backupArchive.version, folders: backupArchive.folders }, {
     format: "zhiye-cloud-backup", version: 3, folders: [],
   });
+
+  const deleted = await handleRequest(new Request("https://app.example.com/api/data-safety/backups/invalid", {
+    method: "DELETE", headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": "cloud-test" }, body: "{}",
+  }), environment());
+  assert.equal(deleted.status, 404);
 
   preparedSql = [];
   const scopedSearch = await handleRequest(
@@ -402,7 +411,7 @@ test("cloud document and capture job pagination never skips mixed rows", async (
 });
 
 test("cloud backup restores v3 trash, maps v1 documents to active unfiled, and rolls back failures", async () => {
-  const { env, db } = sqliteEnvironment();
+  const { env, db, bucket } = sqliteEnvironment();
   const now = "2026-08-18T00:00:00.000Z";
   db.sqlite.prepare("INSERT INTO cloud_folders(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)")
     .run("folder-v2", "Research", now, now);
@@ -478,6 +487,25 @@ test("cloud backup restores v3 trash, maps v1 documents to active unfiled, and r
   db.failBatchOn = null;
   assert.equal(failed.status, 500);
   assert.equal((db.sqlite.prepare("SELECT title FROM cloud_documents").get() as { title: string }).title, "Current state");
+
+  const deletable = await handleRequest(new Request("https://app.example.com/api/data-safety/backups", {
+    method: "POST", headers: epochHeader(), body: "{}",
+  }), env);
+  const deletableId = (await deletable.json() as { id: string }).id;
+  const originalDelete = env.BACKUPS.delete;
+  env.BACKUPS.delete = async () => { throw new Error("injected R2 delete failure"); };
+  const failedDelete = await handleRequest(new Request(`https://app.example.com/api/data-safety/backups/${deletableId}`, {
+    method: "DELETE", headers: epochHeader(), body: "{}",
+  }), env);
+  assert.equal(failedDelete.status, 500);
+  assert.equal((db.sqlite.prepare("SELECT COUNT(*) AS count FROM cloud_backups WHERE id = ?").get(deletableId) as { count: number }).count, 1);
+  env.BACKUPS.delete = originalDelete;
+  const deleted = await handleRequest(new Request(`https://app.example.com/api/data-safety/backups/${deletableId}`, {
+    method: "DELETE", headers: epochHeader(), body: "{}",
+  }), env);
+  assert.equal(deleted.status, 204);
+  assert.equal(bucket.objects.has(`backups/${deletableId}.zhiye-cloud-backup`), false);
+  assert.equal((db.sqlite.prepare("SELECT COUNT(*) AS count FROM cloud_backups WHERE id = ?").get(deletableId) as { count: number }).count, 0);
   assert.doesNotMatch(String((db.sqlite.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'").get() as { value: string }).value), /^restore:/u);
 });
 

@@ -18,6 +18,7 @@ export interface R2Bucket {
   put(key: string, value: ArrayBuffer | Uint8Array | string, options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }): Promise<unknown>;
   get(key: string): Promise<R2ObjectBody | null>;
   head(key: string): Promise<{ size: number } | null>;
+  delete(key: string): Promise<void>;
 }
 
 interface BackupReply { status?: number; body: unknown; epoch?: string }
@@ -397,6 +398,22 @@ export async function handleBackupApi(
     const verifiedAt = new Date().toISOString();
     await db.prepare("UPDATE cloud_backups SET status = 'verified', verified_at = ?, error_code = NULL WHERE id = ?").bind(verifiedAt, id).run();
     return { body: backupRecord({ ...row, status: "verified", verifiedAt, errorCode: null }) };
+  }
+  if (!match[2] && request.method === "DELETE") {
+    const row = await db.prepare(`SELECT ${backupColumns} FROM cloud_backups WHERE id = ?`).bind(id).first<Record<string, unknown>>();
+    if (!row) throw new CloudHttpError(404, "BACKUP_NOT_FOUND", "Cloud backup not found");
+    const deleted = await db.prepare("DELETE FROM cloud_backups WHERE id = ?").bind(id).run();
+    if (changes(deleted) !== 1) throw new CloudHttpError(404, "BACKUP_NOT_FOUND", "Cloud backup not found");
+    try {
+      await bucket.delete(String(row.objectKey));
+    } catch (cause) {
+      await db.prepare(`INSERT INTO cloud_backups(id, object_key, reason, status, created_at, verified_at, total_bytes, sha256, error_code)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+        row.id, row.objectKey, row.reason, row.status, row.createdAt, row.verifiedAt, row.totalBytes, row.sha256, row.errorCode,
+      ).run();
+      throw cause;
+    }
+    return new Response(null, { status: 204 });
   }
   if (match[2] === "restore" && request.method === "POST") {
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;

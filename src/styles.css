@@ -1325,6 +1325,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .safety-overview small { overflow: hidden; color: var(--ink-faint); font-size: var(--font-small); text-overflow: ellipsis; white-space: nowrap; }
 
 .safety-columns { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(270px, .75fr); gap: 22px; max-width: 1420px; margin: 0 auto; }
+.safety-columns.is-cloud { grid-template-columns: 1fr; }
 .safety-card { background: rgba(250,247,239,.72); border: 1px solid var(--line-strong); box-shadow: 0 18px 55px rgba(54,46,34,.055); }
 .safety-card h2 { margin: 5px 0 0; font: 500 25px/1.2 var(--font-serif); }
 .backup-ledger > header { display: flex; justify-content: space-between; align-items: start; gap: 20px; padding: 22px 25px; border-bottom: 1px solid var(--line); }
@@ -1363,6 +1364,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .safety-controls button { padding: 7px 10px; color: var(--ink-soft); background: transparent; border: 1px solid var(--line-strong); font-size: var(--font-small); }
 .backup-actions a { text-decoration: none; }
 .backup-actions .restore-button { color: var(--paper-light); background: var(--ink); border-color: var(--ink); }
+.backup-actions .delete-button { color: var(--vermilion-dark); border-color: var(--vermilion); }
 
 .safety-controls { padding: 24px 25px; }
 .safety-controls > p { margin: 13px 0 24px; color: var(--ink-soft); font-size: var(--font-ui); line-height: 1.75; }

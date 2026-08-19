@@ -556,6 +556,25 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(page.getByText("还没有派生结果。", { exact: false })).toBeVisible();
 });
 
+test("deletes a complete backup after confirmation", async ({ page }) => {
+  await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  if (await deferSetup.isVisible()) await deferSetup.click();
+  await page.getByRole("button", { name: "数据安全" }).click();
+  await expect(page.getByRole("heading", { name: "数据安全" })).toBeVisible();
+  const backupRows = page.locator(".backup-row");
+  const before = await backupRows.count();
+  await page.getByRole("button", { name: "创建留档" }).click();
+  await expect(page.getByText("完整留档已创建并校验。")).toBeVisible();
+  await expect(backupRows).toHaveCount(before + 1);
+  await backupRows.first().getByRole("button", { name: "删除此留档" }).click();
+  const dialog = page.getByRole("alertdialog", { name: "删除完整留档" });
+  await expect(dialog).toContainText("删除后无法恢复");
+  await dialog.getByRole("button", { name: "删除留档" }).click();
+  await expect(page.getByText("留档已删除。")).toBeVisible();
+  await expect(backupRows).toHaveCount(before);
+});
+
 test("imports, restores history, trashes, restores, searches, exports, and blocks raw scripts", async ({ page }) => {
   test.setTimeout(60_000);
   const remoteImageRequests: string[] = [];

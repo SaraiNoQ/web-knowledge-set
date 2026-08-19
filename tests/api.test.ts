@@ -594,6 +594,16 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     const importedBackupRecord = (await importedBackupResponse.json()) as BackupRecord;
     assert.equal(importedBackupRecord.status, "verified");
     assert.notEqual(importedBackupRecord.id, backupRecord.id);
+    if (!importedBackupRecord.directoryName) throw new Error("Imported backup has no directory");
+    rmSync(join(`${directory}-backups`, importedBackupRecord.directoryName, "manifest.json"));
+    const deletedBackup = await fetch(`${base}/api/data-safety/backups/${encodeURIComponent(importedBackupRecord.id)}`, {
+      method: "DELETE", headers: jsonHeaders, body: "{}",
+    });
+    assert.equal(deletedBackup.status, 200);
+    assert.deepEqual((await deletedBackup.json()) as { deleted: true }, { deleted: true });
+    const afterDelete = (await (await fetch(`${base}/api/data-safety`, { headers: { Cookie: cookie } })).json()) as DataSafetyStatus;
+    assert.equal(afterDelete.backups.some((value) => value.id === importedBackupRecord.id), false);
+    assert.equal(existsSync(join(`${directory}-backups`, importedBackupRecord.directoryName)), false);
     for (const automaticRetentionCount of [0, 101]) {
       const response = await fetch(`${base}/api/data-safety/settings`, {
         method: "PATCH",

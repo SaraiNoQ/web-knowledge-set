@@ -423,6 +423,13 @@ export const api = {
     }, true);
   },
 
+  deleteBackup(id: string) {
+    return request<void>(`/api/data-safety/backups/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      body: JSON.stringify({}),
+    });
+  },
+
   updateBackupSettings(automaticRetentionCount: number) {
     return request<BackupSettings>("/api/data-safety/settings", {
       method: "PATCH",

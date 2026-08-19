@@ -292,6 +292,25 @@ export async function deleteBackup(backupRoot: string, directoryName: string) {
   return verified;
 }
 
+/** Call only while no backup operation is running. */
+export function removeBackup(backupRoot: string, directoryName: string) {
+  if (typeof directoryName !== "string" || !BACKUP_DIRECTORY.test(directoryName)) {
+    fail("UNSAFE_PATH", "Backup deletion requires a valid direct child directory name");
+  }
+  let root = resolve(backupRoot);
+  ensureDirectory(root);
+  root = realpathSync(root);
+  const path = join(root, directoryName);
+  const identity = directoryIdentity(path, "UNSAFE_PATH");
+  if (!sameDirectory(directoryIdentity(path, "UNSAFE_PATH"), identity)) {
+    fail("UNSAFE_PATH", "Backup directory changed during deletion");
+  }
+  rmSync(path, { recursive: true });
+  if (existsSync(path)) fail("UNSAFE_PATH", "Backup directory still exists after deletion");
+  syncPath(root);
+  return identity;
+}
+
 function backupFilePath(root: string, path: string) {
   if (path !== DATABASE_FILE && !SNAPSHOT_PATH.test(path) && !ASSET_PATH.test(path)) {
     fail("UNSAFE_PATH", `Backup contains an unsafe path: ${path}`);

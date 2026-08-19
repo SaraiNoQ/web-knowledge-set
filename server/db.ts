@@ -1446,6 +1446,10 @@ export class KnowledgeDatabase {
     ).map((row) => this.toBackupRecord(row));
   }
 
+  deleteBackupRecord(id: string) {
+    return this.sql.prepare("DELETE FROM backup_records WHERE id = ?").run(id).changes === 1;
+  }
+
   hasAutomaticBackupForDay(dayStart: string, nextDayStart: string) {
     if (!dayStart || dayStart >= nextDayStart) throw new RangeError("Backup day range is invalid");
     return Boolean(

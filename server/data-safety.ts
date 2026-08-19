@@ -12,6 +12,7 @@ import {
   createBackup,
   deleteBackup,
   importBackupArchive,
+  removeBackup,
   verifyBackup,
   type VerifiedBackup,
 } from "./backup.js";
@@ -240,6 +241,37 @@ async function recordAndBackup(
 
 export async function verifyBackupRecord(db: KnowledgeDatabase, backupRoot: string, id: string) {
   return (await recordAndBackup(db, backupRoot, id)).record;
+}
+
+export async function deleteRecordedBackup(
+  db: KnowledgeDatabase | null,
+  backupRoot: string,
+  id: string,
+) {
+  if (typeof id !== "string" || id.length < 1 || id.length > 300) {
+    throw new DataSafetyError(400, "INVALID_BACKUP_ID", "Backup record ID is invalid");
+  }
+  const record = db
+    ? db.getBackupRecord(id)
+    : (await listRecoveryBackups(backupRoot)).find((candidate) => candidate.id === id) ?? null;
+  if (!record) throw new DataSafetyError(404, "BACKUP_NOT_FOUND", "Backup record not found");
+  const removedFromDatabase = db ? db.deleteBackupRecord(id) : true;
+  if (db && !removedFromDatabase) {
+    throw new DataSafetyError(404, "BACKUP_NOT_FOUND", "Backup record not found");
+  }
+  try {
+    if (record.directoryName) {
+      if (!backupDirectory.test(record.directoryName)) {
+        throw new DataSafetyError(500, "UNSAFE_BACKUP_RECORD", "Backup record contains an unsafe directory name");
+      }
+      const path = join(backupRoot, record.directoryName);
+      if (existsSync(path)) removeBackup(backupRoot, record.directoryName);
+    }
+  } catch (error) {
+    if (db && removedFromDatabase) db.upsertBackupRecord(record);
+    throw error;
+  }
+  return { deleted: true as const };
 }
 
 export async function resolveBackupRecord(
