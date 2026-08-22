@@ -17,11 +17,12 @@ declare const chrome: {
     set(values: Record<string, unknown>): Promise<void>;
     remove(keys: string[]): Promise<void>;
   } };
-  tabs: { query(queryInfo: { active: boolean; currentWindow: boolean }): Promise<Array<{ id?: number; url?: string }>> };
-  scripting: { executeScript<T>(details: {
+  tabs: { query(queryInfo: { active?: boolean; currentWindow?: boolean; url?: string | string[] }): Promise<Array<{ id?: number; url?: string }>> };
+  scripting: { executeScript<T, Args extends unknown[] = []>(details: {
     target: { tabId: number };
     files?: string[];
-    func?: () => T | Promise<T>;
+    func?: (...args: Args) => T | Promise<T>;
+    args?: Args;
   }): Promise<Array<{ result?: T }>> };
 };
 

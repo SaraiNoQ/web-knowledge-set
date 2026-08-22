@@ -31,6 +31,16 @@ async function responseJson(response: Response) {
   return payload ?? {};
 }
 
+async function notifyOpenLibraries(documentId: string) {
+  const tabs = await webext.tabs.query({ url: "https://zhiye.sarainoq.cn/*" });
+  const results = await Promise.allSettled(tabs.flatMap(({ id }) => id == null ? [] : [webext.scripting.executeScript({
+    target: { tabId: id },
+    func: (savedId: string) => window.dispatchEvent(new CustomEvent("zhiye:extension-saved", { detail: savedId })),
+    args: [documentId],
+  })]));
+  return results.some(({ status }) => status === "fulfilled");
+}
+
 async function showState() {
   const paired = Boolean(await token());
   pairPanel.hidden = paired;
@@ -100,9 +110,10 @@ clipForm.addEventListener("submit", async (event) => {
         markdown: markdownInput.value,
       }),
     });
-    await responseJson(response);
+    const payload = await responseJson(response);
+    const notified = payload.documentId ? await notifyOpenLibraries(payload.documentId).catch(() => false) : false;
     clipForm.hidden = true;
-    message("已保存为织页中的新副本。");
+    message(notified ? "已保存，织页目录已自动刷新。" : "已保存为织页中的新副本。");
   } catch (error) {
     const code = (error as Error).message;
     if (code === "EXTENSION_UNAUTHORIZED") {

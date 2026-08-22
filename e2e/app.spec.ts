@@ -32,6 +32,29 @@ test("extension content script preserves ChatGPT rendered math in Chromium", asy
   expect(markdown).not.toContain("视觉公式不得重复");
 });
 
+test("refreshes the directory when the browser extension announces a saved clip", async ({ page }) => {
+  await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  await deferSetup.or(page.getByLabel("网页地址")).first().waitFor();
+  if (await deferSetup.isVisible()) await deferSetup.click();
+  await expect(page.getByText("暂无未归入文件夹的知识。")).toBeVisible();
+  const folderName = `即时刷新-${Date.now()}`;
+  await page.getByRole("button", { name: "新建", exact: true }).click();
+  await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文件夹" }).click();
+  await page.getByRole("dialog", { name: "新建文件夹" }).getByLabel("文件夹名称").fill(folderName);
+  await page.getByRole("dialog", { name: "新建文件夹" }).getByRole("button", { name: "创建", exact: true }).click();
+  const folder = page.locator(".folder-node").filter({ hasText: folderName });
+  await expect(folder).toBeVisible();
+  await folder.locator(":scope > button").click();
+  await expect(page.getByText("这个文件夹是空的。")).toBeVisible();
+  const foldersRefresh = page.waitForRequest((request) => request.method() === "GET" && new URL(request.url()).pathname === "/api/folders");
+  const rootRefresh = page.waitForRequest((request) => request.method() === "GET" && new URL(request.url()).pathname === "/api/documents" && new URL(request.url()).searchParams.get("unfiled") === "true");
+  const folderRefresh = page.waitForRequest((request) => request.method() === "GET" && new URL(request.url()).pathname === "/api/documents" && new URL(request.url()).searchParams.has("folderId"));
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("zhiye:extension-saved", { detail: "extension-document-id" })));
+  await Promise.all([foldersRefresh, rootRefresh, folderRefresh]);
+  await expect(page.getByRole("status").filter({ hasText: "浏览器扩展已保存新知识，目录已刷新。" })).toBeVisible();
+});
+
 test("keeps the first-run guide deferrable, reopenable, readable, and durable", async ({ page, context }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /你的知识/u })).toBeVisible();

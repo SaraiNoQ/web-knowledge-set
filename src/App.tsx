@@ -715,6 +715,16 @@ export default function App() {
   }, [cloudMode]);
 
   useEffect(() => {
+    const refresh = (event: Event) => {
+      if (typeof (event as CustomEvent<unknown>).detail !== "string") return;
+      setListRefresh((value) => value + 1);
+      toast.success("浏览器扩展已保存新知识，目录已刷新。");
+    };
+    window.addEventListener("zhiye:extension-saved", refresh);
+    return () => window.removeEventListener("zhiye:extension-saved", refresh);
+  }, [toast]);
+
+  useEffect(() => {
     if (longArticle) setMode("edit");
     else setLongPreviewDocumentId(null);
   }, [longArticle]);

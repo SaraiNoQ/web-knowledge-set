@@ -48,8 +48,8 @@ export function BrowserExtension({ onPairingCountChange }: { onPairingCountChang
     <h3 id="extension-title">浏览器扩展</h3>
     <p>在已登录网页中提取当前可见正文。扩展不申请 Cookie、历史或全部网页权限，只在点击时读取当前标签页。</p>
     <div className="extension-downloads">
-      <a href="/extensions/zhiye-clipper-chrome.zip?v=0.2.3" download>下载 Chrome 扩展 0.2.3</a>
-      <a href="/extensions/zhiye-clipper-firefox.zip?v=0.2.3" download>下载 Firefox 扩展 0.2.3</a>
+      <a href="/extensions/zhiye-clipper-chrome.zip?v=0.3.0" download>下载 Chrome 扩展 0.3.0</a>
+      <a href="/extensions/zhiye-clipper-firefox.zip?v=0.3.0" download>下载 Firefox 扩展 0.3.0</a>
     </div>
     <p>升级时请先覆盖旧解压目录并点“重新加载”。Chrome 在扩展管理页加载目录；Firefox 在 about:debugging 临时加载 manifest.json。</p>
     <div className="extension-actions">
@@ -61,7 +61,7 @@ export function BrowserExtension({ onPairingCountChange }: { onPairingCountChang
       <span>{pairing.browser === "chrome" ? "Chrome" : "Firefox"} · {new Date(pairing.createdAt).toLocaleDateString()}</span>
       <button type="button" onClick={() => void revoke(pairing)} disabled={busy}>撤销</button>
     </li>)}</ul>}
-    <p>扩展只连接 clip.sarainoq.cn；每次剪藏都会创建新副本。图片只保留原链接，不上传登录凭证、完整 DOM 或登录态图片字节。</p>
+    <p>扩展只向 clip.sarainoq.cn 保存新副本；保存后会通知已打开的织页标签页刷新目录。图片只保留原链接，不上传登录凭证、完整 DOM 或登录态图片字节。</p>
     {error && <p className="form-error" role="alert">{error}</p>}
   </section>;
 }

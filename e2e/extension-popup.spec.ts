@@ -53,3 +53,62 @@ test("extension popup prevents horizontal overflow and uses the app scrollbar pa
     expect(forced.track).not.toBe("rgba(189, 65, 44, 0.08)");
   }
 });
+
+test("extension save notifies open library tabs without coupling save success to delivery", async ({ page }) => {
+  await page.addInitScript(() => {
+    const state: { args?: unknown[]; hasTab: boolean; query?: unknown; received: unknown[]; rejectInjection: boolean } = { hasTab: true, received: [], rejectInjection: false };
+    window.addEventListener("zhiye:extension-saved", (event) => state.received.push((event as CustomEvent<unknown>).detail));
+    const api = {
+      runtime: {},
+      storage: { local: { get: async () => ({ token: "paired-token" }), set: async () => undefined, remove: async () => undefined } },
+      tabs: { query: async (query: unknown) => { state.query = query; return state.hasTab ? [{ id: 17, url: "https://zhiye.sarainoq.cn/" }] : []; } },
+      scripting: { executeScript: async (details: { args?: unknown[]; func?: (...args: unknown[]) => unknown }) => {
+        if (state.rejectInjection) throw new Error("tab closed");
+        state.args = details.args;
+        return [{ result: details.func?.(...(details.args ?? [])) }];
+      } },
+    };
+    Object.defineProperty(window, "chrome", { configurable: true, value: api });
+    Object.defineProperty(window, "browser", { configurable: true, value: api });
+    Object.defineProperty(window, "fetch", { configurable: true, value: async () => new Response(JSON.stringify({ documentId: "saved-document-id" }), { status: 201, headers: { "Content-Type": "application/json" } }) });
+    Object.assign(window, { __EXTENSION_PUSH_TEST__: state });
+  });
+  const [html, css, script] = await Promise.all([
+    readFile("extension/popup.html", "utf8"),
+    readFile("extension/popup.css", "utf8"),
+    readFile("dist/extensions/zhiye-clipper-chrome/popup.js", "utf8"),
+  ]);
+  await page.route("https://extension.test/**", (route) => route.fulfill({ contentType: "text/html", body: html.replace('<link rel="stylesheet" href="popup.css">', `<style>${css}</style>`).replace('<script src="popup.js"></script>', "") }));
+  await page.goto("https://extension.test/popup.html");
+  await page.addScriptTag({ content: script });
+  await expect(page.locator("#clip-panel")).toBeVisible();
+  await page.locator("#clip-form").evaluate((element: HTMLElement) => { element.hidden = false; });
+  await page.locator("#title").fill("即时刷新测试");
+  await page.locator("#source").fill("https://example.com/saved");
+  await page.locator("#markdown").fill("# 已保存");
+  await page.getByRole("button", { name: "确认并保存新副本" }).click();
+  await expect(page.locator("#status")).toHaveText("已保存，织页目录已自动刷新。");
+  expect(await page.evaluate(() => {
+    const { args, query, received } = (window as typeof window & { __EXTENSION_PUSH_TEST__: { args?: unknown[]; query?: unknown; received: unknown[] } }).__EXTENSION_PUSH_TEST__;
+    return { args, query, received };
+  })).toEqual({
+    args: ["saved-document-id"],
+    query: { url: "https://zhiye.sarainoq.cn/*" },
+    received: ["saved-document-id"],
+  });
+  await page.evaluate(() => {
+    const state = (window as typeof window & { __EXTENSION_PUSH_TEST__: { rejectInjection: boolean } }).__EXTENSION_PUSH_TEST__;
+    state.rejectInjection = true;
+    document.querySelector<HTMLElement>("#clip-form")!.hidden = false;
+  });
+  await page.getByRole("button", { name: "确认并保存新副本" }).click();
+  await expect(page.locator("#status")).toHaveText("已保存为织页中的新副本。");
+  await page.evaluate(() => {
+    const state = (window as typeof window & { __EXTENSION_PUSH_TEST__: { hasTab: boolean; rejectInjection: boolean } }).__EXTENSION_PUSH_TEST__;
+    state.rejectInjection = false;
+    state.hasTab = false;
+    document.querySelector<HTMLElement>("#clip-form")!.hidden = false;
+  });
+  await page.getByRole("button", { name: "确认并保存新副本" }).click();
+  await expect(page.locator("#status")).toHaveText("已保存为织页中的新副本。");
+});

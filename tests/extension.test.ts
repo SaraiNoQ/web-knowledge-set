@@ -10,8 +10,9 @@ import { createApp } from "../server/app.js";
 import { openDatabase } from "../server/db.js";
 
 test("extension download links match both manifest versions", async () => {
-  const manifests = await Promise.all(["chrome", "firefox"].map(async (browser) => JSON.parse(await readFile(new URL(`../extension/manifest.${browser}.json`, import.meta.url), "utf8")) as { version: string }));
+  const manifests = await Promise.all(["chrome", "firefox"].map(async (browser) => JSON.parse(await readFile(new URL(`../extension/manifest.${browser}.json`, import.meta.url), "utf8")) as { host_permissions: string[]; version: string }));
   assert.equal(manifests[0].version, manifests[1].version);
+  for (const manifest of manifests) assert.deepEqual(manifest.host_permissions, ["https://clip.sarainoq.cn/*", "https://zhiye.sarainoq.cn/*"]);
   const help = await readFile(new URL("../src/components/BrowserExtension.tsx", import.meta.url), "utf8");
   for (const [browser, label] of [["chrome", "Chrome"], ["firefox", "Firefox"]]) {
     assert.ok(help.includes(`href="/extensions/zhiye-clipper-${browser}.zip?v=${manifests[0].version}"`));
