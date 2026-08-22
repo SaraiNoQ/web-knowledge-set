@@ -30,5 +30,10 @@ export default defineConfig({
       dependencies: ["auth"],
       use: { browserName: "firefox", storageState: "test-results/e2e-auth.json" },
     },
+    {
+      name: "firefox-popup",
+      testMatch: "**/extension-popup.spec.ts",
+      use: { browserName: "firefox" },
+    },
   ],
 });
