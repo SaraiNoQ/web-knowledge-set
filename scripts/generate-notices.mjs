@@ -128,12 +128,14 @@ const donor = {
 };
 const override = new Map([
   [["block2@0.6.2", "dispatch2@0.3.1", "objc2@0.6.4", "objc2-app-kit@0.3.2", "objc2-core-foundation@0.3.2", "objc2-core-graphics@0.3.2", "objc2-encode@4.1.0", "objc2-exception-helper@0.1.1", "objc2-foundation@0.3.2", "objc2-io-surface@0.3.2", "objc2-osa-kit@0.3.2", "objc2-web-kit@0.3.2"], "objc2-LICENSE.md"],
+  [["rehype-katex@7.0.1", "remark-math@6.0.0"], "remark-math-LICENSE-MIT.txt"],
   [["sigchld@0.2.4"], "sigchld-LICENSE-MIT.txt"],
   [["selectors@0.36.1"], "selectors-NOTICE-MPL-2.0.txt"],
   [["unic-char-property@0.9.0", "unic-char-range@0.9.0", "unic-common@0.9.0", "unic-ucd-ident@0.9.0", "unic-ucd-version@0.9.0"], "rust-unic-NOTICE.txt"],
 ].flatMap(([packages, file]) => packages.map((name) => [name, file])));
 const overrideHashes = {
   "objc2-LICENSE.md": "d2acb74dfbf5e6a9f80a7431925da31f4ea29e59d4b6dedec5cb39acc48e435a",
+  "remark-math-LICENSE-MIT.txt": "b4c9077a6fe03b40387623026f4de8c05ad819f1f86e7e0ad3230976bbf3fd90",
   "rust-unic-NOTICE.txt": "ad68113eef6907387d6095debdd4b1a12a38bbc3533b65e434d501a996f6336d",
   "selectors-NOTICE-MPL-2.0.txt": "c80bb752cdf998c673781daf9830e1e96f641ae6b43c886daa68de63c59b945f",
   "sigchld-LICENSE-MIT.txt": "f427674c31022b54bb6aaa28135efa4f026fd08d63c318411e0380be942e51ce",

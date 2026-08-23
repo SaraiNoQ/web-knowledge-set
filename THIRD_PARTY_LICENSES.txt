@@ -184,7 +184,7 @@ DEALINGS IN THE SOFTWARE.
 
 ================================================================================
 SHA-256: 0e57eeaccc07eadeb2c7f720ab2601ef37e02fbc6a86cd6667caf7bf5c614de6
-Provided by: css-select@7.0.0, css-what@8.0.0, domelementtype@2.3.0, domelementtype@3.0.0, domhandler@5.0.3, domhandler@6.0.1, domutils@3.2.2, domutils@4.0.2, entities@4.5.0, entities@7.0.1, entities@8.0.0, nth-check@3.0.1
+Provided by: css-select@7.0.0, css-what@8.0.0, domelementtype@2.3.0, domelementtype@3.0.0, domhandler@5.0.3, domhandler@6.0.1, domutils@3.2.2, domutils@4.0.2, entities@4.5.0, entities@6.0.1, entities@7.0.1, entities@8.0.0, nth-check@3.0.1
 --------------------------------------------------------------------------------
 Copyright (c) Felix Böhm
 All rights reserved.
@@ -200,7 +200,7 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
 SHA-256: 0e99f2710dd25758c759e0578c135dfebc0cf8abb3f5f2b9ae7bec06912b44aa
-Provided by: estree-util-is-identifier-name@3.0.0, mdast-util-gfm-autolink-literal@2.0.1, mdast-util-gfm-strikethrough@2.0.0, mdast-util-gfm-table@2.0.0, mdast-util-gfm-task-list-item@2.0.0, mdast-util-mdx-expression@2.0.1, mdast-util-mdx-jsx@3.2.0, mdast-util-mdxjs-esm@2.0.1, micromark-extension-gfm-autolink-literal@2.1.0, micromark-extension-gfm-strikethrough@2.1.0, micromark-extension-gfm-tagfilter@2.0.0, micromark-extension-gfm-task-list-item@2.1.0, micromark-extension-gfm@3.0.0
+Provided by: estree-util-is-identifier-name@3.0.0, mdast-util-gfm-autolink-literal@2.0.1, mdast-util-gfm-strikethrough@2.0.0, mdast-util-gfm-table@2.0.0, mdast-util-gfm-task-list-item@2.0.0, mdast-util-math@3.0.0, mdast-util-mdx-expression@2.0.1, mdast-util-mdx-jsx@3.2.0, mdast-util-mdxjs-esm@2.0.1, micromark-extension-gfm-autolink-literal@2.1.0, micromark-extension-gfm-strikethrough@2.1.0, micromark-extension-gfm-tagfilter@2.0.0, micromark-extension-gfm-task-list-item@2.1.0, micromark-extension-gfm@3.0.0, micromark-extension-math@3.1.0
 --------------------------------------------------------------------------------
 (The MIT License)
 
@@ -1676,6 +1676,30 @@ all copies or substantial portions of the Software.
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+================================================================================
+SHA-256: 2c01a01133de3c6dddb991ed3793725513ace5b8a3f1581dd040c83a3da7337f
+Provided by: parse5@7.3.0
+--------------------------------------------------------------------------------
+Copyright (c) 2013-2019 Ivan Nikulin (ifaaan@gmail.com, https://github.com/inikulin)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
@@ -3832,7 +3856,7 @@ THE SOFTWARE.
 
 ================================================================================
 SHA-256: 4cc9c2af4eb0056cd4d2297b7404819e3816b4c44b7f8012c42d5fd671d783d3
-Provided by: commander@12.1.0
+Provided by: commander@12.1.0, commander@8.3.0
 --------------------------------------------------------------------------------
 (The MIT License)
 
@@ -5150,6 +5174,33 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ================================================================================
+SHA-256: 66c0cedc9e4d6c816b9aee4284715e9ab2b2c5d17b2b1787478fe8e3b21b4c25
+Provided by: hast-util-to-text@4.0.2
+--------------------------------------------------------------------------------
+(The MIT License)
+
+Copyright (c) 2019 Titus Wormer <tituswormer@gmail.com>
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+'Software'), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+================================================================================
 SHA-256: 67047503c71f90918a89209a99aaacd9db2d28a6ab6bc6568b8506bcbab5d9d8
 Provided by: bs58@0.5.1
 --------------------------------------------------------------------------------
@@ -5162,6 +5213,32 @@ the Software without restriction, including without limitation the rights to
 use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
 of the Software, and to permit persons to whom the Software is furnished to do
 so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+SHA-256: 67ca4d6ceaf0f3e627dfcdf307f3e9c6301c9846cd477e32359bd51dc055fddf
+Provided by: rehype-katex@7.0.1, remark-math@6.0.0
+--------------------------------------------------------------------------------
+(The MIT License)
+
+Copyright (c) Junyoung Choi <fluke8259@gmail.com>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
@@ -7396,6 +7473,33 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ================================================================================
+SHA-256: 8885adee5b78b990348487962651590b68873e9843cf377a8f7312080a15db57
+Provided by: hast-util-from-html@2.0.3
+--------------------------------------------------------------------------------
+(The MIT License)
+
+Copyright (c) 2022 Titus Wormer <tituswormer@gmail.com>
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+'Software'), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+================================================================================
 SHA-256: 89ff9689dcf9dd53968785d05a26f7898bb169dbfcada8d032b3e68cf0d55607
 Provided by: @tauri-apps/api@2.11.1, tauri-build@2.6.3, tauri-codegen@2.6.3, tauri-macros@2.6.3, tauri-plugin-deep-link@2.4.9, tauri-plugin-dialog@2.7.2, tauri-plugin-fs@2.5.1, tauri-plugin-shell@2.3.5, tauri-plugin-updater@2.10.1, tauri-plugin@2.6.3, tauri-runtime-wry@2.11.4, tauri-runtime@2.11.3, tauri-utils@2.9.3, tauri@2.11.5
 --------------------------------------------------------------------------------
@@ -7420,6 +7524,33 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+================================================================================
+SHA-256: 8af47eab821e755a7cde5ed95eb8f7edbeecaea18a9183911f1855616b646b32
+Provided by: hast-util-from-html-isomorphic@2.0.0
+--------------------------------------------------------------------------------
+(The MIT License)
+
+Copyright (c) 2023 Remco Haszing <remcohaszing@gmail.com>
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+'Software'), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ================================================================================
 SHA-256: 8d1f81ea4e87111d557b185d58d996e7bcb974c19c364197fffd4e814fd9b6fa
@@ -8827,6 +8958,26 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
+SHA-256: b418be76101cb0b026e905128d1f30c0a73c74f936f0df81892aba33a4c96444
+Provided by: hast-util-from-dom@5.0.1
+--------------------------------------------------------------------------------
+(ISC License)
+
+Copyright (c) Keith McKnight <keith@mcknig.ht>
+
+Permission to use, copy, modify, and/or distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright notice
+and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+THIS SOFTWARE.
+
+================================================================================
 SHA-256: b420d8add23b5cf7663f17f012b06a4c16b722c5dd8fb049b285417214b5702e
 Provided by: futures-channel@0.3.33, futures-core@0.3.33, futures-io@0.3.33, futures-macro@0.3.33, futures-sink@0.3.33, futures-task@0.3.33, futures-util@0.3.33
 --------------------------------------------------------------------------------
@@ -9306,7 +9457,7 @@ DEALINGS IN THE SOFTWARE.
 
 ================================================================================
 SHA-256: c37a32dd1cd44e7b68afdf88cb45eb2c4028574f7d894c720371d5688f73ef45
-Provided by: bail@2.0.2, ccount@2.0.1, character-entities-html4@2.1.0, character-entities-legacy@3.0.0, character-entities@2.0.2, character-reference-invalid@2.0.1, mdast-util-to-string@4.0.0, unist-util-position@5.0.0, unist-util-visit@5.1.0
+Provided by: bail@2.0.2, ccount@2.0.1, character-entities-html4@2.1.0, character-entities-legacy@3.0.0, character-entities@2.0.2, character-reference-invalid@2.0.1, mdast-util-to-string@4.0.0, unist-util-find-after@5.0.0, unist-util-position@5.0.0, unist-util-visit@5.1.0
 --------------------------------------------------------------------------------
 (The MIT License)
 
@@ -11173,8 +11324,34 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ================================================================================
+SHA-256: d3c8c167dfa0a8a7f2ace9fc23ddfb89e609adc13b113e958bede249592b852d
+Provided by: katex@0.16.47
+--------------------------------------------------------------------------------
+The MIT License (MIT)
+
+Copyright (c) 2013-2020 Khan Academy and other contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
 SHA-256: d9c32f07344cb9c8160725e998daa6a4bf5760ff6508ee645e0f192a06e929cb
-Provided by: comma-separated-tokens@2.0.3, hast-util-whitespace@3.0.0, is-alphabetical@2.0.1, is-alphanumerical@2.0.1, is-decimal@2.0.1, is-hexadecimal@2.0.1, mdast-util-to-hast@13.2.1, space-separated-tokens@2.0.2, unist-util-stringify-position@4.0.0, unist-util-visit-parents@6.0.2, zwitch@2.0.4
+Provided by: comma-separated-tokens@2.0.3, hast-util-is-element@3.0.0, hast-util-parse-selector@4.0.0, hast-util-whitespace@3.0.0, is-alphabetical@2.0.1, is-alphanumerical@2.0.1, is-decimal@2.0.1, is-hexadecimal@2.0.1, mdast-util-to-hast@13.2.1, space-separated-tokens@2.0.2, unist-util-remove-position@5.0.0, unist-util-stringify-position@4.0.0, unist-util-visit-parents@6.0.2, vfile-location@5.0.3, web-namespaces@2.0.1, zwitch@2.0.4
 --------------------------------------------------------------------------------
 (The MIT License)
 
@@ -12177,7 +12354,7 @@ SOFTWARE.
 
 ================================================================================
 SHA-256: ea559213e0e927a249bd60f4f6a27d1a272fb5d38d2babbd723099c66a17c5af
-Provided by: decode-named-character-reference@1.3.0, hast-util-to-jsx-runtime@2.3.6, markdown-table@3.0.4, mdast-util-find-and-replace@3.0.2, mdast-util-from-markdown@2.0.3, mdast-util-gfm-footnote@2.1.0, mdast-util-gfm@3.1.0, mdast-util-to-markdown@2.1.2, micromark-core-commonmark@2.0.3, micromark-extension-gfm-table@2.1.1, micromark-factory-destination@2.0.1, micromark-factory-label@2.0.1, micromark-factory-space@2.0.1, micromark-factory-title@2.0.1, micromark-factory-whitespace@2.0.1, micromark-util-character@2.1.1, micromark-util-chunked@2.0.1, micromark-util-classify-character@2.0.1, micromark-util-combine-extensions@2.0.1, micromark-util-decode-numeric-character-reference@2.0.2, micromark-util-decode-string@2.0.1, micromark-util-encode@2.0.1, micromark-util-html-tag-name@2.0.1, micromark-util-normalize-identifier@2.0.1, micromark-util-resolve-all@2.0.1, micromark-util-sanitize-uri@2.0.1, micromark-util-subtokenize@2.1.0, micromark-util-symbol@2.0.1, micromark-util-types@2.0.2, micromark@4.0.2, remark-gfm@4.0.1, remark-rehype@11.1.2, vfile-message@4.0.3
+Provided by: decode-named-character-reference@1.3.0, hast-util-from-parse5@8.0.3, hast-util-to-jsx-runtime@2.3.6, hastscript@9.0.1, markdown-table@3.0.4, mdast-util-find-and-replace@3.0.2, mdast-util-from-markdown@2.0.3, mdast-util-gfm-footnote@2.1.0, mdast-util-gfm@3.1.0, mdast-util-to-markdown@2.1.2, micromark-core-commonmark@2.0.3, micromark-extension-gfm-table@2.1.1, micromark-factory-destination@2.0.1, micromark-factory-label@2.0.1, micromark-factory-space@2.0.1, micromark-factory-title@2.0.1, micromark-factory-whitespace@2.0.1, micromark-util-character@2.1.1, micromark-util-chunked@2.0.1, micromark-util-classify-character@2.0.1, micromark-util-combine-extensions@2.0.1, micromark-util-decode-numeric-character-reference@2.0.2, micromark-util-decode-string@2.0.1, micromark-util-encode@2.0.1, micromark-util-html-tag-name@2.0.1, micromark-util-normalize-identifier@2.0.1, micromark-util-resolve-all@2.0.1, micromark-util-sanitize-uri@2.0.1, micromark-util-subtokenize@2.1.0, micromark-util-symbol@2.0.1, micromark-util-types@2.0.2, micromark@4.0.2, remark-gfm@4.0.1, remark-rehype@11.1.2, vfile-message@4.0.3
 --------------------------------------------------------------------------------
 (The MIT License)
 
@@ -13352,7 +13529,7 @@ Apache License
 
 ================================================================================
 SHA-256: ff82c90f84945c60601e96b43246009b9bc589f3ebe1cd8a0fd39a3520d8c310
-Provided by: @types/debug@4.1.13, @types/estree-jsx@1.0.5, @types/estree@1.0.9, @types/hast@3.0.5, @types/mdast@4.0.4, @types/ms@2.1.0, @types/react@19.2.18, @types/unist@2.0.11, @types/unist@3.0.3
+Provided by: @types/debug@4.1.13, @types/estree-jsx@1.0.5, @types/estree@1.0.9, @types/hast@3.0.5, @types/katex@0.16.8, @types/mdast@4.0.4, @types/ms@2.1.0, @types/react@19.2.18, @types/unist@2.0.11, @types/unist@3.0.3
 --------------------------------------------------------------------------------
 MIT License
 

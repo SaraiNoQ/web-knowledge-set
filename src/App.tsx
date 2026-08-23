@@ -7,7 +7,9 @@ import {
 } from "react";
 import type { ChangeEvent, FormEvent, KeyboardEvent, ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   BatchDocumentAction,
@@ -327,7 +329,8 @@ function MarkdownPreview({ markdown, sourceUrl, assets = [] }: { markdown: strin
   return (
     <article className="markdown-preview">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeKatex]}
+        remarkPlugins={[remarkGfm, remarkMath]}
         components={{
           a: ({ node: _node, href, children, ...props }) => {
             const safeHref = resolveLink(href, sourceUrl);

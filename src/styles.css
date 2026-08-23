@@ -1233,6 +1233,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .markdown-preview code { padding: .16em .38em; color: #713d2f; background: rgba(114,86,56,.09); border-radius: 2px; font: .83em/1.5 var(--font-mono); }
 .markdown-preview pre { overflow: auto; margin: 1.5em 0; padding: 18px 20px; color: #e8e0d0; background: #2f2d28; border-left: 3px solid var(--vermilion); }
 .markdown-preview pre code { padding: 0; color: inherit; background: transparent; }
+.markdown-preview .katex-display { overflow-x: auto; overflow-y: hidden; }
 .external-image-note {
   display: block;
   margin: 1.4em 0;

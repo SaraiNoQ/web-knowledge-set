@@ -1488,3 +1488,24 @@ test("debounces automatic document saves until 20 seconds idle", async ({ page }
   await manualSave;
   expect(patches).toHaveLength(3);
 });
+
+test("renders inline and display LaTeX in article previews", async ({ page }) => {
+  await page.goto("/");
+  const deferOnboarding = page.getByRole("button", { name: "稍后设置" });
+  if (await deferOnboarding.isVisible()) await deferOnboarding.click();
+  await page.getByLabel("网页地址").fill("https://example.com/latex-preview");
+  await page.getByRole("button", { name: "收取网页" }).click();
+  await expect(page.getByLabel("文档标题")).toHaveValue("远端测试文章", { timeout: 8_000 });
+
+  await page.setViewportSize({ width: 520, height: 800 });
+  const terms = Array.from({ length: 24 }, (_, index) => `x_{${index}}`).join(" + ");
+  await page.getByLabel("Markdown 编辑器").fill(`行内公式 $x$。\n\n$$\n${terms}\n$$`);
+  const preview = page.getByLabel("Markdown 预览");
+  await expect(preview.locator(".katex")).toHaveCount(2);
+  const display = preview.locator(".katex-display");
+  await expect(display).toHaveCount(1);
+  await expect.poll(() => display.evaluate((element) => getComputedStyle(element).overflowX)).toBe("auto");
+  await expect.poll(() => display.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  await display.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+  await expect.poll(() => display.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+});

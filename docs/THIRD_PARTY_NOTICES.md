@@ -38,6 +38,7 @@ This inventory is generated from the locked production dependency metadata. Bund
 | @types/estree-jsx | 1.0.5 | MIT | — | https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree-jsx |
 | @types/estree | 1.0.9 | MIT | — | https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree |
 | @types/hast | 3.0.5 | MIT | — | https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/hast |
+| @types/katex | 0.16.8 | MIT | — | https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/katex |
 | @types/mdast | 4.0.4 | MIT | — | https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/mdast |
 | @types/ms | 2.1.0 | MIT | — | https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/ms |
 | @types/react | 19.2.18 | MIT | — | https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react |
@@ -54,6 +55,7 @@ This inventory is generated from the locked production dependency metadata. Bund
 | character-reference-invalid | 2.0.1 | MIT | Titus Wormer | https://github.com/wooorm/character-reference-invalid#readme |
 | comma-separated-tokens | 2.0.3 | MIT | Titus Wormer | https://github.com/wooorm/comma-separated-tokens#readme |
 | commander | 12.1.0 | MIT | TJ Holowaychuk | https://github.com/tj/commander.js#readme |
+| commander | 8.3.0 | MIT | TJ Holowaychuk | https://github.com/tj/commander.js#readme |
 | crelt | 1.0.7 | MIT | Marijn Haverbeke | https://code.haverbeke.berlin/marijn/crelt |
 | css-select | 7.0.0 | BSD-2-Clause | Felix Boehm | https://github.com/fb55/css-select#readme |
 | css-what | 8.0.0 | BSD-2-Clause | Felix Böhm | https://github.com/fb55/css-what#readme |
@@ -73,6 +75,7 @@ This inventory is generated from the locked production dependency metadata. Bund
 | domutils | 3.2.2 | BSD-2-Clause | Felix Boehm | https://github.com/fb55/domutils#readme |
 | domutils | 4.0.2 | BSD-2-Clause | Felix Boehm | https://github.com/fb55/domutils#readme |
 | entities | 4.5.0 | BSD-2-Clause | Felix Boehm | https://github.com/fb55/entities#readme |
+| entities | 6.0.1 | BSD-2-Clause | Felix Boehm | https://github.com/fb55/entities#readme |
 | entities | 7.0.1 | BSD-2-Clause | Felix Boehm | https://github.com/fb55/entities#readme |
 | entities | 8.0.0 | BSD-2-Clause | Felix Boehm | https://github.com/fb55/entities#readme |
 | escape-string-regexp | 5.0.0 | MIT | Sindre Sorhus | https://github.com/sindresorhus/escape-string-regexp#readme |
@@ -80,8 +83,16 @@ This inventory is generated from the locked production dependency metadata. Bund
 | extend | 3.0.2 | MIT | Stefan Thomas | https://github.com/justmoon/node-extend#readme |
 | fflate | 0.8.3 | MIT | Arjun Barrett | https://101arrowz.github.io/fflate |
 | fsevents | 2.3.2 | MIT | Philipp Dunkel, Ben Noordhuis, Elan Shankar, Paul Miller | https://github.com/fsevents/fsevents |
+| hast-util-from-dom | 5.0.1 | ISC | Keith McKnight | https://github.com/syntax-tree/hast-util-from-dom#readme |
+| hast-util-from-html-isomorphic | 2.0.0 | MIT | Remco Haszing | https://github.com/syntax-tree/hast-util-from-html-isomorphic#readme |
+| hast-util-from-html | 2.0.3 | MIT | Titus Wormer | https://github.com/syntax-tree/hast-util-from-html#readme |
+| hast-util-from-parse5 | 8.0.3 | MIT | Titus Wormer | https://github.com/syntax-tree/hast-util-from-parse5#readme |
+| hast-util-is-element | 3.0.0 | MIT | Titus Wormer | https://github.com/syntax-tree/hast-util-is-element#readme |
+| hast-util-parse-selector | 4.0.0 | MIT | Titus Wormer | https://github.com/syntax-tree/hast-util-parse-selector#readme |
 | hast-util-to-jsx-runtime | 2.3.6 | MIT | Titus Wormer | https://github.com/syntax-tree/hast-util-to-jsx-runtime#readme |
+| hast-util-to-text | 4.0.2 | MIT | Titus Wormer | https://github.com/syntax-tree/hast-util-to-text#readme |
 | hast-util-whitespace | 3.0.0 | MIT | Titus Wormer | https://github.com/syntax-tree/hast-util-whitespace#readme |
+| hastscript | 9.0.1 | MIT | Titus Wormer | https://github.com/syntax-tree/hastscript#readme |
 | html-escaper | 3.0.3 | MIT | Andrea Giammarchi | https://github.com/WebReflection/html-escaper |
 | html-url-attributes | 3.0.1 | MIT | Titus Wormer | https://github.com/rehypejs/rehype-minify/tree/main#readme |
 | htmlparser2 | 10.1.0 | MIT | Felix Boehm | https://github.com/fb55/htmlparser2#readme |
@@ -92,6 +103,7 @@ This inventory is generated from the locked production dependency metadata. Bund
 | is-decimal | 2.0.1 | MIT | Titus Wormer | https://github.com/wooorm/is-decimal#readme |
 | is-hexadecimal | 2.0.1 | MIT | Titus Wormer | https://github.com/wooorm/is-hexadecimal#readme |
 | is-plain-obj | 4.1.0 | MIT | Sindre Sorhus | https://github.com/sindresorhus/is-plain-obj#readme |
+| katex | 0.16.47 | MIT | — | https://katex.org |
 | linkedom | 0.18.13 | ISC | Andrea Giammarchi | https://github.com/WebReflection/linkedom#readme |
 | longest-streak | 3.1.0 | MIT | Titus Wormer | https://github.com/wooorm/longest-streak#readme |
 | markdown-table | 3.0.4 | MIT | Titus Wormer | https://github.com/wooorm/markdown-table#readme |
@@ -104,6 +116,7 @@ This inventory is generated from the locked production dependency metadata. Bund
 | mdast-util-gfm-table | 2.0.0 | MIT | Titus Wormer | https://github.com/syntax-tree/mdast-util-gfm-table#readme |
 | mdast-util-gfm-task-list-item | 2.0.0 | MIT | Titus Wormer | https://github.com/syntax-tree/mdast-util-gfm-task-list-item#readme |
 | mdast-util-gfm | 3.1.0 | MIT | Titus Wormer | https://github.com/syntax-tree/mdast-util-gfm#readme |
+| mdast-util-math | 3.0.0 | MIT | Titus Wormer | https://github.com/syntax-tree/mdast-util-math#readme |
 | mdast-util-mdx-expression | 2.0.1 | MIT | Titus Wormer | https://github.com/syntax-tree/mdast-util-mdx-expression#readme |
 | mdast-util-mdx-jsx | 3.2.0 | MIT | Titus Wormer | https://github.com/syntax-tree/mdast-util-mdx-jsx#readme |
 | mdast-util-mdxjs-esm | 2.0.1 | MIT | Titus Wormer | https://github.com/syntax-tree/mdast-util-mdxjs-esm#readme |
@@ -119,6 +132,7 @@ This inventory is generated from the locked production dependency metadata. Bund
 | micromark-extension-gfm-tagfilter | 2.0.0 | MIT | Titus Wormer | https://github.com/micromark/micromark-extension-gfm-tagfilter#readme |
 | micromark-extension-gfm-task-list-item | 2.1.0 | MIT | Titus Wormer | https://github.com/micromark/micromark-extension-gfm-task-list-item#readme |
 | micromark-extension-gfm | 3.0.0 | MIT | Titus Wormer | https://github.com/micromark/micromark-extension-gfm#readme |
+| micromark-extension-math | 3.1.0 | MIT | Titus Wormer | https://github.com/micromark/micromark-extension-math#readme |
 | micromark-factory-destination | 2.0.1 | MIT | Titus Wormer | https://github.com/micromark/micromark/tree/main#readme |
 | micromark-factory-label | 2.0.1 | MIT | Titus Wormer | https://github.com/micromark/micromark/tree/main#readme |
 | micromark-factory-space | 2.0.1 | MIT | Titus Wormer | https://github.com/micromark/micromark/tree/main#readme |
@@ -142,13 +156,16 @@ This inventory is generated from the locked production dependency metadata. Bund
 | ms | 2.1.3 | MIT | — | https://github.com/vercel/ms#readme |
 | nth-check | 3.0.1 | BSD-2-Clause | Felix Boehm | https://github.com/fb55/nth-check |
 | parse-entities | 4.0.2 | MIT | Titus Wormer | https://github.com/wooorm/parse-entities#readme |
+| parse5 | 7.3.0 | MIT | Ivan Nikulin | https://parse5.js.org |
 | playwright-core | 1.62.1 | Apache-2.0 | Microsoft Corporation | https://playwright.dev |
 | playwright | 1.62.1 | Apache-2.0 | Microsoft Corporation | https://playwright.dev |
 | property-information | 7.2.0 | MIT | Titus Wormer | https://github.com/wooorm/property-information#readme |
 | react-dom | 19.2.8 | MIT | — | https://react.dev/ |
 | react-markdown | 10.1.0 | MIT | Espen Hovlandsdal | https://github.com/remarkjs/react-markdown#readme |
 | react | 19.2.8 | MIT | — | https://react.dev/ |
+| rehype-katex | 7.0.1 | MIT | Junyoung Choi | https://github.com/remarkjs/remark-math/tree/main#readme |
 | remark-gfm | 4.0.1 | MIT | Titus Wormer | https://github.com/remarkjs/remark-gfm#readme |
+| remark-math | 6.0.0 | MIT | Junyoung Choi | https://github.com/remarkjs/remark-math/tree/main#readme |
 | remark-parse | 11.0.0 | MIT | Titus Wormer | https://remark.js.org |
 | remark-rehype | 11.1.2 | MIT | Titus Wormer | https://github.com/remarkjs/remark-rehype#readme |
 | remark-stringify | 11.0.0 | MIT | Titus Wormer | https://remark.js.org |
@@ -164,14 +181,18 @@ This inventory is generated from the locked production dependency metadata. Bund
 | turndown | 7.2.4 | MIT | Dom Christie | https://github.com/mixmark-io/turndown#readme |
 | uhyphen | 0.2.0 | ISC | Andrea Giammarchi | https://github.com/WebReflection/uhyphen#readme |
 | unified | 11.0.5 | MIT | Titus Wormer | https://unifiedjs.com |
+| unist-util-find-after | 5.0.0 | MIT | Titus Wormer | https://github.com/syntax-tree/unist-util-find-after#readme |
 | unist-util-is | 6.0.1 | MIT | Titus Wormer | https://github.com/syntax-tree/unist-util-is#readme |
 | unist-util-position | 5.0.0 | MIT | Titus Wormer | https://github.com/syntax-tree/unist-util-position#readme |
+| unist-util-remove-position | 5.0.0 | MIT | Titus Wormer | https://github.com/syntax-tree/unist-util-remove-position#readme |
 | unist-util-stringify-position | 4.0.0 | MIT | Titus Wormer | https://github.com/syntax-tree/unist-util-stringify-position#readme |
 | unist-util-visit-parents | 6.0.2 | MIT | Titus Wormer | https://github.com/syntax-tree/unist-util-visit-parents#readme |
 | unist-util-visit | 5.1.0 | MIT | Titus Wormer | https://github.com/syntax-tree/unist-util-visit#readme |
+| vfile-location | 5.0.3 | MIT | Titus Wormer | https://github.com/vfile/vfile-location#readme |
 | vfile-message | 4.0.3 | MIT | Titus Wormer | https://github.com/vfile/vfile-message#readme |
 | vfile | 6.0.3 | MIT | Titus Wormer | https://github.com/vfile/vfile#readme |
 | w3c-keyname | 2.2.8 | MIT | Marijn Haverbeke | https://github.com/marijnh/w3c-keyname#readme |
+| web-namespaces | 2.0.1 | MIT | Titus Wormer | https://github.com/wooorm/web-namespaces#readme |
 | zwitch | 2.0.4 | MIT | Titus Wormer | https://github.com/wooorm/zwitch#readme |
 
 ## Rust dependencies
