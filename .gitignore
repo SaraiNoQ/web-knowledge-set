@@ -14,3 +14,4 @@ src-tauri/binaries/node-*
 desktop-resources/
 .DS_Store
 *.log
+.codegraph/
