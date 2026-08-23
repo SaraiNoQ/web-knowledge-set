@@ -7,12 +7,12 @@ function text(value: unknown) {
 
 async function extract(): Promise<ZhiyeClipResult> {
   const page = document.cloneNode(true) as Document;
-  const protectedMath = protectRenderedMath(page);
   for (const element of page.querySelectorAll("script, style, noscript, iframe, object, embed, form, input, textarea, select, [contenteditable]")) {
     const presentationOnly = element.getAttribute("contenteditable")?.toLowerCase() === "false"
       && !element.matches("script, style, noscript, iframe, object, embed, form, input, textarea, select");
     if (!presentationOnly) element.remove();
   }
+  const protectedMath = protectRenderedMath(page);
   for (const element of page.querySelectorAll("button, [contenteditable]")) {
     if (!page.documentElement.contains(element)) continue;
     if (element.localName !== "button" && element.getAttribute("contenteditable")?.toLowerCase() !== "false") continue;

@@ -39,11 +39,12 @@ test("protects exact alternate math source without colliding with page attribute
     <a href="https://example.com/ZHIYERENDEREDMATHTOKEN0X">existing token</a>
     <span class="katex"><math><semantics><annotation encoding="application/x-tex">  \\pi(x)  </annotation></semantics></math></span>
     <div class="MathJax_Display"><math display="block" alttext="  x + y  "></math></div>
+    <span class="katex-display"><span class="katex" data-latex="  P_c = \\sum_k p_{k,c}  "></span></span>
   </body>`);
   const values = protectRenderedMath(document as unknown as Document);
-  assert.equal(values.length, 2);
+  assert.equal(values.length, 3);
   assert.notEqual(values[0].token, "ZHIYERENDEREDMATHTOKEN0X");
-  assert.equal(restoreProtectedMath(`${values[0].token}|${values[1].token}`, values), "$  \\pi(x)  $|\n\n$$\n  x + y  \n$$\n\n");
+  assert.equal(restoreProtectedMath(values.map(({ token }) => token).join("|"), values), "$  \\pi(x)  $|\n\n$$\n  x + y  \n$$\n\n|\n\n$$\n  P_c = \\sum_k p_{k,c}  \n$$\n\n");
 });
 
 test("leaves delimiter-breaking math safe and ignores detached duplicate annotations", () => {

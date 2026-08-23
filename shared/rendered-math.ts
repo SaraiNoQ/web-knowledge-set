@@ -40,8 +40,8 @@ export function protectRenderedMath(document: Document): ProtectedMath[] {
     replace(rendered, source, display);
   }
 
-  for (const math of [...document.querySelectorAll("math[alttext]")]) {
-    const source = math.getAttribute("alttext") ?? "";
+  for (const math of [...document.querySelectorAll(".katex[data-latex], math[data-latex], math[alttext]")]) {
+    const source = math.getAttribute("data-latex") || math.getAttribute("alttext") || "";
     if (!source.trim() || hasUnescapedDollar(source)) continue;
     const display = math.getAttribute("display") === "block" || Boolean(math.closest(".katex-display, .MathJax_Display"));
     const rendered = display ? math.closest(".katex-display, .MathJax_Display") ?? math : math.closest(".katex, .MathJax") ?? math;

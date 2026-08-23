@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "织页剪藏",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "将当前已登录网页提取为 Markdown 并保存到云端织页。",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": ["https://clip.sarainoq.cn/*", "https://zhiye.sarainoq.cn/*"],
