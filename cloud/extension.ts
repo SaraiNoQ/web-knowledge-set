@@ -413,6 +413,7 @@ interface DocumentSummaryRow {
   author: string | null;
   status: "ready";
   folderId: string | null;
+  favorite: number;
   revision: number;
   deletedAt: string | null;
   createdAt: string;
@@ -440,7 +441,7 @@ function summary(row: DocumentSummaryRow) {
     tags: [],
     collections: [],
     folderId: row.folderId,
-    favorite: false,
+    favorite: Boolean(row.favorite),
     archivedAt: null,
     revision: row.revision,
     deletedAt: row.deletedAt,
@@ -450,7 +451,7 @@ function summary(row: DocumentSummaryRow) {
 }
 
 const summaryColumns = `id, source_url AS sourceUrl, final_url AS finalUrl, canonical_url AS canonicalUrl,
-  title, author, status, folder_id AS folderId, revision, deleted_at AS deletedAt,
+  title, author, status, folder_id AS folderId, favorite, revision, deleted_at AS deletedAt,
   created_at AS createdAt, updated_at AS updatedAt`;
 
 export async function listDocuments(db: D1Database, url: URL, window?: { limit: number; offset: number }) {
@@ -479,8 +480,14 @@ export async function listDocuments(db: D1Database, url: URL, window?: { limit: 
     conditions.push(`(${columns.map((column) => `${column} LIKE ?`).join(" OR ")})`);
     values.push(...columns.map(() => `%${query}%`));
   }
+  const favorite = url.searchParams.get("favorite");
+  if (favorite !== null) {
+    if (favorite !== "true" && favorite !== "false") throw new CloudHttpError(400, "INVALID_FILTER", "favorite must be true or false");
+    conditions.push("favorite = ?");
+    values.push(favorite === "true" ? 1 : 0);
+  }
   const unsupported = (url.searchParams.get("status") && url.searchParams.get("status") !== "ready") ||
-    url.searchParams.get("favorite") === "true" || url.searchParams.get("archived") === "true" ||
+    url.searchParams.get("archived") === "true" ||
     Boolean(url.searchParams.get("tag") || url.searchParams.get("collectionId") || url.searchParams.get("captureMode"));
   if (unsupported) conditions.push("0");
   const from = url.searchParams.get("from");
@@ -576,9 +583,11 @@ export async function updateDocument(db: D1Database, id: string, body: Record<st
   const hasTitle = Object.hasOwn(body, "title");
   const hasMarkdown = Object.hasOwn(body, "markdown");
   const hasFolder = Object.hasOwn(body, "folderId");
-  if (keys.some((key) => !["title", "markdown", "folderId", "revision"].includes(key)) ||
+  const hasFavorite = Object.hasOwn(body, "favorite");
+  if (keys.some((key) => !["title", "markdown", "folderId", "favorite", "revision"].includes(key)) ||
     typeof body.revision !== "number" || !Number.isSafeInteger(body.revision) || body.revision < 1 ||
-    hasTitle !== hasMarkdown || (!hasTitle && !hasFolder) ||
+    hasTitle !== hasMarkdown || (!hasTitle && !hasFolder && !hasFavorite) ||
+    (hasFavorite && typeof body.favorite !== "boolean") ||
     (hasTitle && (typeof body.title !== "string" || !body.title.trim() || body.title.length > 1_000 ||
       typeof body.markdown !== "string" || encoder.encode(body.markdown).byteLength > MAX_CLOUD_ROW_TEXT_BYTES ||
       unsafeControl.test(body.title) || unsafeControl.test(body.markdown)))) {
@@ -594,6 +603,10 @@ export async function updateDocument(db: D1Database, id: string, body: Record<st
   if (hasFolder) {
     assignments.push("folder_id = ?");
     values.push(folderId);
+  }
+  if (hasFavorite) {
+    assignments.push("favorite = ?");
+    values.push(body.favorite ? 1 : 0);
   }
   const now = new Date().toISOString();
   const result = await db.prepare(

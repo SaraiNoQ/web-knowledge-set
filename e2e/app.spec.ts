@@ -1538,11 +1538,74 @@ test("spaces the selected marker and returns to the article title", async ({ pag
   await expect.poll(() => selectedTitle.evaluate((element) => getComputedStyle(element).paddingLeft)).toBe("10px");
 
   await page.setViewportSize({ width: 1280, height: 320 });
-  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-  await expect.poll(() => page.locator(".document-head").evaluate((element) => element.getBoundingClientRect().bottom)).toBeLessThan(0);
   const backToTitle = page.getByRole("button", { name: "返回文章标题" });
+  await page.locator(".document-head").evaluate((element) => element.scrollIntoView({ block: "start" }));
+  await page.evaluate(() => window.scrollBy(0, 239));
+  await expect(backToTitle).toBeHidden();
+  await page.evaluate(() => window.scrollBy(0, 2));
   await expect(backToTitle).toBeVisible();
   await backToTitle.click();
   await expect.poll(() => page.locator(".document-head").evaluate((element) => Math.abs(element.getBoundingClientRect().top))).toBeLessThan(2);
   await expect(backToTitle).toBeHidden();
+});
+
+test("favorites from the cloud title area and labels the article as favorited", async ({ page }) => {
+  await page.goto("/");
+  const deferOnboarding = page.getByRole("button", { name: "稍后设置" });
+  if (await deferOnboarding.isVisible()) await deferOnboarding.click();
+  await page.getByRole("button", { name: "新建", exact: true }).click();
+  await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文章" }).click();
+  await page.getByLabel("文档标题").fill("云端收藏入口测试");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.getByText("已保存", { exact: true })).toBeVisible();
+
+  await page.route("**/health", (route) => route.fulfill({ json: { ok: true, mode: "cloud-core" } }));
+  await page.reload();
+  const deferAfterReload = page.getByRole("button", { name: "稍后设置" });
+  if (await deferAfterReload.isVisible()) await deferAfterReload.click();
+  await page.getByRole("button", { name: "云端收藏入口测试", exact: true }).click();
+  const favorite = page.getByRole("button", { name: "设为收藏" });
+  await expect(favorite).toBeVisible();
+  await favorite.click();
+  await expect(page.getByRole("button", { name: "取消收藏" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".document-kicker .status")).toHaveText("已收藏");
+});
+
+test("permanently deletes a trashed article from its directory row", async ({ page }) => {
+  await page.goto("/");
+  const deferOnboarding = page.getByRole("button", { name: "稍后设置" });
+  if (await deferOnboarding.isVisible()) await deferOnboarding.click();
+  const firstCreated = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/documents");
+  await page.getByRole("button", { name: "新建", exact: true }).click();
+  await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文章" }).click();
+  const { document: { id: firstId } } = await (await firstCreated).json() as { document: { id: string } };
+  await page.getByLabel("文档标题").fill("含草稿待删除文章");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.getByText("已保存", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "移入回收站" }).click();
+  await page.getByRole("alertdialog", { name: "移入回收站" }).getByRole("button", { name: "移入回收站" }).click();
+
+  await page.getByRole("button", { name: "全部", exact: true }).click();
+  await page.getByRole("button", { name: "新建", exact: true }).click();
+  await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文章" }).click();
+  await page.getByLabel("文档标题").fill("待永久删除文章");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.getByText("已保存", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "移入回收站" }).click();
+  await page.getByRole("alertdialog", { name: "移入回收站" }).getByRole("button", { name: "移入回收站" }).click();
+  await expect(page.getByRole("button", { name: "回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
+
+  await page.route(`**/api/documents/${firstId}/draft`, (route) => route.fulfill({ json: {
+    documentId: firstId, draftRevision: 1, baseRevision: 2, title: "未保存草稿", markdown: "草稿", tags: [], updatedAt: new Date().toISOString(),
+  } }));
+  await page.getByRole("button", { name: "永久删除：含草稿待删除文章" }).click();
+  const draftWarning = page.getByRole("alertdialog", { name: "永久删除知识" });
+  await expect(draftWarning).toContainText("检测到未保存草稿");
+  await draftWarning.getByRole("button", { name: "取消" }).click();
+
+  const permanentlyDelete = page.getByRole("button", { name: "永久删除：待永久删除文章" });
+  await expect(permanentlyDelete).toBeVisible();
+  await permanentlyDelete.click();
+  await page.getByRole("alertdialog", { name: "永久删除知识" }).getByRole("button", { name: "永久删除" }).click();
+  await expect(page.getByRole("button", { name: "待永久删除文章", exact: true })).toHaveCount(0);
 });

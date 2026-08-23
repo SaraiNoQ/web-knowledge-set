@@ -41,7 +41,11 @@ interface ArchiveV3 extends Omit<ArchiveV2, "version"> {
   version: 3;
 }
 
-type Archive = ArchiveV1 | ArchiveV2 | ArchiveV3;
+interface ArchiveV4 extends Omit<ArchiveV3, "version"> {
+  version: 4;
+}
+
+type Archive = ArchiveV1 | ArchiveV2 | ArchiveV3 | ArchiveV4;
 
 function changes(result: { meta: { changes?: number } }) {
   return result.meta.changes ?? 0;
@@ -57,7 +61,7 @@ function backupRecord(row: Record<string, unknown>) {
     id: String(row.id), directoryName: String(row.objectKey), reason: row.reason,
     status: row.status, createdAt: String(row.createdAt), finishedAt: row.verifiedAt ? String(row.verifiedAt) : null,
     verifiedAt: row.verifiedAt ? String(row.verifiedAt) : null, totalBytes: row.totalBytes == null ? null : Number(row.totalBytes),
-    schemaVersion: 7, errorCode: row.errorCode ? String(row.errorCode) : null, errorMessage: null,
+    schemaVersion: 8, errorCode: row.errorCode ? String(row.errorCode) : null, errorMessage: null,
   };
 }
 
@@ -76,7 +80,7 @@ function parseArchive(bytes: Uint8Array): Archive {
   const topFields = version === 1
     ? ["format", "version", "createdAt", "documents", "derivedResults", "llmSettings"]
     : ["format", "version", "createdAt", "folders", "documents", "derivedResults", "llmSettings"];
-  if ((version !== 1 && version !== 2 && version !== 3) || !exact(raw, topFields) || raw.format !== "zhiye-cloud-backup" ||
+  if ((version !== 1 && version !== 2 && version !== 3 && version !== 4) || !exact(raw, topFields) || raw.format !== "zhiye-cloud-backup" ||
     !timestamp(raw.createdAt) || !Array.isArray(raw.documents) || !Array.isArray(raw.derivedResults) ||
     (version !== 1 && !Array.isArray(raw.folders))) {
     throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup schema is invalid");
@@ -111,8 +115,9 @@ function parseArchive(bytes: Uint8Array): Archive {
     const markdown = row.markdown;
     const note = row.source_note;
     const folderId = result.version === 1 ? null : row.folder_id;
-    const deletedAt = result.version === 3 ? row.deleted_at : null;
-    const expectedFields = result.version === 1 ? documentFields : result.version === 2 ? [...documentFields, "folder_id"] : [...documentFields, "folder_id", "deleted_at"];
+    const deletedAt = result.version >= 3 ? row.deleted_at : null;
+    const favorite = result.version === 4 ? row.favorite : 0;
+    const expectedFields = result.version === 1 ? documentFields : result.version === 2 ? [...documentFields, "folder_id"] : result.version === 3 ? [...documentFields, "folder_id", "deleted_at"] : [...documentFields, "folder_id", "deleted_at", "favorite"];
     if (!exact(row, expectedFields) || !identifier(id) || documentIds.has(id) ||
       !safeUrl(row.source_url) || ![row.final_url, row.canonical_url].every((entry) => entry == null || safeUrl(entry)) ||
       typeof title !== "string" || !title.trim() || title.length > 1_000 || typeof markdown !== "string" ||
@@ -120,6 +125,7 @@ function parseArchive(bytes: Uint8Array): Archive {
       control.test(title) || control.test(markdown) || control.test(note) || row.status !== "ready" ||
       !positiveInteger(row.revision) || !timestamp(row.created_at) || !timestamp(row.updated_at) ||
       (deletedAt !== null && !timestamp(deletedAt)) ||
+      (favorite !== 0 && favorite !== 1) ||
       [row.final_url, row.canonical_url, row.author, row.published_at].some((entry) => entry != null && typeof entry !== "string") ||
       (folderId !== null && (!identifier(folderId) || !folderIds.has(folderId)))) {
       throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup document row is invalid");
@@ -246,7 +252,7 @@ async function snapshot(db: D1Database): Promise<Archive> {
     throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds 32 records");
   }
   return {
-    format: "zhiye-cloud-backup", version: 3, createdAt: new Date().toISOString(),
+    format: "zhiye-cloud-backup", version: 4, createdAt: new Date().toISOString(),
     folders: folders.results as Record<string, unknown>[], documents: documents.results as Record<string, unknown>[],
     derivedResults: derived.results as Record<string, unknown>[],
     llmSettings: settings.results[0] as { value: string; revision: number } | undefined ?? null,
@@ -327,11 +333,11 @@ async function restoreArchive(db: D1Database, archive: Archive, reservation: str
     id, name, created_at, updated_at
   ) VALUES (?, ?, ?, ?)`).bind(field(row, "id"), field(row, "name"), field(row, "created_at"), field(row, "updated_at")));
   for (const row of archive.documents) statements.push(db.prepare(`INSERT INTO cloud_documents(
-    id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note, folder_id, revision, created_at, updated_at, deleted_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+    id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note, folder_id, favorite, revision, created_at, updated_at, deleted_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
     field(row, "id"), field(row, "source_url"), row.final_url ?? null, row.canonical_url ?? null, field(row, "title"), row.author ?? null,
     row.published_at ?? null, field(row, "markdown"), field(row, "status"), field(row, "source_note"), archive.version === 1 ? null : row.folder_id,
-    field(row, "revision"), field(row, "created_at"), field(row, "updated_at"), archive.version === 3 ? row.deleted_at : null,
+    archive.version === 4 ? field(row, "favorite") : 0, field(row, "revision"), field(row, "created_at"), field(row, "updated_at"), archive.version >= 3 ? row.deleted_at : null,
   ));
   for (const row of archive.derivedResults) statements.push(db.prepare(`INSERT INTO cloud_derived_results(
     id, document_id, type, target_language, model, endpoint_id, prompt_version, input_hash, output, duration_ms,

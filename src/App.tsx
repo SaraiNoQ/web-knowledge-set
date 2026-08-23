@@ -246,8 +246,8 @@ function StatePanel({ kind, title, children }: { kind: "loading" | "empty" | "er
   );
 }
 
-function DocumentStatus({ status }: { status: CaptureStatus }) {
-  return <span className={`status status-${status}`}><i />{STATUS_LABEL[status]}</span>;
+function DocumentStatus({ status, favorite = false }: { status: CaptureStatus; favorite?: boolean }) {
+  return <span className={`status status-${favorite && status === "ready" ? "favorite" : status}`}><i />{favorite && status === "ready" ? "已收藏" : STATUS_LABEL[status]}</span>;
 }
 
 function needsCapturePolling(document: Pick<DocumentSummary, "status" | "deletedAt">) {
@@ -684,7 +684,7 @@ export default function App() {
   useEffect(() => {
     setShowBackToTitle(false);
     if (!selectedId || !currentDoc?.id) return;
-    const update = () => setShowBackToTitle((documentHeadRef.current?.getBoundingClientRect().bottom ?? 1) < 0);
+    const update = () => setShowBackToTitle((documentHeadRef.current?.getBoundingClientRect().top ?? 1) < -240);
     const frame = window.requestAnimationFrame(update);
     window.addEventListener("scroll", update, true);
     return () => {
@@ -2739,6 +2739,8 @@ export default function App() {
       );
       setItems((previous) => previous.filter((item) => item.id !== document.id));
       setTotal((value) => Math.max(0, value - 1));
+      selectedDocumentRevisionsRef.current.delete(document.id);
+      setSelectedIds((previous) => { const next = new Set(previous); next.delete(document.id); return next; });
       setPage(1);
       invalidateNavigation();
       setSelectedId(null);
@@ -2765,6 +2767,36 @@ export default function App() {
       setDetailError((error as Error).message);
     } finally {
       setLifecycleAction(null);
+    }
+  };
+
+  const permanentlyDeleteListItem = async (document: DocumentSummary) => {
+    if (batchBusy || listLoading) return;
+    if (currentDocRef.current?.id === document.id) {
+      await permanentlyDelete();
+      return;
+    }
+    const requestContext = listContextKey;
+    setBatchBusy(true);
+    setBatchError("");
+    try {
+      const stored = cloudMode ? null : await api.getDocumentDraft(document.id);
+      if (!await dialogs.confirm(`永久删除“${document.title || "未命名网页"}”？${stored ? "检测到未保存草稿；草稿、" : ""}抓取快照和历史版本也会被删除，此操作无法撤销。`, {
+        title: "永久删除知识", confirmLabel: "永久删除", tone: "danger",
+      })) return;
+      await api.permanentlyDeleteDocument(document.id, document.revision, stored?.draftRevision ?? null);
+      selectedDocumentRevisionsRef.current.delete(document.id);
+      setSelectedIds((previous) => { const next = new Set(previous); next.delete(document.id); return next; });
+      if (listContextRef.current === requestContext) {
+        setItems((previous) => previous.filter((item) => item.id !== document.id));
+        setTotal((value) => Math.max(0, value - 1));
+        setPage(1);
+      } else setListRefresh((value) => value + 1);
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 409 && error.document) updateListItem(error.document);
+      setBatchError((error as Error).message);
+    } finally {
+      setBatchBusy(false);
     }
   };
 
@@ -3412,6 +3444,7 @@ export default function App() {
                   selected={selectedId === item.id}
                   onOpen={(id) => void selectDocument(id)}
                   onMove={moveDocumentToFolder}
+                  onPermanentDelete={permanentlyDeleteListItem}
                   checkbox={!cloudMode ? <label className="row-select"><span className="sr-only">选择 {item.title || "未命名网页"}</span><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={selectedIds.has(item.id)} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds((previous) => { const next = new Set(previous); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; }); }} /></label> : undefined}
                 />
               ))}
@@ -3449,12 +3482,13 @@ export default function App() {
               <button type="button" className="mobile-back" onClick={closeDocument}><Icon size={16}><path d="m15 18-6-6 6-6" /></Icon>返回知识库</button>
               <header ref={documentHeadRef} className="document-head">
                 <div className="document-kicker">
-                  <DocumentStatus status={currentDoc.status} />
+                  <DocumentStatus status={currentDoc.status} favorite={currentDoc.favorite} />
                   {/^(?:https?):/u.test(currentDoc.finalUrl || currentDoc.sourceUrl) ? <a href={currentDoc.finalUrl || currentDoc.sourceUrl} target="_blank" rel="noreferrer noopener">{sourceName(currentDoc.finalUrl || currentDoc.sourceUrl)}<Icon size={13}><path d="M14 5h5v5M10 14 19 5M19 14v5H5V5h5" /></Icon></a> : <span>本地文章</span>}
                   <span>{formatDate(currentDoc.updatedAt)}</span>
                 </div>
                 {cloudEditing ? <label className="title-field"><span className="sr-only">文档标题</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} disabled={saveState === "saving"} /></label> : <h2>{currentDoc.title || "未命名网页"}</h2>}
                 <div className="document-actions">
+                  <button type="button" className={`favorite-button ${currentDoc.favorite ? "is-active" : ""}`} aria-pressed={currentDoc.favorite} onClick={() => void toggleFavorite()} disabled={organizationLocked || metadataDirty}>{currentDoc.favorite ? "★ 取消收藏" : "☆ 设为收藏"}</button>
                   <button type="button" className="primary-button" onClick={() => void toggleCloudEditing()} disabled={currentDoc.status !== "ready" || saveState === "saving"}>{cloudEditing ? "返回阅读" : "编辑这篇知识"}</button>
                   <button type="button" className="history-button" onClick={toggleDerived} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen} aria-controls="derived-knowledge">AI 派生</button>
                   <button type="button" className="history-button translation-button" onClick={openTranslation} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen && derivedPreferredType === "translation"} aria-controls="derived-knowledge">翻译</button>
@@ -3484,7 +3518,7 @@ export default function App() {
               <button type="button" className="mobile-back" onClick={closeDocument}><Icon size={16}><path d="m15 18-6-6 6-6" /></Icon>返回知识库</button>
               <header ref={documentHeadRef} className="document-head">
                 <div className="document-kicker">
-                  <DocumentStatus status={currentDoc.status} />
+                  <DocumentStatus status={currentDoc.status} favorite={currentDoc.favorite} />
                   {/^(?:https?):/u.test(currentDoc.finalUrl || currentDoc.sourceUrl) ? <a href={currentDoc.finalUrl || currentDoc.sourceUrl} target="_blank" rel="noreferrer noopener">{sourceName(currentDoc.finalUrl || currentDoc.sourceUrl)}<Icon size={13}><path d="M14 5h5v5M10 14 19 5M19 14v5H5V5h5" /></Icon></a> : <span>本地文章</span>}
                   <span>{formatDate(currentDoc.updatedAt)}</span>
                   {currentDoc.archivedAt && <span className="archive-stamp">已归档</span>}

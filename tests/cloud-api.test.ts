@@ -83,9 +83,9 @@ class SqliteD1Database implements D1Database {
 function migratedCloudDatabase() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
-  for (let version = 1; version <= 7; version += 1) {
+  for (let version = 1; version <= 8; version += 1) {
     sqlite.exec(readFileSync(new URL(`../cloud/migrations/${String(version).padStart(4, "0")}_${[
-      "cloud_core", "browser_extension", "cloud_ai", "cloud_backups", "cloud_capture", "cloud_folders", "cloud_trash",
+      "cloud_core", "browser_extension", "cloud_ai", "cloud_backups", "cloud_capture", "cloud_folders", "cloud_trash", "cloud_favorites",
     ][version - 1]}.sql`, import.meta.url), "utf8"));
   }
   return new SqliteD1Database(sqlite);
@@ -226,7 +226,7 @@ test("cloud core serves the existing empty-library startup contract", async () =
   assert.equal((await backup.json() as { status: string }).status, "verified");
   const backupArchive = JSON.parse(lastBackup) as { format: string; version: number; folders: unknown[] };
   assert.deepEqual({ format: backupArchive.format, version: backupArchive.version, folders: backupArchive.folders }, {
-    format: "zhiye-cloud-backup", version: 3, folders: [],
+    format: "zhiye-cloud-backup", version: 4, folders: [],
   });
 
   const deleted = await handleRequest(new Request("https://app.example.com/api/data-safety/backups/invalid", {
@@ -316,6 +316,33 @@ test("cloud creates a ready blank article in the top level", async () => {
   assert.equal(article.status, "ready");
   assert.equal(article.folderId, null);
   assert.match(article.sourceUrl, /^zhiye:\/\/article\//u);
+});
+
+test("cloud favorites documents with revision guards and list filters", async () => {
+  const { env } = sqliteEnvironment();
+  const headers = { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": "cloud-1" };
+  const created = await handleRequest(new Request("https://app.example.com/api/documents", {
+    method: "POST", headers, body: JSON.stringify({ title: "Favorite" }),
+  }), env);
+  const document = (await created.json() as { document: { id: string; revision: number } }).document;
+  const favorited = await handleRequest(new Request(`https://app.example.com/api/documents/${document.id}`, {
+    method: "PATCH", headers, body: JSON.stringify({ revision: document.revision, favorite: true }),
+  }), env);
+  assert.equal(favorited.status, 200);
+  assert.deepEqual(
+    (({ favorite, revision }) => ({ favorite, revision }))(await favorited.json() as { favorite: boolean; revision: number }),
+    { favorite: true, revision: 2 },
+  );
+  const favorites = await handleRequest(new Request("https://app.example.com/api/documents?favorite=true&page=1"), env);
+  const favoritesBody = await favorites.json() as { items: Array<{ id: string; favorite: boolean }>; total: number };
+  assert.equal(favoritesBody.total, 1);
+  assert.deepEqual(favoritesBody.items.map(({ id, favorite }) => ({ id, favorite })), [{ id: document.id, favorite: true }]);
+  const others = await handleRequest(new Request("https://app.example.com/api/documents?favorite=false&page=1"), env);
+  assert.equal((await others.json() as { total: number }).total, 0);
+  const stale = await handleRequest(new Request(`https://app.example.com/api/documents/${document.id}`, {
+    method: "PATCH", headers, body: JSON.stringify({ revision: 1, favorite: false }),
+  }), env);
+  assert.equal(stale.status, 409);
 });
 
 test("cloud documents and capture jobs round-trip through trash with revision guards", async () => {
@@ -410,7 +437,7 @@ test("cloud document and capture job pagination never skips mixed rows", async (
   }
 });
 
-test("cloud backup restores v3 trash, maps v1 documents to active unfiled, and rolls back failures", async () => {
+test("cloud backup restores v4 favorites and trash, maps v1 documents to defaults, and rolls back failures", async () => {
   const { env, db, bucket } = sqliteEnvironment();
   const now = "2026-08-18T00:00:00.000Z";
   db.sqlite.prepare("INSERT INTO cloud_folders(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)")
@@ -421,6 +448,7 @@ test("cloud backup restores v3 trash, maps v1 documents to active unfiled, and r
   ) VALUES (?, ?, NULL, NULL, ?, NULL, NULL, ?, 'ready', '', 1, ?, ?, ?)`)
     .run("document-v2", "https://example.com/v2", "V2", "# V2", now, now, "folder-v2");
   db.sqlite.prepare("UPDATE cloud_documents SET deleted_at = ? WHERE id = 'document-v2'").run(now);
+  db.sqlite.prepare("UPDATE cloud_documents SET favorite = 1 WHERE id = 'document-v2'").run();
   const epochHeader = () => ({
     "Content-Type": "application/json",
     "X-Zhiye-Data-Epoch": String((db.sqlite.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'").get() as { value: string }).value),
@@ -432,7 +460,7 @@ test("cloud backup restores v3 trash, maps v1 documents to active unfiled, and r
   const v2BackupId = (await created.json() as { id: string }).id;
   const exported = await handleRequest(new Request(`https://app.example.com/api/data-safety/backups/${v2BackupId}/export.zhiye-backup`), env);
   assert.equal(exported.status, 200);
-  assert.equal((await exported.json() as { version: number }).version, 3);
+  assert.equal((await exported.json() as { version: number }).version, 4);
   db.sqlite.exec("DELETE FROM cloud_documents; DELETE FROM cloud_folders;");
   db.sqlite.prepare(`INSERT INTO cloud_documents(
     id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note,
@@ -445,8 +473,8 @@ test("cloud backup restores v3 trash, maps v1 documents to active unfiled, and r
   assert.equal(restored.status, 200);
   assert.match(restored.headers.get("X-Zhiye-Data-Epoch") || "", /^cloud-/u);
   assert.deepEqual(
-    db.sqlite.prepare("SELECT id, folder_id, deleted_at FROM cloud_documents ORDER BY id").all().map((row) => ({ ...row })),
-    [{ id: "document-v2", folder_id: "folder-v2", deleted_at: now }],
+    db.sqlite.prepare("SELECT id, folder_id, favorite, deleted_at FROM cloud_documents ORDER BY id").all().map((row) => ({ ...row })),
+    [{ id: "document-v2", folder_id: "folder-v2", favorite: 1, deleted_at: now }],
   );
   assert.deepEqual(db.sqlite.prepare("SELECT id, name FROM cloud_folders").all().map((row) => ({ ...row })), [{ id: "folder-v2", name: "Research" }]);
 
@@ -928,9 +956,9 @@ test("expired cloud restore recovery releases the epoch and fails pending captur
   assert.match(batchSql[1]!, /value = \?/u);
 });
 
-test("cloud backup reader accepts strict v1, v2 and v3 archives and rejects extra fields", async () => {
+test("cloud backup reader accepts strict v1 through v4 archives and rejects extra fields", async () => {
   const base = { format: "zhiye-cloud-backup", createdAt: "2026-08-18T00:00:00.000Z", documents: [], derivedResults: [], llmSettings: null };
-  for (const archive of [{ ...base, version: 1 }, { ...base, version: 2, folders: [] }, { ...base, version: 3, folders: [] }]) {
+  for (const archive of [{ ...base, version: 1 }, { ...base, version: 2, folders: [] }, { ...base, version: 3, folders: [] }, { ...base, version: 4, folders: [] }]) {
     const response = await handleRequest(new Request("https://app.example.com/api/data-safety/backups/import", {
       method: "POST",
       headers: { "Content-Type": "application/vnd.zhiye.cloud-backup+json", "X-Zhiye-Data-Epoch": "cloud-test" },
@@ -957,6 +985,12 @@ test("cloud backup reader accepts strict v1, v2 and v3 archives and rejects extr
     body: JSON.stringify({ ...base, version: 3, folders: [folder], documents: [{ ...document, deleted_at: "2026-08-18T00:00:00.000Z" }] }),
   }), environment());
   assert.equal(populatedV3.status, 201);
+  const populatedV4 = await handleRequest(new Request("https://app.example.com/api/data-safety/backups/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/vnd.zhiye.cloud-backup+json", "X-Zhiye-Data-Epoch": "cloud-test" },
+    body: JSON.stringify({ ...base, version: 4, folders: [folder], documents: [{ ...document, deleted_at: null, favorite: 1 }] }),
+  }), environment());
+  assert.equal(populatedV4.status, 201);
   const invalid = await handleRequest(new Request("https://app.example.com/api/data-safety/backups/import", {
     method: "POST",
     headers: { "Content-Type": "application/vnd.zhiye.cloud-backup+json", "X-Zhiye-Data-Epoch": "cloud-test" },

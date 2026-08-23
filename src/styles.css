@@ -692,6 +692,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 
 .status i { width: 5px; height: 5px; background: currentColor; border-radius: 50%; }
 .status-ready { color: var(--moss); }
+.status-favorite { color: #8a6426; }
 .status-failed { color: var(--vermilion-dark); }
 .status-queued { color: var(--gold); }
 .status-fetching, .status-extracting { color: #7c6945; }
@@ -2046,6 +2047,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .directory-external:hover { color: var(--vermilion); }
 .directory-external-space { width: 24px; }
 .directory-document-row > .ui-icon-button { width: 30px; min-height: 30px; padding: 0; color: var(--ink-faint); font-size: 12px; letter-spacing: -.08em; }
+.directory-document-row > .ui-icon-button.directory-permanent-delete { color: var(--vermilion-dark); font-size: 18px; }
 .directory-hover-detail { display: grid; gap: 5px; min-width: 250px; }
 .directory-hover-detail strong { font: 500 16px/1.4 var(--font-serif); }
 .directory-hover-detail span { color: var(--ink-soft); overflow-wrap: anywhere; }

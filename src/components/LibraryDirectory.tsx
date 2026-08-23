@@ -35,6 +35,7 @@ export function DocumentDirectoryRow({
   onOpen,
   onMove,
   onTrash,
+  onPermanentDelete,
 }: {
   document: DocumentSummary;
   folders: KnowledgeFolder[];
@@ -43,10 +44,12 @@ export function DocumentDirectoryRow({
   onOpen: (id: string) => void;
   onMove: (document: MoveDocumentTarget, folderId: string | null) => Promise<void>;
   onTrash?: (document: DocumentSummary) => Promise<void>;
+  onPermanentDelete?: (document: DocumentSummary) => Promise<void>;
 }) {
   const [moveOpen, setMoveOpen] = useState(false);
   const [targetFolder, setTargetFolder] = useState(document.folderId ?? "");
   const [moving, setMoving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const actionId = useId();
   const actionButton = useRef<HTMLButtonElement>(null);
   const actionMenu = useRef<HTMLDivElement>(null);
@@ -106,6 +109,7 @@ export function DocumentDirectoryRow({
     </HoverCard>
     {/^(?:https?):/u.test(externalUrl) ? <a className="directory-external" href={externalUrl} target="_blank" rel="noreferrer noopener" aria-label={`打开原网页：${document.title || "未命名网页"}`}>↗</a> : <span className="directory-external-space" aria-hidden="true" />}
     {!document.deletedAt && onTrash && <><IconButton ref={actionButton} label={`更多操作：${document.title || "未命名网页"}`} aria-haspopup="dialog" aria-controls={actionId} popoverTarget={actionId} onClick={positionActions}>•••</IconButton><div ref={actionMenu} id={actionId} popover="auto" className="directory-action-menu" role="dialog" aria-label={`操作：${document.title || "未命名网页"}`} onToggle={(event) => { const open = event.currentTarget.matches(":popover-open"); if (open) { event.currentTarget.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true }); window.addEventListener("scroll", closeActions, true); } else { window.removeEventListener("resize", closeActions); window.removeEventListener("scroll", closeActions, true); if (event.currentTarget.contains(globalThis.document.activeElement)) actionButton.current?.focus(); } }}><button type="button" onClick={() => { actionMenu.current?.hidePopover(); setTargetFolder(document.folderId ?? ""); setMoveOpen(true); }}>移动到文件夹…</button><button type="button" className="danger" onClick={() => { actionMenu.current?.hidePopover(); void onTrash(document); }}>删除（移入回收站）</button></div></>}
+    {document.deletedAt && onPermanentDelete && <IconButton className="directory-permanent-delete" label={`永久删除：${document.title || "未命名网页"}`} disabled={deleting} onClick={() => { setDeleting(true); void onPermanentDelete(document).finally(() => setDeleting(false)); }}>×</IconButton>}
     {moveOpen && <ModalMove
       folders={folders}
       moving={moving}
