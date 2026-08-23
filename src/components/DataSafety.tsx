@@ -156,9 +156,9 @@ export function DataSafety({
     const file = input.files?.[0];
     input.value = "";
     if (!file) return;
-    const extension = cloud ? ".zhiye-cloud-backup" : ".zhiye-backup";
-    if (!file.name.toLocaleLowerCase().endsWith(extension)) {
-      setError(`请选择 ${extension} 完整留档文件。`);
+    const accepted = cloud ? [".zhiye-cloud-backup"] : [".zhiye-backup", ".zhiye-cloud-backup"];
+    if (!accepted.some((extension) => file.name.toLocaleLowerCase().endsWith(extension))) {
+      setError(`请选择 ${accepted.join(" / ")} 完整留档文件。`);
       return;
     }
     const maxBytes = cloud ? 8 * 1024 * 1024 : 2 * 1024 * 1024 * 1024;
@@ -357,13 +357,13 @@ export function DataSafety({
             <div>
               <span className="eyebrow">ARCHIVE LEDGER</span>
               <h2>完整留档</h2>
-              <p>{cloud ? ".zhiye-cloud-backup 未加密，包含云端文档与 AI 结果，不包含 API Key；导入不会自动恢复。" : ".zhiye-backup 未加密，包含数据库、网页快照和离线资源；导入只新增已校验留档，不会自动恢复。"}</p>
+              <p>{cloud ? ".zhiye-cloud-backup 未加密，包含云端文档与 AI 结果，不包含 API Key；导入不会自动恢复。" : ".zhiye-backup / .zhiye-cloud-backup 均可；本机导入会把云端留档转成 .zhiye-backup，只新增已校验留档，不会自动恢复。云端不含网页快照与离线图片。"}</p>
             </div>
             <div className="backup-ledger-actions">
               <label className="backup-import">
                 <input
                   type="file"
-                  accept={cloud ? ".zhiye-cloud-backup,application/vnd.zhiye.cloud-backup+json" : ".zhiye-backup,application/vnd.zhiye.backup+zip"}
+                  accept={cloud ? ".zhiye-cloud-backup,application/vnd.zhiye.cloud-backup+json" : ".zhiye-backup,.zhiye-cloud-backup,application/vnd.zhiye.backup+zip,application/vnd.zhiye.cloud-backup+json"}
                   aria-label="导入完整留档文件"
                   disabled={Boolean(busy) || status.maintenance}
                   onChange={(event) => void importBackup(event)}

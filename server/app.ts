@@ -51,6 +51,7 @@ import {
   resolveBackupRecord,
   verifyBackupRecord,
 } from "./data-safety.js";
+import { importCloudJsonBackup } from "./cloud-backup.js";
 import {
   CURRENT_SCHEMA_VERSION,
   KnowledgeDatabase,
@@ -345,6 +346,39 @@ function backupArchiveLength(request: IncomingMessage) {
     throw new HttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Backup archive exceeds 2 GiB");
   }
   return bytes;
+}
+
+/** A cloud backup is never larger than 8 MiB; buffer anything below this ceiling so we can sniff it. */
+const CLOUD_JSON_BODY_LIMIT = 16 * 1024 * 1024;
+const CLOUD_BACKUP_MIME = "application/vnd.zhiye.cloud-backup+json";
+
+async function readRequestBody(request: IncomingMessage, bytes: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of request) {
+    const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += value.length;
+    if (total > bytes) throw new HttpError(413, "BODY_TOO_LARGE", "Request body exceeds its declared length");
+    chunks.push(value);
+  }
+  if (total !== bytes) throw new HttpError(400, "BODY_MISMATCH", "Request body length does not match Content-Length");
+  return Buffer.concat(chunks, total);
+}
+
+function looksLikeCloudJsonArchive(body: Buffer) {
+  // A ZIP archive never begins with an ASCII '{'; cloud JSON always does.
+  if (body[0] !== 0x7b) return false;
+  try {
+    const value = JSON.parse(body.toString("utf8")) as unknown;
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value) &&
+      (value as { format?: unknown }).format === "zhiye-cloud-backup";
+  } catch {
+    return false;
+  }
+}
+
+async function* bufferedArchiveSource(body: Uint8Array): AsyncGenerator<Uint8Array> {
+  yield body;
 }
 
 function operationAbort(request: IncomingMessage, response: ServerResponse) {
@@ -1233,7 +1267,8 @@ export function createApp(options: AppOptions) {
 
   const guardBackupArchiveMutation = (request: IncomingMessage) => {
     if (!sameOrigin(request)) throw new HttpError(403, "ORIGIN_REJECTED", "Cross-origin mutations are not allowed");
-    if (request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() !== BACKUP_ARCHIVE_MIME) {
+    const type = request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
+    if (type !== BACKUP_ARCHIVE_MIME && type !== CLOUD_BACKUP_MIME) {
       throw new HttpError(415, "BACKUP_ARCHIVE_REQUIRED", `Content-Type must be ${BACKUP_ARCHIVE_MIME}`);
     }
     const enteringEpoch = request.headers[DATA_EPOCH_HEADER.toLowerCase()];
@@ -1822,6 +1857,28 @@ export function createApp(options: AppOptions) {
           const record = await runMaintenance("backup import", async () => {
             await worker.pause();
             try {
+              if (declaredBytes <= CLOUD_JSON_BODY_LIMIT) {
+                const body = await readRequestBody(request, declaredBytes);
+                if (looksLikeCloudJsonArchive(body)) {
+                  return await importCloudJsonBackup(
+                    db,
+                    options.dataDir,
+                    backupRoot,
+                    body,
+                    CURRENT_SCHEMA_VERSION,
+                    operation.signal,
+                  );
+                }
+                return await importRecordedBackup(
+                  db,
+                  options.dataDir,
+                  backupRoot,
+                  bufferedArchiveSource(body),
+                  declaredBytes,
+                  CURRENT_SCHEMA_VERSION,
+                  operation.signal,
+                );
+              }
               return await importRecordedBackup(
                 db,
                 options.dataDir,

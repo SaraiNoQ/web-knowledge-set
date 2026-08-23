@@ -799,7 +799,7 @@ const derivedResultTypes = new Set<DerivedResultType>([
   "translation",
 ]);
 
-function derivedTargetLanguage(type: DerivedResultType, promptVersion: string) {
+export function derivedTargetLanguage(type: DerivedResultType, promptVersion: string) {
   if (type !== "translation") return null;
   const match = /^(?:translation-v1-p40000|translation-v2-b40000-p12000):(.+)$/u.exec(promptVersion);
   const language = match?.[1] ?? "";
