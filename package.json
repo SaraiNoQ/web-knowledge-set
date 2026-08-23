@@ -24,7 +24,8 @@
     "desktop:build": "tauri build",
     "tauri": "tauri",
     "cloud:check": "tsx --test tests/cloud-api.test.ts",
-    "cloud:bundle": "wrangler deploy --dry-run --config cloud/wrangler.web.example.jsonc && wrangler deploy --dry-run --config cloud/wrangler.clip.example.jsonc"
+    "cloud:bundle": "wrangler deploy --dry-run --config cloud/wrangler.web.example.jsonc && wrangler deploy --dry-run --config cloud/wrangler.clip.example.jsonc",
+    "firefox:amo": "node scripts/build-extension.mjs && node scripts/validate-firefox-amo.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",

@@ -28,6 +28,8 @@ SQLite 数据库保存文档正文、标题、来源地址和元数据、一级�
 
 可选的 Chrome/Firefox 剪藏扩展只在用户点击扩展时以 `activeTab` 读取当前浏览器已经渲染的页面，并在浏览器本地转换成 Markdown。扩展不申请 Cookie、历史或全部网站权限，不读取 Cookie 数据库，也不上传登录凭证、完整 DOM、表单值或登录态图片字节；图片仅保留原始链接。用户核对并确认后，扩展才把标题、HTTP(S) 来源、安全元数据和 Markdown 发到固定的 `https://clip.sarainoq.cn`，每次保存为新副本；随后只向已打开的 `https://zhiye.sarainoq.cn` 标签页注入一个包含新文档 ID 的本地刷新事件，不读取该标签页内容，也不把事件发送到网络。
 
+Firefox 正式包使用浏览器内置数据同意声明：配对码与撤销型 Bearer 令牌属于 `authenticationInfo`，来源 URL 属于 `browsingActivity`，正文属于 `websiteContent`，可能出现的聊天或消息属于 `personalCommunications`。四类数据都只在用户主动配对或点击确认保存后发送；扩展不声明可选遥测，也不在后台自动采集。
+
 ### 可选 AI
 
 AI 默认关闭，关闭时不会自动发送文档或产生派生结果。保存 AI 设置本身不会发送正文；摘要等预设指令在用户点击“获取”后直接发送，只有自由“AI 对话”会先展示 Prompt、准确文本与网络目标，再由用户手动确认。

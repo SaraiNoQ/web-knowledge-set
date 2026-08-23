@@ -10,9 +10,15 @@ import { createApp } from "../server/app.js";
 import { openDatabase } from "../server/db.js";
 
 test("extension download links match both manifest versions", async () => {
-  const manifests = await Promise.all(["chrome", "firefox"].map(async (browser) => JSON.parse(await readFile(new URL(`../extension/manifest.${browser}.json`, import.meta.url), "utf8")) as { host_permissions: string[]; version: string }));
+  const manifests = await Promise.all(["chrome", "firefox"].map(async (browser) => JSON.parse(await readFile(new URL(`../extension/manifest.${browser}.json`, import.meta.url), "utf8")) as { browser_specific_settings?: { gecko?: { data_collection_permissions?: { required?: string[] }; id?: string; strict_min_version?: string }; gecko_android?: { strict_min_version?: string } }; host_permissions: string[]; version: string }));
   assert.equal(manifests[0].version, manifests[1].version);
   for (const manifest of manifests) assert.deepEqual(manifest.host_permissions, ["https://clip.sarainoq.cn/*", "https://zhiye.sarainoq.cn/*"]);
+  assert.deepEqual(manifests[1].browser_specific_settings?.gecko, {
+    id: "clipper@zhiye.sarainoq.cn",
+    strict_min_version: "140.0",
+    data_collection_permissions: { required: ["authenticationInfo", "browsingActivity", "websiteContent", "personalCommunications"] },
+  });
+  assert.deepEqual(manifests[1].browser_specific_settings?.gecko_android, { strict_min_version: "142.0" });
   const help = await readFile(new URL("../src/components/BrowserExtension.tsx", import.meta.url), "utf8");
   for (const [browser, label] of [["chrome", "Chrome"], ["firefox", "Firefox"]]) {
     assert.ok(help.includes(`href="/extensions/zhiye-clipper-${browser}.zip?v=${manifests[0].version}"`));

@@ -7,5 +7,14 @@
   "host_permissions": ["https://clip.sarainoq.cn/*", "https://zhiye.sarainoq.cn/*"],
   "icons": { "128": "icon.png" },
   "action": { "default_title": "织页剪藏", "default_popup": "popup.html", "default_icon": "icon.png" },
-  "browser_specific_settings": { "gecko": { "id": "clipper@zhiye.local", "strict_min_version": "128.0" } }
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "clipper@zhiye.sarainoq.cn",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": ["authenticationInfo", "browsingActivity", "websiteContent", "personalCommunications"]
+      }
+    },
+    "gecko_android": { "strict_min_version": "142.0" }
+  }
 }
