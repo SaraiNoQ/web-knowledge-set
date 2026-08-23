@@ -48,7 +48,7 @@ v1.0 坚持以下边界：
 - DeepSeek 真实 smoke 需要受保护 GitHub Environment 中的 API Key 和人工批准；源码、日志、诊断包及构建产物不得包含该密钥。
 - 24 小时 soak 具有不可压缩的自然时间；未签名 macOS RC 与 DeepSeek smoke 仍需要可用的受保护 macOS CI runner，GitHub 分支保护、Environment 与 Release 发布需要仓库管理员权限。
 
-交付分为两个阶段：阶段 A 发布 `v0.9.2-rc.2` 功能完整预览版（稳定 Web + 未签名 Apple Silicon 包）；阶段 B 在 Apple 凭据、受保护 macOS CI、updater 密钥及发布权限就绪且 Definition of Done 全部通过后，发布签名、公证并完成真实更新演练的 `v1.0.0`。
+当前发布版本从 `v1.0.0` 开始命名；在 Apple 凭据到位前提供 ad-hoc 签名、未公证的 Apple Silicon DMG。Developer ID 签名、公证和真实更新演练仍须等待 Apple 凭据、受保护 macOS CI、updater 密钥及发布权限就绪且 Definition of Done 全部通过。
 
 ## 3. 统一开发与交付规则
 
@@ -83,7 +83,7 @@ v1.0 坚持以下边界：
 - `v0.9.1`：锁定正式应用身份并安全承接早期开发数据的无签名候选版；不宣称已上线。
 - `v0.9.2-rc.1`：首次阶段 A 发布尝试；因 macOS 测试路径别名问题中止，未创建 Release。
 - `v0.9.2-rc.2`：阶段 A 功能完整预览版；稳定 Web 和未签名 Apple Silicon 包，不包含正式自动更新能力。
-- `v1.0.0`：阶段 B 正式版；Apple 签名、公证、更新实测和本文 Definition of Done 全部满足后发布。数据库迁移只能前向追加，不修改已经发布的迁移。
+- `v1.0.0`：从当前 `main` 打包的首个 1.x 版本，提供 ad-hoc 签名、未公证的 Apple Silicon DMG；Developer ID 签名、公证和自动更新不在该产物中。数据库迁移只能前向追加，不修改已经发布的迁移。
 
 ## 4. 历史路线图与验收记录
 
@@ -397,7 +397,7 @@ v1.0 坚持以下边界：
 
 ---
 
-### M7：macOS 签名、公证、更新与正式上线（v1.0.0）
+### M7：macOS Developer ID 签名、公证与更新上线（Apple 凭据到位后的后续版本）
 
 **用户价值**
 
@@ -433,14 +433,14 @@ v1.0 坚持以下边界：
 **依赖**
 
 - M6 的 `v0.9.0` RC；Apple Developer 身份、macOS CI runner、GitHub Releases 和更新签名凭据。
-- 正式 bundle identifier 已锁定为 `io.github.sarainoq.zhiye`。当前没有 Apple 签名与公证凭据，因此继续完成和验证不依赖签名的主要功能，但不创建 `v1.0.0` 正式标签、不声称已上线。
+- 正式 bundle identifier 已锁定为 `io.github.sarainoq.zhiye`。当前没有 Apple 签名与公证凭据；`v1.0.0` 只能明确发布为 ad-hoc、未公证构建，不声称具备 Apple 身份认证或签名更新能力。
 
 **提交 / Review 边界**
 
 - 提交一：`build(macos): add signed notarized release pipeline`。
 - 提交二：`feat(update): add signed opt-in updates`。
-- 提交三：`chore(release): prepare v1.0.0`。
-- 发布流水线由独立 agent 审查 secret 边界、entitlements、签名顺序和供应链；macOS 产物全部验收后才创建并推送 `v1.0.0` tag。
+- 提交三：`chore(release): prepare signed macOS release`。
+- 发布流水线由独立 agent 审查 secret 边界、entitlements、签名顺序和供应链；macOS 产物全部验收后才创建并推送尚未占用的后续版本 tag。
 
 ## 5. v1.0 正式上线 Definition of Done
 
@@ -477,7 +477,7 @@ v1.0 坚持以下边界：
 - 发布 DMG 已签名、公证、staple，并在无开发工具的干净 macOS 账户通过安装和核心流程验收。
 - 更新包和 manifest 已签名；成功升级、下载中断、错误签名和回滚演练均有记录。
 - GitHub Release 包含校验和、SBOM、第三方 notices、变更日志、安装/备份/恢复/卸载说明和已知限制。
-- 每个里程碑均有服务器验证记录、独立 agent review 结论和聚焦提交；`v1.0.0` tag 指向干净、已推送且可复现的发布提交。
+- 每个里程碑均有服务器验证记录、独立 agent review 结论和聚焦提交；发布 tag 指向干净、已推送且可复现的发布提交。
 
 ## 6. 需要用户提供或确认的外部凭据
 
