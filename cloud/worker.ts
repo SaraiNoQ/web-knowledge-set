@@ -20,6 +20,7 @@ import {
   type D1Database,
 } from "./extension";
 import { handleAiApi } from "./ai";
+import { handleAssetRequest } from "./assets";
 import { handleBackupApi, type R2Bucket } from "./backup";
 import {
   captureQueueStatus,
@@ -43,6 +44,7 @@ interface AssetFetcher {
 export interface CloudEnv extends CaptureEnv {
   ASSETS: AssetFetcher;
   BACKUPS: R2Bucket;
+  IMAGES: R2Bucket;
 }
 
 const DATA_EPOCH_HEADER = "X-Zhiye-Data-Epoch";
@@ -323,6 +325,16 @@ export async function handleRequest(request: Request, env: CloudEnv) {
   try {
     const url = new URL(request.url);
     if (url.pathname === "/health") return json({ ok: true, mode: "cloud-core" });
+
+    const assetResponse = (request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith("/api/assets/")
+      ? await handleAssetRequest(env.IMAGES, url)
+      : null;
+    if (assetResponse) {
+      const headers = new Headers(assetResponse.headers);
+      for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
+      return new Response(assetResponse.body, { status: assetResponse.status, statusText: assetResponse.statusText, headers });
+    }
+
     if (url.pathname.startsWith("/api/")) return await api(request, env, url);
 
     const asset = await env.ASSETS.fetch(request);

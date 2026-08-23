@@ -11,6 +11,7 @@ interface R2ObjectBody {
   body: ReadableStream<Uint8Array>;
   size: number;
   httpEtag: string;
+  httpMetadata?: { contentType?: string };
   arrayBuffer(): Promise<ArrayBuffer>;
 }
 

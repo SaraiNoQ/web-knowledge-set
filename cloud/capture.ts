@@ -1,5 +1,5 @@
-import ipaddr from "ipaddr.js";
-
+import { fetchDocumentAssets } from "./assets";
+import type { R2Bucket } from "./backup";
 import {
   CloudHttpError,
   documentFolderFilter,
@@ -15,10 +15,11 @@ import {
   updateDocument,
   type D1Database,
 } from "./extension";
+import { publicUrl } from "./net";
 
 interface QueueBinding { send(body: unknown): Promise<void> }
 interface BrowserRun { quickAction(action: string, options: Record<string, unknown>): Promise<Response> }
-export interface CaptureEnv { DB: D1Database; CAPTURE_QUEUE: QueueBinding; BROWSER: BrowserRun }
+export interface CaptureEnv { DB: D1Database; CAPTURE_QUEUE: QueueBinding; BROWSER: BrowserRun; IMAGES: R2Bucket }
 export interface QueueMessage<T> { body: T; ack(): void; retry(): void }
 export interface QueueBatch<T> { messages: QueueMessage<T>[] }
 
@@ -73,31 +74,6 @@ function jobDocument(row: CaptureJobRow) {
     folderId: row.folderId, archivedAt: null, revision: row.revision, deletedAt: row.deletedAt, createdAt: row.createdAt, updatedAt: row.updatedAt,
     publishedAt: null, markdown: "", captureMode: "browser", sourceNote: "Cloudflare Browser Run",
   };
-}
-
-async function publicUrl(input: unknown) {
-  let url: URL;
-  try { url = new URL(typeof input === "string" ? input.trim() : ""); }
-  catch { throw new CloudHttpError(400, "INVALID_URL", "A valid HTTP or HTTPS URL is required"); }
-  if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password || url.port === "0") {
-    throw new CloudHttpError(400, "INVALID_URL", "A public HTTP or HTTPS URL is required");
-  }
-  url.hash = "";
-  const hostname = url.hostname.replace(/^\[|\]$/gu, "").toLowerCase();
-  if (hostname === "localhost" || hostname.endsWith(".local") || ipaddr.isValid(hostname)) {
-    throw new CloudHttpError(400, "BLOCKED_ADDRESS", "IP literals and local hostnames are blocked");
-  }
-  const answers = await Promise.all(["A", "AAAA"].map(async (type) => {
-    const response = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=${type}`, { headers: { "Accept": "application/dns-json" }, signal: AbortSignal.timeout(5_000) });
-    if (!response.ok) throw new CloudHttpError(502, "DNS_FAILED", "Hostname resolution failed");
-    const body = await response.json() as { Answer?: Array<{ type: number; data: string }> };
-    return (body.Answer || []).filter((answer) => answer.type === 1 || answer.type === 28).map((answer) => answer.data);
-  }));
-  const addresses = answers.flat();
-  if (!addresses.length || addresses.some((address) => !ipaddr.isValid(address) || ipaddr.process(address).range() !== "unicast")) {
-    throw new CloudHttpError(400, "BLOCKED_ADDRESS", "Hostname resolved to a blocked network range");
-  }
-  return url.href;
 }
 
 export async function createCapture(body: Record<string, unknown>, env: CaptureEnv, expectedEpoch: string) {
@@ -345,16 +321,18 @@ async function consume(message: CaptureMessage, env: CaptureEnv) {
     throw new CloudHttpError(502, "EXTRACTION_EMPTY", "Browser Run returned no Markdown");
   }
   const markdown = payload.result.trim();
-  if (new TextEncoder().encode(markdown).byteLength > MAX_CLOUD_ROW_TEXT_BYTES) throw new CloudHttpError(413, "RESPONSE_TOO_LARGE", "Captured Markdown exceeds the D1 row budget");
-  const title = /^#\s+(.+)$/mu.exec(markdown)?.[1]?.trim() || new URL(url).hostname;
   const now = new Date().toISOString();
+  const title = /^#\s+(.+)$/mu.exec(markdown)?.[1]?.trim() || new URL(url).hostname;
+  const rewritten = await fetchDocumentAssets({ IMAGES: env.IMAGES }, markdown, url);
+  const storedMarkdown = rewritten.markdown;
+  if (new TextEncoder().encode(storedMarkdown).byteLength > MAX_CLOUD_ROW_TEXT_BYTES) throw new CloudHttpError(413, "RESPONSE_TOO_LARGE", "Captured Markdown exceeds the D1 row budget");
   if (!env.DB.batch) throw new CloudHttpError(503, "CLOUD_BATCH_UNAVAILABLE", "D1 batch API is unavailable");
   await env.DB.batch([env.DB.prepare(`INSERT INTO cloud_documents(
     id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note, folder_id, revision, created_at, updated_at
   ) SELECT ?, ?, ?, ?, ?, NULL, NULL, ?, 'ready', 'Cloudflare Browser Run', job.folder_id, job.revision + 1, ?, ?
     FROM cloud_capture_jobs job WHERE job.id = ? AND job.deleted_at IS NULL
       AND EXISTS (SELECT 1 FROM app_settings WHERE key = 'data_epoch' AND value = ?)`).bind(
-    message.id, url, url, url, title.slice(0, 1_000), markdown, now, now, message.id, message.epoch,
+    message.id, url, url, url, title.slice(0, 1_000), storedMarkdown, now, now, message.id, message.epoch,
   ), env.DB.prepare(`DELETE FROM cloud_capture_jobs WHERE id = ?
     AND EXISTS (SELECT 1 FROM cloud_documents WHERE id = ?)`).bind(message.id, message.id)]);
 }

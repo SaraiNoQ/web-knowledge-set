@@ -277,6 +277,14 @@ function assetSource(src: string | undefined, sourceUrl: string) {
   }
 }
 
+const ASSET_URI = /^zhiye:\/\/asset\/([a-f0-9]{64})$/u;
+
+function assetHashFromUri(src: string | undefined) {
+  if (!src) return null;
+  const match = ASSET_URI.exec(src.trim());
+  return match ? match[1]! : null;
+}
+
 function ImagePlaceholder({ alt, children }: { alt?: string; children: string }) {
   const label = alt ? `图片“${alt}”` : "图片";
   return (
@@ -308,6 +316,18 @@ function OfflineImage({ asset, alt }: { asset?: DocumentAsset; alt?: string }) {
   );
 }
 
+function CloudAssetImage({ asset, hash, alt }: { asset?: DocumentAsset; hash: string; alt?: string }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [hash]);
+  if (asset) return <OfflineImage asset={asset} alt={alt} />;
+  if (failed) return <ImagePlaceholder alt={alt}>图片暂不可用。</ImagePlaceholder>;
+  return (
+    <span className="offline-image">
+      <img src={api.assetUrl(hash)} alt={alt || ""} loading="lazy" onError={() => setFailed(true)} />
+    </span>
+  );
+}
+
 function MarkdownPreview({ markdown, sourceUrl, assets = [] }: { markdown: string; sourceUrl: string; assets?: DocumentAsset[] }) {
   const assetsBySource = useMemo(() => {
     const result = new Map<string, DocumentAsset>();
@@ -317,6 +337,14 @@ function MarkdownPreview({ markdown, sourceUrl, assets = [] }: { markdown: strin
     }
     return result;
   }, [assets, sourceUrl]);
+
+  const assetsByHash = useMemo(() => {
+    const result = new Map<string, DocumentAsset>();
+    for (const asset of assets) {
+      if (asset.assetHash) result.set(asset.assetHash, asset);
+    }
+    return result;
+  }, [assets]);
 
   return (
     <article className="markdown-preview">
@@ -331,6 +359,8 @@ function MarkdownPreview({ markdown, sourceUrl, assets = [] }: { markdown: strin
             return <a {...props} href={safeHref} target={external ? "_blank" : undefined} rel={external ? "noreferrer noopener" : undefined}>{children}</a>;
           },
           img: ({ node: _node, src, alt }) => {
+            const assetHash = assetHashFromUri(src);
+            if (assetHash) return <CloudAssetImage asset={assetsByHash.get(assetHash)} hash={assetHash} alt={alt} />;
             const source = assetSource(src, sourceUrl);
             return source
               ? <OfflineImage asset={assetsBySource.get(source)} alt={alt} />

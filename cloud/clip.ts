@@ -1,16 +1,20 @@
 import {
   CloudHttpError,
+  clipInput,
   createClip,
   epochGuardedDatabase,
   exchangePairing,
   extensionCors,
   extensionOrigin,
   jsonObject,
+  MAX_CLOUD_ROW_TEXT_BYTES,
   recoverExpiredRestore,
   type D1Database,
 } from "./extension";
+import { fetchDocumentAssets } from "./assets";
+import type { R2Bucket } from "./backup";
 
-interface ClipEnv { DB: D1Database }
+interface ClipEnv { DB: D1Database; IMAGES: R2Bucket }
 
 function json(body: unknown, status: number, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), {
@@ -44,7 +48,13 @@ export async function handleClipRequest(request: Request, env: ClipEnv) {
       return json(await exchangePairing(db, await jsonObject(request, 4_096), extension.browser), 201, cors);
     }
     if (url.pathname === "/api/browser-extension/clips") {
-      return json(await createClip(db, request), 201, cors);
+      const input = clipInput(await jsonObject(request));
+      const rewritten = await fetchDocumentAssets({ IMAGES: env.IMAGES }, input.markdown, input.sourceUrl);
+      if (new TextEncoder().encode(rewritten.markdown).byteLength > MAX_CLOUD_ROW_TEXT_BYTES) {
+        throw new CloudHttpError(413, "MARKDOWN_TOO_LARGE", "markdown exceeds the D1 row budget");
+      }
+      const clipped = { ...input, markdown: rewritten.markdown };
+      return json(await createClip(db, request, clipped), 201, cors);
     }
     throw new CloudHttpError(404, "NOT_FOUND", "Endpoint not found");
   } catch (error) {
@@ -54,3 +64,4 @@ export async function handleClipRequest(request: Request, env: ClipEnv) {
 }
 
 export default { fetch: handleClipRequest };
+

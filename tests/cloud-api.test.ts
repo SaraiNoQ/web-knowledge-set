@@ -129,6 +129,7 @@ function environment(): CloudEnv {
       async head() { return null; },
       async delete() {},
     },
+    IMAGES: memoryBucket(),
     CAPTURE_QUEUE: { async send() {} },
     BROWSER: { async quickAction() { return new Response('{"success":true,"result":"# captured"}'); } },
     DB: {
@@ -163,15 +164,16 @@ function environment(): CloudEnv {
   };
 }
 
-function sqliteEnvironment(db = migratedCloudDatabase(), bucket = memoryBucket()) {
+function sqliteEnvironment(db = migratedCloudDatabase(), bucket = memoryBucket(), imagesBucket = memoryBucket()) {
   const env: CloudEnv = {
     ASSETS: { fetch: async () => new Response("<main>cloud</main>", { headers: { "Content-Type": "text/html" } }) },
     BACKUPS: bucket,
+    IMAGES: imagesBucket,
     CAPTURE_QUEUE: { async send() {} },
     BROWSER: { async quickAction() { return new Response('{"success":true,"result":"# captured"}'); } },
     DB: db,
   };
-  return { env, db, bucket };
+  return { env, db, bucket, imagesBucket };
 }
 
 test("cloud core serves the existing empty-library startup contract", async () => {

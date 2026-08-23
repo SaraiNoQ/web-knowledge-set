@@ -25,6 +25,10 @@
     {
       "binding": "BACKUPS",
       "bucket_name": "zhiye-cloud-backups"
+    },
+    {
+      "binding": "IMAGES",
+      "bucket_name": "zhiye-cloud-images"
     }
   ],
   "browser": { "binding": "BROWSER" },

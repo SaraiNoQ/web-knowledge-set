@@ -338,7 +338,7 @@ export async function exchangePairing(db: D1Database, body: Record<string, unkno
   return { token, pairing };
 }
 
-function clipInput(body: Record<string, unknown>) {
+export function clipInput(body: Record<string, unknown>) {
   const allowed = new Set(["sourceUrl", "title", "author", "publishedAt", "markdown"]);
   if (Object.keys(body).some((key) => !allowed.has(key))) {
     throw new CloudHttpError(400, "INVALID_EXTENSION_CLIP", "Extension clip contains an unknown field");
@@ -379,7 +379,7 @@ function clipInput(body: Record<string, unknown>) {
   return { sourceUrl, title: body.title.trim(), author: author?.trim() ?? null, publishedAt, markdown: body.markdown };
 }
 
-export async function createClip(db: D1Database, request: Request) {
+export async function createClip(db: D1Database, request: Request, input: ReturnType<typeof clipInput>) {
   const match = /^Bearer ([A-Za-z0-9_-]{43})$/u.exec(request.headers.get("Authorization") || "");
   if (!match) throw new CloudHttpError(401, "EXTENSION_UNAUTHORIZED", "Extension token required");
   const tokenHash = await sha256(match[1]);
@@ -387,7 +387,6 @@ export async function createClip(db: D1Database, request: Request) {
     .bind(tokenHash).first<{ id: string }>();
   if (!pairing) throw new CloudHttpError(401, "EXTENSION_UNAUTHORIZED", "Extension token is invalid or revoked");
 
-  const input = clipInput(await jsonObject(request));
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   const inserted = await db.prepare(
