@@ -470,6 +470,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 
 .library-toggle:hover { color: var(--vermilion); border-color: var(--vermilion); }
 .library-panel:not(.is-collapsed) .panel-heading { padding-right: 34px; }
+.collapsed-actions { display: none; }
 
 .panel-heading {
   display: flex;
@@ -552,26 +553,9 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   line-height: 1;
 }
 
-.select-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.select-row label { min-width: 0; }
-
-.select-row .ui-select {
-  width: 100%;
-  height: 34px;
-  padding: 0 28px 0 10px;
-  color: var(--ink-soft);
-  background-color: transparent;
-  border: 1px solid var(--line);
-  border-radius: 0;
-  font-size: var(--font-ui);
-}
-
-.scope-field,
-.advanced-filters label { display: grid; gap: 4px; color: var(--ink-faint); font-size: var(--font-caption); }
+.scope-field { display: grid; gap: 4px; color: var(--ink-faint); font-size: var(--font-caption); }
 .scope-field { grid-template-columns: auto 1fr; align-items: center; }
 .scope-field .ui-select,
-.advanced-filters .ui-select,
-.advanced-filters input,
 .bulk-toolbar .ui-select {
   width: 100%;
   height: 32px;
@@ -582,14 +566,6 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   border-radius: 0;
   font-size: var(--font-small);
 }
-.advanced-filters { padding: 7px 0 0; border-top: 1px dashed var(--line); }
-.advanced-filters summary { color: var(--ink-soft); cursor: pointer; font-size: var(--font-small); }
-.advanced-filters[open] summary { margin-bottom: 8px; }
-.advanced-filters > label { margin-top: 8px; }
-.date-filter-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
-.recent-filters { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
-.recent-filters > span { color: var(--ink-faint); font-size: var(--font-caption); }
-.recent-filters button { overflow: hidden; max-width: 145px; padding: 4px 6px; color: var(--ink-soft); background: rgba(250,247,239,.72); border: 1px solid var(--line); font-size: var(--font-caption); text-overflow: ellipsis; white-space: nowrap; }
 
 .result-caption {
   display: flex;
@@ -747,6 +723,23 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   background: rgba(250,247,239,.58);
 }
 .reader-panel:focus { outline: 2px solid var(--vermilion); outline-offset: -2px; }
+
+.back-to-title {
+  position: fixed;
+  z-index: 5;
+  right: 24px;
+  bottom: 24px;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  color: var(--ink-soft);
+  background: rgba(250,247,239,.92);
+  border: 1px solid var(--line-strong);
+  box-shadow: 4px 4px 0 rgba(31,29,25,.08);
+}
+.back-to-title:hover { color: var(--vermilion); border-color: var(--vermilion); }
 
 .reader-panel > .state-panel { min-height: 520px; }
 
@@ -1461,8 +1454,11 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   .workspace.library-collapsed { grid-template-columns: 52px minmax(0, 1fr); }
   .library-panel { position: sticky; top: 0; align-self: start; height: 100vh; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
   .library-panel.is-collapsed { padding: 32px 10px; scrollbar-gutter: auto; }
-  .library-panel.is-collapsed > :not(.library-toggle) { display: none; }
+  .library-panel.is-collapsed > :not(.library-toggle, .collapsed-actions) { display: none; }
   .library-panel.is-collapsed .library-toggle { position: static; margin: 0 auto; }
+  .library-panel.is-collapsed .collapsed-actions { display: grid; gap: 10px; margin-top: 18px; }
+  .collapsed-actions button { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; color: var(--ink-faint); background: transparent; border: 1px solid transparent; }
+  .collapsed-actions button:hover, .collapsed-actions button[aria-pressed="true"] { color: var(--vermilion); border-color: var(--line-strong); background: rgba(250,247,239,.62); }
 }
 
 @media (max-width: 1100px) {
@@ -1514,6 +1510,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   .workspace.has-selection .library-panel { display: none; }
   .workspace:not(.has-selection) .reader-panel { display: none; }
   .reader-panel { min-height: 560px; }
+  .back-to-title { right: 16px; bottom: 16px; }
   .mobile-back {
     display: inline-flex;
     align-items: center;
@@ -1587,7 +1584,6 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   .capture-form .primary-button { grid-column: 1 / -1; width: 100%; height: 44px; border-width: 1px 0 0; }
   .capture-form input { height: 47px; padding-right: 10px; padding-left: 10px; }
   .url-prefix { padding: 0 10px; }
-  .select-row { grid-template-columns: 1fr; }
   .document-head { gap: 13px; }
   .title-field input { font-size: 27px; }
   .document-kicker > span:last-child { display: none; }
@@ -1777,6 +1773,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .derived-markdown > :first-child, .derived-markdown > div > :first-child { margin-top: 0; }
 .derived-markdown > :last-child, .derived-markdown > div > :last-child { margin-bottom: 0; }
 .derived-markdown pre { padding: 10px; overflow: auto; background: #ebe5d8; font: var(--font-caption)/1.6 var(--font-mono); }
+.derived-keywords { margin: 13px 0 0; color: var(--ink-soft); font: var(--font-readable)/1.75 var(--font-serif); }
 .derived-lightweight { display: grid; gap: 9px; margin-top: 13px; }
 .derived-lightweight > div { display: flex; flex-wrap: wrap; align-items: center; gap: 7px 11px; color: var(--ink-faint); }
 .derived-lightweight > div span { color: var(--gold); font: 600 var(--font-caption)/1 var(--font-mono); letter-spacing: .08em; }
@@ -2044,6 +2041,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 }
 .directory-title.document-row::before { display: none; }
 .directory-title.document-row:hover, .directory-title.document-row.is-selected { padding: 5px 4px; background: transparent; }
+.directory-document-row.is-selected .directory-title { padding-left: 10px; }
 .directory-external { display: grid; place-items: center; min-height: 30px; color: var(--ink-faint); text-decoration: none; }
 .directory-external:hover { color: var(--vermilion); }
 .directory-external-space { width: 24px; }

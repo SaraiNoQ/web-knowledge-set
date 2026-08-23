@@ -31,7 +31,6 @@ import type {
   KnowledgeFolder,
   KnowledgeTag,
   OnboardingState,
-  RecentFilter,
   ReextractionPreview,
 } from "../shared/types";
 import { api, ApiRequestError } from "./api";
@@ -45,7 +44,7 @@ import { DerivedKnowledge, type DerivedMode } from "./components/DerivedKnowledg
 import { MarkdownEditor } from "./components/MarkdownEditor";
 import { Onboarding } from "./components/Onboarding";
 import { DocumentDirectoryRow, LibraryDirectory, type MoveDocumentTarget } from "./components/LibraryDirectory";
-import { Select } from "./components/ui/Controls";
+import { IconButton, Select } from "./components/ui/Controls";
 import { useDialogs, useToast } from "./components/ui/Feedback";
 import { Modal } from "./components/ui/Modal";
 import { userErrorFrom, userErrorMessage } from "./error-messages";
@@ -58,13 +57,6 @@ type StatusFilter = CaptureStatus | "";
 type LibraryView = "all" | "recent" | "favorites" | "unorganized" | "archived" | "failed" | "trash";
 type SearchScope = "all" | "title" | "body" | "source";
 type SortOrder = "updated" | "created" | "title";
-
-type SavedFilter = RecentFilter;
-
-function addRecentFilter(filters: SavedFilter[], saved: SavedFilter) {
-  const signature = JSON.stringify({ ...saved, label: undefined });
-  return [saved, ...filters.filter((value) => JSON.stringify({ ...value, label: undefined }) !== signature)].slice(0, 5);
-}
 
 interface Draft {
   title: string;
@@ -509,8 +501,6 @@ export default function App() {
   const [sortOrder, setSortOrder] = useState<SortOrder>("updated");
   const [unorganizedFilter, setUnorganizedFilter] = useState(false);
   const [libraryView, setLibraryView] = useState<LibraryView>("all");
-  const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([]);
-  const [recentFilterNotice, setRecentFilterNotice] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [batchAction, setBatchAction] = useState<BatchDocumentAction | "">("");
   const [batchCollectionId, setBatchCollectionId] = useState("");
@@ -524,13 +514,13 @@ export default function App() {
   const [shortcutHelp, setShortcutHelp] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const [inTrash, setInTrash] = useState(false);
-  const [knownTags, setKnownTags] = useState<string[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState("");
   const [discardPromptOpen, setDiscardPromptOpen] = useState(false);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
+  const [showBackToTitle, setShowBackToTitle] = useState(false);
   const [currentDoc, setCurrentDoc] = useState<KnowledgeDocument | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [tagText, setTagText] = useState("");
@@ -628,9 +618,6 @@ export default function App() {
   const selectedDocumentRevisionsRef = useRef(new Map<string, number>());
   const listContextRef = useRef("");
   const itemsContextRef = useRef("");
-  const savedFiltersEditedRef = useRef(false);
-  const recentFiltersStateRef = useRef<{ filters: SavedFilter[]; revision: number }>({ filters: [], revision: 0 });
-  const recentFilterSaveChainRef = useRef<Promise<unknown>>(Promise.resolve());
   const bulkImportAbortRef = useRef<AbortController | null>(null);
   const externalIntentHandlerRef = useRef<(intents: ExternalIntent[]) => Promise<void>>(async () => undefined);
   const portableExportAbortRef = useRef<AbortController | null>(null);
@@ -639,6 +626,7 @@ export default function App() {
   const keptDuplicateIdsRef = useRef(new Set<string>());
   const navigationGenerationRef = useRef(0);
   const readerPanelRef = useRef<HTMLElement>(null);
+  const documentHeadRef = useRef<HTMLElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const libraryListRef = useRef<HTMLDivElement>(null);
   selectedIdRef.current = selectedId;
@@ -694,11 +682,16 @@ export default function App() {
   useEffect(() => setDerivedOpen(false), [selectedId]);
 
   useEffect(() => {
-    recentFilterSaveChainRef.current = api.getRecentFilters().then((value) => {
-      recentFiltersStateRef.current = value;
-      if (!savedFiltersEditedRef.current) setSavedFilters(value.filters);
-    }).catch(() => undefined);
-  }, []);
+    setShowBackToTitle(false);
+    if (!selectedId || !currentDoc?.id) return;
+    const update = () => setShowBackToTitle((documentHeadRef.current?.getBoundingClientRect().bottom ?? 1) < 0);
+    const frame = window.requestAnimationFrame(update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [currentDoc?.id, selectedId]);
 
   const longArticle = (draft?.markdown.length ?? 0) > 250_000;
   const cloudMode = runtimeMode === "cloud";
@@ -865,12 +858,6 @@ export default function App() {
     void loadFolders(controller.signal);
     return () => controller.abort();
   }, [listRefresh, loadFolders, safetyOpen]);
-
-  const refreshKnownTags = useCallback((signal?: AbortSignal) => {
-    void api.listTags(inTrash ? "only" : undefined, signal).then(setKnownTags).catch(() => {
-      // Keep the last complete tag list when this secondary refresh fails.
-    });
-  }, [inTrash]);
 
   const updateListItem = useCallback((document: KnowledgeDocument) => {
     setItems((previous) => previous.map((item) => item.id === document.id ? {
@@ -1171,7 +1158,6 @@ export default function App() {
         setItems(result.items);
         setTotal(result.total);
         setPageSize(result.pageSize || 30);
-        refreshKnownTags(controller.signal);
       } catch (error) {
         if ((error as Error).name !== "AbortError") setListError((error as Error).message);
       } finally {
@@ -1182,7 +1168,7 @@ export default function App() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [archivedFilter, captureModeFilter, collectionFilter, dateFrom, dateTo, favoriteFilter, inTrash, listRefresh, page, query, refreshKnownTags, searchScope, sortOrder, status, tag, unorganizedFilter]);
+  }, [archivedFilter, captureModeFilter, collectionFilter, dateFrom, dateTo, favoriteFilter, inTrash, listRefresh, page, query, searchScope, sortOrder, status, tag, unorganizedFilter]);
 
   useEffect(() => {
     if (!inTrash || !items.some(needsCapturePolling)) return;
@@ -1214,7 +1200,6 @@ export default function App() {
         itemsContextRef.current = listContextKey;
         setItems(result.items);
         setTotal(result.total);
-        refreshKnownTags();
       } catch (error) {
         if ((error as Error).name === "AbortError") return;
         // Background refresh failures should not replace the current workspace.
@@ -1224,7 +1209,7 @@ export default function App() {
       window.clearInterval(timer);
       controller.abort();
     };
-  }, [archivedFilter, captureModeFilter, collectionFilter, dateFrom, dateTo, favoriteFilter, inTrash, items, page, query, refreshKnownTags, searchScope, sortOrder, status, tag, unorganizedFilter]);
+  }, [archivedFilter, captureModeFilter, collectionFilter, dateFrom, dateTo, favoriteFilter, inTrash, items, page, query, searchScope, sortOrder, status, tag, unorganizedFilter]);
 
   useEffect(() => {
     if (inTrash) setSelectedIds((previous) => new Set(items.filter((item) => previous.has(item.id)).map((item) => item.id)));
@@ -1244,51 +1229,6 @@ export default function App() {
   useEffect(() => {
     setLibraryView((value) => inTrash ? "trash" : value === "trash" ? "all" : value);
   }, [inTrash]);
-
-  useEffect(() => {
-    if (cloudMode) return;
-    if (inTrash || (!query.trim() && searchScope === "all" && !tag && !collectionFilter && !status && favoriteFilter === undefined && archivedFilter === undefined && !captureModeFilter && !dateFrom && !dateTo && sortOrder === "updated")) return;
-    const timer = window.setTimeout(() => {
-      savedFiltersEditedRef.current = true;
-      const saved: SavedFilter = {
-        label: [query.trim() && `“${query.trim()}”`, tag && `#${tag}`, collectionFilter && "集合", status && STATUS_LABEL[status], favoriteFilter && "收藏", archivedFilter && "归档", unorganizedFilter && "未整理"].filter(Boolean).join(" · ") || "组合筛选",
-        query: query.trim(),
-        scope: searchScope,
-        tag,
-        collectionId: collectionFilter,
-        status,
-        favorite: favoriteFilter,
-        archived: archivedFilter,
-        unorganized: unorganizedFilter,
-        captureMode: captureModeFilter,
-        from: dateFrom,
-        to: dateTo,
-        sort: sortOrder,
-      };
-      setSavedFilters((previous) => {
-        const next = addRecentFilter(previous, saved);
-        recentFilterSaveChainRef.current = recentFilterSaveChainRef.current
-          .catch(() => undefined)
-          .then(() => {
-            const current = recentFiltersStateRef.current;
-            return api.saveRecentFilters(addRecentFilter(current.filters, saved), current.revision);
-          })
-          .then((value) => {
-            recentFiltersStateRef.current = value;
-            setSavedFilters(value.filters);
-          })
-          .catch(async (error) => {
-            if (!(error instanceof ApiRequestError) || error.code !== "RECENT_FILTERS_CONFLICT") throw error;
-            const value = await api.getRecentFilters();
-            recentFiltersStateRef.current = value;
-            setSavedFilters(value.filters);
-            setRecentFilterNotice("最近筛选已在另一窗口更新，已载入最新版本。");
-          });
-        return next;
-      });
-    }, 600);
-    return () => window.clearTimeout(timer);
-  }, [archivedFilter, captureModeFilter, cloudMode, collectionFilter, dateFrom, dateTo, favoriteFilter, inTrash, query, searchScope, sortOrder, status, tag, unorganizedFilter]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -1501,7 +1441,6 @@ export default function App() {
       installCurrentDocument(updated);
       updateListItem(updated);
       setListRefresh((value) => value + 1);
-      if (!cloudMode) refreshKnownTags();
       const unchangedSinceRequest = Boolean(draftRef.current && draftsEqual(draftRef.current, sent));
       if (unchangedSinceRequest) {
         persistedDraftRef.current = null;
@@ -1525,7 +1464,7 @@ export default function App() {
     } finally {
       saveInFlight.current = false;
     }
-  }, [cloudMode, collectionAction, conflict, currentDoc, dirty, draft, metadataDirty, organizationConflict, persistDraft, refreshKnownTags, remoteDraftConflict, updateListItem]);
+  }, [cloudMode, collectionAction, conflict, currentDoc, dirty, draft, metadataDirty, organizationConflict, persistDraft, remoteDraftConflict, updateListItem]);
 
   saveNowRef.current = saveNow;
 
@@ -1981,7 +1920,6 @@ export default function App() {
       setListRefresh((value) => value + 1);
       void loadCaptureQueue();
       void loadCollections();
-      refreshKnownTags();
       setImportNotice(`批量导入完成：新增 ${result.counts.created}，更新 ${result.counts.updated}，跳过 ${result.counts.skipped}。`);
       setBulkImportNotice(bulkImportPreview.kind === "bundle" ? "知识包已导入，资料库已刷新。" : "导入完成，资料库已刷新。");
       const currentId = selectedIdRef.current;
@@ -2237,7 +2175,6 @@ export default function App() {
   const refreshClassificationData = async () => {
     const [tags] = await Promise.all([api.listManagedTags(), loadCollections()]);
     setManagedTags(tags);
-    refreshKnownTags();
     setListRefresh((value) => value + 1);
     const document = currentDocRef.current;
     if (document) {
@@ -2448,22 +2385,6 @@ export default function App() {
     return true;
   };
 
-  const applySavedFilter = async (saved: SavedFilter) => {
-    if (!await applyLibraryView("all")) return;
-    setQuery(saved.query);
-    setSearchScope(saved.scope);
-    setTag(saved.tag);
-    setCollectionFilter(saved.collectionId);
-    setStatus(saved.status);
-    setFavoriteFilter(saved.favorite);
-    setArchivedFilter(saved.archived);
-    setUnorganizedFilter(Boolean(saved.unorganized));
-    setCaptureModeFilter(saved.captureMode);
-    setDateFrom(saved.from);
-    setDateTo(saved.to);
-    setSortOrder(saved.sort);
-  };
-
   const runBatchAction = async () => {
     if (
       !batchAction || !selectedIds.size || batchBusy || (inTrash && listLoading) || hasUnsavedChanges ||
@@ -2524,7 +2445,6 @@ export default function App() {
         setBatchAction("");
         setListRefresh((value) => value + 1);
         await loadCollections();
-        refreshKnownTags();
       })());
     } catch (error) {
       setBatchError((error as Error).message);
@@ -2958,7 +2878,6 @@ export default function App() {
         setTagText(updated.tags.join(", "));
         setSaveState("saved");
         updateListItem(updated);
-        refreshKnownTags();
       }
     } catch (error) {
       if (error instanceof ApiRequestError && error.status === 409 && error.document) {
@@ -2989,7 +2908,6 @@ export default function App() {
       setDraft(draftOf(restored));
       setTagText(restored.tags.join(", "));
       updateListItem(restored);
-      refreshKnownTags();
       setHistoryOpen(false);
       setSaveState("saved");
       focusReader();
@@ -3122,7 +3040,6 @@ export default function App() {
       }
       updateListItem(updated);
       setListRefresh((value) => value + 1);
-      void api.listTags().then(setKnownTags).catch(() => undefined);
       focusReader();
     } catch (error) {
       if (error instanceof ApiRequestError && error.code === "DRAFT_CONFLICT") {
@@ -3417,6 +3334,13 @@ export default function App() {
           <button type="button" className="library-toggle" aria-expanded={!libraryCollapsed} aria-controls="library-panel" aria-label={libraryCollapsed ? "展开知识织片" : "收起知识织片"} onClick={() => setLibraryCollapsed((value) => !value)}>
             <Icon size={17}><path d={libraryCollapsed ? "m9 6 6 6-6 6" : "m15 6-6 6 6 6"} /></Icon>
           </button>
+          <nav className="collapsed-actions" aria-label="折叠侧栏快捷操作">
+            <IconButton label="搜索知识" onClick={() => { setLibraryCollapsed(false); window.requestAnimationFrame(() => searchInputRef.current?.focus()); }}><Icon size={17}><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></Icon></IconButton>
+            <IconButton label="全部知识" aria-pressed={libraryView === "all"} onClick={() => void applyLibraryView("all")}><Icon size={17}><path d="M5 5h14v14H5zM5 10h14" /></Icon></IconButton>
+            <IconButton label="收藏知识" aria-pressed={libraryView === "favorites"} onClick={() => void applyLibraryView("favorites")}><Icon size={17}><path d="m12 4 2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4-3.9-3.8 5.4-.8z" /></Icon></IconButton>
+            <IconButton label="新建文章" onClick={() => void createArticle()}><Icon size={18}><path d="M12 5v14M5 12h14" /></Icon></IconButton>
+            <IconButton label="打开回收站" aria-pressed={libraryView === "trash"} onClick={() => void applyLibraryView("trash")}><Icon size={17}><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13M10 10v7M14 10v7" /></Icon></IconButton>
+          </nav>
           <div className="panel-heading">
             <div><span className="eyebrow">02 · {inTrash ? "TRASH" : "LIBRARY"}</span><h2>{inTrash ? "回收站" : "知识织片"}</h2></div>
             <span className="total-count">{total}<small>篇</small></span>
@@ -3439,25 +3363,6 @@ export default function App() {
               {query && <button type="button" className="clear-search" onClick={() => setQuery("")} aria-label="清空搜索">×</button>}
             </label>
             <label className="scope-field"><span>搜索范围</span><Select density="compact" value={searchScope} onChange={(event) => { setSearchScope(event.target.value as SearchScope); setPage(1); }}><option value="all">全部字段</option><option value="title">仅标题</option><option value="body">仅正文</option><option value="source">仅来源</option></Select></label>
-            <div className="select-row">
-              <label><span className="sr-only">按标签筛选</span><Select density="compact" value={tag} onChange={(event) => { setTag(event.target.value); setPage(1); }}><option value="">全部标签</option>{knownTags.map((value) => <option key={value} value={value}>#{value}</option>)}</Select></label>
-              <label><span className="sr-only">按状态筛选</span><Select density="compact" value={status} onChange={(event) => { setStatus(event.target.value as StatusFilter); setPage(1); }}><option value="">全部状态</option><option value="ready">已就绪</option><option value="queued">等待中</option><option value="fetching">抓取中</option><option value="extracting">整理中</option><option value="failed">抓取失败</option></Select></label>
-            </div>
-            <div className="select-row">
-              <label><span className="sr-only">按集合筛选</span><Select density="compact" value={collectionFilter} onChange={(event) => { setCollectionFilter(event.target.value); setPage(1); }}><option value="">全部集合</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</Select></label>
-              <label><span className="sr-only">排序</span><Select density="compact" value={sortOrder} onChange={(event) => { setSortOrder(event.target.value as SortOrder); setPage(1); }}><option value="updated">最近更新</option><option value="created">最近创建</option><option value="title">标题排序</option></Select></label>
-            </div>
-            <details className="advanced-filters">
-              <summary>更多筛选</summary>
-              <div className="select-row">
-                <label><span>收藏</span><Select density="compact" value={favoriteFilter === undefined ? "" : String(favoriteFilter)} onChange={(event) => { setFavoriteFilter(event.target.value === "" ? undefined : event.target.value === "true"); setPage(1); }}><option value="">不限</option><option value="true">已收藏</option><option value="false">未收藏</option></Select></label>
-                <label><span>归档</span><Select density="compact" value={archivedFilter === undefined ? "" : String(archivedFilter)} onChange={(event) => { setArchivedFilter(event.target.value === "" ? undefined : event.target.value === "true"); setPage(1); }}><option value="">不限</option><option value="true">已归档</option><option value="false">未归档</option></Select></label>
-              </div>
-              <label><span>采集方式</span><Select density="compact" value={captureModeFilter} onChange={(event) => { setCaptureModeFilter(event.target.value as CaptureMode | ""); setPage(1); }}><option value="">不限</option><option value="http">直接读取</option><option value="browser">浏览器采集</option></Select></label>
-              <div className="date-filter-row"><label><span>起始日期</span><input type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPage(1); }} /></label><label><span>结束日期</span><input type="date" value={dateTo} onChange={(event) => { setDateTo(event.target.value); setPage(1); }} /></label></div>
-            </details>
-            {!!savedFilters.length && <div className="recent-filters" aria-label="最近筛选"><span>最近</span>{savedFilters.map((saved, index) => <button type="button" key={`${saved.label}-${index}`} onClick={() => void applySavedFilter(saved)}>{saved.label}</button>)}</div>}
-            {recentFilterNotice && <p className="batch-message" role="status">{recentFilterNotice}</p>}
           </fieldset>
 
           {!inTrash ? <><LibraryDirectory
@@ -3542,7 +3447,7 @@ export default function App() {
           ) : currentDoc && draft && cloudMode ? (
             <>
               <button type="button" className="mobile-back" onClick={closeDocument}><Icon size={16}><path d="m15 18-6-6 6-6" /></Icon>返回知识库</button>
-              <header className="document-head">
+              <header ref={documentHeadRef} className="document-head">
                 <div className="document-kicker">
                   <DocumentStatus status={currentDoc.status} />
                   {/^(?:https?):/u.test(currentDoc.finalUrl || currentDoc.sourceUrl) ? <a href={currentDoc.finalUrl || currentDoc.sourceUrl} target="_blank" rel="noreferrer noopener">{sourceName(currentDoc.finalUrl || currentDoc.sourceUrl)}<Icon size={13}><path d="M14 5h5v5M10 14 19 5M19 14v5H5V5h5" /></Icon></a> : <span>本地文章</span>}
@@ -3577,7 +3482,7 @@ export default function App() {
           ) : currentDoc && draft ? (
             <>
               <button type="button" className="mobile-back" onClick={closeDocument}><Icon size={16}><path d="m15 18-6-6 6-6" /></Icon>返回知识库</button>
-              <header className="document-head">
+              <header ref={documentHeadRef} className="document-head">
                 <div className="document-kicker">
                   <DocumentStatus status={currentDoc.status} />
                   {/^(?:https?):/u.test(currentDoc.finalUrl || currentDoc.sourceUrl) ? <a href={currentDoc.finalUrl || currentDoc.sourceUrl} target="_blank" rel="noreferrer noopener">{sourceName(currentDoc.finalUrl || currentDoc.sourceUrl)}<Icon size={13}><path d="M14 5h5v5M10 14 19 5M19 14v5H5V5h5" /></Icon></a> : <span>本地文章</span>}
@@ -3770,6 +3675,7 @@ export default function App() {
               )}
             </>
           ) : null}
+          {showBackToTitle && <button type="button" className="back-to-title" aria-label="返回文章标题" onClick={() => documentHeadRef.current?.scrollIntoView({ block: "start" })}><Icon size={20}><path d="m6 10 6-6 6 6M12 4v16" /></Icon></button>}
         </section>
       </main>
       </>}

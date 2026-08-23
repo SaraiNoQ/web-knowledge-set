@@ -197,6 +197,9 @@ test("returns home from the logo and toggles the knowledge sidebar", async ({ pa
   await expect(page.locator(".workspace")).toHaveClass(/library-collapsed/u);
   await expect.poll(() => page.locator(".library-panel").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  for (const label of ["搜索知识", "全部知识", "收藏知识", "新建文章", "打开回收站"]) {
+    await expect(page.getByRole("button", { name: label })).toBeVisible();
+  }
   const expand = page.getByRole("button", { name: "展开知识织片" });
   await expect(expand).toHaveAttribute("aria-expanded", "false");
   await page.setViewportSize({ width: 800, height: 900 });
@@ -205,15 +208,22 @@ test("returns home from the logo and toggles the knowledge sidebar", async ({ pa
   await page.setViewportSize({ width: 1280, height: 900 });
   await expand.click();
   await expect(page.locator(".workspace")).not.toHaveClass(/library-collapsed/u);
+  await expect(page.getByText("更多筛选", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("combobox", { name: "按标签筛选" })).toHaveCount(0);
+  await expect(page.getByRole("combobox", { name: "按状态筛选" })).toHaveCount(0);
+  await expect(page.getByRole("combobox", { name: "按集合筛选" })).toHaveCount(0);
 
   const scope = page.getByRole("combobox", { name: "搜索范围" });
   await scope.click();
   await expect(page.getByRole("listbox")).toBeVisible();
   await page.getByRole("option", { name: "仅标题" }).click();
   await expect(scope).toContainText("仅标题");
+  await scope.scrollIntoViewIfNeeded();
   await scope.press("ArrowDown");
+  await expect(page.getByRole("listbox")).toBeVisible();
   await scope.press("ArrowDown");
   await expect(page.getByRole("option", { name: "仅正文" })).toHaveClass(/is-active/u);
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
   await scope.press("Enter");
   await expect(scope).toContainText("仅正文");
   await expect(scope).toHaveAttribute("aria-valuetext", "仅正文");
@@ -529,6 +539,9 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(page.getByRole("region", { name: "固定摘要" })).toContainText("本地摘要");
 
   await page.getByRole("button", { name: "AI 派生", exact: true }).click();
+  await panel.getByRole("button", { name: "关键词", exact: true }).click();
+  await panel.getByRole("button", { name: "获取", exact: true }).click();
+  await expect(panel.locator(".derived-keywords")).toHaveText("联邦学习 · 原型聚合 · 余弦相似度", { timeout: 5_000 });
   await panel.getByRole("button", { name: "AI 对话", exact: true }).click();
   const customPrompt = panel.getByLabel("AI 对话 Prompt");
   await expect(customPrompt).toBeVisible();
@@ -597,7 +610,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await page.getByRole("button", { name: "AI 设置", exact: true }).click();
   await page.getByRole("button", { name: "关闭 AI 并删除全部结果" }).click();
   await page.getByRole("alertdialog", { name: "关闭 AI 并删除结果" }).getByRole("button", { name: "关闭并删除" }).click();
-  await expect(page.getByText(/AI 已关闭，并删除 4 条派生结果/u)).toBeVisible();
+  await expect(page.getByText(/AI 已关闭，并删除 5 条派生结果/u)).toBeVisible();
   await page.getByRole("button", { name: "返回资料库" }).click();
   await page.getByRole("button", { name: "AI 派生", exact: true }).click();
   await expect(page.getByText("还没有派生结果。", { exact: false })).toBeVisible();
@@ -1508,4 +1521,28 @@ test("renders inline and display LaTeX in article previews", async ({ page }) =>
   await expect.poll(() => display.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
   await display.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
   await expect.poll(() => display.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+});
+
+test("spaces the selected marker and returns to the article title", async ({ page }) => {
+  await page.goto("/");
+  const deferOnboarding = page.getByRole("button", { name: "稍后设置" });
+  if (await deferOnboarding.isVisible()) await deferOnboarding.click();
+  await page.getByLabel("网页地址").fill("https://example.com/back-to-title");
+  await page.getByRole("button", { name: "收取网页" }).click();
+  await expect(page.getByLabel("文档标题")).toHaveValue("远端测试文章", { timeout: 8_000 });
+
+  const selectedTitle = page.locator(".directory-document-row.is-selected .directory-title");
+  await expect(selectedTitle).toBeVisible();
+  await expect.poll(() => selectedTitle.evaluate((element) => getComputedStyle(element).paddingLeft)).toBe("10px");
+  await selectedTitle.hover();
+  await expect.poll(() => selectedTitle.evaluate((element) => getComputedStyle(element).paddingLeft)).toBe("10px");
+
+  await page.setViewportSize({ width: 1280, height: 320 });
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await expect.poll(() => page.locator(".document-head").evaluate((element) => element.getBoundingClientRect().bottom)).toBeLessThan(0);
+  const backToTitle = page.getByRole("button", { name: "返回文章标题" });
+  await expect(backToTitle).toBeVisible();
+  await backToTitle.click();
+  await expect.poll(() => page.locator(".document-head").evaluate((element) => Math.abs(element.getBoundingClientRect().top))).toBeLessThan(2);
+  await expect(backToTitle).toBeHidden();
 });

@@ -70,6 +70,8 @@ function DerivedOutput({ result, markdown, onLoadMarkdown }: {
   markdown: boolean;
   onLoadMarkdown: () => void;
 }) {
+  const keywords = result.type === "keywords" ? stringList(result.output) : [];
+  if (keywords.length > 1) return <p className="derived-keywords">{keywords.join(" · ")}</p>;
   if (result.output.length <= LIGHTWEIGHT_RESULT_CHARS || markdown) return <ModelMarkdown>{result.output}</ModelMarkdown>;
   return (
     <div className="derived-lightweight">

@@ -21,6 +21,8 @@ const llmServer = createServer(async (request, response) => {
       .map(({ id, text }) => ({ id, text: `译文：${text}` })))
     : system.includes("tag suggestion")
       ? JSON.stringify(["人工智能", "本地知识库"])
+    : system.includes("keyword strings")
+      ? JSON.stringify(["联邦学习", "原型聚合", "余弦相似度"])
       : "## 本地摘要\n\n这是确定性的测试摘要。[不可点击](https://model.example.test/)\n\n![不得请求](https://model.example.test/pixel.png)\n\n<script>window.__modelXss = true</script>";
   setTimeout(() => {
     response.writeHead(200, { "Content-Type": "application/json" });
