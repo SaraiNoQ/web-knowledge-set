@@ -19,7 +19,22 @@ async function extract(): Promise<ZhiyeClipResult> {
     const content = element.textContent ?? "";
     const formulas = protectedMath.filter(({ token }) => content.includes(token)).sort((left, right) => content.indexOf(left.token) - content.indexOf(right.token));
     if (formulas.length) element.replaceWith(page.createTextNode(formulas.map(({ token }) => token).join("\n\n")));
-    else element.remove();
+    else {
+      const math = (element.matches("math") ? [element] : [...element.querySelectorAll("math")]).filter((value) => (
+        !value.parentElement?.closest("math")
+        && !value.getAttribute("data-latex")?.trim()
+        && !value.getAttribute("alttext")?.trim()
+        && ![...value.querySelectorAll("annotation[encoding]")].some((annotation) => (
+          annotation.getAttribute("encoding")?.toLowerCase() === "application/x-tex" && annotation.textContent?.trim()
+        ))
+      ));
+      if (math.length) element.replaceWith(...math.map((value) => {
+        const clone = value.cloneNode(true) as Element;
+        if (!clone.hasAttribute("display")) clone.setAttribute("display", value.closest(".katex-display, .MathJax_Display") ? "block" : "inline");
+        return clone;
+      }));
+      else element.remove();
+    }
   }
   const result = new Defuddle(page, { url: location.href, markdown: true, useAsync: false }).parse();
   const extracted = text(result.contentMarkdown) ?? text(result.content);
