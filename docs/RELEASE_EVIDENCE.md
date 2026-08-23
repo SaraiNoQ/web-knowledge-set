@@ -1,5 +1,12 @@
 # 发布证据
 
+## `1.0.0` Apple Silicon DMG
+
+- 发布准备提交：`cf7a4e32dbfeb090e878a6f000867c51d8358129`。
+- macOS 构建：GitHub Actions run `32653476688`，完成应用编译、ad-hoc 签名、DMG 封装和 artifact 上传。
+- Actions artifact：`zhiye-dmg-cf7a4e32dbfeb090e878a6f000867c51d8358129`；应用版本和 DMG 文件名均为 `1.0.0`。
+- 该产物没有 Developer ID 签名、Apple 公证票据或自动更新通道。
+
 本文件只记录可复核的发布门禁结果；不记录会话 Cookie、启动令牌、API Key、正文、标题或私有路径。
 
 ## `0.9.2-rc.1` 候选阶段
