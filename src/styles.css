@@ -1446,7 +1446,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   animation: orbit .7s linear infinite;
 }
 
-@keyframes paper-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+@keyframes paper-in { from { opacity: 0; } }
 @keyframes orbit { to { transform: rotate(360deg); } }
 @keyframes breathe { 50% { opacity: .28; transform: scale(.78); } }
 @keyframes progress { from { transform: translateX(-105%); } to { transform: translateX(270%); } }

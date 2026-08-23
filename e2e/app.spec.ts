@@ -1526,6 +1526,7 @@ test("renders inline and display LaTeX in article previews", async ({ page }) =>
 test("spaces the selected marker and returns to the article title", async ({ page }) => {
   await page.goto("/");
   const deferOnboarding = page.getByRole("button", { name: "稍后设置" });
+  await deferOnboarding.or(page.getByLabel("网页地址")).first().waitFor();
   if (await deferOnboarding.isVisible()) await deferOnboarding.click();
   await page.getByLabel("网页地址").fill("https://example.com/back-to-title");
   await page.getByRole("button", { name: "收取网页" }).click();
@@ -1537,13 +1538,29 @@ test("spaces the selected marker and returns to the article title", async ({ pag
   await selectedTitle.hover();
   await expect.poll(() => selectedTitle.evaluate((element) => getComputedStyle(element).paddingLeft)).toBe("10px");
 
-  await page.setViewportSize({ width: 1280, height: 320 });
+  await page.getByLabel("文档标题").fill("返回标题滚动测试");
+  await page.getByLabel("Markdown 编辑器").fill(Array.from({ length: 120 }, (_, index) => `第 ${index + 1} 段长文，用于验证真实滚轮滚动。`).join("\n\n"));
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.getByText("已保存", { exact: true })).toBeVisible();
+  await page.route("**/health", (route) => route.fulfill({ json: { ok: true, mode: "cloud-core" } }));
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.reload();
+  const deferAfterReload = page.getByRole("button", { name: "稍后设置" });
+  if (await deferAfterReload.isVisible()) await deferAfterReload.click();
+  await page.getByRole("button", { name: "返回标题滚动测试", exact: true }).click();
+
   const backToTitle = page.getByRole("button", { name: "返回文章标题" });
-  await page.locator(".document-head").evaluate((element) => element.scrollIntoView({ block: "start" }));
-  await page.evaluate(() => window.scrollBy(0, 239));
   await expect(backToTitle).toBeHidden();
-  await page.evaluate(() => window.scrollBy(0, 2));
+  await page.mouse.move(1000, 520);
+  await page.mouse.wheel(0, 1_200);
+  await expect.poll(() => page.locator(".document-head").evaluate((element) => element.getBoundingClientRect().top)).toBeLessThan(-240);
   await expect(backToTitle).toBeVisible();
+  const fixedPosition = await backToTitle.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { bottom: window.innerHeight - rect.bottom, right: window.innerWidth - rect.right };
+  });
+  expect(fixedPosition.bottom).toBeCloseTo(24, 0);
+  expect(fixedPosition.right).toBeCloseTo(24, 0);
   await backToTitle.click();
   await expect.poll(() => page.locator(".document-head").evaluate((element) => Math.abs(element.getBoundingClientRect().top))).toBeLessThan(2);
   await expect(backToTitle).toBeHidden();
