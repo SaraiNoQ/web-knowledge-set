@@ -47,6 +47,15 @@ export function protectRenderedMath(document: Document): ProtectedMath[] {
     const rendered = display ? math.closest(".katex-display, .MathJax_Display") ?? math : math.closest(".katex, .MathJax") ?? math;
     replace(rendered, source, display);
   }
+
+  // Match the verified ChatGPT exporter: without TeX source, prefer KaTeX's visible layer over renderer-specific MathML.
+  for (const rendered of [...document.querySelectorAll(".katex-display, .katex")]) {
+    if (!document.documentElement?.contains(rendered)) continue;
+    const source = (rendered.querySelector(".katex-html")?.textContent ?? "").replaceAll("\u00a0", " ").trim();
+    if (!source || hasUnescapedDollar(source)) continue;
+    const display = rendered.classList.contains("katex-display") || Boolean(rendered.closest(".katex-display"));
+    replace(display ? rendered.closest(".katex-display") ?? rendered : rendered.closest(".katex") ?? rendered, source, display);
+  }
   return protectedMath;
 }
 

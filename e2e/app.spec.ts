@@ -16,10 +16,13 @@ test("extension content script preserves ChatGPT rendered math in Chromium", asy
     <div contenteditable="false"><button type="button" aria-label="复制公式"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math display="block"><semantics><mrow><mi>o</mi></mrow><annotation encoding="application/x-tex">观察 o_t \\to 策略 \\pi \\to 动作 a_t \\to 环境 \\to o_{t+1}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true">视觉公式不得重复</span></span></span></button></div>
     <button type="button"><span contenteditable="false"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math display="block"><semantics><annotation encoding="application/x-tex">Q(s, a) = r + \\gamma V(s')</annotation></semantics></math></span></span></span></span></button>
     <div contenteditable="false"><button type="button" aria-label="复制公式"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math display="block" data-latex="P_c = \\frac{\\sum_k N_{k,c}p_{k,c}}{\\sum_k N_{k,c}}"><mrow><mi>P</mi></mrow></math></span><span class="katex-html" aria-hidden="true">当前 ChatGPT 视觉公式不得重复</span></span></span></button></div>
-    <p>行内公式之前 <span contenteditable="false"><span class="katex"><span class="katex-mathml"><math><mn>314159265</mn></math></span><span class="katex-html" aria-hidden="true">行内视觉副本不得保留</span></span></span> 行内公式之后。</p>
-    <button type="button" aria-label="复制公式"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math display="block"><mrow><mi>P</mi><mo>=</mo><mfrac><mn>271828182</mn><mn>10</mn></mfrac></mrow></math></span><span class="katex-html" aria-hidden="true">块级视觉副本不得保留</span></span></span></button>
+    <p>行内公式之前 <span contenteditable="false"><math><mn>314159265</mn></math></span> 行内公式之后。</p>
+    <button type="button" aria-label="复制公式"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math display="block"><mrow><mi>P</mi><mo>=</mo><mfrac><mn>271828182</mn><mn>10</mn></mfrac></mrow></math></span></span></span></button>
     <button type="button"><math display="block"><mrow><mn>161803398</mn><math><mn>999999999</mn></math></mrow></math></button>
     <button type="button"><math display="block" data-latex="x $ ![outside](https://example.com/pixel.png)"><mi>x</mi></math></button>
+    <p>可见层之前 <span contenteditable="false"><span class="katex"><span class="katex-mathml"><math><mn>11235813</mn></math></span><span class="katex-html" aria-hidden="true">VISIBLE_INLINE_314159</span></span></span> 可见层之后。</p>
+    <button type="button"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math display="block"><mn>22360679</mn></math></span><span class="katex-html" aria-hidden="true">VISIBLE_BLOCK_271828</span></span></span></button>
+    <button type="button"><span class="katex"><span class="katex-html" aria-hidden="true">x $ ![visible-attack](https://example.com/visible.png)</span></span></button>
     <form class="katex" data-latex="FORM_SECRET"></form>
     <span class="katex" contenteditable="true" data-latex="EDITABLE_SECRET"></span>
     <p>后续段落继续解释模仿学习、强化学习与世界模型的区别，确保公式位于正文中间且前后内容都能被正常提取。</p>
@@ -39,13 +42,18 @@ test("extension content script preserves ChatGPT rendered math in Chromium", asy
   expect(markdown).toMatch(/\$\$[^$]*271828182[^$]*\$\$/u);
   expect(markdown.split("999999999")).toHaveLength(2);
   expect(markdown.indexOf("161803398")).toBeLessThan(markdown.indexOf("999999999"));
+  expect(markdown).toContain("$VISIBLE_INLINE_314159$");
+  expect(markdown).toMatch(/\$\$[^$]*VISIBLE_BLOCK_271828[^$]*\$\$/u);
+  expect(markdown).not.toContain("11235813");
+  expect(markdown).not.toContain("22360679");
   expect(markdown).not.toContain("FORM_SECRET");
   expect(markdown).not.toContain("EDITABLE_SECRET");
   expect(markdown).not.toContain("视觉公式不得重复");
   expect(markdown).not.toContain("当前 ChatGPT 视觉公式不得重复");
-  expect(markdown).not.toContain("视觉副本不得保留");
   expect(markdown).not.toContain("outside");
   expect(markdown).not.toContain("pixel.png");
+  expect(markdown).not.toContain("visible-attack");
+  expect(markdown).not.toContain("visible.png");
 });
 
 test("refreshes the directory when the browser extension announces a saved clip", async ({ page }) => {
