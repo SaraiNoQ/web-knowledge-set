@@ -48,6 +48,7 @@ import { IconButton, Select } from "./components/ui/Controls";
 import { useDialogs, useToast } from "./components/ui/Feedback";
 import { Modal } from "./components/ui/Modal";
 import { userErrorFrom, userErrorMessage } from "./error-messages";
+import { assetHashFromUri, markdownUrlTransform } from "./markdown-url";
 
 declare const __APP_VERSION__: string;
 
@@ -277,14 +278,6 @@ function assetSource(src: string | undefined, sourceUrl: string) {
   }
 }
 
-const ASSET_URI = /^zhiye:\/\/asset\/([a-f0-9]{64})$/u;
-
-function assetHashFromUri(src: string | undefined) {
-  if (!src) return null;
-  const match = ASSET_URI.exec(src.trim());
-  return match ? match[1]! : null;
-}
-
 function ImagePlaceholder({ alt, children }: { alt?: string; children: string }) {
   const label = alt ? `图片“${alt}”` : "图片";
   return (
@@ -349,6 +342,7 @@ function MarkdownPreview({ markdown, sourceUrl, assets = [] }: { markdown: strin
   return (
     <article className="markdown-preview">
       <ReactMarkdown
+        urlTransform={markdownUrlTransform}
         rehypePlugins={[rehypeKatex]}
         remarkPlugins={[remarkGfm, remarkMath]}
         components={{

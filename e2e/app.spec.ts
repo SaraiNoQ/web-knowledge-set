@@ -313,6 +313,26 @@ test("creates a top-level blank article from the directory menu", async ({ page 
   await expect(page.getByRole("region", { name: "根目录内容" }).getByRole("button", { name: "未命名文章", exact: true })).toHaveAttribute("aria-current", "true");
 });
 
+test("renders a stored cloud image URI through the same-origin asset route", async ({ page }) => {
+  const hash = "a".repeat(64);
+  await page.route(`**/api/assets/${hash}`, (route) => route.fulfill({
+    contentType: "image/png",
+    body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"),
+  }));
+  await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
+  if (await deferSetup.isVisible()) await deferSetup.click();
+  await page.getByRole("button", { name: "新建", exact: true }).click();
+  await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文章" }).click();
+  await page.getByLabel("Markdown 编辑器").fill(`![云端图片](zhiye://asset/${hash})`);
+  await page.getByRole("button", { name: "预览", exact: true }).click();
+
+  const image = page.getByRole("img", { name: "云端图片" });
+  await expect(image).toHaveAttribute("src", `/api/assets/${hash}`);
+  await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBeGreaterThan(0);
+});
+
 test("opens one keyboard-accessible help and about dialog in normal and recovery modes", async ({ page }) => {
   await page.goto("/");
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
