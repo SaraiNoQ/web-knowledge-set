@@ -54,7 +54,8 @@ test("fetchDocumentAssets caches images and rewrites Markdown to zhiye asset URI
   const images = new MemoryImages();
   const firstUrl = "https://example.com/a.png";
   const secondUrl = "https://example.com/b.png";
-  const markdown = `Intro ![first](${firstUrl}) end\n\n![second](${secondUrl})\n\n[^1]: note`;
+  const repeated = Array.from({ length: 32 }, (_, index) => `![duplicate-${index}](${firstUrl})`).join("\n");
+  const markdown = `${repeated}\n\n![second](${secondUrl})\n\n[^1]: note`;
   const { markdown: rewritten, fetched } = await fetchDocumentAssets(
     { IMAGES: images as never },
     markdown,
@@ -69,12 +70,36 @@ test("fetchDocumentAssets caches images and rewrites Markdown to zhiye asset URI
   );
 
   assert.equal(fetched, 2);
-  assert.match(rewritten, /!\[first\]\(zhiye:\/\/asset\/[a-f0-9]{64}\)/u);
+  assert.match(rewritten, /!\[duplicate-0\]\(zhiye:\/\/asset\/[a-f0-9]{64}\)/u);
   assert.match(rewritten, /!\[second\]\(zhiye:\/\/asset\/[a-f0-9]{64}\)/u);
   const keys = [...(images as unknown as { objects: Map<string, unknown> }).objects.keys()];
   assert.equal(keys.length, 2);
   for (const hash of keys) assert.match(hash, /^[a-f0-9]{64}$/u);
   assert.notEqual(keys[0], keys[1]);
+});
+
+test("fetchDocumentAssets handles reference images and destinations with parentheses", async () => {
+  const images = new MemoryImages();
+  const markdown = [
+    `![parent [nested]](<https://example.com/image_(one).png> "caption")`,
+    "![reference][hero]",
+    "",
+    '[hero]: https://example.com/hero.png "hero caption"',
+  ].join("\n");
+  const { markdown: rewritten, fetched } = await fetchDocumentAssets(
+    { IMAGES: images as never },
+    markdown,
+    "https://example.com/",
+    {
+      resolve: async () => {},
+      fetch: async (url) => ({ bytes: new Uint8Array([url.includes("hero") ? 2 : 1]), mime: "image/png" }),
+    },
+  );
+
+  assert.equal(fetched, 2);
+  assert.ok(rewritten.includes("![parent \\[nested\\]](zhiye://asset/"));
+  assert.match(rewritten, /zhiye:\/\/asset\/[a-f0-9]{64} "caption"\)/u);
+  assert.match(rewritten, /!\[reference\]\(zhiye:\/\/asset\/[a-f0-9]{64} "hero caption"\)/u);
 });
 
 test("fetchDocumentAssets leaves failing and internal references untouched", async () => {

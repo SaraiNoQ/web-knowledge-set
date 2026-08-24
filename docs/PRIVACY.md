@@ -26,7 +26,7 @@ SQLite 数据库保存文档正文、标题、来源地址和元数据、一级�
 
 这些请求会向目标站点暴露正常网络信息，例如本机公网 IP、请求时间、目标路径和织页/Chromium 的请求头。织页不导入个人浏览器 Cookie，不尝试绕过登录、付费墙、验证码或反爬机制。
 
-可选的 Chrome/Firefox 剪藏扩展只在用户点击扩展时以 `activeTab` 读取当前浏览器已经渲染的页面，并在浏览器本地转换成 Markdown。扩展不申请 Cookie、历史或全部网站权限，不读取 Cookie 数据库，也不上传登录凭证、完整 DOM、表单值或登录态图片字节；图片仅保留原始链接。用户核对并确认后，扩展才把标题、HTTP(S) 来源、安全元数据和 Markdown 发到固定的 `https://clip.sarainoq.cn`，每次保存为新副本；随后只向已打开的 `https://zhiye.sarainoq.cn` 标签页注入一个包含新文档 ID 的本地刷新事件，不读取该标签页内容，也不把事件发送到网络。
+可选的 Chrome/Firefox 剪藏扩展只在用户点击扩展时以 `activeTab` 读取当前浏览器已经渲染的页面，并在浏览器本地转换成 Markdown。扩展不申请 Cookie、历史或全部网站权限，不读取 Cookie 数据库，也不上传登录凭证、完整 DOM、表单值或登录态图片字节。用户核对并确认后，扩展才把标题、HTTP(S) 来源、安全元数据和 Markdown 发到固定的 `https://clip.sarainoq.cn`，云端 Worker 随后按 Markdown 图片地址尝试从公网抓取并写入私有 R2；失败图片仍只保留原始链接。每次保存为新副本；随后只向已打开的 `https://zhiye.sarainoq.cn` 标签页注入一个包含新文档 ID 的本地刷新事件，不读取该标签页内容，也不把事件发送到网络。
 
 Firefox 正式包使用浏览器内置数据同意声明：配对码与撤销型 Bearer 令牌属于 `authenticationInfo`，来源 URL 属于 `browsingActivity`，正文属于 `websiteContent`，可能出现的聊天或消息属于 `personalCommunications`。四类数据都只在用户主动配对或点击确认保存后发送；扩展不声明可选遥测，也不在后台自动采集。
 
@@ -52,7 +52,7 @@ Cloudflare Web 的 AI 平台与模型设置保存在 D1。API Key 与规范化�
 
 “数据安全”可把一份已校验完整备份导出为 `.zhiye-backup`。该文件未加密，直接包含数据库、HTML 快照和离线资源；不包含 API 密钥，但仍应当按完整知识数据保管。导入会先限制文件为 2 GiB、50,000 个条目，再严格校验 ZIP 路径、CRC、清单、SHA-256、schema 和可用空间。通过后只新增一份“已校验留档”，不会覆盖当前资料或自动恢复；恢复仍需要用户另行确认。
 
-Cloudflare Web 使用私有 R2 bucket 保存 `.zhiye-cloud-backup`。v4 包含 D1 一级文件夹、文档归属、收藏、回收站状态、AI 设置和派生结果，不包含 API Key 或扩展 Bearer Token；v1/v2/v3 仍可导入，旧归档中的文档按未收藏状态恢复，v1/v2 还按未删除状态恢复。文件未加密，当前上限 8 MiB，且文件夹、文档与 AI 结果合计 32 条；恢复前先创建当前副本，再使用 D1 原子 batch 切换并撤销旧扩展配对。
+Cloudflare Web 使用私有 R2 bucket 保存 `.zhiye-cloud-backup`。v5 以 JSON manifest 携带文档图片清单，导出 ZIP 另含 `assets/<sha256>` 图片内容；v1/v2/v3/v4 JSON 仍可导入，旧归档按未收藏、未删除默认值恢复，不包含 API Key 或扩展 Bearer Token。manifest 文件未加密且上限 8 MiB，文件夹、文档与 AI 结果合计 32 条；v5 ZIP 导入请求上限 64 MiB、解压后 96 MiB，图片按内容哈希校验。恢复前先创建当前副本，再使用 D1 原子 batch 切换并撤销旧扩展配对。
 
 Cloudflare Web 的 D1/R2 数据与本地知识库相互独立，不会自动同步；只有用户明确执行的导出、导入或恢复才会移动数据。
 

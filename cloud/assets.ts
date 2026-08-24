@@ -1,6 +1,7 @@
 import type { R2Bucket } from "./backup";
 import { CloudHttpError } from "./extension";
 import { publicUrl } from "./net";
+import { fromMarkdown } from "mdast-util-from-markdown";
 
 /**
  * Cloud-side document image cache.
@@ -26,8 +27,6 @@ export const ASSET_CONCURRENCY = 4;
 const ASSET_HOST = "asset";
 const ASSET_URI = /^zhiye:\/\/asset\/([a-f0-9]{64})$/u;
 const HASH = /^[a-f0-9]{64}$/u;
-const IMAGE_REFERENCE = /!\[([^\]]*)\]\(([^)\s]+)\)/gu;
-const encoder = new TextEncoder();
 
 export type AssetMimeType = "image/jpeg" | "image/png" | "image/gif" | "image/webp" | "image/avif";
 
@@ -106,7 +105,14 @@ async function defaultFetchImage(url: string, maxBytes: number): Promise<Fetched
   // cannot bounce the worker to a private/link-local address.
   let current = url;
   for (let redirects = 0; redirects <= 5; redirects += 1) {
-    const response = await fetch(current, { redirect: "manual", signal: AbortSignal.timeout(10_000) });
+    const response = await fetch(current, {
+      redirect: "manual",
+      headers: {
+        Accept: "image/jpeg,image/png,image/gif,image/webp,image/avif",
+        "User-Agent": "Zhiye/1.0 (+cloud image cache)",
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("Location");
       if (!location || redirects === 5) {
@@ -155,29 +161,73 @@ async function defaultFetchImage(url: string, maxBytes: number): Promise<Fetched
   throw new CloudHttpError(502, "ASSET_FETCH_FAILED", "Image redirect loop did not terminate");
 }
 
+interface MarkdownNode {
+  type: string;
+  alt?: string;
+  title?: string | null;
+  url?: string;
+  identifier?: string;
+  children?: MarkdownNode[];
+  position?: { start: { offset?: number }; end: { offset?: number } };
+}
+
 interface ImageDestination {
-  raw: string;
+  node: MarkdownNode;
+  start: number;
+  end: number;
+  title?: string | null;
   url: string | null;
 }
 
 function imageDestinations(markdown: string, baseUrl: string): ImageDestination[] {
   const destinations: ImageDestination[] = [];
   const seen = new Set<string>();
-  const push = (raw: string) => {
-    if (seen.has(raw)) return;
-    seen.add(raw);
-    destinations.push({ raw, url: fetchableUrl(raw, baseUrl) });
+  let root: MarkdownNode;
+  try {
+    root = fromMarkdown(markdown) as MarkdownNode;
+  } catch {
+    return destinations;
+  }
+  const definitions = new Map<string, { url: string; title: string | null }>();
+  const visitDefinitions = (node: MarkdownNode) => {
+    if (node.type === "definition" && node.identifier && node.url) {
+      definitions.set(node.identifier, { url: node.url, title: node.title ?? null });
+    }
+    for (const child of node.children ?? []) visitDefinitions(child);
   };
-  for (const match of markdown.matchAll(IMAGE_REFERENCE)) push(match[2]!);
+  visitDefinitions(root);
+  const push = (node: MarkdownNode, raw: string, title = node.title) => {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (start === undefined || end === undefined || end <= start || seen.has(`${start}:${end}`)) return;
+    seen.add(`${start}:${end}`);
+    destinations.push({ node, start, end, title, url: fetchableUrl(raw, baseUrl) });
+  };
+  const visitImages = (node: MarkdownNode) => {
+    if (node.type === "image" && node.url) push(node, node.url);
+    else if (node.type === "imageReference" && node.identifier) {
+      const definition = definitions.get(node.identifier);
+      if (definition) push(node, definition.url, definition.title);
+    }
+    for (const child of node.children ?? []) visitImages(child);
+  };
+  visitImages(root);
   return destinations;
 }
 
-function rewriteMarkdown(markdown: string, rewritten: Map<string, string>): string {
+function inlineImage(node: MarkdownNode, uri: string, title = node.title) {
+  const alt = (node.alt ?? "").replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
+  const suffix = typeof title === "string" ? ` ${JSON.stringify(title)}` : "";
+  return `![${alt}](${uri}${suffix})`;
+}
+
+function rewriteMarkdown(markdown: string, rewritten: Map<ImageDestination, string>): string {
   if (!rewritten.size) return markdown;
-  return markdown.replace(IMAGE_REFERENCE, (whole, alt: string, destination: string) => {
-    const replacement = rewritten.get(destination);
-    return replacement ? `![${alt}](${replacement})` : whole;
-  });
+  let result = markdown;
+  for (const [destination, uri] of [...rewritten].sort(([left], [right]) => right.start - left.start)) {
+    result = `${result.slice(0, destination.start)}${inlineImage(destination.node, uri, destination.title)}${result.slice(destination.end)}`;
+  }
+  return result;
 }
 
 export async function fetchDocumentAssets(
@@ -190,14 +240,19 @@ export async function fetchDocumentAssets(
   const fetchAsset = options.fetch ?? defaultFetchImage;
   // Filter to fetchable http(s) URLs first so internal/scheme references do not
   // consume the per-document budget.
-  const fetcheable = imageDestinations(markdown, baseUrl)
+  const candidates = imageDestinations(markdown, baseUrl)
     .filter((destination): destination is ImageDestination & { url: string } => destination.url !== null)
-    .slice(0, MAX_ASSETS_PER_DOCUMENT);
-  const rewritten = new Map<string, string>();
+  const seenUrls = new Set<string>();
+  const fetcheable = candidates.filter(({ url }) => {
+    if (seenUrls.has(url)) return false;
+    seenUrls.add(url);
+    return true;
+  }).slice(0, MAX_ASSETS_PER_DOCUMENT);
+  const rewritten = new Map<ImageDestination, string>();
   let fetched = 0;
   let totalBytes = 0;
   const rawByUrl = new Map<string, ImageDestination[]>();
-  for (const destination of fetcheable) {
+  for (const destination of candidates) {
     const list = rawByUrl.get(destination.url!) ?? [];
     list.push(destination);
     rawByUrl.set(destination.url!, list);
@@ -208,7 +263,6 @@ export async function fetchDocumentAssets(
     while (next < fetcheable.length) {
       const destination = fetcheable[next++]!;
       const url = destination.url!;
-      if (rewritten.has(url)) continue;
       const remaining = MAX_DOCUMENT_ASSET_BYTES - totalBytes;
       if (remaining <= 0) break;
       const allocation = Math.min(MAX_ASSET_BYTES, remaining);
@@ -219,8 +273,8 @@ export async function fetchDocumentAssets(
         const hash = await sha256(asset.bytes);
         await env.IMAGES.put(hash, asset.bytes, { httpMetadata: { contentType: asset.mime } });
         totalBytes = totalBytes - allocation + asset.bytes.length;
-        rewritten.set(url, assetUri(hash));
-        for (const item of rawByUrl.get(url) ?? []) rewritten.set(item.raw, assetUri(hash));
+        const uri = assetUri(hash);
+        for (const item of rawByUrl.get(url) ?? []) rewritten.set(item, uri);
         fetched += 1;
       } catch {
         totalBytes -= allocation;

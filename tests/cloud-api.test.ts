@@ -837,6 +837,89 @@ test("cloud capture publishes the document and removes its job in one D1 batch",
   }
 });
 
+test("cloud capture consumes a publisher Markdown alternate before Browser Run", async () => {
+  const originalFetch = globalThis.fetch;
+  const envData = sqliteEnvironment();
+  const { env, db } = envData;
+  const id = "markdown-job";
+  db.sqlite.prepare(`INSERT INTO cloud_capture_jobs(
+    id, url, status, error_code, folder_id, revision, created_at, updated_at
+  ) VALUES (?, ?, 'queued', NULL, NULL, 1, ?, ?)`)
+    .run(id, "https://example.com/article", "2026-08-24T00:00:00.000Z", "2026-08-24T00:00:00.000Z");
+  env.BROWSER = { async quickAction() { throw new Error("Browser Run should not be called"); } };
+  let acked = false;
+  globalThis.fetch = async (input) => {
+    const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (target.startsWith("https://cloudflare-dns.com/")) {
+      return new Response(JSON.stringify({ Answer: [{ type: 1, data: "93.184.216.34" }] }));
+    }
+    if (target === "https://example.com/article") {
+      return new Response('<link rel="alternate" type="text/markdown" href="/article.md">', { headers: { "Content-Type": "text/html" } });
+    }
+    if (target === "https://example.com/article.md") {
+      return new Response("# Markdown source\n\nDirect publisher Markdown.", { headers: { "Content-Type": "text/markdown; charset=utf-8" } });
+    }
+    throw new Error(`Unexpected fetch: ${target}`);
+  };
+  try {
+    await handleCaptureQueue({ messages: [{
+      body: { id, url: "https://example.com/article", epoch: "cloud-1" },
+      ack() { acked = true; },
+      retry() { throw new Error("capture should not retry"); },
+    }] }, env);
+    assert.equal(acked, true);
+    const document = db.sqlite.prepare("SELECT title, markdown, source_note, final_url FROM cloud_documents WHERE id = ?").get(id) as {
+      title: string; markdown: string; source_note: string; final_url: string;
+    };
+    assert.equal(document.title, "Markdown source");
+    assert.match(document.markdown, /Direct publisher Markdown/u);
+    assert.equal(document.source_note, "Cloudflare Markdown");
+    assert.equal(document.final_url, "https://example.com/article");
+  } finally {
+    globalThis.fetch = originalFetch;
+    db.sqlite.close();
+  }
+});
+
+test("cloud capture accepts a direct Markdown response", async () => {
+  const originalFetch = globalThis.fetch;
+  const { env, db } = sqliteEnvironment();
+  const id = "direct-markdown-job";
+  db.sqlite.prepare(`INSERT INTO cloud_capture_jobs(
+    id, url, status, error_code, folder_id, revision, created_at, updated_at
+  ) VALUES (?, ?, 'queued', NULL, NULL, 1, ?, ?)`)
+    .run(id, "https://example.com/article.md", "2026-08-24T00:00:00.000Z", "2026-08-24T00:00:00.000Z");
+  env.BROWSER = { async quickAction() { throw new Error("Browser Run should not be called"); } };
+  let acked = false;
+  globalThis.fetch = async (input) => {
+    const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (target.startsWith("https://cloudflare-dns.com/")) {
+      return new Response(JSON.stringify({ Answer: [{ type: 1, data: "93.184.216.34" }] }));
+    }
+    if (target === "https://example.com/article.md") {
+      return new Response("# Direct Markdown\n\nNo Browser Run needed.", { headers: { "Content-Type": "text/markdown" } });
+    }
+    throw new Error(`Unexpected fetch: ${target}`);
+  };
+  try {
+    await handleCaptureQueue({ messages: [{
+      body: { id, url: "https://example.com/article.md", epoch: "cloud-1" },
+      ack() { acked = true; },
+      retry() { throw new Error("capture should not retry"); },
+    }] }, env);
+    assert.equal(acked, true);
+    const document = db.sqlite.prepare("SELECT title, markdown, source_note FROM cloud_documents WHERE id = ?").get(id) as {
+      title: string; markdown: string; source_note: string;
+    };
+    assert.equal(document.title, "Direct Markdown");
+    assert.match(document.markdown, /No Browser Run needed/u);
+    assert.equal(document.source_note, "Cloudflare Markdown");
+  } finally {
+    globalThis.fetch = originalFetch;
+    db.sqlite.close();
+  }
+});
+
 test("cloud editing increments revision and rejects a stale writer", async () => {
   let row = {
     id: "doc-1", sourceUrl: "https://example.com/", finalUrl: "https://example.com/", canonicalUrl: "https://example.com/",

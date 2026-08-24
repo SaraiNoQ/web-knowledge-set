@@ -24,7 +24,7 @@ export interface QueueMessage<T> { body: T; ack(): void; retry(): void }
 export interface QueueBatch<T> { messages: QueueMessage<T>[] }
 
 interface CaptureMessage { id: string; url: string; epoch: string }
-const MAX_HTML_BYTES = 5 * 1024 * 1024;
+const MAX_CAPTURE_BYTES = 5 * 1024 * 1024;
 interface RewriterElement {
   tagName: string;
   attributes: Iterable<[string, string]>;
@@ -53,6 +53,80 @@ async function sanitizeHtml(html: string) {
     },
   }).transform(new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } }));
   return await rewritten.text();
+}
+
+interface CaptureResource {
+  text: string;
+  finalUrl: string;
+  markdown: boolean;
+}
+
+function attributeValue(attributes: string, name: string) {
+  const match = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "iu").exec(attributes);
+  return match?.[1] ?? match?.[2] ?? match?.[3] ?? null;
+}
+
+function alternateMarkdownUrl(html: string, baseUrl: string) {
+  for (const match of html.matchAll(/<link\b([^>]*?)>/giu)) {
+    const attributes = match[1] || "";
+    const rel = attributeValue(attributes, "rel");
+    const type = attributeValue(attributes, "type");
+    const href = attributeValue(attributes, "href");
+    if (!rel?.split(/\s+/u).some((value) => value.toLowerCase() === "alternate") ||
+      !type || !/^text\/markdown(?:;|$)/iu.test(type) || !href) continue;
+    try { return new URL(href.replaceAll("&amp;", "&"), baseUrl).href; }
+    catch { /* Ignore malformed publisher metadata. */ }
+  }
+  return null;
+}
+
+async function fetchCaptureResource(input: string, alternate = false): Promise<CaptureResource> {
+  let url = await publicUrl(input);
+  for (let redirects = 0; redirects <= 5; redirects += 1) {
+    const page = await fetch(url, {
+      redirect: "manual",
+      headers: {
+        Accept: alternate ? "text/markdown,text/plain;q=0.9" : "text/html,application/xhtml+xml,text/markdown;q=0.8",
+        "User-Agent": "Zhiye/1.0 (+cloud knowledge capture)",
+      },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (page.status >= 300 && page.status < 400) {
+      const location = page.headers.get("Location");
+      if (!location || redirects === 5) throw new CloudHttpError(502, "HTTP_ERROR", "Capture redirect is invalid or excessive");
+      url = await publicUrl(new URL(location, url).href);
+      continue;
+    }
+    const contentType = page.headers.get("Content-Type") || "";
+    const isHtml = /^(?:text\/html|application\/xhtml\+xml)(?:;|$)/iu.test(contentType);
+    const isMarkdown = /^text\/markdown(?:;|$)/iu.test(contentType);
+    const isPlain = /^text\/plain(?:;|$)/iu.test(contentType);
+    if (!page.ok || (alternate ? !isMarkdown && !isPlain : !isHtml && !isMarkdown)) {
+      throw new CloudHttpError(502, "HTTP_ERROR", "Capture target did not return supported text");
+    }
+    const declared = Number(page.headers.get("Content-Length") || 0);
+    if (declared > MAX_CAPTURE_BYTES) throw new CloudHttpError(413, "RESPONSE_TOO_LARGE", "Capture response exceeds 5 MiB");
+    const reader = page.body?.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    if (reader) try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > MAX_CAPTURE_BYTES) {
+          await reader.cancel();
+          throw new CloudHttpError(413, "RESPONSE_TOO_LARGE", "Capture response exceeds 5 MiB");
+        }
+        chunks.push(value);
+      }
+    } finally { reader.releaseLock(); }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return { text: new TextDecoder().decode(bytes), finalUrl: url, markdown: isMarkdown || isPlain };
+  }
+  throw new CloudHttpError(502, "HTTP_ERROR", "Capture redirect did not terminate");
 }
 
 interface CaptureJobRow {
@@ -278,61 +352,50 @@ async function consume(message: CaptureMessage, env: CaptureEnv) {
     await env.DB.prepare("DELETE FROM cloud_capture_jobs WHERE id = ?").bind(message.id).run();
     return;
   }
-  let url = await publicUrl(message.url);
   const fetching = await env.DB.prepare("UPDATE cloud_capture_jobs SET status = 'fetching', error_code = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
     .bind(new Date().toISOString(), message.id).run();
   if (changes(fetching) !== 1) return;
-  let html = "";
-  for (let redirects = 0; redirects <= 5; redirects += 1) {
-    url = await publicUrl(url);
-    const page = await fetch(url, { redirect: "manual", headers: { "Accept": "text/html,application/xhtml+xml" }, signal: AbortSignal.timeout(15_000) });
-    if (page.status >= 300 && page.status < 400) {
-      const location = page.headers.get("Location");
-      if (!location || redirects === 5) throw new CloudHttpError(502, "HTTP_ERROR", "Capture redirect is invalid or excessive");
-      url = new URL(location, url).href;
-      continue;
-    }
-    if (!page.ok || !/^(?:text\/html|application\/xhtml\+xml)(?:;|$)/iu.test(page.headers.get("Content-Type") || "")) throw new CloudHttpError(502, "HTTP_ERROR", "Capture target did not return HTML");
-    const declared = Number(page.headers.get("Content-Length") || 0);
-    if (declared > MAX_HTML_BYTES) throw new CloudHttpError(413, "RESPONSE_TOO_LARGE", "Capture HTML exceeds 5 MiB");
-    const reader = page.body?.getReader();
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    if (reader) try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > MAX_HTML_BYTES) { await reader.cancel(); throw new CloudHttpError(413, "RESPONSE_TOO_LARGE", "Capture HTML exceeds 5 MiB"); }
-        chunks.push(value);
+  const page = await fetchCaptureResource(message.url);
+  const url = page.finalUrl;
+  let markdown = page.markdown ? page.text.trim() : "";
+  let markdownBaseUrl = url;
+  let sourceNote = page.markdown ? "Cloudflare Markdown" : "Cloudflare Browser Run";
+  if (!markdown) {
+    const alternate = alternateMarkdownUrl(page.text, url);
+    if (alternate) {
+      try {
+        const candidate = await fetchCaptureResource(alternate, true);
+        if (candidate.text.trim()) {
+          markdown = candidate.text.trim();
+          markdownBaseUrl = candidate.finalUrl;
+          sourceNote = "Cloudflare Markdown";
+        }
+      } catch {
+        // Fall back to Browser Run when the publisher's Markdown endpoint is unavailable.
       }
-    } finally { reader.releaseLock(); }
-    const bytes = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-    html = new TextDecoder().decode(bytes);
-    break;
+    }
   }
-  if (!html) throw new CloudHttpError(502, "EXTRACTION_EMPTY", "Capture target returned no HTML");
-  const response = await env.BROWSER.quickAction("markdown", { html: await sanitizeHtml(html) });
-  if (!response.ok) throw new CloudHttpError(502, "BROWSER_FAILED", "Browser Run failed to capture the page");
-  const payload = await response.json() as { success?: boolean; result?: unknown };
-  if (payload.success !== true || typeof payload.result !== "string" || !payload.result.trim()) {
-    throw new CloudHttpError(502, "EXTRACTION_EMPTY", "Browser Run returned no Markdown");
+  if (!markdown) {
+    const response = await env.BROWSER.quickAction("markdown", { html: await sanitizeHtml(page.text) });
+    if (!response.ok) throw new CloudHttpError(502, "BROWSER_FAILED", "Browser Run failed to capture the page");
+    const payload = await response.json() as { success?: boolean; result?: unknown };
+    if (payload.success !== true || typeof payload.result !== "string" || !payload.result.trim()) {
+      throw new CloudHttpError(502, "EXTRACTION_EMPTY", "Browser Run returned no Markdown");
+    }
+    markdown = payload.result.trim();
   }
-  const markdown = payload.result.trim();
   const now = new Date().toISOString();
   const title = /^#\s+(.+)$/mu.exec(markdown)?.[1]?.trim() || new URL(url).hostname;
-  const rewritten = await fetchDocumentAssets({ IMAGES: env.IMAGES }, markdown, url);
+  const rewritten = await fetchDocumentAssets({ IMAGES: env.IMAGES }, markdown, markdownBaseUrl);
   const storedMarkdown = rewritten.markdown;
   if (new TextEncoder().encode(storedMarkdown).byteLength > MAX_CLOUD_ROW_TEXT_BYTES) throw new CloudHttpError(413, "RESPONSE_TOO_LARGE", "Captured Markdown exceeds the D1 row budget");
   if (!env.DB.batch) throw new CloudHttpError(503, "CLOUD_BATCH_UNAVAILABLE", "D1 batch API is unavailable");
   await env.DB.batch([env.DB.prepare(`INSERT INTO cloud_documents(
     id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note, folder_id, revision, created_at, updated_at
-  ) SELECT ?, ?, ?, ?, ?, NULL, NULL, ?, 'ready', 'Cloudflare Browser Run', job.folder_id, job.revision + 1, ?, ?
+  ) SELECT ?, ?, ?, ?, ?, NULL, NULL, ?, 'ready', ?, job.folder_id, job.revision + 1, ?, ?
     FROM cloud_capture_jobs job WHERE job.id = ? AND job.deleted_at IS NULL
       AND EXISTS (SELECT 1 FROM app_settings WHERE key = 'data_epoch' AND value = ?)`).bind(
-    message.id, url, url, url, title.slice(0, 1_000), storedMarkdown, now, now, message.id, message.epoch,
+    message.id, url, url, url, title.slice(0, 1_000), storedMarkdown, sourceNote, now, now, message.id, message.epoch,
   ), env.DB.prepare(`DELETE FROM cloud_capture_jobs WHERE id = ?
     AND EXISTS (SELECT 1 FROM cloud_documents WHERE id = ?)`).bind(message.id, message.id)]);
 }

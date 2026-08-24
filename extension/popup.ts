@@ -87,7 +87,7 @@ extractButton.addEventListener("click", async () => {
     metadata = { author: result.author, publishedAt: result.publishedAt };
     count.textContent = `${result.markdown.length.toLocaleString()} 字符`;
     clipForm.hidden = false;
-    message("请核对正文后保存。图片仅保留原链接。");
+    message("请核对正文后保存。保存时会尝试缓存图片，失败才保留原链接。");
   } catch (error) {
     message((error as Error).message, true);
   }

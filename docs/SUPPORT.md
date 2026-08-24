@@ -81,7 +81,7 @@ scripts/soak-web-preview.sh --verify-restart rc-0.9.2
 
 ### 文章图片无法离线显示
 
-只缓存 JPEG、PNG、GIF、WebP 和 AVIF，且服务器声明的类型必须与文件签名一致。默认每张 10 MiB、每篇 100 张、合计 100 MiB。SVG、视频、需要 Cookie 的图片、非公网图片和失败请求不会缓存；Markdown 仍保留原始 URL，但预览不会为了失败图片偷偷回连原站。
+云端剪藏与公开抓取会在服务端按 Markdown 图片节点尝试缓存 JPEG、PNG、GIF、WebP 和 AVIF；引用式图片、图片标题以及带括号或尖括号的 URL 也会处理。服务器声明的类型必须与文件签名一致，默认每张 5 MiB、每篇 32 张、合计 20 MiB。SVG、视频、需要 Cookie 的图片、非公网图片和失败请求不会缓存；Markdown 会保留原始 URL，但 Access 保护下的预览不会为了失败图片偷偷回连原站。若网页声明了独立 `text/markdown` 入口，云端公开抓取会优先读取该入口，避免大 HTML 触发浏览器回退限制。
 
 ### 编辑内容未保存或发生冲突
 
@@ -114,7 +114,7 @@ scripts/soak-web-preview.sh --verify-restart rc-0.9.2
 
 如果出现结构、路径、链接、校验值、schema 或空间错误，不要修改 ZIP 内容或反复导入；从原设备重新创建并导出留档。导入失败不会改变当前资料。
 
-Cloudflare Web 使用 `.zhiye-cloud-backup`：在“数据安全”创建并导出，新环境导入后再明确点击恢复。当前 v4 会保存一级文件夹、文档归属、收藏和回收站状态，并继续接受 v1/v2/v3（旧归档按未收藏状态恢复，v1/v2 还按未删除状态恢复）；上限为 8 MiB/合计 32 条文件夹、文档与 AI 结果，不与本地 `.zhiye-backup` ZIP 混用。恢复会撤销旧扩展配对，需重新配对。
+Cloudflare Web 使用 `.zhiye-cloud-backup`：在“数据安全”创建并导出，新环境导入后再明确点击恢复。当前 v5 ZIP 会保存一级文件夹、文档归属、收藏、回收站状态、AI 结果与已缓存图片，并继续接受 v1/v2/v3/v4 JSON；同一来源 URL 的多个云端副本导入本机时会保留为独立文档并生成本地唯一来源标识。manifest 上限为 8 MiB、合计 32 条文件夹/文档/AI 结果；v5 ZIP 另受 64 MiB 上传与 96 MiB 解压上限，不与本地 `.zhiye-backup` ZIP 混用。恢复会撤销旧扩展配对，需重新配对。
 
 ## 更新失败与版本回退
 

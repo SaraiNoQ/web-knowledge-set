@@ -26,7 +26,7 @@ Chrome/Firefox 剪藏扩展是独立的用户授权路径：5 分钟单次配对
 
 备份使用 SQLite 一致性副本和版本化 SHA-256 清单，恢复前校验并先保留当前数据。迁移只向前追加，较旧应用不会被允许打开较新的数据库 schema。SHA-256 用于完整性而非来源认证；有本地写权限的攻击者仍可同时替换备份及其清单。
 
-Cloudflare 留档使用私有 R2 bucket、SHA-256 对象校验和 8 MiB/32 条记录上限；v4 会校验文件夹引用、收藏布尔值和可空 `deleted_at` 时间戳，v1/v2/v3 按未收藏状态恢复，v1/v2 还按未删除状态恢复。恢复先以原子 epoch reservation 阻断慢写，再创建恢复前留档并使用 D1 原子 batch 切换；失败会释放 reservation，崩溃后的过期 reservation 会终止遗留抓取任务，成功切换则撤销旧扩展令牌和抓取任务。公开网页抓取逐跳校验 URL 与 A/AAAA 公网单播结果，由 Worker 手动跟随重定向并限量读取 HTML，再把 HTML 而非目标 URL 交给 Browser Run。
+Cloudflare 留档使用私有 R2 bucket、SHA-256 对象校验和 8 MiB/32 条 manifest 记录上限；v5 另以 64 MiB 上传、96 MiB 解压上限校验 `assets/<sha256>` 内容，v1/v2/v3/v4 按兼容默认值导入。恢复先以原子 epoch reservation 阻断慢写，再创建恢复前留档并使用 D1 原子 batch 切换；失败会释放 reservation，崩溃后的过期 reservation 会终止遗留抓取任务，成功切换则撤销旧扩展令牌和抓取任务。公开网页抓取逐跳校验 URL 与 A/AAAA 公网单播结果，由 Worker 手动跟随重定向并限量读取 HTML；若页面声明安全的 `text/markdown` 入口则直接读取，否则才把 HTML（而非目标 URL）交给 Browser Run。图片抓取沿用同一逐跳校验、签名/MIME 校验和 5 MiB/32 张/20 MiB 预算。
 
 文件夹移动使用文档 revision 乐观锁；删除文件夹在同一事务或 D1 batch 中解除文档归属并递增受影响 revision，不会连带删除文档。
 

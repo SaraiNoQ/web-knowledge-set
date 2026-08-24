@@ -161,6 +161,34 @@ test("importCloudJsonBackup accepts a cloud default llm revision of 0", async (t
   }
 });
 
+test("importCloudJsonBackup keeps duplicate cloud sources as separate local documents", async (t) => {
+  const { root, dataDir, backupRoot, db } = workspace();
+  t.after(() => {
+    db.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const payload = cloudArchive();
+  payload.documents.push({ ...payload.documents[0]!, id: uuid(), title: "Cloud copy" });
+  const record = await importCloudJsonBackup(
+    db,
+    dataDir,
+    backupRoot,
+    new TextEncoder().encode(JSON.stringify(payload)),
+    CURRENT_SCHEMA_VERSION,
+  );
+  const sql = new DatabaseSync(join(backupRoot, record.directoryName!, "database.sqlite3"), { readOnly: true });
+  try {
+    const rows = sql.prepare("SELECT title, source_url, final_url FROM documents ORDER BY title").all() as Array<{ title: string; source_url: string; final_url: string }>;
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0]!.final_url, rows[1]!.final_url);
+    assert.notEqual(rows[0]!.source_url, rows[1]!.source_url);
+    assert.ok(rows.some(({ source_url }) => /#zhiye-cloud-copy-/u.test(source_url)));
+  } finally {
+    sql.close();
+  }
+});
+
 test("importCloudJsonBackup rejects a malformed cloud archive", async (t) => {
   const { root, dataDir, backupRoot, db } = workspace();
   t.after(() => {

@@ -17,8 +17,8 @@ Cloudflare Web 已部署在 `https://zhiye.sarainoq.cn`，并由 Access 保护�
 ## 分阶段实施
 
 1. **Workers Static Assets + D1 云核心**：已建立 Worker、前端静态资源和 D1 数据模型，支持扩展剪藏、搜索、阅读和标题/Markdown 编辑；本里程碑在同一 D1 核心增加一级文件夹，仍从空云端知识库开始，不自动复制本地数据。完成部署门禁前不得把新增能力描述为已上线。
-2. **R2 资源与留档**：私有 `zhiye-cloud-backups` bucket 已绑定，支持创建、校验、导入导出、明确恢复和确认删除。`.zhiye-cloud-backup` v4 保存文件夹、文档归属、收藏及回收站状态；导入器继续接受 v1/v2/v3，旧归档中的文档按未收藏状态恢复，v1/v2 还按未删除状态恢复。
-3. **Browser Run + Queues 抓取**：`zhiye-cloud-capture` 已同时绑定生产者和消费者，消费端使用 Browser Run Markdown Quick Action。
+2. **R2 资源与留档**：私有 `zhiye-cloud-backups` 与 `zhiye-cloud-images` bucket 已绑定，支持创建、校验、导入导出、明确恢复和确认删除。`.zhiye-cloud-backup` v5 保存文件夹、文档归属、收藏、回收站状态、AI 结果与引用图片；导入器继续接受 v1/v2/v3/v4 JSON，旧归档按兼容默认值恢复。
+3. **Browser Run + Queues 抓取**：`zhiye-cloud-capture` 已同时绑定生产者和消费者；消费端优先读取页面声明的 `text/markdown` 入口，找不到时再使用 Browser Run Markdown Quick Action，并继续执行逐跳公网校验和大小限制。
 4. **Access 与扩展迁移**：Web 由 Access 保护；独立的 `clip.sarainoq.cn` Worker 只接受扩展配对和剪藏写入，令牌不能读取、搜索、删除或导出知识库。
 5. **功能等价与切换**：逐项验证编辑、搜索、导入导出、备份恢复、AI 与剪藏后，才允许将 Web 默认入口切到 Cloudflare。
 
@@ -29,6 +29,8 @@ Cloudflare Web 已部署在 `https://zhiye.sarainoq.cn`，并由 Access 保护�
 Cloudflare Web 的正式文档和抓取任务均支持 revision 保护的回收站生命周期。删除抓取中的任务会停止其队列发布；恢复后以失败态保留，由用户明确重试。
 
 两端功能等价不代表云同步。本地 SQLite 与 Cloudflare D1/R2 不会自动互传文件夹或文档，跨端迁移仍必须由用户明确导出和导入。
+
+云端图片只对新抓取或新剪藏正文按预算缓存；每张最多 5 MiB、每篇 32 张、合计 20 MiB。缓存成功后正文使用 `zhiye://asset/<sha256>`，Web 同源资源路由从 R2 提供内容；抓取失败仍保留原始 URL，但 Access/CSP 不允许预览阶段回连原站。
 
 ## 安全与发布前提
 

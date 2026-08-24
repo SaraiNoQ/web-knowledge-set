@@ -173,7 +173,6 @@ function parseCloudArchive(bytes: Uint8Array): CloudArchive {
   });
 
   const documentIds = new Set<string>();
-  const documentSourceUrls = new Set<string>();
   const parsedDocuments: CloudDocument[] = value.documents.map((entry, index) => {
     if (!record(entry)) fail("INVALID_BACKUP_ARCHIVE", `Cloud backup document ${index} is invalid`);
     const id = entry.id;
@@ -184,7 +183,7 @@ function parseCloudArchive(bytes: Uint8Array): CloudArchive {
     const deletedAt = version >= 3 ? (entry.deleted_at ?? null) : null;
     const favorite = version >= 4 ? (entry.favorite ?? 0) : 0;
     if (!identifier(id) || documentIds.has(id) || typeof sourceUrl !== "string" || !safeUrl(sourceUrl) ||
-      documentSourceUrls.has(sourceUrl) || typeof title !== "string" || !title.trim() || title.length > 1_000 ||
+      typeof title !== "string" || !title.trim() || title.length > 1_000 ||
       typeof markdown !== "string" || typeof entry.source_note !== "string" || entry.source_note.length > 50_000 ||
       control.test(title) || control.test(markdown) || control.test(entry.source_note) ||
       entry.status !== "ready" || !positiveInteger(entry.revision) || !timestamp(entry.created_at) ||
@@ -196,7 +195,6 @@ function parseCloudArchive(bytes: Uint8Array): CloudArchive {
       fail("INVALID_BACKUP_ARCHIVE", `Cloud backup document ${index} is invalid`);
     }
     documentIds.add(id);
-    documentSourceUrls.add(sourceUrl);
     return {
       id,
       sourceUrl,
@@ -329,9 +327,23 @@ function ingest(database: KnowledgeDatabase, archive: CloudArchive) {
          source_note, folder_id, revision, deleted_at, created_at, updated_at
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', 1, 1, 1, 1, ?, NULL, ?, ?, ?, ?, ?, ?)`,
     );
+    const sourceUrls = new Set<string>();
     for (const document of archive.documents) {
+      let sourceUrl = document.sourceUrl;
+      if (sourceUrls.has(sourceUrl)) {
+        const url = new URL(sourceUrl);
+        url.hash = `zhiye-cloud-copy-${document.id}`;
+        sourceUrl = url.href;
+        let suffix = 2;
+        while (sourceUrls.has(sourceUrl)) {
+          url.hash = `zhiye-cloud-copy-${document.id}-${suffix}`;
+          sourceUrl = url.href;
+          suffix += 1;
+        }
+      }
+      sourceUrls.add(sourceUrl);
       insertDocument.run(
-        document.id, document.sourceUrl, document.finalUrl, document.canonicalUrl, document.title,
+        document.id, sourceUrl, document.finalUrl, document.canonicalUrl, document.title,
         document.author, document.publishedAt, document.markdown, document.favorite ? 1 : 0,
         document.sourceNote, document.folderId, document.revision, document.deletedAt,
         document.createdAt, document.updatedAt,
