@@ -253,6 +253,29 @@ function rowBytes(row: Record<string, unknown>) {
   return Object.values(row).reduce<number>((sum, value) => sum + (typeof value === "string" ? encoder.encode(value).byteLength : 0), 0);
 }
 
+function uniqueDocumentSources(documents: Record<string, unknown>[]) {
+  const seen = new Set<string>();
+  return documents.map((document) => {
+    const sourceUrl = typeof document.source_url === "string" ? document.source_url : "";
+    if (!sourceUrl || !seen.has(sourceUrl)) {
+      if (sourceUrl) seen.add(sourceUrl);
+      return document;
+    }
+    const url = new URL(sourceUrl);
+    const id = typeof document.id === "string" ? document.id : crypto.randomUUID();
+    url.hash = `zhiye-cloud-copy-${id}`;
+    let unique = url.href;
+    let suffix = 2;
+    while (seen.has(unique)) {
+      url.hash = `zhiye-cloud-copy-${id}-${suffix}`;
+      unique = url.href;
+      suffix += 1;
+    }
+    seen.add(unique);
+    return { ...document, source_url: unique };
+  });
+}
+
 function safeUrl(value: unknown) {
   if (typeof value !== "string" || value.length > 8_192) return false;
   try {
@@ -406,8 +429,9 @@ async function restoreArchive(db: D1Database, archive: Archive, reservation: str
 
 /** Stream a `.zhiye-cloud-backup` ZIP (manifest.json + assets/<hash>) from the stored manifest and R2 images. */
 function streamArchiveZip(archive: Archive, images: R2Bucket): ReadableStream<Uint8Array> {
-  const manifest = encoder.encode(JSON.stringify(archive));
-  const assets = (archive as ArchiveV5).assets ?? [];
+  const exported = { ...archive, documents: uniqueDocumentSources(archive.documents) };
+  const manifest = encoder.encode(JSON.stringify(exported));
+  const assets = (exported as ArchiveV5).assets ?? [];
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       let closed = false;

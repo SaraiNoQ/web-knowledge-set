@@ -1119,7 +1119,7 @@ test("cloud backup reader accepts strict v1 through v4 archives and rejects extr
 });
 
 test("cloud backup export carries referenced images and import stages them back", async () => {
-  const { env, db, imagesBucket } = sqliteEnvironment();
+  const { env, db, bucket, imagesBucket } = sqliteEnvironment();
   const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
   const hash = createHash("sha256").update(png).digest("hex");
   const now = "2026-08-18T00:00:00.000Z";
@@ -1128,6 +1128,11 @@ test("cloud backup export carries referenced images and import stages them back"
     revision, created_at, updated_at, folder_id
   ) VALUES (?, ?, NULL, NULL, ?, NULL, NULL, ?, 'ready', '', 1, ?, ?, NULL)`)
     .run("doc-img", "https://example.com/img", "Img", `# Img\n\n![pic](zhiye://asset/${hash})`, now, now);
+  db.sqlite.prepare(`INSERT INTO cloud_documents(
+    id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note,
+    revision, created_at, updated_at, folder_id
+  ) VALUES (?, ?, NULL, NULL, ?, NULL, NULL, ?, 'ready', '', 1, ?, ?, NULL)`)
+    .run("doc-img-copy", "https://example.com/img", "Img copy", "# Img copy", now, now);
   await imagesBucket.put(hash, png, { httpMetadata: { contentType: "image/png" } });
   const epoch = String((db.sqlite.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'").get() as { value: string }).value);
 
@@ -1136,14 +1141,24 @@ test("cloud backup export carries referenced images and import stages them back"
   }), env);
   assert.equal(created.status, 201);
   const backupId = (await created.json() as { id: string }).id;
+  const stored = JSON.parse(new TextDecoder().decode(bucket.objects.get(`backups/${backupId}.zhiye-cloud-backup`)!.bytes)) as {
+    documents: Array<{ source_url: string }>;
+  };
+  assert.equal(new Set(stored.documents.map(({ source_url }) => source_url)).size, 1);
 
   const exported = await handleRequest(new Request(`https://app.example.com/api/data-safety/backups/${backupId}/export.zhiye-backup`), env);
   assert.equal(exported.status, 200);
   const exportedBytes = new Uint8Array(await exported.arrayBuffer());
   const unpacked = unzipSync(exportedBytes);
-  const manifest = JSON.parse(new TextDecoder().decode(unpacked["manifest.json"]!)) as { version: number; assets: Array<{ hash: string; mime: string; bytes: number }> };
+  const manifest = JSON.parse(new TextDecoder().decode(unpacked["manifest.json"]!)) as {
+    version: number;
+    assets: Array<{ hash: string; mime: string; bytes: number }>;
+    documents: Array<{ source_url: string }>;
+  };
   assert.equal(manifest.version, 5);
   assert.deepEqual(manifest.assets, [{ hash, mime: "image/png", bytes: png.byteLength }]);
+  assert.equal(new Set(manifest.documents.map(({ source_url }) => source_url)).size, 2);
+  assert.ok(manifest.documents.some(({ source_url }) => source_url.includes("#zhiye-cloud-copy-doc-img-copy")));
   assert.deepEqual(unpacked[`assets/${hash}`], png);
 
   // Import must stage the asset bytes back into the image store.
