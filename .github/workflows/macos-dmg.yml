@@ -34,10 +34,12 @@ jobs:
           rustup default 1.97.1
       - name: Install build dependencies
         run: pnpm install --frozen-lockfile
+      - name: Generate desktop icons
+        run: pnpm tauri icon src-tauri/icons/zhiye.svg
       - name: Prepare desktop runtime
         run: pnpm desktop:prepare
       - name: Build application
-        run: pnpm tauri build --ci --no-sign --config '{"bundle":{"macOS":{"infoPlist":"Info.rc.plist","bundleVersion":"10001"}}}' --bundles app
+        run: pnpm tauri build --ci --no-sign --config '{"bundle":{"macOS":{"infoPlist":"Info.rc.plist","bundleVersion":"10002"}}}' --bundles app
       - name: Ad-hoc sign application and build DMG
         shell: bash
         run: |
@@ -57,7 +59,7 @@ jobs:
           ditto "$APP" "dmg-root/织页.app"
           ln -s /Applications dmg-root/Applications
           hdiutil create -volname "织页" -srcfolder dmg-root -ov -format UDZO \
-            src-tauri/target/release/bundle/dmg/织页_1.0.1_aarch64.dmg
+            src-tauri/target/release/bundle/dmg/织页_1.0.2_aarch64.dmg
       - name: Upload DMG
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
