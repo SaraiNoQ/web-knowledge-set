@@ -248,6 +248,7 @@ async function api(request: Request, env: CloudEnv, url: URL) {
     request,
     backupPath && request.method !== "GET" && !restorePath ? epochGuardedDatabase(env.DB, epoch) : env.DB,
     env.BACKUPS,
+    env.IMAGES,
     url,
     restorePath ? epoch : undefined,
   );

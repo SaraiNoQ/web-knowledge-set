@@ -1,3 +1,5 @@
+import { Zip, ZipPassThrough, unzipSync } from "fflate";
+
 import { CloudHttpError, MAX_CLOUD_ROW_TEXT_BYTES, type D1Database, type D1Statement } from "./extension";
 import { validateStoredLlmSettings } from "./ai";
 import { TRANSLATION_LANGUAGES } from "../shared/types";
@@ -5,6 +7,11 @@ import { TRANSLATION_LANGUAGES } from "../shared/types";
 const encoder = new TextEncoder();
 const MAX_ARCHIVE_BYTES = 8 * 1024 * 1024;
 const MAX_ARCHIVE_RECORDS = 32;
+const MAX_CLOUD_ZIP_BYTES = 512 * 1024 * 1024;
+const MAX_CLOUD_ZIP_REQUEST_BYTES = 64 * 1024 * 1024;
+const MAX_CLOUD_ZIP_UNPACKED_BYTES = 96 * 1024 * 1024;
+const CLOUD_ZIP_MIME = "application/vnd.zhiye.cloud-backup+zip";
+const ASSET_URI = /zhiye:\/\/asset\/([a-f0-9]{64})/gu;
 const control = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
 
 interface R2ObjectBody {
@@ -16,9 +23,9 @@ interface R2ObjectBody {
 }
 
 export interface R2Bucket {
-  put(key: string, value: ArrayBuffer | Uint8Array | string, options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }): Promise<unknown>;
+  put(key: string, value: ArrayBuffer | Uint8Array | string | ReadableStream<Uint8Array>, options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }): Promise<unknown>;
   get(key: string): Promise<R2ObjectBody | null>;
-  head(key: string): Promise<{ size: number } | null>;
+  head(key: string): Promise<{ size: number; httpMetadata?: { contentType?: string } } | null>;
   delete(key: string): Promise<void>;
 }
 
@@ -46,7 +53,33 @@ interface ArchiveV4 extends Omit<ArchiveV3, "version"> {
   version: 4;
 }
 
-type Archive = ArchiveV1 | ArchiveV2 | ArchiveV3 | ArchiveV4;
+interface ArchiveV5 extends Omit<ArchiveV4, "version"> {
+  version: 5;
+  assets: Array<{ hash: string; mime: string; bytes: number }>;
+}
+
+type Archive = ArchiveV1 | ArchiveV2 | ArchiveV3 | ArchiveV4 | ArchiveV5;
+
+function assetHashRefs(markdown: unknown): string[] {
+  if (typeof markdown !== "string") return [];
+  const hashes = new Set<string>();
+  for (const match of markdown.matchAll(ASSET_URI)) hashes.add(match[1]!);
+  return [...hashes];
+}
+
+async function referencedAssets(db: D1Database, documents: Array<Record<string, unknown>>, images: R2Bucket) {
+  const hashes = new Set<string>();
+  for (const row of documents) {
+    for (const hash of assetHashRefs(row.markdown)) hashes.add(hash);
+  }
+  const assets: Array<{ hash: string; mime: string; bytes: number }> = [];
+  for (const hash of hashes) {
+    const object = await images.head(hash);
+    if (!object) throw new CloudHttpError(409, "ASSET_MISSING", "A referenced image object is missing from the store");
+    assets.push({ hash, mime: object.httpMetadata?.contentType ?? "application/octet-stream", bytes: object.size });
+  }
+  return assets;
+}
 
 function changes(result: { meta: { changes?: number } }) {
   return result.meta.changes ?? 0;
@@ -80,11 +113,25 @@ function parseArchive(bytes: Uint8Array): Archive {
   const version = raw.version;
   const topFields = version === 1
     ? ["format", "version", "createdAt", "documents", "derivedResults", "llmSettings"]
-    : ["format", "version", "createdAt", "folders", "documents", "derivedResults", "llmSettings"];
-  if ((version !== 1 && version !== 2 && version !== 3 && version !== 4) || !exact(raw, topFields) || raw.format !== "zhiye-cloud-backup" ||
+    : ["format", "version", "createdAt", "folders", "documents", "derivedResults", "llmSettings", ...(version === 5 ? ["assets"] : [])];
+  if ((version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5) || !exact(raw, topFields) || raw.format !== "zhiye-cloud-backup" ||
     !timestamp(raw.createdAt) || !Array.isArray(raw.documents) || !Array.isArray(raw.derivedResults) ||
     (version !== 1 && !Array.isArray(raw.folders))) {
     throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup schema is invalid");
+  }
+  if (version === 5 && !Array.isArray(raw.assets)) {
+    throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup assets are invalid");
+  }
+  if (version === 5) {
+    const seen = new Set<string>();
+    for (const row of raw.assets as Array<Record<string, unknown>>) {
+      if (!record(row) || !exact(row, ["hash", "mime", "bytes"]) || !/^[a-f0-9]{64}$/u.test(String(row.hash)) ||
+        seen.has(String(row.hash)) || typeof row.mime !== "string" || !row.mime ||
+        !Number.isSafeInteger(row.bytes) || Number(row.bytes) < 0 || Number(row.bytes) > MAX_CLOUD_ZIP_BYTES) {
+        throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup asset row is invalid");
+      }
+      seen.add(String(row.hash));
+    }
   }
   const result = raw as unknown as Archive;
   const folders = result.version === 1 ? [] : result.folders;
@@ -215,10 +262,10 @@ function safeUrl(value: unknown) {
   } catch { return false; }
 }
 
-async function requestBytes(request: Request) {
+async function requestBytes(request: Request, maxBytes = MAX_ARCHIVE_BYTES) {
   const declared = request.headers.get("Content-Length");
-  if (declared && (!/^\d+$/u.test(declared) || Number(declared) > MAX_ARCHIVE_BYTES)) {
-    throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds 8 MiB");
+  if (declared && (!/^\d+$/u.test(declared) || Number(declared) > maxBytes)) {
+    throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds its size limit");
   }
   const reader = request.body?.getReader();
   const chunks: Uint8Array[] = [];
@@ -228,9 +275,9 @@ async function requestBytes(request: Request) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > MAX_ARCHIVE_BYTES) {
+      if (size > maxBytes) {
         await reader.cancel();
-        throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds 8 MiB");
+        throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds its size limit");
       }
       chunks.push(value);
     }
@@ -241,7 +288,7 @@ async function requestBytes(request: Request) {
   return bytes;
 }
 
-async function snapshot(db: D1Database): Promise<Archive> {
+async function snapshot(db: D1Database, images: R2Bucket): Promise<Archive> {
   if (!db.batch) throw new CloudHttpError(503, "CLOUD_BATCH_UNAVAILABLE", "D1 batch API is unavailable");
   const [folders, documents, derived, settings] = await db.batch([
     db.prepare("SELECT * FROM cloud_folders ORDER BY created_at"),
@@ -252,18 +299,20 @@ async function snapshot(db: D1Database): Promise<Archive> {
   if (folders.results.length + documents.results.length + derived.results.length > MAX_ARCHIVE_RECORDS) {
     throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds 32 records");
   }
-  return {
-    format: "zhiye-cloud-backup", version: 4, createdAt: new Date().toISOString(),
+  const base = {
+    format: "zhiye-cloud-backup" as const, version: 4, createdAt: new Date().toISOString(),
     folders: folders.results as Record<string, unknown>[], documents: documents.results as Record<string, unknown>[],
     derivedResults: derived.results as Record<string, unknown>[],
     llmSettings: settings.results[0] as { value: string; revision: number } | undefined ?? null,
   };
+  const assets = await referencedAssets(db, base.documents, images);
+  return { ...base, version: 5, assets };
 }
 
-async function createBackup(db: D1Database, bucket: R2Bucket, reason: "manual" | "pre-restore" = "manual") {
+async function createBackup(db: D1Database, bucket: R2Bucket, images: R2Bucket, reason: "manual" | "pre-restore" = "manual") {
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
-  const bytes = encoder.encode(JSON.stringify(await snapshot(db)));
+  const bytes = encoder.encode(JSON.stringify(await snapshot(db, images)));
   if (bytes.byteLength > MAX_ARCHIVE_BYTES) throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds 8 MiB");
   const hash = await sha256(bytes);
   const objectKey = `backups/${id}.zhiye-cloud-backup`;
@@ -301,8 +350,7 @@ async function reserveRestore(db: D1Database, expectedEpoch: string) {
   return token;
 }
 
-async function releaseRestore(db: D1Database, token: string, expectedEpoch: string) {
-  if (!db.batch) throw new CloudHttpError(503, "CLOUD_BATCH_UNAVAILABLE", "D1 batch API is unavailable");
+async function releaseRestore(db: D1Database, token: string, expectedEpoch: string) {  if (!db.batch) throw new CloudHttpError(503, "CLOUD_BATCH_UNAVAILABLE", "D1 batch API is unavailable");
   const timestamp = new Date().toISOString();
   const [, released] = await db.batch([
     db.prepare(`UPDATE cloud_capture_jobs SET status = 'failed', error_code = 'RESTORE_INTERRUPTED',
@@ -338,7 +386,7 @@ async function restoreArchive(db: D1Database, archive: Archive, reservation: str
   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
     field(row, "id"), field(row, "source_url"), row.final_url ?? null, row.canonical_url ?? null, field(row, "title"), row.author ?? null,
     row.published_at ?? null, field(row, "markdown"), field(row, "status"), field(row, "source_note"), archive.version === 1 ? null : row.folder_id,
-    archive.version === 4 ? field(row, "favorite") : 0, field(row, "revision"), field(row, "created_at"), field(row, "updated_at"), archive.version >= 3 ? row.deleted_at : null,
+    archive.version >= 4 ? field(row, "favorite") : 0, field(row, "revision"), field(row, "created_at"), field(row, "updated_at"), archive.version >= 3 ? row.deleted_at : null,
   ));
   for (const row of archive.derivedResults) statements.push(db.prepare(`INSERT INTO cloud_derived_results(
     id, document_id, type, target_language, model, endpoint_id, prompt_version, input_hash, output, duration_ms,
@@ -356,10 +404,81 @@ async function restoreArchive(db: D1Database, archive: Archive, reservation: str
   await db.batch(statements);
 }
 
+/** Stream a `.zhiye-cloud-backup` ZIP (manifest.json + assets/<hash>) from the stored manifest and R2 images. */
+function streamArchiveZip(archive: Archive, images: R2Bucket): ReadableStream<Uint8Array> {
+  const manifest = encoder.encode(JSON.stringify(archive));
+  const assets = (archive as ArchiveV5).assets ?? [];
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let closed = false;
+      const archiveZip = new Zip((error, chunk, final) => {
+        if (error) { if (!closed) { closed = true; controller.error(error); } return; }
+        if (chunk) { if (!closed) try { controller.enqueue(chunk); } catch {} }
+        if (final && !closed) { closed = true; try { controller.close(); } catch {} }
+      });
+      const file = (path: string) => {
+        const stream = new ZipPassThrough(path);
+        stream.os = 3;
+        stream.attrs = 0o100600 * 0x1_0000;
+        stream.mtime = new Date("1980-01-01T00:00:00.000Z");
+        archiveZip.add(stream);
+        return stream;
+      };
+      try {
+        const manifestStream = file("manifest.json");
+        manifestStream.push(manifest, true);
+        for (const asset of assets) {
+          const object = await images.get(asset.hash);
+          if (!object) throw new CloudHttpError(409, "ASSET_MISSING", "A referenced image object is missing from the store");
+          const assetStream = file(`assets/${asset.hash}`);
+          const reader = object.body.getReader();
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              assetStream.push(value);
+            }
+          } finally {
+            reader.releaseLock();
+          }
+          assetStream.push(new Uint8Array(), true);
+        }
+        archiveZip.end();
+      } catch (error) {
+        if (!closed) { closed = true; try { controller.error(error); } catch {} }
+        try { archiveZip.terminate(); } catch {}
+      }
+    },
+  });
+}
+
+/** Parse an uploaded `.zhiye-cloud-backup` ZIP container into its manifest and asset bytes. */
+function parseCloudZip(bytes: Uint8Array): { archive: Archive; assetBytes: Map<string, Uint8Array> } {
+  let unpacked: Record<string, Uint8Array>;
+  try { unpacked = unzipSync(bytes); }
+  catch { throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup ZIP is invalid"); }
+  let total = 0;
+  for (const value of Object.values(unpacked)) {
+    total += value.byteLength;
+    if (total > MAX_CLOUD_ZIP_UNPACKED_BYTES) throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup unpacked data exceeds the archive budget");
+  }
+  const manifest = unpacked["manifest.json"];
+  if (!manifest) throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup ZIP is missing its manifest");
+  const archive = parseArchive(manifest);
+  const assetBytes = new Map<string, Uint8Array>();
+  for (const asset of (archive as ArchiveV5).assets ?? []) {
+    const value = unpacked[`assets/${asset.hash}`];
+    if (!value) throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup ZIP is missing an asset");
+    assetBytes.set(asset.hash, value);
+  }
+  return { archive, assetBytes };
+}
+
 export async function handleBackupApi(
   request: Request,
   db: D1Database,
   bucket: R2Bucket,
+  images: R2Bucket,
   url: URL,
   expectedEpoch?: string,
 ): Promise<BackupReply | Response | null> {
@@ -376,14 +495,36 @@ export async function handleBackupApi(
   if (url.pathname === "/api/data-safety/backups" && request.method === "POST") {
     const body = await request.json().catch(() => null) as unknown;
     if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length) throw new CloudHttpError(400, "INVALID_BACKUP_REQUEST", "Backup creation accepts an empty JSON object");
-    return { status: 201, body: await createBackup(db, bucket) };
+    return { status: 201, body: await createBackup(db, bucket, images) };
   }
   if (url.pathname === "/api/data-safety/backups/import" && request.method === "POST") {
-    if (request.headers.get("Content-Type")?.split(";", 1)[0] !== "application/vnd.zhiye.cloud-backup+json") throw new CloudHttpError(415, "BACKUP_ARCHIVE_REQUIRED", "Cloud backup content type is required");
-    const bytes = await requestBytes(request);
-    parseArchive(bytes);
+    const contentType = (request.headers.get("Content-Type") || "").split(";", 1)[0]?.trim().toLowerCase();
+    const zipRequested = contentType === CLOUD_ZIP_MIME;
+    const bytes = await requestBytes(request, zipRequested ? MAX_CLOUD_ZIP_REQUEST_BYTES : MAX_ARCHIVE_BYTES);
+    const isZip = zipRequested || (bytes[0] === 0x50 && bytes[1] === 0x4b);
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
+    if (isZip) {
+      const { archive, assetBytes } = parseCloudZip(bytes);
+      for (const [hash, value] of assetBytes) {
+        const asset = (archive as ArchiveV5).assets.find((entry) => entry.hash === hash);
+        const mime = asset?.mime ?? "application/octet-stream";
+        // Content-addressed store: the bytes must hash to the manifest's key and match its size.
+        if (!asset || asset.bytes !== value.byteLength || await sha256(value) !== hash) {
+          throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup asset content does not match its hash");
+        }
+        await images.put(hash, value, { httpMetadata: { contentType: mime } });
+      }
+      // The ledger holds the manifest snapshot; the ZIP is the export artifact.
+      const manifestBytes = encoder.encode(JSON.stringify(archive));
+      const hash = await sha256(manifestBytes);
+      const objectKey = `backups/${id}.zhiye-cloud-backup`;
+      await bucket.put(objectKey, manifestBytes, { httpMetadata: { contentType: "application/vnd.zhiye.cloud-backup+json" }, customMetadata: { sha256: hash } });
+      await db.prepare(`INSERT INTO cloud_backups(id, object_key, reason, status, created_at, verified_at, total_bytes, sha256, error_code)
+        VALUES (?, ?, 'manual', 'verified', ?, ?, ?, ?, NULL)`).bind(id, objectKey, createdAt, createdAt, manifestBytes.byteLength, hash).run();
+      return { status: 201, body: backupRecord({ id, objectKey, reason: "manual", status: "verified", createdAt, verifiedAt: createdAt, totalBytes: manifestBytes.byteLength, sha256: hash, errorCode: null }) };
+    }
+    parseArchive(bytes);
     const hash = await sha256(bytes);
     const objectKey = `backups/${id}.zhiye-cloud-backup`;
     await bucket.put(objectKey, bytes, { httpMetadata: { contentType: "application/vnd.zhiye.cloud-backup+json" }, customMetadata: { sha256: hash } });
@@ -396,7 +537,22 @@ export async function handleBackupApi(
   const id = decodeURIComponent(match[1]);
   if (match[2] === "export.zhiye-backup" && request.method === "GET") {
     const { object, bytes } = await archiveBytes(db, bucket, id);
-    return new Response(bytes, { headers: { "Cache-Control": "no-store", "Content-Disposition": `attachment; filename="zhiye-cloud-${id}.zhiye-cloud-backup"`, "Content-Type": "application/vnd.zhiye.cloud-backup+json", "ETag": object.httpEtag } });
+    const archive = parseArchive(bytes);
+    // Pre-flight every referenced asset so a missing image fails cleanly with a
+    // 409 instead of mid-stream, which would otherwise surface as a truncated 200.
+    for (const asset of (archive as ArchiveV5).assets ?? []) {
+      if (!await images.head(asset.hash)) {
+        throw new CloudHttpError(409, "ASSET_MISSING", "A referenced image object is missing from the store");
+      }
+    }
+    return new Response(streamArchiveZip(archive, images), {
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Disposition": `attachment; filename="zhiye-cloud-${id}.zhiye-cloud-backup"`,
+        "Content-Type": CLOUD_ZIP_MIME,
+        "ETag": object.httpEtag,
+      },
+    });
   }
   if (match[2] === "verify" && request.method === "POST") {
     const body = await request.json().catch(() => null) as unknown;
@@ -426,7 +582,7 @@ export async function handleBackupApi(
     if (!expectedEpoch) throw new CloudHttpError(409, "STALE_DATA_EPOCH", "Cloud restore requires the current data epoch");
     const reservation = await reserveRestore(db, expectedEpoch);
     try {
-      const preRestore = await createBackup(db, bucket, "pre-restore");
+      const preRestore = await createBackup(db, bucket, images, "pre-restore");
       const finalEpoch = `cloud-${crypto.randomUUID()}`;
       await restoreArchive(db, archive, reservation, finalEpoch);
       return {

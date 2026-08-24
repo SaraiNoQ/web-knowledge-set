@@ -5,6 +5,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, extname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { gunzip, gzip } from "node:zlib";
+import { unzipSync } from "fflate";
 
 import type {
   BatchDocumentAction,
@@ -51,7 +52,7 @@ import {
   resolveBackupRecord,
   verifyBackupRecord,
 } from "./data-safety.js";
-import { importCloudJsonBackup } from "./cloud-backup.js";
+import { importCloudJsonBackup, importCloudZipBackup } from "./cloud-backup.js";
 import {
   CURRENT_SCHEMA_VERSION,
   KnowledgeDatabase,
@@ -351,6 +352,9 @@ function backupArchiveLength(request: IncomingMessage) {
 /** A cloud backup is never larger than 8 MiB; buffer anything below this ceiling so we can sniff it. */
 const CLOUD_JSON_BODY_LIMIT = 16 * 1024 * 1024;
 const CLOUD_BACKUP_MIME = "application/vnd.zhiye.cloud-backup+json";
+const CLOUD_ZIP_MIME = "application/vnd.zhiye.cloud-backup+zip";
+const CLOUD_ZIP_FORMAT = "zhiye-cloud-backup";
+const CLOUD_ZIP_BODY_LIMIT = 512 * 1024 * 1024;
 
 async function readRequestBody(request: IncomingMessage, bytes: number): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -371,7 +375,22 @@ function looksLikeCloudJsonArchive(body: Buffer) {
   try {
     const value = JSON.parse(body.toString("utf8")) as unknown;
     return Boolean(value) && typeof value === "object" && !Array.isArray(value) &&
-      (value as { format?: unknown }).format === "zhiye-cloud-backup";
+      (value as { format?: unknown }).format === CLOUD_ZIP_FORMAT;
+  } catch {
+    return false;
+  }
+}
+
+function looksLikeCloudZipArchive(body: Buffer) {
+  // A ZIP begins with the PK local-file header; peek at its manifest to tell a
+  // cloud archive (zhiye-cloud-backup) apart from a local .zhiye-backup.
+  if (body[0] !== 0x50 || body[1] !== 0x4b) return false;
+  try {
+    const unpacked = unzipSync(new Uint8Array(body));
+    const manifest = unpacked["manifest.json"];
+    if (!manifest) return false;
+    const value = JSON.parse(new TextDecoder().decode(manifest)) as { format?: unknown };
+    return value.format === CLOUD_ZIP_FORMAT;
   } catch {
     return false;
   }
@@ -1268,7 +1287,7 @@ export function createApp(options: AppOptions) {
   const guardBackupArchiveMutation = (request: IncomingMessage) => {
     if (!sameOrigin(request)) throw new HttpError(403, "ORIGIN_REJECTED", "Cross-origin mutations are not allowed");
     const type = request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
-    if (type !== BACKUP_ARCHIVE_MIME && type !== CLOUD_BACKUP_MIME) {
+    if (type !== BACKUP_ARCHIVE_MIME && type !== CLOUD_BACKUP_MIME && type !== CLOUD_ZIP_MIME) {
       throw new HttpError(415, "BACKUP_ARCHIVE_REQUIRED", `Content-Type must be ${BACKUP_ARCHIVE_MIME}`);
     }
     const enteringEpoch = request.headers[DATA_EPOCH_HEADER.toLowerCase()];
@@ -1856,11 +1875,34 @@ export function createApp(options: AppOptions) {
         try {
           const record = await runMaintenance("backup import", async () => {
             await worker.pause();
+            const importContentType = request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
             try {
+              if (importContentType === CLOUD_ZIP_MIME) {
+                if (declaredBytes > CLOUD_ZIP_BODY_LIMIT) throw new HttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds its import limit");
+                const body = await readRequestBody(request, declaredBytes);
+                return await importCloudZipBackup(
+                  db,
+                  options.dataDir,
+                  backupRoot,
+                  body,
+                  CURRENT_SCHEMA_VERSION,
+                  operation.signal,
+                );
+              }
               if (declaredBytes <= CLOUD_JSON_BODY_LIMIT) {
                 const body = await readRequestBody(request, declaredBytes);
                 if (looksLikeCloudJsonArchive(body)) {
                   return await importCloudJsonBackup(
+                    db,
+                    options.dataDir,
+                    backupRoot,
+                    body,
+                    CURRENT_SCHEMA_VERSION,
+                    operation.signal,
+                  );
+                }
+                if (looksLikeCloudZipArchive(body)) {
+                  return await importCloudZipBackup(
                     db,
                     options.dataDir,
                     backupRoot,

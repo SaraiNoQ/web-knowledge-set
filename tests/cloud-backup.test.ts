@@ -5,9 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { zipSync } from "fflate";
 
 import { verifyBackup } from "../server/backup.js";
-import { importCloudJsonBackup } from "../server/cloud-backup.js";
+import { importCloudJsonBackup, importCloudZipBackup } from "../server/cloud-backup.js";
 import { CURRENT_SCHEMA_VERSION, openDatabase } from "../server/db.js";
 
 function workspace() {
@@ -177,4 +178,49 @@ test("importCloudJsonBackup rejects a malformed cloud archive", async (t) => {
   // No backup directory should have been recorded.
   assert.equal(db.listBackupRecords().length, 0);
   assert.equal(existsSync(backupRoot) ? readdirSync(backupRoot).length : 0, 0);
+});
+
+test("importCloudZipBackup converts a cloud ZIP with images into a restorable .zhiye-backup", async (t) => {
+  const { root, dataDir, backupRoot, db } = workspace();
+  t.after(() => {
+    db.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
+  const assetHash = createHash("sha256").update(png).digest("hex");
+  const archive = { ...cloudArchive(), version: 5, assets: [{ hash: assetHash, mime: "image/png", bytes: png.length }] };
+  archive.documents = archive.documents.map((document) => ({
+    ...document,
+    markdown: `${document.markdown}\n\n![pic](zhiye://asset/${assetHash})`,
+  }));
+  const zipped = zipSync({
+    "manifest.json": new TextEncoder().encode(JSON.stringify(archive)),
+    [`assets/${assetHash}`]: png,
+  });
+
+  const record = await importCloudZipBackup(db, dataDir, backupRoot, zipped, CURRENT_SCHEMA_VERSION);
+  assert.equal(record.status, "verified");
+
+  const backupPath = join(backupRoot, record.directoryName!);
+  const verified = await verifyBackup(backupPath);
+  assert.equal(verified.manifest.format, "zhiye-backup");
+  assert.ok(existsSync(join(backupPath, "assets", assetHash)), "the imported asset file is present in the backup");
+
+  const sql = new DatabaseSync(join(backupPath, "database.sqlite3"), { readOnly: true });
+  try {
+    const mapping = sql.prepare("SELECT source_url, status, asset_hash FROM document_assets").get() as {
+      source_url: string;
+      status: string;
+      asset_hash: string;
+    };
+    assert.equal(mapping.status, "ready");
+    assert.equal(mapping.asset_hash, assetHash);
+    assert.equal(mapping.source_url, `zhiye://asset/${assetHash}`);
+    const asset = sql.prepare("SELECT mime, bytes FROM assets WHERE hash = ?").get(assetHash) as { mime: string; bytes: number };
+    assert.equal(asset.mime, "image/png");
+    assert.equal(asset.bytes, png.length);
+  } finally {
+    sql.close();
+  }
 });

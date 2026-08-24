@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { unzipSync } from "fflate";
 
 import { handleRequest, type CloudEnv } from "../cloud/worker.js";
 import {
@@ -92,24 +94,28 @@ function migratedCloudDatabase() {
 }
 
 function memoryBucket() {
-  const objects = new Map<string, Uint8Array>();
+  const objects = new Map<string, { bytes: Uint8Array; contentType?: string }>();
   return {
     objects,
-    async put(key: string, value: ArrayBuffer | Uint8Array | string) {
-      objects.set(key, typeof value === "string" ? new TextEncoder().encode(value) : value instanceof Uint8Array ? value : new Uint8Array(value));
+    async put(key: string, value: ArrayBuffer | Uint8Array | string, options?: { httpMetadata?: { contentType?: string } }) {
+      objects.set(key, {
+        bytes: typeof value === "string" ? new TextEncoder().encode(value) : value instanceof Uint8Array ? value : new Uint8Array(value),
+        contentType: options?.httpMetadata?.contentType,
+      });
     },
     async get(key: string) {
-      const bytes = objects.get(key);
-      if (!bytes) return null;
-      const response = new Response(bytes);
+      const object = objects.get(key);
+      if (!object) return null;
+      const response = new Response(object.bytes);
       return {
-        body: response.body!, size: bytes.byteLength, httpEtag: `"${key}"`,
+        body: response.body!, size: object.bytes.byteLength, httpEtag: `"${key}"`,
+        httpMetadata: object.contentType ? { contentType: object.contentType } : undefined,
         async arrayBuffer() { return await response.arrayBuffer(); },
       };
     },
     async head(key: string) {
-      const bytes = objects.get(key);
-      return bytes ? { size: bytes.byteLength } : null;
+      const object = objects.get(key);
+      return object ? { size: object.bytes.byteLength, httpMetadata: object.contentType ? { contentType: object.contentType } : undefined } : null;
     },
     async delete(key: string) {
       objects.delete(key);
@@ -228,7 +234,7 @@ test("cloud core serves the existing empty-library startup contract", async () =
   assert.equal((await backup.json() as { status: string }).status, "verified");
   const backupArchive = JSON.parse(lastBackup) as { format: string; version: number; folders: unknown[] };
   assert.deepEqual({ format: backupArchive.format, version: backupArchive.version, folders: backupArchive.folders }, {
-    format: "zhiye-cloud-backup", version: 4, folders: [],
+    format: "zhiye-cloud-backup", version: 5, folders: [],
   });
 
   const deleted = await handleRequest(new Request("https://app.example.com/api/data-safety/backups/invalid", {
@@ -462,7 +468,9 @@ test("cloud backup restores v4 favorites and trash, maps v1 documents to default
   const v2BackupId = (await created.json() as { id: string }).id;
   const exported = await handleRequest(new Request(`https://app.example.com/api/data-safety/backups/${v2BackupId}/export.zhiye-backup`), env);
   assert.equal(exported.status, 200);
-  assert.equal((await exported.json() as { version: number }).version, 4);
+  assert.equal(exported.headers.get("Content-Type"), "application/vnd.zhiye.cloud-backup+zip");
+  const unpacked = unzipSync(new Uint8Array(await exported.arrayBuffer()));
+  assert.equal((JSON.parse(new TextDecoder().decode(unpacked["manifest.json"]!)) as { version: number }).version, 5);
   db.sqlite.exec("DELETE FROM cloud_documents; DELETE FROM cloud_folders;");
   db.sqlite.prepare(`INSERT INTO cloud_documents(
     id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note,
@@ -1025,4 +1033,44 @@ test("cloud backup reader accepts strict v1 through v4 archives and rejects extr
     body: JSON.stringify({ ...base, version: 3, folders: [folder], documents: [{ ...document, deleted_at: "yesterday" }] }),
   }), environment());
   assert.equal(invalidDeletedAt.status, 400);
+});
+
+test("cloud backup export carries referenced images and import stages them back", async () => {
+  const { env, db, imagesBucket } = sqliteEnvironment();
+  const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
+  const hash = createHash("sha256").update(png).digest("hex");
+  const now = "2026-08-18T00:00:00.000Z";
+  db.sqlite.prepare(`INSERT INTO cloud_documents(
+    id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note,
+    revision, created_at, updated_at, folder_id
+  ) VALUES (?, ?, NULL, NULL, ?, NULL, NULL, ?, 'ready', '', 1, ?, ?, NULL)`)
+    .run("doc-img", "https://example.com/img", "Img", `# Img\n\n![pic](zhiye://asset/${hash})`, now, now);
+  await imagesBucket.put(hash, png, { httpMetadata: { contentType: "image/png" } });
+  const epoch = String((db.sqlite.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'").get() as { value: string }).value);
+
+  const created = await handleRequest(new Request("https://app.example.com/api/data-safety/backups", {
+    method: "POST", headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch }, body: "{}",
+  }), env);
+  assert.equal(created.status, 201);
+  const backupId = (await created.json() as { id: string }).id;
+
+  const exported = await handleRequest(new Request(`https://app.example.com/api/data-safety/backups/${backupId}/export.zhiye-backup`), env);
+  assert.equal(exported.status, 200);
+  const exportedBytes = new Uint8Array(await exported.arrayBuffer());
+  const unpacked = unzipSync(exportedBytes);
+  const manifest = JSON.parse(new TextDecoder().decode(unpacked["manifest.json"]!)) as { version: number; assets: Array<{ hash: string; mime: string; bytes: number }> };
+  assert.equal(manifest.version, 5);
+  assert.deepEqual(manifest.assets, [{ hash, mime: "image/png", bytes: png.byteLength }]);
+  assert.deepEqual(unpacked[`assets/${hash}`], png);
+
+  // Import must stage the asset bytes back into the image store.
+  imagesBucket.objects.delete(hash);
+  assert.equal(imagesBucket.objects.has(hash), false);
+  const imported = await handleRequest(new Request("https://app.example.com/api/data-safety/backups/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/vnd.zhiye.cloud-backup+zip", "X-Zhiye-Data-Epoch": epoch },
+    body: exportedBytes,
+  }), env);
+  assert.equal(imported.status, 201);
+  assert.ok(imagesBucket.objects.has(hash), "import staged the referenced image back into R2");
 });

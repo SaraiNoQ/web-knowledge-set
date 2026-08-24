@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { StatementSync } from "node:sqlite";
+import { unzipSync } from "fflate";
 
 import { BackupError, createBackup, type VerifiedBackup } from "./backup.js";
 import { CURRENT_SCHEMA_VERSION, KnowledgeDatabase, derivedTargetLanguage } from "./db.js";
@@ -81,13 +82,20 @@ interface CloudDerivedResult {
   createdAt: string;
 }
 
+interface CloudDerivedAsset {
+  hash: string;
+  mime: string;
+  bytes: number;
+}
+
 interface CloudArchive {
-  version: 1 | 2 | 3 | 4;
+  version: 1 | 2 | 3 | 4 | 5;
   createdAt: string;
   folders: CloudFolder[];
   documents: CloudDocument[];
   derivedResults: CloudDerivedResult[];
   llmSettings: { value: string; revision: number } | null;
+  assets: CloudDerivedAsset[];
 }
 
 function fail(code: string, message: string, cause?: unknown): never {
@@ -137,7 +145,7 @@ function parseCloudArchive(bytes: Uint8Array): CloudArchive {
   }
   if (!record(value)) fail("INVALID_BACKUP_ARCHIVE", "Cloud backup must be an object");
   const version = value.version;
-  if (version !== 1 && version !== 2 && version !== 3 && version !== 4) {
+  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5) {
     fail("UNSUPPORTED_FORMAT", "Unsupported cloud backup format version");
   }
   if (value.format !== FORMAT) fail("INVALID_BACKUP_ARCHIVE", "Cloud backup format is unknown");
@@ -257,13 +265,29 @@ function parseCloudArchive(bytes: Uint8Array): CloudArchive {
     llmSettings = { value: value.llmSettings.value, revision: value.llmSettings.revision };
   }
 
+  let assets: CloudDerivedAsset[] = [];
+  if (version === 5) {
+    if (!Array.isArray(value.assets)) fail("INVALID_BACKUP_ARCHIVE", "Cloud backup assets are invalid");
+    const seen = new Set<string>();
+    assets = value.assets.map((entry, index) => {
+      if (!record(entry) || typeof entry.hash !== "string" || !/^[a-f0-9]{64}$/u.test(entry.hash) ||
+        seen.has(entry.hash) || typeof entry.mime !== "string" || !entry.mime ||
+        !Number.isSafeInteger(entry.bytes) || Number(entry.bytes) < 0 || Number(entry.bytes) > 512 * 1024 * 1024) {
+        fail("INVALID_BACKUP_ARCHIVE", `Cloud backup asset ${index} is invalid`);
+      }
+      seen.add(entry.hash);
+      return { hash: entry.hash, mime: entry.mime, bytes: Number(entry.bytes) };
+    });
+  }
+
   return {
-    version: version as 1 | 2 | 3 | 4,
+    version: version as 1 | 2 | 3 | 4 | 5,
     createdAt: value.createdAt as string,
     folders: parsedFolders,
     documents: parsedDocuments,
     derivedResults,
     llmSettings,
+    assets,
   };
 }
 
@@ -380,6 +404,102 @@ function ingestDerivedResult(
     result.output, durationMs, usageJson, sourceChars, sentChars, sentChars < sourceChars ? 1 : 0,
     result.pinned ? 1 : 0, result.createdAt,
   );
+}
+
+function ingestAssets(database: KnowledgeDatabase, archive: CloudArchive, assetBytes: Map<string, Uint8Array>) {
+  if (!archive.assets.length) return;
+  const timestamp = new Date().toISOString();
+  if (!existsSync(database.assetsDir)) mkdirSync(database.assetsDir, { recursive: true, mode: 0o700 });
+  const insertAsset = database.sql.prepare(
+    "INSERT INTO assets(hash, mime, bytes, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(hash) DO NOTHING",
+  );
+  const insertMapping = database.sql.prepare(
+    `INSERT INTO document_assets(document_id, source_url, status, asset_hash, created_at, updated_at)
+     VALUES (?, ?, 'ready', ?, ?, ?)
+     ON CONFLICT(document_id, source_url) DO UPDATE SET
+       status = 'ready', asset_hash = ?, error_code = NULL, error_message = NULL, updated_at = excluded.updated_at`,
+  );
+  for (const asset of archive.assets) {
+    const bytes = assetBytes.get(asset.hash);
+    if (!bytes || bytes.byteLength !== asset.bytes) {
+      fail("INVALID_BACKUP_ARCHIVE", "Cloud backup asset bytes are missing");
+    }
+    writeFileSync(database.assetFilePath(asset.hash), bytes, { mode: 0o600, flag: "wx" });
+    insertAsset.run(asset.hash, asset.mime, asset.bytes, timestamp);
+    for (const document of archive.documents) {
+      const uri = `zhiye://asset/${asset.hash}`;
+      if (document.markdown.includes(uri)) {
+        insertMapping.run(document.id, uri, asset.hash, timestamp, timestamp, asset.hash);
+      }
+    }
+  }
+}
+
+function parseCloudZip(bytes: Uint8Array): { archive: CloudArchive; assetBytes: Map<string, Uint8Array> } {
+  let unpacked: Record<string, Uint8Array>;
+  try {
+    unpacked = unzipSync(bytes);
+  } catch {
+    fail("INVALID_BACKUP_ARCHIVE", "Cloud backup ZIP is invalid");
+  }
+  let total = 0;
+  for (const value of Object.values(unpacked)) {
+    total += value.byteLength;
+    if (total > 2 * 1024 * 1024 * 1024) fail("INVALID_BACKUP_ARCHIVE", "Cloud backup unpacked data exceeds the archive budget");
+  }
+  const manifest = unpacked["manifest.json"];
+  if (!manifest) fail("INVALID_BACKUP_ARCHIVE", "Cloud backup ZIP is missing its manifest");
+  const archive = parseCloudArchive(manifest);
+  const assetBytes = new Map<string, Uint8Array>();
+  for (const asset of archive.assets) {
+    const value = unpacked[`assets/${asset.hash}`];
+    if (!value) fail("INVALID_BACKUP_ARCHIVE", `Cloud backup ZIP is missing an asset`);
+    assetBytes.set(asset.hash, value);
+  }
+  return { archive, assetBytes };
+}
+
+export async function importCloudZipBackup(
+  db: KnowledgeDatabase | null,
+  dataDir: string,
+  backupRoot: string,
+  bytes: Uint8Array,
+  supportedSchemaVersion: number,
+  signal?: AbortSignal,
+): Promise<BackupRecord> {
+  if (signal?.aborted) fail("REQUEST_ABORTED", "Backup archive operation was aborted");
+  if (!Number.isSafeInteger(supportedSchemaVersion) || supportedSchemaVersion < 1) {
+    fail("INVALID_SUPPORTED_SCHEMA", "supportedSchemaVersion must be a positive safe integer");
+  }
+  const { archive, assetBytes } = parseCloudZip(bytes);
+  if (signal?.aborted) fail("REQUEST_ABORTED", "Backup archive operation was aborted");
+
+  const temporaryDataDir = mkdtempSync(join(tmpdir(), "zhiye-cloud-"));
+  chmodSync(temporaryDataDir, 0o700);
+  let database: KnowledgeDatabase | undefined;
+  try {
+    database = new KnowledgeDatabase(temporaryDataDir);
+    if (database.getSchemaVersion() !== CURRENT_SCHEMA_VERSION) {
+      fail("UNSUPPORTED_SCHEMA", "Cloud backup could not be staged at the supported schema version");
+    }
+    ingest(database, archive);
+    ingestAssets(database, archive, assetBytes);
+    const backup = await createBackup({
+      dataDir: temporaryDataDir,
+      backupRoot,
+      database: database.sql,
+      reason: "manual",
+    });
+    if (backup.manifest.schemaVersion > supportedSchemaVersion) {
+      fail("UNSUPPORTED_SCHEMA", "Cloud backup was created by a newer version of Zhiye");
+    }
+    const record = verifiedRecord(backup);
+    db?.upsertBackupRecord(record);
+    return record;
+  } finally {
+    database?.close();
+    rmSync(temporaryDataDir, { recursive: true, force: true });
+  }
 }
 
 export async function importCloudJsonBackup(
