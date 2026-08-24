@@ -10,6 +10,7 @@
 - 该 `.app` 没有 Developer ID 签名或 Apple 公证。
 - DMG 构建与发布：GitHub Actions run `32738735936` 成功完成 ad-hoc 签名、DMG 封装、`SHA256SUMS` 生成和 GitHub Release 发布；Release [v1.0.2](https://github.com/SaraiNoQ/web-knowledge-set/releases/tag/v1.0.2) 为 immutable。
 - Release 资产：`_1.0.2_aarch64.dmg`（GitHub 对中文文件名前缀做了规范化）和 `SHA256SUMS`；DMG SHA-256：`b8fc5474971cc2f69f9b2028b3e14fc6ff2800c82e376bf3714d37a6930819d8`。
+- 由于 immutable Release 不能替换已规范化的中文资产名，修正版发布 run `32740393567` 创建了推荐入口 [v1.0.2-corrected](https://github.com/SaraiNoQ/web-knowledge-set/releases/tag/v1.0.2-corrected)：资产为 `Zhiye_1.0.2_aarch64.dmg`，`SHA256SUMS` 与该 ASCII 文件名匹配；DMG SHA-256：`16fb6a0dfb740fca057166c1591179799c7e75080a55e49014397c49ebeeb7cc`。
 
 ## `1.0.1` Apple Silicon DMG
 
