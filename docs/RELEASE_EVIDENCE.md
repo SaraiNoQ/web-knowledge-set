@@ -1,5 +1,14 @@
 # 发布证据
 
+## `1.0.2` Apple Silicon `.app`
+
+- 发布准备提交：`7caf72c234a4a4175c35c9970e39baf38dba3965`；图标嵌入修复提交：`5df0fcc4efaa5418e51bc37ba0920a11a4ce42ec`。
+- 服务器门禁：类型检查、137 项测试（136 通过、1 项按 root Chromium 沙箱条件跳过）和生产构建通过；独立审查无 P0/P1。
+- macOS 构建：GitHub Actions run `32732298419` 成功完成依赖审计、Apple Silicon `.app` 编译、Chromium 安全、Keychain、URL/file 入口检查和 artifact 上传。
+- Actions artifact：`zhiye-app-5df0fcc4efaa5418e51bc37ba0920a11a4ce42ec`（artifact `9522153938`，SHA-256 `9441e7e7544bd518a01fa3b072d87b12ef3d52dd75b93a874d94243d98a5ad7b`，保留至 2026-08-31）。
+- 实际包核验：`CFBundleShortVersionString=1.0.2`、`CFBundleVersion=1.0.2`、Apple Silicon arm64、`CFBundleIconFile=icon.icns`，内嵌图标为“纸页 + 交织线”设计；`codesign -dv` 显示 `adhoc,linker-signed`。
+- 该 `.app` 没有 Developer ID 签名或 Apple 公证；专门的 DMG workflow 尚未手动触发。
+
 ## `1.0.1` Apple Silicon DMG
 
 - 发布准备提交：`2ccd1692635d8c1c2d0259f6d41899430c9e036e`。
