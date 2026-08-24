@@ -1,5 +1,14 @@
 # 发布证据
 
+## `1.0.1` Apple Silicon DMG
+
+- 发布准备提交：`2ccd1692635d8c1c2d0259f6d41899430c9e036e`。
+- 服务器门禁：Node 24 类型检查、132 项测试（131 通过、1 项按 root Chromium 沙箱条件跳过）和生产构建通过；独立审查无 P0/P1。
+- macOS 构建：GitHub Actions run `32688196058`，完成应用编译、ad-hoc 签名、DMG 封装和 artifact 上传。
+- 正式 Release：`v1.0.1`，不可变且非 prerelease；包含 `Zhiye_1.0.1_aarch64.dmg` 与 `SHA256SUMS`。
+- DMG SHA-256：`874913d50603f0a61fb8d8828cb5a6ea941a5820e9fd80bb98cf0801c0af51aa`。
+- 该产物没有 Developer ID 签名、Apple 公证票据或自动更新通道。
+
 ## `1.0.0` Apple Silicon DMG
 
 - 发布准备提交：`cf7a4e32dbfeb090e878a6f000867c51d8358129`。
