@@ -2,7 +2,7 @@ name: macOS DMG build
 
 on:
   push:
-    tags: ["v1.0.2"]
+    tags: ["v1.0.2", "v1.0.2-corrected"]
   workflow_dispatch:
     inputs:
       source_sha:
@@ -66,7 +66,7 @@ jobs:
           ditto "$APP" "dmg-root/织页.app"
           ln -s /Applications dmg-root/Applications
           hdiutil create -volname "织页" -srcfolder dmg-root -ov -format UDZO \
-            src-tauri/target/release/bundle/dmg/织页_1.0.2_aarch64.dmg
+            src-tauri/target/release/bundle/dmg/Zhiye_1.0.2_aarch64.dmg
       - name: Upload DMG
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -81,13 +81,13 @@ jobs:
           cd src-tauri/target/release/bundle/dmg
           shasum -a 256 *.dmg > SHA256SUMS
       - name: Publish GitHub Release
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.ref_name == 'v1.0.2-corrected'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --verify-tag \
-            --title "织页 1.0.2" \
+            --title "织页 1.0.2（DMG 修正版）" \
             --notes-file docs/RELEASE_NOTES_1.0.2.md \
-            "src-tauri/target/release/bundle/dmg/织页_1.0.2_aarch64.dmg" \
+            "src-tauri/target/release/bundle/dmg/Zhiye_1.0.2_aarch64.dmg" \
             "src-tauri/target/release/bundle/dmg/SHA256SUMS"
