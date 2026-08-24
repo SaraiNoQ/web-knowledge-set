@@ -7,7 +7,9 @@
 - macOS 构建：GitHub Actions run `32732298419` 成功完成依赖审计、Apple Silicon `.app` 编译、Chromium 安全、Keychain、URL/file 入口检查和 artifact 上传。
 - Actions artifact：`zhiye-app-5df0fcc4efaa5418e51bc37ba0920a11a4ce42ec`（artifact `9522153938`，SHA-256 `9441e7e7544bd518a01fa3b072d87b12ef3d52dd75b93a874d94243d98a5ad7b`，保留至 2026-08-31）。
 - 实际包核验：`CFBundleShortVersionString=1.0.2`、`CFBundleVersion=1.0.2`、Apple Silicon arm64、`CFBundleIconFile=icon.icns`，内嵌图标为“纸页 + 交织线”设计；`codesign -dv` 显示 `adhoc,linker-signed`。
-- 该 `.app` 没有 Developer ID 签名或 Apple 公证；专门的 DMG workflow 尚未手动触发。
+- 该 `.app` 没有 Developer ID 签名或 Apple 公证。
+- DMG 构建与发布：GitHub Actions run `32738735936` 成功完成 ad-hoc 签名、DMG 封装、`SHA256SUMS` 生成和 GitHub Release 发布；Release [v1.0.2](https://github.com/SaraiNoQ/web-knowledge-set/releases/tag/v1.0.2) 为 immutable。
+- Release 资产：`_1.0.2_aarch64.dmg`（GitHub 对中文文件名前缀做了规范化）和 `SHA256SUMS`；DMG SHA-256：`b8fc5474971cc2f69f9b2028b3e14fc6ff2800c82e376bf3714d37a6930819d8`。
 
 ## `1.0.1` Apple Silicon DMG
 
