@@ -1,6 +1,8 @@
 name: macOS DMG build
 
 on:
+  push:
+    tags: ["v1.0.2"]
   workflow_dispatch:
     inputs:
       source_sha:
@@ -9,7 +11,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -18,9 +20,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ inputs.source_sha || github.ref }}
           fetch-depth: 1
           persist-credentials: false
+      - name: Verify release tag is the main tip
+        if: github.event_name == 'push'
+        run: |
+          git fetch --no-tags origin main --depth=1
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
         with:
           version: 11.7.0
@@ -63,7 +70,24 @@ jobs:
       - name: Upload DMG
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: zhiye-dmg-${{ inputs.source_sha }}
+          name: zhiye-dmg-${{ inputs.source_sha || github.sha }}
           path: src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
           retention-days: 7
+      - name: Create checksum manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd src-tauri/target/release/bundle/dmg
+          shasum -a 256 *.dmg > SHA256SUMS
+      - name: Publish GitHub Release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "织页 1.0.2" \
+            --notes-file docs/RELEASE_NOTES_1.0.2.md \
+            "src-tauri/target/release/bundle/dmg/织页_1.0.2_aarch64.dmg" \
+            "src-tauri/target/release/bundle/dmg/SHA256SUMS"
