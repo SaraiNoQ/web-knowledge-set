@@ -2,7 +2,7 @@
 
 织页是单用户、本机运行的互联网知识库：输入公开网页 URL，应用会优先直接读取网页，必要时回退到隔离的 Chromium，再把正文保存成可编辑、可搜索的 Markdown。SQLite 是唯一事实源，网页 HTML 快照和允许类型的图片保存在同一知识库目录中。
 
-> 当前仓库版本为 `1.0.0`。它可提供 Apple Silicon DMG，应用使用 ad-hoc 签名，但未经 Apple Developer ID 签名或公证，也不配置自动更新。
+> 当前仓库版本为 `1.0.1`。它可提供 Apple Silicon DMG，应用使用 ad-hoc 签名，但未经 Apple Developer ID 签名或公证，也不配置自动更新。
 
 ## 已有功能
 

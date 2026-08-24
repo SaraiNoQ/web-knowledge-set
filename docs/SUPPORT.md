@@ -1,6 +1,6 @@
 # 支持与故障排查
 
-织页当前版本为 `1.0.0`。Apple Silicon DMG 使用 ad-hoc 签名，没有 Developer ID 签名或 Apple 公证，也不配置更新通道；以下步骤以保护本地数据为第一原则。
+织页当前版本为 `1.0.1`。Apple Silicon DMG 使用 ad-hoc 签名，没有 Developer ID 签名或 Apple 公证，也不配置更新通道；以下步骤以保护本地数据为第一原则。
 
 ## 先保护数据
 
