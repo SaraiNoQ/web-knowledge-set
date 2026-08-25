@@ -221,7 +221,8 @@ fn process_exists(pid: u32) -> bool {
 }
 
 fn clear_or_reject_source_lock(data_dir: &Path) -> Result<(), String> {
-    let lock = companion_paths(data_dir)
+    let companions = companion_paths(data_dir);
+    let lock = companions
         .get(2)
         .ok_or_else(|| "数据目录路径无效。".to_string())?;
     let metadata = match fs::symlink_metadata(lock) {
@@ -710,7 +711,7 @@ fn copy_and_promote_bundle(source: &Path, target: &Path) -> Result<(), String> {
             }
         }
     }
-    let mut promoted = Vec::new();
+    let mut promoted: Vec<PathBuf> = Vec::new();
     for (staging, target_path) in &staged {
         let target_metadata = fs::symlink_metadata(target_path);
         if let Ok(metadata) = target_metadata {
