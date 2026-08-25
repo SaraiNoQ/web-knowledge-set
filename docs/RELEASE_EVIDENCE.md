@@ -2,6 +2,11 @@
 
 ## `1.0.2` Apple Silicon `.app`
 
+- 最新桌面文章工作台构建提交：`db274450649547e7ada0c624e49994fc26e0cf06`；该提交已通过服务器门禁和最新 macOS desktop smoke。
+- DMG 构建：GitHub Actions run `32875931607` 成功完成 Apple Silicon 应用编译、ad-hoc 签名、DMG 封装、artifact 上传和 checksum 生成。
+- 最新 build Release：[v1.0.2-build.2](https://github.com/SaraiNoQ/web-knowledge-set/releases/tag/v1.0.2-build.2)；资产为 `Zhiye_1.0.2_aarch64.dmg` 与 `SHA256SUMS`，DMG SHA-256：`d605eff47fee590a3ab931937d720996e435a2d196c27aa18ac825b0f448a410`。
+- DMG 内实际应用核验：`CFBundleShortVersionString=1.0.2`、`CFBundleVersion=10002`、Bundle ID `io.github.sarainoq.zhiye`、Apple Silicon `arm64`；签名为 ad-hoc，未使用 Developer ID、未公证且无更新通道。
+
 - 发布准备提交：`7caf72c234a4a4175c35c9970e39baf38dba3965`；图标嵌入修复提交：`5df0fcc4efaa5418e51bc37ba0920a11a4ce42ec`。
 - 服务器门禁：类型检查、137 项测试（136 通过、1 项按 root Chromium 沙箱条件跳过）和生产构建通过；独立审查无 P0/P1。
 - macOS 构建：GitHub Actions run `32732298419` 成功完成依赖审计、Apple Silicon `.app` 编译、Chromium 安全、Keychain、URL/file 入口检查和 artifact 上传。
