@@ -599,7 +599,6 @@ export default function App() {
   const [safetyOpen, setSafetyOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [onboarding, setOnboarding] = useState<OnboardingState | "unavailable" | null>(null);
-  const [onboardingDeferred, setOnboardingDeferred] = useState(false);
   const [offline, setOffline] = useState(() => !navigator.onLine);
   const [runtimeMode, setRuntimeMode] = useState<"local" | "cloud" | null>(null);
   const [browserPairingCount, setBrowserPairingCount] = useState<number | null>(null);
@@ -719,6 +718,8 @@ export default function App() {
 
   const longArticle = (draft?.markdown.length ?? 0) > 250_000;
   const cloudMode = runtimeMode === "cloud";
+  const desktopRuntime = "__TAURI_INTERNALS__" in window;
+  const selectionEnabled = !cloudMode && !desktopRuntime;
   const longPreviewAllowed = !longArticle || longPreviewDocumentId === currentDoc?.id;
   useEffect(() => {
     if (!cloudMode) return;
@@ -1546,6 +1547,10 @@ export default function App() {
   }, [organizationConflict, remoteDraftConflict]);
 
   useEffect(() => {
+    const cancelStagedMigration = () => {
+      if (!("__TAURI_INTERNALS__" in window)) return;
+      void invoke("cancel_staged_data_directory_change").catch(() => undefined);
+    };
     const prepareClose = (event: Event) => {
       const attemptId = (event as CustomEvent<{ attemptId?: unknown }>).detail?.attemptId;
       if (typeof attemptId !== "string" || !/^[1-9]\d{0,19}$/u.test(attemptId)) {
@@ -1594,6 +1599,7 @@ export default function App() {
           await api.desktopCloseReady(attemptId);
         } catch (error) {
           if (closeAttemptRef.current !== attemptId) return;
+          cancelStagedMigration();
           closeAttemptRef.current = null;
           setClosing(false);
           setDraftError(`关闭前无法保存更改：${(error as Error).message}`);
@@ -1603,6 +1609,7 @@ export default function App() {
     const closeTimedOut = (event: Event) => {
       const attemptId = (event as CustomEvent<{ attemptId?: unknown }>).detail?.attemptId;
       if (attemptId !== closeAttemptRef.current) return;
+      cancelStagedMigration();
       closeAttemptRef.current = null;
       setClosing(false);
       setDraftError("关闭确认超时，请再次关闭窗口重试。");
@@ -3176,8 +3183,8 @@ export default function App() {
   if (onboarding === null || runtimeMode === null) {
     return <main className="onboarding-loading" aria-live="polite"><span className="brand-seal">知</span><p>正在打开知识库…</p></main>;
   }
-  if (onboarding !== "unavailable" && !onboarding.completed && !onboardingDeferred) {
-    return <Onboarding state={onboarding} onComplete={setOnboarding} onLater={() => setOnboardingDeferred(true)} />;
+  if (onboarding !== "unavailable" && !onboarding.completed) {
+    return <Onboarding state={onboarding} onComplete={setOnboarding} onLater={() => undefined} />;
   }
 
   return (
@@ -3440,14 +3447,14 @@ export default function App() {
             selectionDisabled={batchBusy}
             listRef={libraryListRef}
             onListKeyDown={handleListKeyDown}
-            onSelect={!cloudMode ? (document, checked) => {
+            onSelect={selectionEnabled ? (document, checked) => {
               selectionContextRef.current = listContextKey;
               if (checked) selectedDocumentRevisionsRef.current.set(document.id, document.revision);
               else selectedDocumentRevisionsRef.current.delete(document.id);
               setSelectedIds((previous) => { const next = new Set(previous); if (checked) next.add(document.id); else next.delete(document.id); return next; });
             } : undefined}
           />
-            {!!selectedIds.size && !cloudMode && <div className="bulk-toolbar" aria-label="选中知识批量操作">
+            {!!selectedIds.size && selectionEnabled && <div className="bulk-toolbar" aria-label="选中知识批量操作">
               <span className="batch-selection-summary">已选 <strong>{selectedIds.size}</strong> 篇</span>
               <Select density="compact" aria-label="批量操作" disabled={batchBusy} value={batchAction} onChange={(event) => setBatchAction(event.target.value as BatchDocumentAction | "")}><option value="">选择操作</option><option value="add-tag">添加标签</option><option value="remove-tag">移除标签</option><option value="add-collection">加入集合</option><option value="remove-collection">移出集合</option><option value="archive">归档</option><option value="unarchive">取消归档</option><option value="trash">删除（移入回收站）</option></Select>
               {(batchAction === "add-collection" || batchAction === "remove-collection") && <Select density="compact" aria-label="批量操作集合" disabled={batchBusy} value={batchCollectionId} onChange={(event) => setBatchCollectionId(event.target.value)}><option value="">选择集合</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</Select>}
@@ -3455,7 +3462,7 @@ export default function App() {
             </div>}
           </> : <>
             <div className="result-caption"><span>{filteredDescription}</span>{items.some(needsCapturePolling) && <span className="polling-mark"><i />更新中</span>}</div>
-            {!!items.length && !cloudMode && <div className="bulk-toolbar" aria-label="当前页批量操作">
+            {!!items.length && selectionEnabled && <div className="bulk-toolbar" aria-label="当前页批量操作">
               <label><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={items.length > 0 && items.every((item) => selectedIds.has(item.id))} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds(event.target.checked ? new Set(items.map((item) => item.id)) : new Set()); }} />选中当前页 <strong>{selectedIds.size}</strong> 篇</label>
               {!!selectedIds.size && <><Select density="compact" aria-label="批量操作" disabled={listLoading || batchBusy} value={batchAction} onChange={(event) => setBatchAction(event.target.value as BatchDocumentAction | "")}><option value="">选择操作</option><option value="add-tag">添加标签</option><option value="remove-tag">移除标签</option><option value="add-collection">加入集合</option><option value="remove-collection">移出集合</option><option value="restore">恢复</option></Select>{(batchAction === "add-collection" || batchAction === "remove-collection") && <Select density="compact" aria-label="批量操作集合" disabled={listLoading || batchBusy} value={batchCollectionId} onChange={(event) => setBatchCollectionId(event.target.value)}><option value="">选择集合</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</Select>}<button type="button" onClick={() => void runBatchAction()} disabled={listLoading || batchBusy || !batchAction}>{batchBusy ? "处理中…" : "应用"}</button></>}
             </div>}
@@ -3469,21 +3476,21 @@ export default function App() {
                   onOpen={(id) => void selectDocument(id)}
                   onMove={moveDocumentToFolder}
                   onPermanentDelete={permanentlyDeleteListItem}
-                  checkbox={!cloudMode ? <label className="row-select"><span className="sr-only">选择 {item.title || "未命名网页"}</span><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={selectedIds.has(item.id)} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds((previous) => { const next = new Set(previous); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; }); }} /></label> : undefined}
+                  checkbox={selectionEnabled ? <label className="row-select"><span className="sr-only">选择 {item.title || "未命名网页"}</span><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={selectedIds.has(item.id)} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds((previous) => { const next = new Set(previous); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; }); }} /></label> : undefined}
                 />
               ))}
             </div>
             {pageCount > 1 && <nav className="pagination" aria-label="知识列表分页"><button type="button" disabled={listLoading || batchBusy || page <= 1} onClick={() => setPage((value) => value - 1)}>上一页</button><span>{page} / {pageCount}</span><button type="button" disabled={listLoading || batchBusy || page >= pageCount} onClick={() => setPage((value) => value + 1)}>下一页</button></nav>}
           </>}
-          {!cloudMode && (!inTrash || portableExporting) && <div className="portable-toolbar" aria-label="便携知识包导出">
+          {selectionEnabled && (!inTrash || portableExporting) && <div className="portable-toolbar" aria-label="便携知识包导出">
             <div><strong>便携知识包</strong><span>用于迁移与分享，不等同于可恢复数据库的完整留档。</span><button type="button" onClick={() => setSafetyOpen(true)} disabled={Boolean(portableExporting)}>前往完整留档</button></div>
             <div>
               <button type="button" onClick={() => void exportPortable("selected")} disabled={(portableExporting !== null && portableExporting !== "selected") || (!selectedIds.size && portableExporting !== "selected")}>{portableExporting === "selected" ? "取消所选导出" : `导出所选${selectedIds.size ? ` ${selectedIds.size} 篇` : ""}`}</button>
               <button type="button" onClick={() => void exportPortable("all")} disabled={((listLoading || closing) && portableExporting !== "all") || (inTrash && portableExporting !== "all") || (portableExporting !== null && portableExporting !== "all")}>{portableExporting === "all" ? "取消全部导出" : "导出全部"}</button>
             </div>
           </div>}
-          {portableNotice && <p className="batch-message" role="status">{portableNotice}</p>}
-          {portableError && <p className="batch-message error-text" role="alert">{portableError}</p>}
+          {selectionEnabled && portableNotice && <p className="batch-message" role="status">{portableNotice}</p>}
+          {selectionEnabled && portableError && <p className="batch-message error-text" role="alert">{portableError}</p>}
           {batchNotice && <p className="batch-message" role="status">{batchNotice}</p>}
           {batchError && <p className="batch-message error-text" role="alert">{batchError}</p>}
 

@@ -84,6 +84,9 @@ test("keeps the first-run guide deferrable, reopenable, readable, and durable", 
   await expect(page.getByRole("heading", { name: /你的知识/u })).toBeVisible();
   await page.getByRole("button", { name: "稍后设置" }).click();
   await expect(page.getByLabel("网页地址")).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("网页地址")).toBeVisible();
+  await expect(page.getByRole("heading", { name: /你的知识/u })).toBeHidden();
   await expect.poll(() => page.locator(".capture-copy p").evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(14);
 
   await page.getByRole("button", { name: "使用指南" }).click();
@@ -104,7 +107,7 @@ test("keeps the first-run guide deferrable, reopenable, readable, and durable", 
   await expect(page.getByRole("heading", { name: /正文归你/u })).toBeVisible();
   await page.getByRole("button", { name: "继续" }).click();
   await expect(page.getByRole("heading", { name: /先留返回键/u })).toBeVisible();
-  await page.getByRole("button", { name: "进入资料库" }).click();
+  await page.getByRole("button", { name: "关闭指南", exact: true }).last().click();
   await expect(page.getByLabel("网页地址")).toBeVisible();
   await page.reload();
   await expect(page.getByLabel("网页地址")).toBeVisible();
@@ -1347,6 +1350,8 @@ test("routes desktop capture and file intents through existing imports", async (
     });
   });
   await page.goto("/");
+  await expect(page.locator(".portable-toolbar")).toHaveCount(0);
+  await expect(page.locator(".library-directory .row-select")).toHaveCount(0);
   await expect(page.getByLabel("文档标题")).toHaveValue("远端测试文章", { timeout: 8_000 });
   await expect.poll(() => page.evaluate(async () => {
     const value = await fetch("/api/documents?page=1").then((response) => response.json()) as {

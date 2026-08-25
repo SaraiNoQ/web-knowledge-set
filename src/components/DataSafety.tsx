@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import type { BackupReason, BackupRecord, BackupStatus } from "../../shared/types";
@@ -102,6 +103,7 @@ export function DataSafety({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const desktop = "__TAURI_INTERNALS__" in window;
   const statusRef = useRef(status);
   const busyRef = useRef(busy);
   statusRef.current = status;
@@ -246,6 +248,28 @@ export function DataSafety({
       return;
     }
     void perform("settings", () => api.updateBackupSettings(retention), "自动留档数量已更新。");
+  };
+
+  const changeDataDirectory = async () => {
+    if (cloud || !desktop || busyRef.current || statusRef.current?.maintenance || statusRef.current?.mode === "recovery") return;
+    if (!await dialogs.confirm(
+      "织页会先保存当前修改，然后安全关闭并把数据库、快照、离线资源、留档和诊断目录迁移到你选择的空文件夹。迁移完成后应用会自动重新启动。确定继续吗？",
+      { title: "更改知识库位置", confirmLabel: "选择新位置", tone: "warning" },
+    ) || busyRef.current) return;
+    busyRef.current = "location";
+    setBusy("location");
+    setError("");
+    setNotice("");
+    try {
+      await beforeOperation();
+      const result = await invoke<{ configured: boolean }>("change_data_directory");
+      if (result.configured) setNotice("新位置已选择，正在安全迁移并重新启动…");
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      busyRef.current = "";
+      setBusy("");
+    }
   };
 
   const cleanup = async () => {
@@ -394,6 +418,12 @@ export function DataSafety({
         </section>
 
         {!cloud && <aside className="safety-card safety-controls">
+          {desktop && <>
+            <div><span className="eyebrow">KNOWLEDGE BASE</span><h2>知识库位置</h2></div>
+            <p>选择新的空文件夹后，织页会在安全重启期间迁移当前数据；迁移失败会保留原位置。</p>
+            <button type="button" onClick={() => void changeDataDirectory()} disabled={Boolean(busy) || recovery || status.maintenance}>{busy === "location" ? "正在准备迁移…" : "更改知识库位置"}</button>
+            <hr />
+          </>}
           <div><span className="eyebrow">HOUSEKEEPING</span><h2>自动留档</h2></div>
           <p>每日首次启动保留一份完整副本。只自动轮换每日留档，不触及手动、升级前或恢复前留档。</p>
           <form onSubmit={saveRetention}>

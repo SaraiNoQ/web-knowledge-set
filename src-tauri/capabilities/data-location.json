@@ -1,11 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "data-location",
-  "description": "Allow the local onboarding page to choose an empty desktop data directory without exposing its path",
+  "description": "Allow the local desktop pages to choose an empty data directory and migrate it without exposing its path",
   "windows": ["main"],
   "local": false,
   "remote": {
     "urls": ["http://127.0.0.1:*"]
   },
-  "permissions": ["allow-choose-data-directory", "core:window:allow-close"]
+  "permissions": ["allow-choose-data-directory", "allow-change-data-directory", "allow-cancel-staged-data-directory-change", "core:window:allow-close"]
 }

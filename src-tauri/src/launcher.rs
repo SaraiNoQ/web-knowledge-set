@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
@@ -18,12 +19,62 @@ struct LauncherConfig {
     data_dir: PathBuf,
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PendingMigration {
+    version: u8,
+    source_dir: PathBuf,
+    target_dir: PathBuf,
+    phase: MigrationPhase,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LockReservation {
+    pid: u32,
+    token: String,
+}
+
+struct SourceLockReservation {
+    path: PathBuf,
+    token: String,
+}
+
+impl SourceLockReservation {
+    fn release(&self) -> Result<(), String> {
+        let current = fs::read(&self.path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<LockReservation>(&bytes).ok());
+        if current.as_ref().map(|value| value.token.as_str()) != Some(self.token.as_str()) {
+            return Ok(());
+        }
+        match fs::remove_file(&self.path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err("无法释放源知识库迁移锁。".to_string()),
+        }
+    }
+}
+
+impl Drop for SourceLockReservation {
+    fn drop(&mut self) {
+        let _ = self.release();
+    }
+}
+
+#[derive(Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum MigrationPhase {
+    Copying,
+    Ready,
+}
+
 const LEGACY_IDENTIFIER: &str = "dev.local.zhiye";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DataDirectoryChoice {
-    configured: bool,
+    pub configured: bool,
 }
 
 fn launcher_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -48,6 +99,10 @@ fn legacy_launcher_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_config
         .with_file_name(format!("{LEGACY_IDENTIFIER}-launcher"))
         .join("launcher.json"))
+}
+
+fn migration_path(launcher: &Path) -> PathBuf {
+    launcher.with_file_name(".migration.json")
 }
 
 fn validate_directory(path: &Path, must_be_empty: bool) -> Result<PathBuf, String> {
@@ -82,6 +137,18 @@ fn related_paths(data_dir: &Path) -> Vec<PathBuf> {
     let mut paths = vec![data_dir.to_path_buf()];
     paths.extend(companion_paths(data_dir));
     paths
+}
+
+fn storage_paths(data_dir: &Path) -> Vec<PathBuf> {
+    let companions = companion_paths(data_dir);
+    if companions.len() < 2 {
+        return vec![data_dir.to_path_buf()];
+    }
+    vec![
+        data_dir.to_path_buf(),
+        companions[0].clone(),
+        companions[1].clone(),
+    ]
 }
 
 fn overlaps(left: &Path, right: &Path) -> bool {
@@ -137,6 +204,71 @@ fn data_state(data_dir: &Path) -> Result<DataState, String> {
     })
 }
 
+fn process_exists(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        return Command::new("/bin/kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(true);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
+}
+
+fn clear_or_reject_source_lock(data_dir: &Path) -> Result<(), String> {
+    let lock = companion_paths(data_dir)
+        .get(2)
+        .ok_or_else(|| "数据目录路径无效。".to_string())?;
+    let metadata = match fs::symlink_metadata(lock) {
+        Ok(value) => Some(value),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return Err("无法确认源知识库是否仍被占用。".to_string()),
+    };
+    if let Some(metadata) = metadata {
+        if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 4 * 1024 {
+            return Err("源知识库迁移锁不安全或已损坏。".to_string());
+        }
+        let lock_value = serde_json::from_slice::<LockReservation>(&fs::read(lock).map_err(|_| "无法读取源知识库迁移锁。".to_string())?)
+            .map_err(|_| "无法解析源知识库迁移锁。".to_string())?;
+        if process_exists(lock_value.pid) {
+            return Err("源知识库仍被其他进程占用，请关闭其他织页或本地 Web 服务后重试。".to_string());
+        }
+        fs::remove_file(lock).map_err(|_| "无法清理已退出进程的源知识库迁移锁。".to_string())?;
+    }
+    Ok(())
+}
+
+fn reserve_source_lock(data_dir: &Path) -> Result<SourceLockReservation, String> {
+    clear_or_reject_source_lock(data_dir)?;
+    let path = companion_paths(data_dir)
+        .get(2)
+        .ok_or_else(|| "数据目录路径无效。".to_string())?
+        .to_path_buf();
+    let token = Uuid::new_v4().to_string();
+    let bytes = serde_json::to_vec(&LockReservation {
+        pid: std::process::id(),
+        token: token.clone(),
+    })
+    .map_err(|_| "无法生成源知识库迁移锁。".to_string())?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options
+        .open(&path)
+        .map_err(|_| "源知识库仍被其他进程占用，请关闭其他织页或本地 Web 服务后重试。".to_string())?;
+    if file.write_all(&bytes).and_then(|_| file.sync_all()).is_err() {
+        let _ = fs::remove_file(&path);
+        return Err("无法保存源知识库迁移锁。".to_string());
+    }
+    Ok(SourceLockReservation { path, token })
+}
+
 fn ensure_complete_state(state: DataState) -> Result<(), String> {
     if !state.data && state.companions {
         return Err(
@@ -183,6 +315,39 @@ fn validate_migration_target(
     Ok(())
 }
 
+fn validate_change_target(
+    target: &Path,
+    current: &Path,
+    default: &Path,
+    launcher: &Path,
+    legacy_launcher: &Path,
+) -> Result<(), String> {
+    if same_location(target, current) || same_location(target, default) {
+        return Err("请选择不同于当前数据目录的文件夹。".to_string());
+    }
+    let launcher_root = launcher
+        .parent()
+        .ok_or_else(|| "桌面启动配置路径无效。".to_string())
+        .map(|path| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))?;
+    let legacy_launcher_root = legacy_launcher
+        .parent()
+        .ok_or_else(|| "旧版桌面启动配置路径无效。".to_string())
+        .map(|path| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))?;
+    let candidate = related_paths(target);
+    let mut protected = related_paths(default);
+    protected.extend(related_paths(current));
+    if candidate
+        .iter()
+        .any(|left| protected.iter().any(|right| overlaps(left, right)))
+        || candidate
+            .iter()
+            .any(|path| overlaps(path, &launcher_root) || overlaps(path, &legacy_launcher_root))
+    {
+        return Err("所选文件夹不能位于当前数据、备份或启动配置目录内。".to_string());
+    }
+    Ok(())
+}
+
 fn read_launcher(path: &Path) -> Result<Option<PathBuf>, String> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(value) => value,
@@ -201,9 +366,18 @@ fn read_launcher(path: &Path) -> Result<Option<PathBuf>, String> {
     validate_directory(&value.data_dir, false).map(Some)
 }
 
-fn write_launcher(path: &Path, data_dir: &Path) -> Result<(), String> {
-    if path.exists() {
-        return Err("桌面数据目录已经配置；已有知识库请通过完整备份恢复迁移。".to_string());
+fn write_json_file<T: Serialize>(path: &Path, value: &T, replace: bool) -> Result<(), String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err("桌面启动配置路径不安全。".to_string())
+        }
+        Ok(_) if !replace => {
+            return Err("桌面数据目录已经配置；已有知识库请通过完整备份恢复迁移。".to_string())
+        }
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            return Err("桌面启动配置路径无法访问。".to_string())
+        }
+        _ => {}
     }
     let parent = path
         .parent()
@@ -222,11 +396,7 @@ fn write_launcher(path: &Path, data_dir: &Path) -> Result<(), String> {
         .map_err(|_| "无法保护桌面启动配置目录。".to_string())?;
 
     let temporary = parent.join(format!(".launcher-{}.tmp", Uuid::new_v4()));
-    let bytes = serde_json::to_vec(&LauncherConfig {
-        version: 1,
-        data_dir: data_dir.to_path_buf(),
-    })
-    .map_err(|_| "无法生成桌面启动配置。".to_string())?;
+    let bytes = serde_json::to_vec(value).map_err(|_| "无法生成桌面启动配置。".to_string())?;
     let result = (|| -> Result<(), String> {
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
@@ -238,16 +408,22 @@ fn write_launcher(path: &Path, data_dir: &Path) -> Result<(), String> {
         file.write_all(&bytes)
             .and_then(|_| file.sync_all())
             .map_err(|_| "无法保存桌面启动配置。".to_string())?;
-        fs::hard_link(&temporary, path).map_err(|_| "无法发布桌面启动配置。".to_string())?;
-        if fs::remove_file(&temporary).is_err() {
-            let _ = fs::remove_file(path);
-            return Err("无法完成桌面启动配置。".to_string());
+        if replace {
+            fs::rename(&temporary, path).map_err(|_| "无法发布桌面启动配置。".to_string())?;
+        } else {
+            fs::hard_link(&temporary, path).map_err(|_| "无法发布桌面启动配置。".to_string())?;
+            if fs::remove_file(&temporary).is_err() {
+                let _ = fs::remove_file(path);
+                return Err("无法完成桌面启动配置。".to_string());
+            }
         }
         if File::open(parent)
             .and_then(|directory| directory.sync_all())
             .is_err()
         {
-            let _ = fs::remove_file(path);
+            if !replace {
+                let _ = fs::remove_file(path);
+            }
             return Err("无法同步桌面启动配置。".to_string());
         }
         Ok(())
@@ -258,12 +434,402 @@ fn write_launcher(path: &Path, data_dir: &Path) -> Result<(), String> {
     result
 }
 
+fn write_launcher(path: &Path, data_dir: &Path) -> Result<(), String> {
+    write_json_file(
+        path,
+        &LauncherConfig {
+            version: 1,
+            data_dir: data_dir.to_path_buf(),
+        },
+        false,
+    )
+}
+
+fn replace_launcher(path: &Path, data_dir: &Path) -> Result<(), String> {
+    write_json_file(
+        path,
+        &LauncherConfig {
+            version: 1,
+            data_dir: data_dir.to_path_buf(),
+        },
+        true,
+    )
+}
+
+fn read_pending_migration(path: &Path) -> Result<Option<PendingMigration>, String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("数据目录迁移状态无法读取。".to_string()),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 16 * 1024 {
+        return Err("数据目录迁移状态不安全或已损坏。".to_string());
+    }
+    let value = serde_json::from_slice(&fs::read(path).map_err(|_| "数据目录迁移状态无法读取。".to_string())?)
+        .map_err(|_| "数据目录迁移状态已损坏。".to_string())?;
+    Ok(Some(value))
+}
+
+fn write_pending_migration(path: &Path, migration: &PendingMigration) -> Result<(), String> {
+    write_json_file(path, migration, true)
+}
+
+fn clear_pending_migration(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => {
+            if let Some(parent) = path.parent() {
+                File::open(parent)
+                    .and_then(|directory| directory.sync_all())
+                    .map_err(|_| "无法同步数据目录迁移状态。".to_string())?;
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err("无法清理数据目录迁移状态。".to_string()),
+    }
+}
+
+fn files_equal(left: &Path, right: &Path) -> Result<bool, String> {
+    let mut left_file = File::open(left).map_err(|_| "无法校验迁移后的数据文件。".to_string())?;
+    let mut right_file = File::open(right).map_err(|_| "无法校验迁移后的数据文件。".to_string())?;
+    let mut left_buffer = [0_u8; 64 * 1024];
+    let mut right_buffer = [0_u8; 64 * 1024];
+    loop {
+        let left_read = left_file
+            .read(&mut left_buffer)
+            .map_err(|_| "无法读取迁移源文件。".to_string())?;
+        let right_read = right_file
+            .read(&mut right_buffer)
+            .map_err(|_| "无法读取迁移目标文件。".to_string())?;
+        if left_read != right_read || left_buffer[..left_read] != right_buffer[..right_read] {
+            return Ok(false);
+        }
+        if left_read == 0 {
+            return Ok(true);
+        }
+    }
+}
+
+fn copy_tree(source: &Path, target: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(source).map_err(|_| "无法读取迁移源目录。".to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("知识库中包含不安全的迁移路径。".to_string());
+    }
+    fs::create_dir_all(target).map_err(|_| "无法创建迁移目标目录。".to_string())?;
+    for entry in fs::read_dir(source).map_err(|_| "无法读取迁移源目录。".to_string())? {
+        let entry = entry.map_err(|_| "无法读取迁移源目录。".to_string())?;
+        let source_entry = entry.path();
+        let target_entry = target.join(entry.file_name());
+        let entry_metadata = fs::symlink_metadata(&source_entry)
+            .map_err(|_| "无法读取知识库中的迁移条目。".to_string())?;
+        if entry_metadata.file_type().is_symlink() {
+            return Err("知识库中包含不安全的符号链接，已停止迁移。".to_string());
+        }
+        if entry_metadata.is_dir() {
+            copy_tree(&source_entry, &target_entry)?;
+        } else if entry_metadata.is_file() {
+            fs::copy(&source_entry, &target_entry)
+                .map_err(|_| "无法复制知识库文件。".to_string())?;
+            File::open(&target_entry)
+                .and_then(|file| file.sync_all())
+                .map_err(|_| "无法持久化迁移文件。".to_string())?;
+            if !files_equal(&source_entry, &target_entry)? {
+                return Err("迁移后的知识库文件校验不一致。".to_string());
+            }
+            #[cfg(unix)]
+            fs::set_permissions(&target_entry, entry_metadata.permissions())
+                .map_err(|_| "无法保存迁移文件权限。".to_string())?;
+        } else {
+            return Err("知识库中包含不支持的迁移条目。".to_string());
+        }
+    }
+    #[cfg(unix)]
+    fs::set_permissions(target, metadata.permissions())
+        .map_err(|_| "无法保存迁移目录权限。".to_string())?;
+    Ok(())
+}
+
+fn copy_path(source: &Path, target: &Path) -> Result<bool, String> {
+    let metadata = match fs::symlink_metadata(source) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(_) => return Err("无法读取迁移源路径。".to_string()),
+    };
+    if metadata.file_type().is_symlink() {
+        return Err("知识库中包含不安全的符号链接，已停止迁移。".to_string());
+    }
+    if metadata.is_dir() {
+        copy_tree(source, target)?;
+    } else if metadata.is_file() {
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|_| "无法创建迁移目标目录。".to_string())?;
+        }
+        fs::copy(source, target).map_err(|_| "无法复制知识库文件。".to_string())?;
+        File::open(target)
+            .and_then(|file| file.sync_all())
+            .map_err(|_| "无法持久化迁移文件。".to_string())?;
+        if !files_equal(source, target)? {
+            return Err("迁移后的知识库文件校验不一致。".to_string());
+        }
+        #[cfg(unix)]
+        fs::set_permissions(target, metadata.permissions())
+            .map_err(|_| "无法保存迁移文件权限。".to_string())?;
+    } else {
+        return Err("知识库中包含不支持的迁移条目。".to_string());
+    }
+    Ok(true)
+}
+
+fn remove_path(path: &Path) -> Result<(), String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err("无法读取待清理的数据目录。".to_string()),
+    };
+    if metadata.file_type().is_symlink() {
+        return Err("待清理的数据路径包含符号链接。".to_string());
+    }
+    if metadata.is_dir() {
+        fs::remove_dir_all(path).map_err(|_| "无法清理旧知识库目录。".to_string())?;
+    } else if metadata.is_file() {
+        fs::remove_file(path).map_err(|_| "无法清理旧知识库文件。".to_string())?;
+    } else {
+        return Err("待清理的数据路径类型不受支持。".to_string());
+    }
+    Ok(())
+}
+
+fn migration_staging_path(path: &Path, id: &str) -> Result<PathBuf, String> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| "迁移路径无效。".to_string())?
+        .to_string_lossy();
+    Ok(path.with_file_name(format!(".{name}-zhiye-migration-{id}")))
+}
+
+fn pending_target_directory(path: &Path) -> Result<PathBuf, String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err("迁移目标路径不安全。".to_string());
+            }
+            fs::canonicalize(path).map_err(|_| "迁移目标目录无法解析。".to_string())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let parent = path.parent().ok_or_else(|| "迁移目标路径无效。".to_string())?;
+            let metadata = fs::symlink_metadata(parent)
+                .map_err(|_| "迁移目标目录的父目录无法访问。".to_string())?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err("迁移目标目录的父路径不安全。".to_string());
+            }
+            Ok(path.to_path_buf())
+        }
+        Err(_) => Err("迁移目标目录无法访问。".to_string()),
+    }
+}
+
+fn tree_is_subset(source: &Path, target: &Path) -> Result<bool, String> {
+    let source_metadata = fs::symlink_metadata(source).map_err(|_| "迁移源路径无法访问。".to_string())?;
+    let target_metadata = fs::symlink_metadata(target).map_err(|_| "迁移目标路径无法访问。".to_string())?;
+    if source_metadata.file_type().is_symlink() || target_metadata.file_type().is_symlink() {
+        return Ok(false);
+    }
+    if source_metadata.is_dir() && target_metadata.is_dir() {
+        for entry in fs::read_dir(target).map_err(|_| "无法读取迁移目标目录。".to_string())? {
+            let entry = entry.map_err(|_| "无法读取迁移目标目录。".to_string())?;
+            if !tree_is_subset(&source.join(entry.file_name()), &entry.path())? {
+                return Ok(false);
+            }
+        }
+        return Ok(true);
+    }
+    if source_metadata.is_file() && target_metadata.is_file() {
+        return files_equal(source, target);
+    }
+    Ok(false)
+}
+
+fn cleanup_migration_staging(target: &Path) -> Result<(), String> {
+    let parent = target.parent().ok_or_else(|| "迁移目标路径无效。".to_string())?;
+    let name = target
+        .file_name()
+        .ok_or_else(|| "迁移目标路径无效。".to_string())?
+        .to_string_lossy();
+    let prefix = format!(".{name}-zhiye-migration-");
+    let entries = match fs::read_dir(parent) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err("无法读取迁移目标父目录。".to_string()),
+    };
+    for entry in entries {
+        let entry = entry.map_err(|_| "无法读取迁移目标父目录。".to_string())?;
+        if entry.file_name().to_string_lossy().starts_with(&prefix) {
+            remove_path(&entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+fn reset_partial_target(source: &Path, target: &Path) -> Result<(), String> {
+    for (source_path, target_path) in storage_paths(source).iter().zip(storage_paths(target).iter()) {
+        let target_exists = fs::symlink_metadata(target_path).is_ok();
+        if !target_exists {
+            continue;
+        }
+        let source_exists = fs::symlink_metadata(source_path).is_ok();
+        if !source_exists || !tree_is_subset(source_path, target_path)? {
+            return Err("迁移目标包含无法确认来源的数据，已停止启动以保护数据。".to_string());
+        }
+        remove_path(target_path)?;
+    }
+    for target_path in storage_paths(target) {
+        cleanup_migration_staging(&target_path)?;
+    }
+    if fs::symlink_metadata(target).is_err() {
+        fs::create_dir_all(target).map_err(|_| "无法重建迁移目标目录。".to_string())?;
+    }
+    Ok(())
+}
+
+fn copy_and_promote_bundle(source: &Path, target: &Path) -> Result<(), String> {
+    let source_paths = storage_paths(source);
+    let target_paths = storage_paths(target);
+    let id = Uuid::new_v4().to_string();
+    let mut staged = Vec::new();
+    for (source_path, target_path) in source_paths.iter().zip(target_paths.iter()) {
+        let staging_path = migration_staging_path(target_path, &id)?;
+        match copy_path(source_path, &staging_path) {
+            Ok(false) => continue,
+            Ok(true) => staged.push((staging_path, target_path.to_path_buf())),
+            Err(error) => {
+                let _ = remove_path(&staging_path);
+                for (path, _) in &staged {
+                    let _ = remove_path(path);
+                }
+                return Err(error);
+            }
+        }
+    }
+    let mut promoted = Vec::new();
+    for (staging, target_path) in &staged {
+        let target_metadata = fs::symlink_metadata(target_path);
+        if let Ok(metadata) = target_metadata {
+            if metadata.file_type().is_symlink()
+                || !metadata.is_dir()
+                || fs::read_dir(target_path)
+                    .map_err(|_| "无法读取迁移目标目录。".to_string())?
+                    .next()
+                    .is_some()
+            {
+                for (path, _) in &staged {
+                    let _ = remove_path(path);
+                }
+                return Err("迁移目标目录必须为空。".to_string());
+            }
+            fs::remove_dir(target_path).map_err(|_| "无法准备迁移目标目录。".to_string())?;
+        }
+        if let Err(error) = fs::rename(staging, target_path) {
+            for path in &promoted {
+                let _ = remove_path(path);
+            }
+            let _ = fs::create_dir(target);
+            for (path, _) in &staged {
+                let _ = remove_path(path);
+            }
+            return Err(format!("无法发布迁移后的知识库：{error}"));
+        }
+        promoted.push(target_path.to_path_buf());
+    }
+    Ok(())
+}
+
+fn cleanup_source_bundle(source: &Path) -> Result<(), String> {
+    for path in storage_paths(source) {
+        remove_path(&path)?;
+    }
+    Ok(())
+}
+
+fn apply_pending_migration(
+    launcher: &Path,
+    legacy_launcher: &Path,
+    default: &Path,
+) -> Result<(), String> {
+    let marker = migration_path(launcher);
+    let Some(mut migration) = read_pending_migration(&marker)? else {
+        return Ok(());
+    };
+    if migration.version != 1
+        || !migration.source_dir.is_absolute()
+        || !migration.target_dir.is_absolute()
+    {
+        return Err("数据目录迁移状态版本或路径无效。".to_string());
+    }
+    let current = if let Some(configured) = read_launcher(launcher)? {
+        configured
+    } else if let Some(configured) = read_launcher(legacy_launcher)? {
+        configured
+    } else {
+        default.to_path_buf()
+    };
+    let mut source_lock = None;
+    if migration.phase == MigrationPhase::Copying {
+        if !same_location(&current, &migration.source_dir) {
+            return Err("数据目录迁移源与当前启动配置不一致。".to_string());
+        }
+        let source = validate_directory(&migration.source_dir, false)?;
+        let target = pending_target_directory(&migration.target_dir)?;
+        validate_change_target(&target, &source, default, launcher, legacy_launcher)?;
+        source_lock = Some(reserve_source_lock(&source)?);
+        reset_partial_target(&source, &target)?;
+        let target = validate_directory(&target, true)?;
+        ensure_complete_state(data_state(&source)?)?;
+        copy_and_promote_bundle(&source, &target)?;
+        migration.phase = MigrationPhase::Ready;
+        if let Err(error) = write_pending_migration(&marker, &migration) {
+            let _ = reset_partial_target(&source, &target);
+            return Err(error);
+        }
+    }
+
+    let source = match fs::symlink_metadata(&migration.source_dir) {
+        Ok(_) => validate_directory(&migration.source_dir, false)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => migration.source_dir.clone(),
+        Err(_) => return Err("迁移源目录无法访问。".to_string()),
+    };
+    let target = validate_directory(&migration.target_dir, false)?;
+    if !directory_has_entries(&target)? {
+        return Err("迁移目标目录不完整，已停止启动以保护数据。".to_string());
+    }
+    ensure_complete_state(data_state(&target)?)?;
+    let source_lock_path = companion_paths(&source)
+        .get(2)
+        .map(|path| fs::symlink_metadata(path).is_ok())
+        .unwrap_or(false);
+    if (source.exists() || source_lock_path) && source_lock.is_none() {
+        source_lock = Some(reserve_source_lock(&source)?);
+    }
+    if !same_location(&current, &target) {
+        if !same_location(&current, &source) {
+            return Err("数据目录迁移状态与启动配置不一致。".to_string());
+        }
+        replace_launcher(launcher, &target)?;
+    }
+    cleanup_source_bundle(&source)?;
+    clear_pending_migration(&marker)?;
+    if let Some(reservation) = source_lock {
+        reservation.release()?;
+    }
+    Ok(())
+}
+
 fn resolve_data_directory(
     launcher: &Path,
     legacy_launcher: &Path,
     default: &Path,
     legacy_default: &Path,
 ) -> Result<PathBuf, String> {
+    apply_pending_migration(launcher, legacy_launcher, default)?;
     if let Some(configured) = read_launcher(launcher)? {
         return Ok(configured);
     }
@@ -313,18 +879,9 @@ pub fn data_directory(app: &AppHandle, default: PathBuf) -> Result<PathBuf, Stri
 #[tauri::command]
 #[cfg(target_os = "macos")]
 pub async fn choose_data_directory(app: AppHandle) -> Result<DataDirectoryChoice, String> {
-    let Some(selected) = app
-        .dialog()
-        .file()
-        .set_title("选择织页知识库的空文件夹")
-        .blocking_pick_folder()
-    else {
+    let Some(data_dir) = pick_empty_directory(&app)? else {
         return Ok(DataDirectoryChoice { configured: false });
     };
-    let FilePath::Path(path) = selected else {
-        return Err("请选择本机文件夹。".to_string());
-    };
-    let data_dir = validate_directory(&path, true)?;
     let default = app
         .path()
         .app_data_dir()
@@ -349,9 +906,82 @@ pub async fn choose_data_directory(app: AppHandle) -> Result<DataDirectoryChoice
     Ok(DataDirectoryChoice { configured: true })
 }
 
+#[cfg(target_os = "macos")]
+fn pick_empty_directory(app: &AppHandle) -> Result<Option<PathBuf>, String> {
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .set_title("选择织页知识库的空文件夹")
+        .blocking_pick_folder()
+    else {
+        return Ok(None);
+    };
+    let FilePath::Path(path) = selected else {
+        return Err("请选择本机文件夹。".to_string());
+    };
+    validate_directory(&path, true).map(Some)
+}
+
+#[cfg(target_os = "macos")]
+pub fn stage_data_directory_change(app: &AppHandle) -> Result<DataDirectoryChoice, String> {
+    let Some(data_dir) = pick_empty_directory(app)? else {
+        return Ok(DataDirectoryChoice { configured: false });
+    };
+    let default = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "无法定位默认数据目录。".to_string())?;
+    let launcher = launcher_path(app)?;
+    let legacy_launcher = legacy_launcher_path(app)?;
+    let marker = migration_path(&launcher);
+    if marker.exists() {
+        return Err("已有数据目录迁移正在等待安全重启。".to_string());
+    }
+    let current = if let Some(configured) = read_launcher(&launcher)? {
+        configured
+    } else if let Some(configured) = read_launcher(&legacy_launcher)? {
+        configured
+    } else {
+        default.clone()
+    };
+    validate_change_target(&data_dir, &current, &default, &launcher, &legacy_launcher)?;
+    if companion_paths(&data_dir)
+        .iter()
+        .any(|path| fs::symlink_metadata(path).is_ok())
+    {
+        return Err("所选文件夹不能位于当前数据、备份或启动配置目录内。".to_string());
+    }
+    ensure_complete_state(data_state(&current)?)?;
+    write_pending_migration(
+        &marker,
+        &PendingMigration {
+            version: 1,
+            source_dir: current,
+            target_dir: data_dir,
+            phase: MigrationPhase::Copying,
+        },
+    )?;
+    Ok(DataDirectoryChoice { configured: true })
+}
+
+#[cfg(target_os = "macos")]
+pub fn cancel_staged_data_directory_change(app: &AppHandle) -> Result<(), String> {
+    clear_pending_migration(&migration_path(&launcher_path(app)?))
+}
+
 #[tauri::command]
 #[cfg(not(target_os = "macos"))]
 pub async fn choose_data_directory(_app: AppHandle) -> Result<DataDirectoryChoice, String> {
+    Err("自定义桌面数据目录目前仅支持 macOS。".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn stage_data_directory_change(_app: &AppHandle) -> Result<DataDirectoryChoice, String> {
+    Err("自定义桌面数据目录目前仅支持 macOS。".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn cancel_staged_data_directory_change(_app: &AppHandle) -> Result<(), String> {
     Err("自定义桌面数据目录目前仅支持 macOS。".to_string())
 }
 
@@ -517,6 +1147,165 @@ mod tests {
         )
         .is_err());
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pending_migration_copies_the_complete_bundle_before_switching_launcher() {
+        let root = temporary_root();
+        let launcher = root.join("formal-launcher/launcher.json");
+        let legacy_launcher = root.join("legacy-launcher/launcher.json");
+        let default = root.join("formal");
+        let legacy_default = root.join("legacy");
+        let source = root.join("library");
+        let target = root.join("moved");
+        fs::create_dir_all(source.join("snapshots/nested")).unwrap();
+        fs::create_dir(&target).unwrap();
+        fs::write(source.join("zhiye.sqlite3"), "database").unwrap();
+        fs::write(source.join("snapshots/nested/page.html"), "snapshot").unwrap();
+        fs::create_dir_all(source.join("assets")).unwrap();
+        fs::write(source.join("assets/image.png"), "asset").unwrap();
+        fs::create_dir_all(root.join("library-backups")).unwrap();
+        fs::write(root.join("library-backups/manifest"), "backup").unwrap();
+        fs::create_dir_all(root.join("library-diagnostics")).unwrap();
+        fs::write(root.join("library-diagnostics/log"), "diagnostic").unwrap();
+        write_launcher(&launcher, &fs::canonicalize(&source).unwrap()).unwrap();
+        write_pending_migration(
+            &migration_path(&launcher),
+            &PendingMigration {
+                version: 1,
+                source_dir: fs::canonicalize(&source).unwrap(),
+                target_dir: fs::canonicalize(&target).unwrap(),
+                phase: MigrationPhase::Copying,
+            },
+        )
+        .unwrap();
+
+        let resolved = resolve_data_directory(&launcher, &legacy_launcher, &default, &legacy_default).unwrap();
+        assert_eq!(resolved, fs::canonicalize(&target).unwrap());
+        assert_eq!(fs::read_to_string(target.join("zhiye.sqlite3")).unwrap(), "database");
+        assert_eq!(fs::read_to_string(target.join("snapshots/nested/page.html")).unwrap(), "snapshot");
+        assert_eq!(fs::read_to_string(root.join("moved-backups/manifest")).unwrap(), "backup");
+        assert_eq!(fs::read_to_string(root.join("moved-diagnostics/log")).unwrap(), "diagnostic");
+        assert!(!source.exists());
+        assert!(!root.join("library-backups").exists());
+        assert!(!migration_path(&launcher).exists());
+        assert_eq!(read_launcher(&launcher).unwrap(), Some(fs::canonicalize(&target).unwrap()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pending_migration_retries_a_partial_target_and_cleans_staging() {
+        let root = temporary_root();
+        let launcher = root.join("formal-launcher/launcher.json");
+        let legacy_launcher = root.join("legacy-launcher/launcher.json");
+        let default = root.join("formal");
+        let legacy_default = root.join("legacy");
+        let source = root.join("library");
+        let target = root.join("moved");
+        fs::create_dir_all(source.join("snapshots")).unwrap();
+        fs::create_dir_all(source.join("assets")).unwrap();
+        fs::create_dir(&target).unwrap();
+        fs::write(source.join("zhiye.sqlite3"), "database").unwrap();
+        fs::write(source.join("snapshots/page.html"), "snapshot").unwrap();
+        fs::write(source.join("assets/image.png"), "asset").unwrap();
+        fs::create_dir_all(root.join("library-backups")).unwrap();
+        fs::write(root.join("library-backups/manifest"), "backup").unwrap();
+        fs::write(target.join("zhiye.sqlite3"), "database").unwrap();
+        fs::create_dir_all(root.join("moved-backups")).unwrap();
+        fs::write(root.join("moved-backups/manifest"), "backup").unwrap();
+        let stale = migration_staging_path(&target, "stale").unwrap();
+        fs::create_dir_all(stale).unwrap();
+        fs::write(stale.join("partial"), "partial").unwrap();
+        write_launcher(&launcher, &fs::canonicalize(&source).unwrap()).unwrap();
+        write_pending_migration(
+            &migration_path(&launcher),
+            &PendingMigration {
+                version: 1,
+                source_dir: fs::canonicalize(&source).unwrap(),
+                target_dir: fs::canonicalize(&target).unwrap(),
+                phase: MigrationPhase::Copying,
+            },
+        )
+        .unwrap();
+
+        let resolved = resolve_data_directory(&launcher, &legacy_launcher, &default, &legacy_default).unwrap();
+        assert_eq!(resolved, fs::canonicalize(&target).unwrap());
+        assert_eq!(fs::read_to_string(target.join("snapshots/page.html")).unwrap(), "snapshot");
+        assert!(!stale.exists());
+        assert!(!source.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pending_migration_keeps_source_and_target_when_a_lock_remains() {
+        let root = temporary_root();
+        let launcher = root.join("formal-launcher/launcher.json");
+        let legacy_launcher = root.join("legacy-launcher/launcher.json");
+        let default = root.join("formal");
+        let legacy_default = root.join("legacy");
+        let source = root.join("library");
+        let target = root.join("moved");
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(&target).unwrap();
+        fs::write(source.join("zhiye.sqlite3"), "database").unwrap();
+        fs::write(companion_paths(&source)[2].clone(), "locked").unwrap();
+        write_launcher(&launcher, &fs::canonicalize(&source).unwrap()).unwrap();
+        write_pending_migration(
+            &migration_path(&launcher),
+            &PendingMigration {
+                version: 1,
+                source_dir: fs::canonicalize(&source).unwrap(),
+                target_dir: fs::canonicalize(&target).unwrap(),
+                phase: MigrationPhase::Copying,
+            },
+        )
+        .unwrap();
+
+        assert!(resolve_data_directory(&launcher, &legacy_launcher, &default, &legacy_default).is_err());
+        assert_eq!(fs::read_to_string(source.join("zhiye.sqlite3")).unwrap(), "database");
+        assert!(target.read_dir().unwrap().next().is_none());
+        assert!(migration_path(&launcher).exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn source_lock_reservation_blocks_a_second_owner_until_release() {
+        let root = temporary_root();
+        let source = root.join("library");
+        fs::create_dir(&source).unwrap();
+        let reservation = reserve_source_lock(&source).unwrap();
+        assert!(reserve_source_lock(&source).is_err());
+        reservation.release().unwrap();
+        let second = reserve_source_lock(&source).unwrap();
+        second.release().unwrap();
+        fs::write(
+            companion_paths(&source)[2].clone(),
+            serde_json::to_vec(&LockReservation { pid: u32::MAX, token: "stale".to_string() }).unwrap(),
+        )
+        .unwrap();
+        let recovered = reserve_source_lock(&source).unwrap();
+        recovered.release().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migration_rejects_symlinked_entries_without_touching_source() {
+        use std::os::unix::fs::symlink;
+
+        let root = temporary_root();
+        let source = root.join("source");
+        let target = root.join("target");
+        let outside = root.join("outside");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir(&target).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("secret"), "secret").unwrap();
+        symlink(&outside, source.join("snapshots")).unwrap();
+        assert!(copy_and_promote_bundle(&source, &target).is_err());
+        assert!(source.join("snapshots").exists());
+        assert!(target.read_dir().unwrap().next().is_none());
         fs::remove_dir_all(root).unwrap();
     }
 }

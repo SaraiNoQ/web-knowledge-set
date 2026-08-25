@@ -241,6 +241,37 @@ fn restart_after_update(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+async fn change_data_directory(app: tauri::AppHandle) -> Result<launcher::DataDirectoryChoice, String> {
+    let choice = launcher::stage_data_directory_change(&app)?;
+    if !choice.configured {
+        return Ok(choice);
+    }
+    let service = app.state::<LocalService>();
+    if service
+        .restart_after_shutdown
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        let _ = launcher::cancel_staged_data_directory_change(&app);
+        return Err("应用已经在准备安全重启。".to_owned());
+    }
+    if request_close(&app, false) {
+        Ok(choice)
+    } else {
+        service
+            .restart_after_shutdown
+            .store(false, Ordering::SeqCst);
+        let _ = launcher::cancel_staged_data_directory_change(&app);
+        Err("应用尚未准备好安全重启。".to_owned())
+    }
+}
+
+#[tauri::command]
+fn cancel_staged_data_directory_change(app: tauri::AppHandle) -> Result<(), String> {
+    launcher::cancel_staged_data_directory_change(&app)
+}
+
 fn escape_html(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -409,6 +440,8 @@ pub fn run() {
             keychain::set_llm_api_key,
             keychain::delete_llm_api_key,
             launcher::choose_data_directory,
+            change_data_directory,
+            cancel_staged_data_directory_change,
             updater_configured,
             restart_after_update,
         ])

@@ -83,7 +83,7 @@ export function Onboarding({ state, onComplete, onLater, revisit = false }: {
     <section className={`onboarding-page ${revisit ? "is-revisit" : ""}`} aria-labelledby="onboarding-title">
       <header className="onboarding-masthead">
         <div className="brand"><span className="brand-seal">知</span><span><strong>织页</strong><small>ZHIYE · FIRST THREAD</small></span></div>
-        <button type="button" autoFocus={revisit} onClick={onLater} disabled={busy}>{revisit ? "关闭指南" : "稍后设置"}</button>
+        <button type="button" autoFocus={revisit} onClick={() => revisit ? onLater() : void complete()} disabled={busy}>{revisit ? "关闭指南" : "稍后设置"}</button>
       </header>
 
       <div className="onboarding-layout">
@@ -166,7 +166,7 @@ export function Onboarding({ state, onComplete, onLater, revisit = false }: {
       className="onboarding-dialog"
       title="你的知识，先留在本机"
       dismissible={!busy && !restartRequired}
-      onClose={onLater}
+      onClose={revisit ? onLater : () => void complete()}
     >
       {page}
     </Modal>
