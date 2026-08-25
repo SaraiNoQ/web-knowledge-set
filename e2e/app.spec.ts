@@ -1321,6 +1321,43 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await page.unroute("**/api/documents/*");
 });
 
+test("desktop data safety shows the current knowledge-base path", async ({ page }) => {
+  const dataDirectory = "/Users/e2e/Library/Application Support/io.github.sarainoq.zhiye";
+  await page.addInitScript((path) => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      value: {
+        invoke: async (command: string) => {
+          if (command === "take_external_intents") return [];
+          if (command === "get_data_directory") return path;
+          throw new Error(`Unexpected desktop command: ${command}`);
+        },
+      },
+    });
+  }, dataDirectory);
+  await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  if (await deferSetup.isVisible()) await deferSetup.click();
+  await page.getByRole("button", { name: "数据安全", exact: true }).click();
+  const location = page.getByLabel(`当前知识库路径：${dataDirectory}`, { exact: true });
+  await expect(location).toBeVisible();
+  await expect(location).toHaveAttribute("title", dataDirectory);
+  await page.getByRole("button", { name: "返回资料库", exact: true }).click();
+  await page.getByRole("button", { name: "新建", exact: true }).click();
+  await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文章" }).click();
+  await expect(page.getByRole("heading", { name: "未命名文章", exact: true })).toBeVisible();
+  const reader = page.getByRole("region", { name: "文档工作台" });
+  await expect(reader.getByRole("button", { name: "编辑这篇知识", exact: true })).toBeVisible();
+  await expect(reader.getByLabel("来源信息")).toHaveCount(0);
+  await reader.getByRole("button", { name: "AI 派生", exact: true }).click();
+  const derived = page.getByRole("complementary", { name: "AI 派生知识" });
+  await expect(derived).toBeVisible();
+  await expect(derived.getByRole("button", { name: "标签建议", exact: true })).toHaveCount(0);
+  await derived.getByRole("button", { name: "关闭 AI 派生知识" }).click();
+  await reader.getByRole("button", { name: "编辑这篇知识", exact: true }).click();
+  await expect(reader.getByRole("button", { name: "返回阅读", exact: true })).toBeVisible();
+  await expect(reader.getByLabel("Markdown 编辑器")).toBeVisible();
+});
+
 test("routes desktop capture and file intents through existing imports", async ({ page }) => {
   await page.addInitScript(() => {
     const coldIntents = [
@@ -1344,6 +1381,7 @@ test("routes desktop capture and file intents through existing imports", async (
           if (command === "read_external_text" && args?.token === "desktop-markdown") {
             return { name: "desktop-note.md", content: "# 桌面 Markdown\n\n从 Finder 打开。" };
           }
+          if (command === "get_data_directory") return "/Users/e2e/Library/Application Support/io.github.sarainoq.zhiye";
           throw new Error(`Unexpected desktop command: ${command}`);
         },
       },
@@ -1355,17 +1393,19 @@ test("routes desktop capture and file intents through existing imports", async (
     body: JSON.stringify({ ok: true, mode: "cloud-core" }),
   }));
   await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  if (await deferSetup.isVisible()) await deferSetup.click();
   await expect(page.locator(".portable-toolbar")).toHaveCount(0);
   await expect(page.locator(".library-directory .row-select")).toHaveCount(0);
-  await expect(page.getByLabel("文档标题")).toHaveValue("远端测试文章", { timeout: 8_000 });
+  await expect(page.getByRole("heading", { name: "远端测试文章", exact: true })).toBeVisible({ timeout: 8_000 });
   const reader = page.getByRole("region", { name: "文档工作台" });
-  await expect(reader.getByLabel("来源信息")).toBeVisible();
-  for (const label of ["质量检查", "采集历史", "AI 派生", "翻译", "修订历史"]) {
-    await expect(reader.getByRole("button", { name: label, exact: true })).toBeVisible();
+  await expect(reader.getByRole("button", { name: "编辑这篇知识", exact: true })).toBeVisible();
+  await expect(reader.getByLabel("来源信息")).toHaveCount(0);
+  for (const label of ["归档", "管理分类", "质量检查", "采集历史", "修订历史", "移入回收站"]) {
+    await expect(reader.getByRole("button", { name: label, exact: true })).toHaveCount(0);
   }
-  await expect(reader.getByRole("link", { name: "导出 .md", exact: true })).toBeVisible();
-  await expect(reader.getByRole("button", { name: "对照", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(reader.getByLabel("Markdown 预览")).toBeVisible();
+  await expect(reader.getByText("READ ONLY · MARKDOWN", { exact: true })).toBeVisible();
   await expect.poll(() => page.evaluate(async () => {
     const value = await fetch("/api/documents?page=1").then((response) => response.json()) as {
       items: Array<{ sourceUrl: string }>;

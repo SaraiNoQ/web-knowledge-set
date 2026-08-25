@@ -719,6 +719,7 @@ export default function App() {
   const longArticle = (draft?.markdown.length ?? 0) > 250_000;
   const desktopRuntime = "__TAURI_INTERNALS__" in window;
   const cloudMode = runtimeMode === "cloud" && !desktopRuntime;
+  const webArticleMode = cloudMode || desktopRuntime;
   const selectionEnabled = !cloudMode && !desktopRuntime;
   const longPreviewAllowed = !longArticle || longPreviewDocumentId === currentDoc?.id;
   useEffect(() => {
@@ -3508,7 +3509,7 @@ export default function App() {
             <StatePanel kind="loading" title="正在展开织片" />
           ) : detailError && !currentDoc ? (
             <StatePanel kind="error" title="无法打开这篇知识">{detailError}</StatePanel>
-          ) : currentDoc && draft && cloudMode ? (
+          ) : currentDoc && draft && webArticleMode ? (
             <>
               <button type="button" className="mobile-back" onClick={closeDocument}><Icon size={16}><path d="m15 18-6-6 6-6" /></Icon>返回知识库</button>
               <header ref={documentHeadRef} className="document-head">
@@ -3525,8 +3526,8 @@ export default function App() {
                   <button type="button" className="history-button translation-button" onClick={openTranslation} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen && derivedPreferredType === "translation"} aria-controls="derived-knowledge">翻译</button>
                 </div>
               </header>
-              <DerivedKnowledge cloud document={currentDoc} open={derivedOpen} preferredType={derivedPreferredType} onTypeChange={setDerivedPreferredType} onClose={() => setDerivedOpen(false)} generationBlockedReason={derivedBlockedReason} onAdoptTags={async () => undefined} />
-              {needsCapturePolling(currentDoc) ? <div className="capture-progress" aria-live="polite"><div className="progress-orbit"><i /><i /><span>织</span></div><h3>{STATUS_LABEL[currentDoc.status]}</h3><p>Cloudflare Queue 与 Browser Run 正在处理，完成后会自动刷新。</p></div> : currentDoc.status === "failed" ? <div className="capture-failed" role="alert"><span className="failure-code">{currentDoc.errorCode || "BROWSER_FAILED"}</span><h3>这张网页没有抓取成功</h3><p>{userErrorMessage(currentDoc.errorCode ?? "BROWSER_FAILED")}</p><button type="button" className="primary-button" onClick={() => void retryCapture()} disabled={retrying}>{retrying ? "重试中…" : "重新抓取"}</button></div> : cloudEditing ? <div className="editor-workbench">
+              <DerivedKnowledge cloud={cloudMode} hideTagSuggestions={desktopRuntime} document={currentDoc} open={derivedOpen} preferredType={derivedPreferredType} onTypeChange={setDerivedPreferredType} onClose={() => setDerivedOpen(false)} generationBlockedReason={derivedBlockedReason} onAdoptTags={desktopRuntime ? adoptDerivedTags : async () => undefined} />
+              {needsCapturePolling(currentDoc) ? <div className="capture-progress" aria-live="polite"><div className="progress-orbit"><i /><i /><span>织</span></div><h3>{STATUS_LABEL[currentDoc.status]}</h3><p>{cloudMode ? "Cloudflare Queue 与 Browser Run 正在处理，完成后会自动刷新。" : "本地服务正在处理，完成后会自动刷新。"}</p></div> : currentDoc.status === "failed" ? <div className="capture-failed" role="alert"><span className="failure-code">{currentDoc.errorCode || "BROWSER_FAILED"}</span><h3>这张网页没有抓取成功</h3><p>{userErrorMessage(currentDoc.errorCode ?? "BROWSER_FAILED")}</p><button type="button" className="primary-button" onClick={() => void retryCapture()} disabled={retrying}>{retrying ? "重试中…" : "重新抓取"}</button></div> : cloudEditing ? <div className="editor-workbench">
                 <div className="editor-toolbar">
                   <div className="mode-switch" aria-label="编辑器显示模式">{(["edit", "split", "preview"] as EditorMode[]).map((value) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)}>{value === "edit" ? "编辑" : value === "split" ? "对照" : "预览"}</button>)}</div>
                   <div className="editor-stats">{draft.markdown.length.toLocaleString("zh-CN")} 字符</div>
@@ -3537,11 +3538,11 @@ export default function App() {
                 {conflict && <div className="conflict-banner" role="alert"><div><strong>这篇知识已在别处更新</strong><span>你的文字仍保留在编辑器中。请复制需要保留的内容，然后载入最新版。</span></div><button type="button" onClick={() => { installCurrentDocument(conflict); updateListItem(conflict); setDraft(draftOf(conflict)); setConflict(null); setSaveState("idle"); }}>载入最新版</button></div>}
                 <div className={`editor-grid mode-${mode}`}>
                   {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><div className="pane-label">MARKDOWN</div><MarkdownEditor value={draft.markdown} onChange={(markdown) => setDraft((value) => value ? { ...value, markdown } : value)} readOnly={saveState === "saving"} /></section>}
-                  {mode !== "edit" && <section className="preview-pane" aria-label="Markdown 预览"><div className="pane-label">PREVIEW</div>{draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={[]} /> : <StatePanel kind="empty" title="这里还没有文字" />}</section>}
+                  {mode !== "edit" && <section className="preview-pane" aria-label="Markdown 预览"><div className="pane-label">PREVIEW</div>{draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : []} /> : <StatePanel kind="empty" title="这里还没有文字" />}</section>}
                 </div>
               </div> : <section className="preview-pane cloud-reader" aria-label="Markdown 预览">
                 <div className="pane-label">READ ONLY · MARKDOWN</div>
-                {currentDoc.markdown.trim() ? <MarkdownPreview markdown={currentDoc.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={[]} /> : <StatePanel kind="empty" title="这张织片没有正文" />}
+                {currentDoc.markdown.trim() ? <MarkdownPreview markdown={currentDoc.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : []} /> : <StatePanel kind="empty" title="这张织片没有正文" />}
               </section>}
             </>
           ) : currentDoc && draft ? (

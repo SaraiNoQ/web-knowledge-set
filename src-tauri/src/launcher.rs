@@ -879,6 +879,16 @@ pub fn data_directory(app: &AppHandle, default: PathBuf) -> Result<PathBuf, Stri
 
 #[tauri::command]
 #[cfg(target_os = "macos")]
+pub fn get_data_directory(app: AppHandle) -> Result<String, String> {
+    let default = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "无法定位默认数据目录。".to_string())?;
+    data_directory(&app, default).map(|path| path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+#[cfg(target_os = "macos")]
 pub async fn choose_data_directory(app: AppHandle) -> Result<DataDirectoryChoice, String> {
     let Some(data_dir) = pick_empty_directory(&app)? else {
         return Ok(DataDirectoryChoice { configured: false });
@@ -973,6 +983,12 @@ pub fn cancel_staged_data_directory_change(app: &AppHandle) -> Result<(), String
 #[tauri::command]
 #[cfg(not(target_os = "macos"))]
 pub async fn choose_data_directory(_app: AppHandle) -> Result<DataDirectoryChoice, String> {
+    Err("自定义桌面数据目录目前仅支持 macOS。".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub fn get_data_directory(_app: AppHandle) -> Result<String, String> {
     Err("自定义桌面数据目录目前仅支持 macOS。".to_string())
 }
 

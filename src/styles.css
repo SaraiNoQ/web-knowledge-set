@@ -1363,6 +1363,11 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 
 .safety-controls { padding: 24px 25px; }
 .safety-controls > p { margin: 13px 0 24px; color: var(--ink-soft); font-size: var(--font-ui); line-height: 1.75; }
+.safety-location-current { display: grid; gap: 6px; margin-top: 17px; padding: 11px 12px; background: rgba(238,232,218,.58); border: 1px solid var(--line); }
+.safety-location-current > span:first-child { color: var(--ink-faint); font: 600 var(--font-caption)/1 var(--font-mono); letter-spacing: .1em; }
+.safety-location-current code { display: block; min-width: 0; overflow: hidden; color: var(--ink-soft); text-overflow: ellipsis; white-space: nowrap; font: var(--font-small)/1.5 var(--font-mono); }
+.safety-location-current > span:last-child { color: var(--ink-faint); font-size: var(--font-small); }
+.safety-location-current p { margin: 0; color: var(--vermilion-dark); font-size: var(--font-small); line-height: 1.5; }
 .safety-controls form { display: grid; gap: 12px; }
 .safety-controls label { color: var(--ink-soft); font-size: var(--font-small); letter-spacing: .06em; }
 .safety-controls form > div { display: flex; align-items: center; border-bottom: 1px solid var(--line-strong); }

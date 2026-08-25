@@ -440,6 +440,7 @@ pub fn run() {
             keychain::set_llm_api_key,
             keychain::delete_llm_api_key,
             launcher::choose_data_directory,
+            launcher::get_data_directory,
             change_data_directory,
             cancel_staged_data_directory_change,
             updater_configured,

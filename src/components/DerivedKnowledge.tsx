@@ -83,6 +83,7 @@ function DerivedOutput({ result, markdown, onLoadMarkdown }: {
 
 interface DerivedKnowledgeProps {
   cloud?: boolean;
+  hideTagSuggestions?: boolean;
   document: KnowledgeDocument;
   open: boolean;
   preferredType: DerivedMode;
@@ -92,7 +93,7 @@ interface DerivedKnowledgeProps {
   onAdoptTags: (tags: string[]) => Promise<void>;
 }
 
-export function DerivedKnowledge({ cloud = false, document, open, preferredType: type, onTypeChange, onClose, generationBlockedReason, onAdoptTags }: DerivedKnowledgeProps) {
+export function DerivedKnowledge({ cloud = false, hideTagSuggestions = false, document, open, preferredType: type, onTypeChange, onClose, generationBlockedReason, onAdoptTags }: DerivedKnowledgeProps) {
   const dialogs = useDialogs();
   const [settings, setSettings] = useState<LlmSettings | null>(null);
   const [results, setResults] = useState<DerivedResult[]>([]);
@@ -330,7 +331,7 @@ export function DerivedKnowledge({ cloud = false, document, open, preferredType:
                 <div className="derived-options">
                   <fieldset disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing}>
                     <legend className="sr-only">派生类型</legend>
-                    {[...(Object.entries(TYPE_LABEL) as Array<[DerivedResultType, string]>).filter(([value]) => !cloud || value !== "tag-suggestions"), ["custom", CUSTOM_LABEL] as const].map(([value, label]) => <button key={value} type="button" aria-pressed={type === value} onClick={() => { onTypeChange(value); setPreview(null); setPreviewBatch(0); }}>{label}</button>)}
+                    {[...(Object.entries(TYPE_LABEL) as Array<[DerivedResultType, string]>).filter(([value]) => value !== "tag-suggestions" || (!cloud && !hideTagSuggestions)), ["custom", CUSTOM_LABEL] as const].map(([value, label]) => <button key={value} type="button" aria-pressed={type === value} onClick={() => { onTypeChange(value); setPreview(null); setPreviewBatch(0); }}>{label}</button>)}
                   </fieldset>
                   {type === "translation" && <label className="derived-target-language"><span>翻译为</span><Select aria-label="翻译目标语言" value={targetLanguage} onChange={(event) => { setTargetLanguage(event.target.value as TranslationLanguage); setPreview(null); setPreviewBatch(0); }} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing}>{(Object.entries(TRANSLATION_LANGUAGES) as Array<[TranslationLanguage, string]>).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></label>}
                 </div>

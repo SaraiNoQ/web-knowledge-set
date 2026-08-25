@@ -103,19 +103,33 @@ export function DataSafety({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [dataDirectory, setDataDirectory] = useState<string | null>(null);
+  const [dataDirectoryError, setDataDirectoryError] = useState("");
   const desktop = "__TAURI_INTERNALS__" in window;
   const statusRef = useRef(status);
   const busyRef = useRef(busy);
   statusRef.current = status;
   busyRef.current = busy;
 
+  const loadDataDirectory = useCallback(async () => {
+    if (!desktop) return;
+    setDataDirectoryError("");
+    try {
+      const path = await invoke<string>("get_data_directory");
+      setDataDirectory(path || null);
+    } catch (cause) {
+      setDataDirectoryError((cause as Error).message || "无法读取当前知识库位置。");
+    }
+  }, [desktop]);
+
   const refresh = useCallback(async () => {
     const next = await api.getDataSafety();
     setStatus(next);
     setRetention(next.settings?.automaticRetentionCount ?? 7);
     onModeChange(next.mode === "recovery");
+    void loadDataDirectory();
     return next;
-  }, [onModeChange]);
+  }, [loadDataDirectory, onModeChange]);
 
   useEffect(() => {
     void refresh().catch((cause) => setError((cause as Error).message));
@@ -420,6 +434,10 @@ export function DataSafety({
         {!cloud && <aside className="safety-card safety-controls">
           {desktop && <>
             <div><span className="eyebrow">KNOWLEDGE BASE</span><h2>知识库位置</h2></div>
+            <div className="safety-location-current" aria-live="polite">
+              <span>当前路径</span>
+              {dataDirectory ? <code title={dataDirectory} aria-label={`当前知识库路径：${dataDirectory}`}>{dataDirectory}</code> : dataDirectoryError ? <p role="alert">{dataDirectoryError}</p> : <span>正在读取…</span>}
+            </div>
             <p>选择新的空文件夹后，织页会在安全重启期间迁移当前数据；迁移失败会保留原位置。</p>
             <button type="button" onClick={() => void changeDataDirectory()} disabled={Boolean(busy) || recovery || status.maintenance}>{busy === "location" ? "正在准备迁移…" : "更改知识库位置"}</button>
             <hr />
