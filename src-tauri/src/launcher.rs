@@ -1216,7 +1216,7 @@ mod tests {
         fs::create_dir_all(root.join("moved-backups")).unwrap();
         fs::write(root.join("moved-backups/manifest"), "backup").unwrap();
         let stale = migration_staging_path(&target, "stale").unwrap();
-        fs::create_dir_all(stale).unwrap();
+        fs::create_dir_all(&stale).unwrap();
         fs::write(stale.join("partial"), "partial").unwrap();
         write_launcher(&launcher, &fs::canonicalize(&source).unwrap()).unwrap();
         write_pending_migration(
