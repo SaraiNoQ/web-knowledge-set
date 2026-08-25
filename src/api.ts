@@ -168,7 +168,9 @@ export interface CleanupDataResult {
 export const api = {
   async getRuntimeMode(signal?: AbortSignal) {
     const health = await request<{ mode?: string }>("/health", { signal });
-    cloudRuntime = health.mode === "cloud-core";
+    // Tauri always owns a local sidecar; keep a misreported health response
+    // from sending desktop document requests through the Cloudflare API path.
+    cloudRuntime = !("__TAURI_INTERNALS__" in globalThis) && health.mode === "cloud-core";
     return cloudRuntime ? "cloud" as const : "local" as const;
   },
 

@@ -717,8 +717,8 @@ export default function App() {
   }, [currentDoc?.id, selectedId]);
 
   const longArticle = (draft?.markdown.length ?? 0) > 250_000;
-  const cloudMode = runtimeMode === "cloud";
   const desktopRuntime = "__TAURI_INTERNALS__" in window;
+  const cloudMode = runtimeMode === "cloud" && !desktopRuntime;
   const selectionEnabled = !cloudMode && !desktopRuntime;
   const longPreviewAllowed = !longArticle || longPreviewDocumentId === currentDoc?.id;
   useEffect(() => {

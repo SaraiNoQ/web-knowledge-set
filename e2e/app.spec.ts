@@ -1349,10 +1349,23 @@ test("routes desktop capture and file intents through existing imports", async (
       },
     });
   });
+  await page.route("**/health", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ ok: true, mode: "cloud-core" }),
+  }));
   await page.goto("/");
   await expect(page.locator(".portable-toolbar")).toHaveCount(0);
   await expect(page.locator(".library-directory .row-select")).toHaveCount(0);
   await expect(page.getByLabel("文档标题")).toHaveValue("远端测试文章", { timeout: 8_000 });
+  const reader = page.getByRole("region", { name: "文档工作台" });
+  await expect(reader.getByLabel("来源信息")).toBeVisible();
+  for (const label of ["质量检查", "采集历史", "AI 派生", "翻译", "修订历史"]) {
+    await expect(reader.getByRole("button", { name: label, exact: true })).toBeVisible();
+  }
+  await expect(reader.getByRole("link", { name: "导出 .md", exact: true })).toBeVisible();
+  await expect(reader.getByRole("button", { name: "对照", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(reader.getByLabel("Markdown 预览")).toBeVisible();
   await expect.poll(() => page.evaluate(async () => {
     const value = await fetch("/api/documents?page=1").then((response) => response.json()) as {
       items: Array<{ sourceUrl: string }>;
