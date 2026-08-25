@@ -41,7 +41,7 @@ jobs:
           test "$(sed -n 's/^version = \"\(.*\)\"/\1/p' src-tauri/Cargo.toml | head -1)" = "1.0.3"
           test "$(node -p "require('./src-tauri/tauri.conf.json').version")" = "1.0.3"
           test "$(plutil -extract CFBundleShortVersionString raw -o - src-tauri/Info.rc.plist)" = "1.0.3"
-          test "$(grep -A1 '^name = \"zhiye\"$' src-tauri/Cargo.lock | tail -1 | cut -d'\"' -f2)" = "1.0.3"
+          test "$(grep -A1 '^name = \"zhiye\"$' src-tauri/Cargo.lock | tail -1 | sed -E 's/.*\"([^\"]+)\".*/\1/')" = "1.0.3"
       - name: Install Rust toolchain
         run: |
           rustup toolchain install 1.97.1 --profile minimal --no-self-update
