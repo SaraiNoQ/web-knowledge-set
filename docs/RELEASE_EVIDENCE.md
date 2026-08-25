@@ -1,5 +1,13 @@
 # 发布证据
 
+## `1.0.3` Apple Silicon DMG
+
+- 版本准备提交：`84b8fd90a0c7ae3ca416d5b52eb64e23aca55c37`；macOS workflow 兼容性修复提交：`43d0cb88823423440946643ba29cc2b805e09e46`。
+- macOS desktop smoke：GitHub Actions run `32890233246` 成功完成 Rust/Tauri 编译、无签名应用构建、Chromium 安全边界、Keychain 和 URL/file 入口检查。
+- DMG 构建：GitHub Actions run `32891612359` 成功完成版本断言、Apple Silicon 应用编译、ad-hoc 签名、DMG 封装、artifact 上传和 checksum 生成。
+- 正式 Release：[v1.0.3](https://github.com/SaraiNoQ/web-knowledge-set/releases/tag/v1.0.3) 为 immutable；资产为 `Zhiye_1.0.3_aarch64.dmg` 与 `SHA256SUMS`，DMG SHA-256：`ff5190b12832b055d489e365d2972daa2b59800bcb0dece6856651d8484fb977`。
+- DMG 内实际应用核验：`CFBundleShortVersionString=1.0.3`、`CFBundleVersion=10003`、Bundle ID `io.github.sarainoq.zhiye`、Apple Silicon `arm64`；签名为 ad-hoc，未使用 Developer ID、未公证且无更新通道。线上 Release 资产下载后 SHA256SUMS 复核通过。
+
 ## `1.0.2` Apple Silicon `.app`
 
 - 最新桌面文章工作台构建提交：`db274450649547e7ada0c624e49994fc26e0cf06`；该提交已通过服务器门禁和最新 macOS desktop smoke。
