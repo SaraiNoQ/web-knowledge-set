@@ -48,7 +48,7 @@ Cloudflare Web 只允许内置 HTTPS AI 端点。API Key 与规范化端点绑�
 
 DeepSeek 真实验收只能从 `main` 手动触发已批准的完整提交 SHA，并经 `deepseek-smoke` GitHub Environment 人工批准后运行。构建和无密钥自检完成后，只在真实 smoke 步骤把 `DEEPSEEK_API_KEY` 注入进程环境；验收程序立即从环境删除它，通过应用内存密钥 API 绑定官方端点，并在退出前确认密钥未出现于 SQLite。fixture 只包含仓库内公开短文；日志只输出通过/失败、固定模型、耗时和稳定错误码，不输出供应商正文、响应、端点或密钥。
 
-当前 `1.0.3` 可发布使用 ad-hoc 签名的 Apple Silicon DMG，但没有 Developer ID 签名、Apple 公证票据或正式签名更新 manifest。该构建不配置更新通道，也无法提供 Apple 身份来源保证；只应从本仓库的 GitHub Release 下载，并核对 `SHA256SUMS`。不要下载第三方声称的织页安装包。
+当前 `1.0.4` 可发布使用 ad-hoc 签名的 Apple Silicon DMG，但没有 Developer ID 签名、Apple 公证票据或正式签名更新 manifest。该构建不配置更新通道，也无法提供 Apple 身份来源保证；只应从本仓库的 GitHub Release 下载，并核对 `SHA256SUMS`。不要下载第三方声称的织页安装包。
 
 ## 资源与拒绝服务边界
 

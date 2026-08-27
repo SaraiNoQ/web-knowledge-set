@@ -4,6 +4,7 @@
 
 - [x] ~~**1.0.1 当前源码打包**：统一 Node、Cargo、Tauri 与 macOS 包版本为 `1.0.1`，从当前 `main` 生成 Apple Silicon DMG；产物继续明确标注 ad-hoc 签名、未公证且无自动更新。~~
 - [x] ~~**1.0.2 当前源码打包与桌面图标**：统一版本源并从最新 `main` 生成 Apple Silicon `.app` artifact 和 GitHub Release DMG；使用织页“纸页 + 交织线”图标，包内代码签名为 ad-hoc linker-signed，未使用 Developer ID、未公证且无自动更新。~~
+- [ ] **1.0.4 当前源码打包与 AI 连接修复发布**：统一 Node、Cargo、Tauri、Info.plist 与 macOS workflow 版本为 `1.0.4`；从包含安全公网 DNS 解析修复的 `main` 生成 Apple Silicon DMG、校验清单并发布 GitHub Release，明确标注 ad-hoc 签名、未公证且无自动更新。
 - [x] ~~**1.0.0 当前源码打包**：统一 Node、Cargo、Tauri 与 macOS 包版本为 `1.0.0`，从当前 `main` 生成 Apple Silicon DMG；产物继续明确标注 ad-hoc 签名、未公证且无自动更新。~~
 
 - [x] ~~**首次使用指导**：首次进入时分步介绍网页导入、资料库、Markdown 编辑、搜索与数据安全；可跳过、可再次打开，并满足键盘操作和可访问性要求。~~

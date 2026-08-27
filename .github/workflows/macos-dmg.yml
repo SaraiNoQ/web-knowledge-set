@@ -2,7 +2,7 @@ name: macOS DMG build
 
 on:
   push:
-    tags: ["v1.0.3"]
+    tags: ["v1.0.4"]
   workflow_dispatch:
     inputs:
       source_sha:
@@ -37,11 +37,11 @@ jobs:
           cache: pnpm
       - name: Verify application version
         run: |
-          test "$(node -p "require('./package.json').version")" = "1.0.3"
-          test "$(sed -n 's/^version = \"\(.*\)\"/\1/p' src-tauri/Cargo.toml | head -1)" = "1.0.3"
-          test "$(node -p "require('./src-tauri/tauri.conf.json').version")" = "1.0.3"
-          test "$(plutil -extract CFBundleShortVersionString raw -o - src-tauri/Info.rc.plist)" = "1.0.3"
-          test "$(grep -A1 '^name = \"zhiye\"$' src-tauri/Cargo.lock | tail -1 | sed -E 's/.*\"([^\"]+)\".*/\1/')" = "1.0.3"
+          test "$(node -p "require('./package.json').version")" = "1.0.4"
+          test "$(sed -n 's/^version = \"\(.*\)\"/\1/p' src-tauri/Cargo.toml | head -1)" = "1.0.4"
+          test "$(node -p "require('./src-tauri/tauri.conf.json').version")" = "1.0.4"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - src-tauri/Info.rc.plist)" = "1.0.4"
+          test "$(grep -A1 '^name = \"zhiye\"$' src-tauri/Cargo.lock | tail -1 | sed -E 's/.*\"([^\"]+)\".*/\1/')" = "1.0.4"
       - name: Install Rust toolchain
         run: |
           rustup toolchain install 1.97.1 --profile minimal --no-self-update
@@ -53,7 +53,7 @@ jobs:
       - name: Prepare desktop runtime
         run: pnpm desktop:prepare
       - name: Build application
-        run: pnpm tauri build --ci --no-sign --config '{"bundle":{"macOS":{"infoPlist":"Info.rc.plist","bundleVersion":"10003"}}}' --bundles app
+        run: pnpm tauri build --ci --no-sign --config '{"bundle":{"macOS":{"infoPlist":"Info.rc.plist","bundleVersion":"10004"}}}' --bundles app
       - name: Ad-hoc sign application and build DMG
         shell: bash
         run: |
@@ -73,7 +73,7 @@ jobs:
           ditto "$APP" "dmg-root/织页.app"
           ln -s /Applications dmg-root/Applications
           hdiutil create -volname "织页" -srcfolder dmg-root -ov -format UDZO \
-            src-tauri/target/release/bundle/dmg/Zhiye_1.0.3_aarch64.dmg
+            src-tauri/target/release/bundle/dmg/Zhiye_1.0.4_aarch64.dmg
       - name: Upload DMG
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -88,13 +88,13 @@ jobs:
           cd src-tauri/target/release/bundle/dmg
           shasum -a 256 *.dmg > SHA256SUMS
       - name: Publish GitHub Release
-        if: github.event_name == 'push' && github.ref_name == 'v1.0.3'
+        if: github.event_name == 'push' && github.ref_name == 'v1.0.4'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --verify-tag \
-            --title "织页 1.0.3（Apple Silicon DMG）" \
-            --notes-file docs/RELEASE_NOTES_1.0.3.md \
-            "src-tauri/target/release/bundle/dmg/Zhiye_1.0.3_aarch64.dmg" \
+            --title "织页 1.0.4（Apple Silicon DMG）" \
+            --notes-file docs/RELEASE_NOTES_1.0.4.md \
+            "src-tauri/target/release/bundle/dmg/Zhiye_1.0.4_aarch64.dmg" \
             "src-tauri/target/release/bundle/dmg/SHA256SUMS"
