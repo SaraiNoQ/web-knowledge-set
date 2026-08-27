@@ -1,5 +1,13 @@
 # 发布证据
 
+## `1.0.4` Apple Silicon DMG
+
+- 发布准备提交：`97d26808b49c943890a099be8280ba5de6baaebd`；该提交包含 AI 远程端点安全公网 DNS 解析修复和统一的 1.0.4 版本源。
+- macOS DMG workflow：GitHub Actions run `33065590681` 成功完成 main tip 校验、版本断言、Apple Silicon 应用编译、ad-hoc 签名、DMG 封装、artifact 上传和 checksum 生成。
+- 正式 Release：[v1.0.4](https://github.com/SaraiNoQ/web-knowledge-set/releases/tag/v1.0.4) 为 immutable、非 prerelease；资产为 `Zhiye_1.0.4_aarch64.dmg` 与 `SHA256SUMS`。
+- DMG SHA-256：`8253bfc93cc8eb5707c830eb27c860dbd9b9f4f016ebe0e4dd438b9f700b1d46`；从线上 Release 下载后与 `SHA256SUMS` 复核一致。
+- workflow 使用 `bundleVersion=10004`，应用代码签名为 ad-hoc；未使用 Developer ID、未公证且无更新通道。
+
 ## `1.0.3` Apple Silicon DMG
 
 - 版本准备提交：`84b8fd90a0c7ae3ca416d5b52eb64e23aca55c37`；macOS workflow 兼容性修复提交：`43d0cb88823423440946643ba29cc2b805e09e46`。
