@@ -531,6 +531,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   expect(failedProbeBody).not.toContain("AI 生命周期文章");
   expect(failedProbeBody).not.toContain("这是可搜索的本地知识正文");
   await expect(page.getByRole("alert")).toBeVisible({ timeout: 8_000 });
+  await expect(page.getByText("密钥不会因测试失败而写入数据库或留档。", { exact: true })).toBeVisible();
   await page.getByLabel("AI 本地端点地址").fill("http://127.0.0.1:4175/v1/chat/completions");
   await page.getByText("我信任这个本机端点", { exact: false }).click();
   await page.getByText("允许 AI 派生知识", { exact: true }).click();
@@ -1356,6 +1357,43 @@ test("desktop data safety shows the current knowledge-base path", async ({ page 
   await reader.getByRole("button", { name: "编辑这篇知识", exact: true }).click();
   await expect(reader.getByRole("button", { name: "返回阅读", exact: true })).toBeVisible();
   await expect(reader.getByLabel("Markdown 编辑器")).toBeVisible();
+});
+
+test("desktop AI settings explains local key failures without cloud wording", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      value: {
+        invoke: async (command: string, args?: { endpointUrl?: string }) => {
+          if (command === "take_external_intents") return [];
+          if (command === "llm_keychain_status") return { configured: false, endpointUrl: null };
+          if (command === "set_llm_api_key") return { configured: true, endpointUrl: args?.endpointUrl ?? null };
+          if (command === "delete_llm_api_key") return { configured: false, endpointUrl: null };
+          throw new Error(`Unexpected desktop command: ${command}`);
+        },
+      },
+    });
+  });
+  await page.route("**/api/settings/llm/test", (route) => route.fulfill({
+    status: 400,
+    contentType: "application/json",
+    body: JSON.stringify({ error: { code: "LLM_TARGET_BLOCKED", message: "blocked" } }),
+  }));
+  await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  if (await deferSetup.isVisible()) await deferSetup.click();
+  await page.getByRole("button", { name: "AI 设置", exact: true }).click();
+  await page.getByRole("button", { name: "远程 HTTPS", exact: true }).click();
+  await page.getByLabel("AI 远程模型").fill("desktop-e2e-model");
+  await page.getByLabel("远程模型 API 密钥").fill("desktop-e2e-key");
+  await page.getByRole("button", { name: "保存密钥", exact: true }).click();
+  await expect(page.getByText("密钥已立即生效", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "测试连接", exact: true }).click();
+  await expect(page.getByText("AI 端点指向不允许的网络地址", { exact: false })).toBeVisible();
+  await expect(page.getByText("密钥不会因测试失败而写入数据库或留档。", { exact: true })).toBeVisible();
+  await expect(page.getByText("密钥不会因测试失败而写入 D1 或留档。", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "删除密钥", exact: true }).click();
+  await page.getByRole("alertdialog", { name: "删除远程模型密钥" }).getByRole("button", { name: "删除密钥", exact: true }).click();
+  await expect(page.getByText("当前平台未加载密钥", { exact: false })).toBeVisible();
 });
 
 test("routes desktop capture and file intents through existing imports", async ({ page }) => {

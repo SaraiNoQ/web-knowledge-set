@@ -158,11 +158,12 @@ export async function resolveLlmTarget(
     : await lookupHost(hostname).catch(() => {
       throw new LlmError(502, "LLM_DNS_FAILED", "LLM endpoint hostname could not be resolved");
     });
-  const allowed = kind === "remote"
-    ? addresses.length > 0 && addresses.every(({ address }) => isPublicIp(address))
-    : addresses.length > 0 && addresses.every(({ address }) => isLoopback(address));
-  if (!allowed) throw new LlmError(400, "LLM_TARGET_BLOCKED", "LLM endpoint resolved to a blocked address");
-  const selected = addresses[0]!;
+  const safeAddresses = addresses.filter(({ address, family }) =>
+    (family === 4 || family === 6) && (kind === "remote" ? isPublicIp(address) : isLoopback(address)),
+  );
+  if (!safeAddresses.length) throw new LlmError(400, "LLM_TARGET_BLOCKED", "LLM endpoint resolved to a blocked address");
+  // Pin one safe answer; unusable sibling DNS records must not make a public endpoint fail.
+  const selected = safeAddresses[0]!;
   if (selected.family !== 4 && selected.family !== 6) {
     throw new LlmError(502, "LLM_DNS_FAILED", "LLM endpoint resolved with an unknown address family");
   }

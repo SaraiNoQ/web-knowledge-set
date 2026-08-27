@@ -972,9 +972,14 @@ test("LLM target validation separates remote public HTTPS from explicit loopback
   await assert.rejects(resolveLlmTarget("local", "https://example.com/v1/chat/completions"), /loopback/u);
   await assert.rejects(resolveLlmTarget("local", "http://127.0.0.1/v1/chat/completions?secret=x"), /query/u);
   await assert.rejects(resolveLlmTarget("remote", "https://127.0.0.1/v1/chat/completions"), /blocked/u);
-  await assert.rejects(resolveLlmTarget("remote", "https://mixed.example/v1/chat/completions", async () => [
+  const mixed = await resolveLlmTarget("remote", "https://mixed.example/v1/chat/completions", async () => [
     { address: "8.8.8.8", family: 4 as const },
     { address: "127.0.0.1", family: 4 as const },
+  ]);
+  assert.equal(mixed.address, "8.8.8.8");
+  await assert.rejects(resolveLlmTarget("remote", "https://private.example/v1/chat/completions", async () => [
+    { address: "127.0.0.1", family: 4 as const },
+    { address: "::1", family: 6 as const },
   ]), /blocked/u);
 });
 

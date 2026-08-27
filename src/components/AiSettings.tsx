@@ -340,7 +340,7 @@ export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
               <button type="button" onClick={() => void testConnection()} disabled={locked || (target === "remote" ? !remoteUrl.trim() || !remoteModel.trim() || !processKeyConfigured || Boolean(apiKey.trim()) : !localUrl.trim() || !localModel.trim() || !localTrusted)}>{testing ? "测试中…" : "测试连接"}</button>
               <small>{target === "remote" && apiKey.trim() ? "先保存密钥，再测试该密钥与当前端点。" : "只发送固定探针，不发送文档；远程供应商可能收取小额费用。"}</small>
               {testResult && <div className="ai-test-result is-success" role="status"><strong>连接成功</strong><span>{testResult.target === "remote" ? "远程" : "本机"} · {testResult.model} · {testResult.durationMs} ms</span><small>固定探针未发送正文；远程供应商可能收取小额费用。</small></div>}
-              {testError && <div className="ai-test-result is-error" role="alert"><strong>连接失败</strong><span>{testError}</span><small>密钥不会因测试失败而写入 D1 或留档。</small></div>}
+              {testError && <div className="ai-test-result is-error" role="alert"><strong>连接失败</strong><span>{testError}</span><small>{cloud ? "密钥不会因测试失败而写入 D1 或留档。" : "密钥不会因测试失败而写入数据库或留档。"}</small></div>}
             </div>
           </section>
 
