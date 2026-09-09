@@ -47,9 +47,16 @@ async function sanitizeHtml(html: string) {
         element.remove();
         return;
       }
+      // Collect attribute names before mutating: HTMLRewriter throws if you
+      // call removeAttribute while iterating element.attributes.
+      const strip = new Set(["src", "srcset", "poster", "background", "style", "action", "formaction"]);
+      const toRemove: string[] = [];
       for (const [name] of element.attributes) {
-        if (name.toLowerCase().startsWith("on") || ["src", "srcset", "poster", "background", "style", "action", "formaction"].includes(name.toLowerCase())) element.removeAttribute(name);
+        if (name.toLowerCase().startsWith("on") || strip.has(name.toLowerCase())) {
+          toRemove.push(name);
+        }
       }
+      for (const name of toRemove) element.removeAttribute(name);
     },
   }).transform(new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } }));
   return await rewritten.text();
@@ -377,9 +384,15 @@ async function consume(message: CaptureMessage, env: CaptureEnv) {
   }
   if (!markdown) {
     const response = await env.BROWSER.quickAction("markdown", { html: await sanitizeHtml(page.text) });
-    if (!response.ok) throw new CloudHttpError(502, "BROWSER_FAILED", "Browser Run failed to capture the page");
+    if (!response.ok) {
+      const status = response.status;
+      const body = (await response.clone().text()).slice(0, 500);
+      console.error("[capture] Browser Run quickAction non-OK", JSON.stringify({ status, body }));
+      throw new CloudHttpError(502, "BROWSER_FAILED", `Browser Run failed to capture the page (${status})`);
+    }
     const payload = await response.json() as { success?: boolean; result?: unknown };
     if (payload.success !== true || typeof payload.result !== "string" || !payload.result.trim()) {
+      console.error("[capture] Browser Run quickAction invalid payload", JSON.stringify(payload));
       throw new CloudHttpError(502, "EXTRACTION_EMPTY", "Browser Run returned no Markdown");
     }
     markdown = payload.result.trim();
@@ -415,6 +428,11 @@ export async function handleCaptureQueue(batch: QueueBatch<CaptureMessage>, env:
         continue;
       }
       const code = error instanceof CloudHttpError ? error.code : "BROWSER_FAILED";
+      console.error("[capture] capture job failed", JSON.stringify({
+        job: message.body.id,
+        code,
+        error: error instanceof Error ? error.message : String(error),
+      }));
       await guardedEnv.DB.prepare("UPDATE cloud_capture_jobs SET status = 'failed', error_code = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
         .bind(code, new Date().toISOString(), message.body.id).run();
       message.ack();
