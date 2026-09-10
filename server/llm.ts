@@ -23,6 +23,7 @@ import type {
   UpdateLlmSettingsInput,
 } from "../shared/types.js";
 import { TRANSLATION_LANGUAGES } from "../shared/types.js";
+import { normalizeGeneratedTitle, TITLE_SYSTEM_PROMPT, titleSource } from "../shared/title.js";
 import { derivedInputHash, type KnowledgeDatabase } from "./db.js";
 import { isPublicIp } from "./url-security.js";
 
@@ -35,6 +36,8 @@ const MAX_RESPONSE_BYTES = 256 * 1024;
 const MAX_CUSTOM_PROMPT_CHARS = 4_000;
 const MAX_API_KEY_BYTES = 16 * 1024;
 const REQUEST_TIMEOUT_MS = 60_000;
+const TITLE_TIMEOUT_MS = 30_000;
+const TITLE_MAX_TOKENS = 1_024;
 const types = new Set<DerivedResultType>(["summary", "outline", "keywords", "tag-suggestions", "translation"]);
 const MAX_TRANSLATION_SEGMENTS = 5_000;
 const MAX_TRANSLATED_SEGMENT_CHARS = 20_000;
@@ -615,7 +618,8 @@ function usage(value: unknown): DerivedResultUsage | null {
 
 type CompletionRequest =
   | { kind: "derived"; preview: DerivedTaskPreview; sentText: string }
-  | { kind: "probe"; target: { kind: LlmEndpointKind; url: string }; model: string };
+  | { kind: "probe"; target: { kind: LlmEndpointKind; url: string }; model: string }
+  | { kind: "title"; target: { kind: LlmEndpointKind; url: string }; model: string; sentText: string };
 
 async function requestCompletion(
   input: CompletionRequest,
@@ -651,19 +655,25 @@ async function requestCompletion(
       },
     );
   });
-  const body = Buffer.from(JSON.stringify({
-    model,
-    temperature: 0,
-    ...(input.kind === "probe" ? { max_tokens: 16 } : {}),
-    messages: input.kind === "probe"
+  const messages = input.kind === "probe"
+    ? [
+      { role: "system", content: "This is a connection test. Reply with exactly ZHIYE_OK and nothing else." },
+      { role: "user", content: "Reply with exactly ZHIYE_OK." },
+    ]
+    : input.kind === "title"
       ? [
-        { role: "system", content: "This is a connection test. Reply with exactly ZHIYE_OK and nothing else." },
-        { role: "user", content: "Reply with exactly ZHIYE_OK." },
+        { role: "system", content: TITLE_SYSTEM_PROMPT },
+        { role: "user", content: input.sentText },
       ]
       : [
         { role: "system", content: systemPrompt(input.preview) },
         { role: "user", content: input.sentText },
-      ],
+      ];
+  const body = Buffer.from(JSON.stringify({
+    model,
+    temperature: 0,
+    ...(input.kind === "probe" ? { max_tokens: 16 } : input.kind === "title" ? { max_tokens: TITLE_MAX_TOKENS } : {}),
+    messages,
   }));
   const started = Date.now();
   const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
@@ -759,9 +769,9 @@ async function requestCompletion(
   const choices = Array.isArray(record.choices) ? record.choices : [];
   const first = choices[0] && typeof choices[0] === "object" ? choices[0] as Record<string, unknown> : {};
   const message = first.message && typeof first.message === "object" ? first.message as Record<string, unknown> : {};
-  const output = input.kind === "probe"
-    ? message.content
-    : normalizedOutput(input.preview, message.content, input.sentText);
+  const output = input.kind === "derived"
+    ? normalizedOutput(input.preview, message.content, input.sentText)
+    : message.content;
   if (input.kind === "probe" && output !== "ZHIYE_OK") {
     throw new LlmError(502, "LLM_INVALID_PROBE", "LLM endpoint did not return the exact connection-test response");
   }
@@ -775,6 +785,7 @@ async function requestCompletion(
     output,
     usage: usage(record.usage),
     durationMs: Math.min(Date.now() - started, 86_400_000),
+    finishReason: typeof first.finish_reason === "string" ? first.finish_reason : null,
   };
 }
 
@@ -809,6 +820,71 @@ function sumUsage(current: DerivedResultUsage | null, next: DerivedResultUsage |
   return Object.keys(total).length ? total : null;
 }
 
+interface LlmCredential { value: string; endpointUrl: string }
+
+function llmCredential(apiKey?: string, apiKeyEndpoint?: string): LlmCredential | null {
+  try {
+    if (apiKey && apiKeyEndpoint) {
+      return {
+        value: normalizedApiKey(apiKey),
+        endpointUrl: normalizedEndpoint("remote", apiKeyEndpoint.trim()).href,
+      };
+    }
+  } catch {
+    // Invalid startup credentials are ignored instead of weakening endpoint binding.
+  }
+  return null;
+}
+
+/** A key is only ever spent on the endpoint it was configured for. */
+function apiKeyForCredential(credential: LlmCredential | null, endpointUrl: string) {
+  if (!credential || !endpointUrl) return "";
+  try {
+    return normalizedEndpoint("remote", endpointUrl).href === credential.endpointUrl ? credential.value : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Generates the Chinese title for a freshly captured document. Returns null
+ * whenever the configured model cannot be used or answers with something that
+ * is not a short single-line title, so capture keeps its own title instead.
+ */
+export function createDocumentTitle(options: {
+  database: () => KnowledgeDatabase | null;
+  apiKey?: string;
+  apiKeyEndpoint?: string;
+  resolveTarget?: ResolveLlmTarget;
+}) {
+  const credential = llmCredential(options.apiKey, options.apiKeyEndpoint);
+  const resolver = options.resolveTarget ?? resolveLlmTarget;
+  return async (markdown: string): Promise<string | null> => {
+    const database = options.database();
+    if (!database || !markdown.trim()) return null;
+    const settings = database.getLlmSettings(false);
+    if (!settings.enabled) return null;
+    const selected = settings[settings.target];
+    if (!selected.endpointUrl || !selected.model || (settings.target === "local" && !settings.local.trusted)) return null;
+    const apiKey = settings.target === "remote" ? apiKeyForCredential(credential, settings.remote.endpointUrl) : "";
+    if (settings.target === "remote" && !apiKey) return null;
+    const completed = await requestCompletion(
+      {
+        kind: "title",
+        target: { kind: settings.target, url: selected.endpointUrl },
+        model: selected.model,
+        sentText: titleSource(markdown),
+      },
+      apiKey,
+      new AbortController().signal,
+      resolver,
+      TITLE_TIMEOUT_MS,
+    );
+    if (completed.finishReason === "length") return null;
+    return normalizeGeneratedTitle(completed.output);
+  };
+}
+
 export function createDerivedTasks(options: {
   database: () => KnowledgeDatabase;
   apiKey?: string;
@@ -821,31 +897,14 @@ export function createDerivedTasks(options: {
   let active: { task?: RuntimeTask; controller: AbortController; done: Promise<unknown> } | null = null;
   let pauseDepth = 0;
   let stopped = false;
-  let credential: { value: string; endpointUrl: string } | null = null;
-  try {
-    if (options.apiKey && options.apiKeyEndpoint) {
-      credential = {
-        value: normalizedApiKey(options.apiKey),
-        endpointUrl: normalizedEndpoint("remote", options.apiKeyEndpoint.trim()).href,
-      };
-    }
-  } catch {
-    // Invalid startup credentials are ignored instead of weakening endpoint binding.
-  }
+  let credential = llmCredential(options.apiKey, options.apiKeyEndpoint);
   const resolver = options.resolveTarget ?? resolveLlmTarget;
   const timeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > REQUEST_TIMEOUT_MS) {
     throw new RangeError("LLM request timeout must be from 1 to 60000 milliseconds");
   }
 
-  const apiKeyFor = (endpointUrl: string) => {
-    if (!credential || !endpointUrl) return "";
-    try {
-      return normalizedEndpoint("remote", endpointUrl).href === credential.endpointUrl ? credential.value : "";
-    } catch {
-      return "";
-    }
-  };
+  const apiKeyFor = (endpointUrl: string) => apiKeyForCredential(credential, endpointUrl);
   const settings = () => {
     const current = options.database().getLlmSettings(false);
     return { ...current, apiKeyConfigured: Boolean(apiKeyFor(current.remote.endpointUrl)) };

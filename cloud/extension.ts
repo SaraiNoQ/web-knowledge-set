@@ -81,7 +81,7 @@ export function extensionCors(origin: string) {
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "POST",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Zhiye-LLM-Key",
     "Cache-Control": "no-store",
     "Vary": "Origin",
   };
@@ -379,14 +379,22 @@ export function clipInput(body: Record<string, unknown>) {
   return { sourceUrl, title: body.title.trim(), author: author?.trim() ?? null, publishedAt, markdown: body.markdown };
 }
 
-export async function createClip(db: D1Database, request: Request, input: ReturnType<typeof clipInput>) {
+/**
+ * Resolves the pairing token on a clipper request. Callers verify before doing
+ * any work that costs money, such as an AI request.
+ */
+export async function verifiedExtensionToken(db: D1Database, request: Request) {
   const match = /^Bearer ([A-Za-z0-9_-]{43})$/u.exec(request.headers.get("Authorization") || "");
   if (!match) throw new CloudHttpError(401, "EXTENSION_UNAUTHORIZED", "Extension token required");
   const tokenHash = await sha256(match[1]);
   const pairing = await db.prepare("SELECT id FROM browser_extension_pairings WHERE token_hash = ?")
     .bind(tokenHash).first<{ id: string }>();
   if (!pairing) throw new CloudHttpError(401, "EXTENSION_UNAUTHORIZED", "Extension token is invalid or revoked");
+  return tokenHash;
+}
 
+/** Requires a token hash from {@link verifiedExtensionToken}. */
+export async function createClip(db: D1Database, tokenHash: string, input: ReturnType<typeof clipInput>) {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   const inserted = await db.prepare(

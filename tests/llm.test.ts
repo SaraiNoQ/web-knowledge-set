@@ -10,6 +10,7 @@ import { openDatabase } from "../server/db.js";
 import {
   applyMarkdownTranslation,
   createDerivedTasks,
+  createDocumentTitle,
   llmConnectionTestInput,
   llmNetworkError,
   markdownTranslationInput,
@@ -1079,6 +1080,51 @@ async function waitForTask(base: string, cookie: string, id: string) {
   }
   throw new Error("LLM task did not finish");
 }
+
+test("capture title generation uses the configured model and falls back on unusable replies", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zhiye-title-"));
+  const replies: Array<{ content: string; finish: string }> = [];
+  let sentPrompt = "";
+  const provider = createServer(async (request, response) => {
+    let body = "";
+    for await (const chunk of request) body += chunk;
+    sentPrompt = (JSON.parse(body) as { messages: Array<{ content: string }> }).messages[1]!.content;
+    const reply = replies.shift() ?? { content: "", finish: "stop" };
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ choices: [{ message: { content: reply.content }, finish_reason: reply.finish }] }));
+  });
+  await new Promise<void>((resolve) => provider.listen(0, "127.0.0.1", resolve));
+  const address = provider.address();
+  assert.ok(address && typeof address !== "string");
+  const db = openDatabase(join(root, "data"));
+  const localSettings = {
+    enabled: true,
+    target: "local" as const,
+    remote: { endpointUrl: "", model: "" },
+    local: { endpointUrl: `http://127.0.0.1:${address.port}/title`, model: "local-title", trusted: true },
+  };
+  assert.equal(db.setLlmSettings(localSettings, db.getLlmSettings().revision).kind, "updated");
+  const generate = createDocumentTitle({ database: () => db });
+  try {
+    replies.push({ content: "「新模型发布」", finish: "stop" });
+    assert.equal(await generate("# Post by @MaxForAI on X\n\n新模型发布了。"), "新模型发布");
+    assert.match(sentPrompt, /新模型发布了/u);
+
+    replies.push({ content: "这段模型解释远远长于二十个字，显然不是一个可以使用的标题", finish: "stop" });
+    assert.equal(await generate("正文"), null);
+
+    replies.push({ content: "被截断的", finish: "length" });
+    assert.equal(await generate("正文"), null);
+
+    assert.equal(await generate("   "), null);
+    const disabled = db.getLlmSettings();
+    assert.equal(db.setLlmSettings({ ...localSettings, enabled: false }, disabled.revision).kind, "updated");
+    assert.equal(await generate("正文"), null);
+  } finally {
+    provider.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 async function waitForMemoryTask(manager: ReturnType<typeof createDerivedTasks>, id: string) {
   for (let attempt = 0; attempt < 200; attempt += 1) {

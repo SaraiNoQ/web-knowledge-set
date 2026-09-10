@@ -20,6 +20,7 @@ import {
   type D1Database,
 } from "./extension";
 import { handleAiApi } from "./ai";
+import { handleTitleApi } from "./title";
 import { handleAssetRequest } from "./assets";
 import { handleBackupApi, type R2Bucket } from "./backup";
 import {
@@ -238,6 +239,14 @@ async function api(request: Request, env: CloudEnv, url: URL) {
   const ai = await handleAiApi(request, aiPath && request.method !== "GET" ? epochGuardedDatabase(env.DB, epoch) : env.DB, url);
   if (ai) {
     return json(ai.body, ai.status ?? 200, epoch);
+  }
+  const titlePath = url.pathname.endsWith("/auto-title");
+  if (titlePath && request.method === "POST" && request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
+    return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
+  }
+  const title = await handleTitleApi(request, titlePath && request.method !== "GET" ? epochGuardedDatabase(env.DB, epoch) : env.DB, url);
+  if (title) {
+    return json(title.body, title.status ?? 200, epoch);
   }
   const backupPath = url.pathname.startsWith("/api/data-safety");
   if (backupPath && request.method !== "GET" && request.headers.get(DATA_EPOCH_HEADER) !== epoch) {

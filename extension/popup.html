@@ -17,6 +17,12 @@
           <label>Markdown <span id="count"></span><textarea id="markdown" required></textarea></label>
           <button>确认并保存新副本</button>
         </form>
+        <details id="ai-panel">
+          <summary>AI 标题</summary>
+          <p>保存时用织页“AI 设置”里的模型读一遍正文，换成 20 字以内的中文标题；失败会保留原标题。</p>
+          <label class="inline"><input id="ai-title" type="checkbox"> 保存时生成中文标题</label>
+          <label id="ai-key-row">云端 AI 密钥<input id="ai-key" type="password" autocomplete="off" spellcheck="false"></label>
+        </details>
       </section>
       <p id="status" role="status"></p>
     </main>

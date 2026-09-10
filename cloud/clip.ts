@@ -10,11 +10,36 @@ import {
   MAX_CLOUD_ROW_TEXT_BYTES,
   recoverExpiredRestore,
   type D1Database,
+  verifiedExtensionToken,
 } from "./extension";
 import { fetchDocumentAssets } from "./assets";
 import type { R2Bucket } from "./backup";
+import { optionalLlmRequestKey, settingsRow } from "./ai";
+import { generateDocumentTitle } from "./title";
 
 interface ClipEnv { DB: D1Database; IMAGES: R2Bucket }
+
+/**
+ * The extension only sends a key when the user asked for an AI title. Any
+ * failure here is swallowed so a clip is never lost over its title.
+ */
+async function clipTitle(db: D1Database, key: string, markdown: string) {
+  try {
+    const settings = await settingsRow(db);
+    if (!settings.value.enabled) return null;
+    return await generateDocumentTitle(
+      { endpointUrl: settings.value.remote.endpointUrl, model: settings.value.remote.model },
+      key,
+      markdown,
+    );
+  } catch (error) {
+    console.error("[clip] auto title failed", JSON.stringify({
+      code: error instanceof CloudHttpError ? error.code : "TITLE_FAILED",
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    return null;
+  }
+}
 
 function json(body: unknown, status: number, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), {
@@ -33,7 +58,7 @@ export async function handleClipRequest(request: Request, env: ClipEnv) {
       const method = request.headers.get("Access-Control-Request-Method");
       const headers = (request.headers.get("Access-Control-Request-Headers") || "")
         .split(",").map((value) => value.trim().toLowerCase()).filter(Boolean);
-      if (method !== "POST" || headers.some((value) => value !== "authorization" && value !== "content-type")) {
+      if (method !== "POST" || headers.some((value) => !["authorization", "content-type", "x-zhiye-llm-key"].includes(value))) {
         throw new CloudHttpError(403, "EXTENSION_PREFLIGHT_REJECTED", "Extension preflight rejected");
       }
       return new Response(null, { status: 204, headers: cors });
@@ -48,13 +73,18 @@ export async function handleClipRequest(request: Request, env: ClipEnv) {
       return json(await exchangePairing(db, await jsonObject(request, 4_096), extension.browser), 201, cors);
     }
     if (url.pathname === "/api/browser-extension/clips") {
+      // Authenticate before the AI title request: an unpaired caller must not
+      // be able to spend a provider request through this Worker.
+      const tokenHash = await verifiedExtensionToken(db, request);
       const input = clipInput(await jsonObject(request));
       const rewritten = await fetchDocumentAssets({ IMAGES: env.IMAGES }, input.markdown, input.sourceUrl);
       if (new TextEncoder().encode(rewritten.markdown).byteLength > MAX_CLOUD_ROW_TEXT_BYTES) {
         throw new CloudHttpError(413, "MARKDOWN_TOO_LARGE", "markdown exceeds the D1 row budget");
       }
-      const clipped = { ...input, markdown: rewritten.markdown };
-      return json(await createClip(db, request, clipped), 201, cors);
+      const key = optionalLlmRequestKey(request);
+      const title = key ? await clipTitle(db, key, rewritten.markdown) : null;
+      const clipped = { ...input, markdown: rewritten.markdown, ...(title ? { title } : {}) };
+      return json(await createClip(db, tokenHash, clipped), 201, cors);
     }
     throw new CloudHttpError(404, "NOT_FOUND", "Endpoint not found");
   } catch (error) {

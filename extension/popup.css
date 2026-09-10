@@ -29,11 +29,16 @@ main { padding: 20px; }
 h1 { margin: 0 0 8px; font: 600 24px serif; }
 p { color: #68635b; }
 label { display: block; margin: 14px 0; font-weight: 600; }
+label.inline { display: flex; align-items: center; gap: 8px; }
+label.inline input { width: auto; margin: 0; }
 input, textarea { width: 100%; margin-top: 6px; padding: 10px; border: 1px solid #b9b09f; background: #fffdf7; font: inherit; }
 textarea { min-height: 260px; overflow-x: hidden; resize: vertical; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 ui-monospace, monospace; }
 button { padding: 10px 16px; border: 0; color: #fff; background: #bd3f29; font: 700 14px inherit; cursor: pointer; }
 #extract { width: 100%; }
 #count { float: right; color: #777166; font-weight: 400; }
+#ai-panel { margin-top: 16px; border-top: 1px solid #cfc5b4; padding-top: 10px; }
+#ai-panel summary { cursor: pointer; font-weight: 700; }
+#ai-panel p { margin: 8px 0; font-size: 13px; }
 #status { min-height: 22px; margin-bottom: 0; }
 #status.error { color: #a52e20; }
 [hidden] { display: none !important; }

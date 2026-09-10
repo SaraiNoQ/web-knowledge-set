@@ -13,6 +13,9 @@ const sourceInput = document.querySelector<HTMLInputElement>("#source")!;
 const markdownInput = document.querySelector<HTMLTextAreaElement>("#markdown")!;
 const count = document.querySelector<HTMLElement>("#count")!;
 const statusElement = document.querySelector<HTMLElement>("#status")!;
+const aiTitleInput = document.querySelector<HTMLInputElement>("#ai-title")!;
+const aiKeyRow = document.querySelector<HTMLElement>("#ai-key-row")!;
+const aiKeyInput = document.querySelector<HTMLInputElement>("#ai-key")!;
 let metadata: Pick<ZhiyeClipResult, "author" | "publishedAt"> = { author: null, publishedAt: null };
 
 function message(value: string, error = false) {
@@ -46,6 +49,35 @@ async function showState() {
   pairPanel.hidden = paired;
   clipPanel.hidden = !paired;
 }
+
+/** The key is only sent to clip.sarainoq.cn when the user opts in for that save. */
+async function aiTitleKey() {
+  const stored = await webext.storage.local.get(["llmTitle", "llmKey"]);
+  const key = typeof stored.llmKey === "string" ? stored.llmKey.trim() : "";
+  return stored.llmTitle === true && key ? key : null;
+}
+
+async function loadAiSettings() {
+  const stored = await webext.storage.local.get(["llmTitle", "llmKey"]);
+  aiTitleInput.checked = stored.llmTitle === true;
+  aiKeyInput.value = typeof stored.llmKey === "string" ? stored.llmKey : "";
+  aiKeyRow.hidden = !aiTitleInput.checked;
+}
+
+aiTitleInput.addEventListener("change", async () => {
+  aiKeyRow.hidden = !aiTitleInput.checked;
+  // Turning the feature off drops the stored key as well, so an unchecked
+  // extension holds no AI credential at all.
+  if (!aiTitleInput.checked) aiKeyInput.value = "";
+  await webext.storage.local.set({ llmTitle: aiTitleInput.checked, llmKey: aiKeyInput.value.trim() });
+  if (aiTitleInput.checked) aiKeyInput.focus();
+});
+
+aiKeyInput.addEventListener("change", async () => {
+  const value = aiKeyInput.value.trim();
+  aiKeyInput.value = value;
+  await webext.storage.local.set({ llmKey: value });
+});
 
 pairingForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -87,7 +119,9 @@ extractButton.addEventListener("click", async () => {
     metadata = { author: result.author, publishedAt: result.publishedAt };
     count.textContent = `${result.markdown.length.toLocaleString()} 字符`;
     clipForm.hidden = false;
-    message("请核对正文后保存。保存时会尝试缓存图片，失败才保留原链接。");
+    message(await aiTitleKey()
+      ? "请核对正文后保存；保存时会用 AI 换成 20 字以内的中文标题。"
+      : "请核对正文后保存。保存时会尝试缓存图片，失败才保留原链接。");
   } catch (error) {
     message((error as Error).message, true);
   }
@@ -99,9 +133,14 @@ clipForm.addEventListener("submit", async (event) => {
   try {
     const currentToken = await token();
     if (!currentToken) throw new Error("EXTENSION_UNAUTHORIZED");
+    const key = await aiTitleKey();
     const response = await fetch(`${API}/api/browser-extension/clips`, {
       method: "POST",
-      headers: { "Authorization": `Bearer ${currentToken}`, "Content-Type": "application/json" },
+      headers: {
+        "Authorization": `Bearer ${currentToken}`,
+        "Content-Type": "application/json",
+        ...(key ? { "X-Zhiye-LLM-Key": key } : {}),
+      },
       body: JSON.stringify({
         sourceUrl: sourceInput.value.trim(),
         title: titleInput.value.trim(),
@@ -129,3 +168,4 @@ markdownInput.addEventListener("input", () => {
 });
 
 void showState();
+void loadAiSettings();

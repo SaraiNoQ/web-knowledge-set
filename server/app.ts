@@ -72,6 +72,7 @@ import { extractHtml } from "./extract.js";
 import { ImportParseError, parseImportRequest } from "./import.js";
 import {
   createDerivedTasks,
+  createDocumentTitle,
   LlmError,
   llmApiKeyInput,
   llmConnectionTestInput,
@@ -1088,6 +1089,7 @@ function createWorker(
   fetchAsset: AssetFetchFunction | undefined,
   enabled: boolean,
   diagnosticLog?: (entry: DiagnosticLogInput) => unknown,
+  documentTitle?: (markdown: string) => Promise<string | null>,
 ) {
   let userPaused = !enabled;
   let maintenancePaused = false;
@@ -1122,9 +1124,17 @@ function createWorker(
           db.planCaptureSnapshot(job, snapshotPath);
         }
         const previous = db.getDocument(job.documentId)!;
+        let generated: string | null = null;
+        if (documentTitle && page.markdown.trim()) {
+          try {
+            generated = await documentTitle(page.markdown);
+          } catch (error) {
+            diagnosticLog?.({ level: "warning", event: "title_failed", code: diagnosticCode(error, "TITLE_FAILED") });
+          }
+        }
         const result: CaptureResult = {
           extractorVersion: page.extractorVersion,
-          title: page.title.trim() || previous.title,
+          title: generated || page.title.trim() || previous.title,
           author: page.author || null,
           publishedAt: page.publishedAt || null,
           finalUrl: page.finalUrl,
@@ -1230,12 +1240,19 @@ export function createApp(options: AppOptions) {
   });
   const capture: CaptureFunction =
     options.capture ?? (async (url) => (await import("./capture.js")).captureUrl(url));
+  const documentTitle = createDocumentTitle({
+    database: () => db,
+    apiKey: options.llmApiKey,
+    apiKeyEndpoint: options.llmApiKeyEndpoint,
+    resolveTarget: options.resolveLlmTarget,
+  });
   let worker = createWorker(
     () => db,
     capture,
     options.fetchAsset,
     options.startWorker !== false && db !== null,
     (entry) => options.diagnostics?.log(entry),
+    documentTitle,
   );
   const derivedTasks = createDerivedTasks({
     database: () => {
@@ -2133,6 +2150,7 @@ export function createApp(options: AppOptions) {
               options.fetchAsset,
               options.startWorker !== false && db !== null,
               (entry) => options.diagnostics?.log(entry),
+              documentTitle,
             );
             worker.setPaused(queueWasPaused);
           }

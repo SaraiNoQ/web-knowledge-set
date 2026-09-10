@@ -34,7 +34,7 @@ Cloudflare Web 的正式文档和抓取任务均支持 revision 保护的回收�
 
 ## 安全与发布前提
 
-- Cloudflare API Token、Access 凭据和用户数据均不提交到仓库。云端 AI Key 只保存于当前浏览器页面内存，只随显式测试或生成请求发给 Worker，不写入 D1、R2 或诊断数据。
+- Cloudflare API Token、Access 凭据和用户数据均不提交到仓库。云端 AI Key 只保存在 Web 域的浏览器站点存储与扩展本地存储中，只随显式测试、显式生成或用户已启用的剪藏标题请求发给 Worker，不写入 D1、R2 或诊断数据。
 - 使用自定义域名且关闭可绕过 Access 的公开 Worker 地址；Access 策略默认拒绝。示例 Wrangler 配置故意不带 route：先创建 Access 应用和所有者 allow 策略，再在未跟踪的 `cloud/wrangler.web.jsonc` 中添加同一域名。
 - 发布门禁必须从未登录浏览器验证 `/` 和 `/api/documents` 都被 Access 拒绝，然后再以所有者身份验证空库首屏。没有这项证据不得添加公开 route。
 - 部署前需要 Cloudflare 账户授权、受管域名、D1/R2/Queues/Browser Rendering 资源标识和 Access 配置。缺少其中任一项时，只能完成源码与配置准备，不能宣称已上线。

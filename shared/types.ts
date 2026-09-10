@@ -551,6 +551,7 @@ export type DiagnosticLogEvent =
   | "backup_reconciliation_failed"
   | "automatic_backup_failed"
   | "asset_cache_failed"
+  | "title_failed"
   | "capture_failed"
   | "restore_reconciliation_failed"
   | "unexpected_api_error"

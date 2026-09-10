@@ -595,6 +595,7 @@ export default function App() {
   const [captureHistoryOpen, setCaptureHistoryOpen] = useState(false);
   const [qualityOpen, setQualityOpen] = useState(false);
   const [captureApplying, setCaptureApplying] = useState(false);
+  const [pendingTitleCount, setPendingTitleCount] = useState(0);
   const [closing, setClosing] = useState(false);
   const [safetyOpen, setSafetyOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
@@ -647,6 +648,8 @@ export default function App() {
   const collectionsRequestRef = useRef<{ sequence: number; controller: AbortController } | null>(null);
   const collectionsRequestSequenceRef = useRef(0);
   const keptDuplicateIdsRef = useRef(new Set<string>());
+  const pendingTitlesRef = useRef(new Set<string>());
+  const pendingTitleAttemptsRef = useRef(new Map<string, number>());
   const navigationGenerationRef = useRef(0);
   const readerPanelRef = useRef<HTMLElement>(null);
   const documentHeadRef = useRef<HTMLElement>(null);
@@ -758,7 +761,11 @@ export default function App() {
 
   const persistedDraft = currentDoc ? draftOf(currentDoc) : null;
   const dirty = Boolean(draft && persistedDraft && !draftsEqual(draft, persistedDraft));
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
   const metadataDirty = Boolean(sourceMetadata && currentDoc && !sourceMetadataEqual(sourceMetadata, currentDoc));
+  const metadataDirtyRef = useRef(metadataDirty);
+  metadataDirtyRef.current = metadataDirty;
   const hasUnsavedChanges = dirty || metadataDirty;
   const confirmDiscardChanges = async (message: string) => {
     if (!hasUnsavedChanges) return true;
@@ -911,6 +918,80 @@ export default function App() {
     setCurrentDoc(document);
     setSourceMetadata(metadata);
   }, []);
+
+  const queueAutoTitle = useCallback((id: string) => {
+    pendingTitlesRef.current.add(id);
+    pendingTitleAttemptsRef.current.set(id, 0);
+    setPendingTitleCount(pendingTitlesRef.current.size);
+  }, []);
+
+  const dropAutoTitle = useCallback((id: string) => {
+    pendingTitlesRef.current.delete(id);
+    pendingTitleAttemptsRef.current.delete(id);
+    setPendingTitleCount(pendingTitlesRef.current.size);
+  }, []);
+
+  const retryAutoTitle = useCallback((id: string) => {
+    const attempts = (pendingTitleAttemptsRef.current.get(id) ?? 0) + 1;
+    if (attempts >= 3) return false;
+    pendingTitleAttemptsRef.current.set(id, attempts);
+    return true;
+  }, []);
+
+  // A cloud capture finishes in a queue with the publisher's own title. Once
+  // the document is ready, ask cloud AI for a Chinese title. Titles are a
+  // nicety: every failure just leaves the captured title in place.
+  const autoTitleActive = cloudMode && pendingTitleCount > 0;
+  useEffect(() => {
+    if (!autoTitleActive) return;
+    const controller = new AbortController();
+    let running = false;
+    const attempt = async () => {
+      for (const id of [...pendingTitlesRef.current]) {
+        if (controller.signal.aborted) return;
+        let document: KnowledgeDocument;
+        try {
+          document = await api.getDocument(id, controller.signal);
+        } catch (error) {
+          if ((error as Error).name === "AbortError") return;
+          if (!retryAutoTitle(id)) dropAutoTitle(id);
+          continue;
+        }
+        if (document.deletedAt || (document.status !== "ready" && !ACTIVE_STATUSES.has(document.status))) {
+          dropAutoTitle(id);
+          continue;
+        }
+        if (document.status !== "ready") continue;
+        try {
+          const updated = await api.autoTitleDocument(id, document.revision);
+          if (updated) {
+            updateListItem(updated);
+            // The open editor reads `draft`, not `currentDoc`, and the autosave
+            // compares the two: installing only the document would mark it dirty
+            // and write the captured title back over the generated one.
+            if (currentDocRef.current?.id === id && !dirtyRef.current && !metadataDirtyRef.current) {
+              installCurrentDocument(updated);
+              setDraft(draftOf(updated));
+              setTagText(updated.tags.join(", "));
+            }
+          }
+          dropAutoTitle(id);
+        } catch (error) {
+          if ((error as Error).name === "AbortError") return;
+          if (!retryAutoTitle(id)) dropAutoTitle(id);
+        }
+      }
+    };
+    const timer = window.setInterval(() => {
+      if (running) return;
+      running = true;
+      void attempt().finally(() => { running = false; });
+    }, 3_000);
+    return () => {
+      window.clearInterval(timer);
+      controller.abort();
+    };
+  }, [autoTitleActive, dropAutoTitle, installCurrentDocument, retryAutoTitle, updateListItem]);
 
   const trackOrganizationTask = useCallback(function track<T>(request: Promise<T>) {
     organizationInFlight.current = true;
@@ -1668,6 +1749,7 @@ export default function App() {
       }
       setImportDuplicate(null);
       setImportUrl("");
+      if (cloudMode) queueAutoTitle(result.document.id);
       if (force) keptDuplicateIdsRef.current.add(result.document.id);
       if (!await revealDocument(result.document, guard)) return;
       setImportNotice(force ? "已保留为另一篇知识，两篇内容都不会被删除。" : "");
@@ -2602,6 +2684,7 @@ export default function App() {
       setDraft(draftOf(updated));
       setTagText(updated.tags.join(", "));
       updateListItem(updated);
+      if (cloudMode) queueAutoTitle(currentDoc.id);
       void loadCaptureQueue();
     } catch (error) {
       setDetailError((error as Error).message);

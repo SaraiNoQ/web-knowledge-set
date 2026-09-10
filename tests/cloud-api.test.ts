@@ -16,6 +16,7 @@ import {
   type D1Statement,
 } from "../cloud/extension.js";
 import { handleAiApi } from "../cloud/ai.js";
+import { handleClipRequest } from "../cloud/clip.js";
 import { createCapture, handleCaptureQueue } from "../cloud/capture.js";
 import type { DerivedPreview } from "../shared/types.js";
 
@@ -1171,4 +1172,157 @@ test("cloud backup export carries referenced images and import stages them back"
   }), env);
   assert.equal(imported.status, 201);
   assert.ok(imagesBucket.objects.has(hash), "import staged the referenced image back into R2");
+});
+
+function insertCapturedDocument(database: ReturnType<typeof sqliteEnvironment>["db"], id: string, title: string, markdown: string) {
+  database.sqlite.prepare(`INSERT INTO cloud_documents(
+    id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note, revision, created_at, updated_at
+  ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, 'ready', '测试', 1, ?, ?)`).run(
+    id, "https://x.com/i/status/1", "https://x.com/i/status/1", "https://x.com/i/status/1", title, markdown,
+    "2026-09-10T00:00:00.000Z", "2026-09-10T00:00:00.000Z",
+  );
+}
+
+function setCloudAiEnabled(database: ReturnType<typeof sqliteEnvironment>["db"], enabled: boolean) {
+  database.sqlite.prepare("UPDATE app_settings SET value = ?, revision = revision + 1 WHERE key = 'llm_settings'").run(JSON.stringify({
+    enabled,
+    target: "remote",
+    remote: { endpointUrl: "https://api.openai.com/v1/chat/completions", model: "title-model" },
+    local: { endpointUrl: "", model: "", trusted: false },
+  }));
+}
+
+function autoTitleRequest(id: string, headers: Record<string, string> = {}) {
+  return new Request(`https://app.example.com/api/documents/${id}/auto-title`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": "cloud-1", "X-Zhiye-LLM-Key": "page-scoped-key", ...headers },
+    body: JSON.stringify({ revision: 1 }),
+  });
+}
+
+function titleReply(content: string) {
+  return new Response(JSON.stringify({ choices: [{ message: { content }, finish_reason: "stop" }] }), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+test("cloud auto-title replaces a captured title through the configured model", async () => {
+  const originalFetch = globalThis.fetch;
+  const { env, db } = sqliteEnvironment();
+  setCloudAiEnabled(db, true);
+  insertCapturedDocument(db, "tweet-doc", "Post by @MaxForAI on X", "# Post by @MaxForAI on X\n\n新模型发布了。");
+  let sentPrompt = "";
+  let authorization = "";
+  globalThis.fetch = async (_input, init) => {
+    authorization = new Headers(init?.headers).get("Authorization") || "";
+    sentPrompt = (JSON.parse(String(init?.body)) as { messages: Array<{ content: string }> }).messages[1]!.content;
+    return titleReply("「新模型发布」");
+  };
+  try {
+    const response = await handleRequest(autoTitleRequest("tweet-doc"), env);
+    assert.equal(response.status, 200);
+    const body = await response.json() as { title: string; revision: number };
+    assert.equal(body.title, "新模型发布");
+    assert.equal(body.revision, 2);
+    assert.equal(authorization, "Bearer page-scoped-key");
+    assert.match(sentPrompt, /新模型发布了/u);
+    const stored = db.sqlite.prepare("SELECT title, revision FROM cloud_documents WHERE id = ?").get("tweet-doc") as { title: string; revision: number };
+    assert.equal(stored.title, "新模型发布");
+    assert.equal(stored.revision, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("cloud auto-title stays inert while cloud AI is disabled", async () => {
+  const originalFetch = globalThis.fetch;
+  const { env, db } = sqliteEnvironment();
+  insertCapturedDocument(db, "quiet-doc", "Post by @MaxForAI on X", "# Post by @MaxForAI on X");
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; return titleReply("不应出现"); };
+  try {
+    const response = await handleRequest(autoTitleRequest("quiet-doc"), env);
+    assert.equal(response.status, 409);
+    assert.equal(((await response.json()) as { error: { code: string } }).error.code, "LLM_DISABLED");
+    assert.equal(calls, 0);
+    assert.equal((db.sqlite.prepare("SELECT title FROM cloud_documents WHERE id = ?").get("quiet-doc") as { title: string }).title, "Post by @MaxForAI on X");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+function pairedClipRequest(token: string, markdown: string, llmKey?: string) {
+  return new Request("https://clip.example.com/api/browser-extension/clips", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Origin": `chrome-extension://${"a".repeat(32)}`,
+      "Authorization": `Bearer ${token}`,
+      ...(llmKey ? { "X-Zhiye-LLM-Key": llmKey } : {}),
+    },
+    body: JSON.stringify({ sourceUrl: "https://x.com/i/status/1", title: "Post by @MaxForAI on X", markdown }),
+  });
+}
+
+function pairExtension(database: ReturnType<typeof sqliteEnvironment>["db"], token: string) {
+  database.sqlite.prepare("INSERT INTO browser_extension_pairings(id, browser, token_hash, created_at) VALUES (?, ?, ?, ?)").run(
+    "pair-1", "chrome", createHash("sha256").update(token, "utf8").digest("hex"), "2026-09-10T00:00:00.000Z",
+  );
+}
+
+test("clip auto-title uses the key the extension opted into", async () => {
+  const originalFetch = globalThis.fetch;
+  const { env, db } = sqliteEnvironment();
+  setCloudAiEnabled(db, true);
+  const token = "A".repeat(43);
+  pairExtension(db, token);
+  let authorization = "";
+  globalThis.fetch = async (_input, init) => {
+    authorization = new Headers(init?.headers).get("Authorization") || "";
+    return titleReply("新模型发布");
+  };
+  try {
+    const response = await handleClipRequest(pairedClipRequest(token, "# Post by @MaxForAI on X\n\n新模型发布了。", "extension-key"), env);
+    assert.equal(response.status, 201);
+    const { documentId } = await response.json() as { documentId: string };
+    assert.equal(authorization, "Bearer extension-key");
+    assert.equal((db.sqlite.prepare("SELECT title FROM cloud_documents WHERE id = ?").get(documentId) as { title: string }).title, "新模型发布");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("clip rejects an unpaired token before spending a provider request", async () => {
+  const originalFetch = globalThis.fetch;
+  const { env, db } = sqliteEnvironment();
+  setCloudAiEnabled(db, true);
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; return titleReply("不应出现"); };
+  try {
+    const response = await handleClipRequest(pairedClipRequest("B".repeat(43), "# Post by @MaxForAI on X", "extension-key"), env);
+    assert.equal(response.status, 401);
+    assert.equal(calls, 0);
+    assert.equal((db.sqlite.prepare("SELECT COUNT(*) AS count FROM cloud_documents").get() as { count: number }).count, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("clip without an AI key never calls the model and keeps the captured title", async () => {
+  const originalFetch = globalThis.fetch;
+  const { env, db } = sqliteEnvironment();
+  setCloudAiEnabled(db, true);
+  const token = "A".repeat(43);
+  pairExtension(db, token);
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; return titleReply("不应出现"); };
+  try {
+    const response = await handleClipRequest(pairedClipRequest(token, "# Post by @MaxForAI on X"), env);
+    assert.equal(response.status, 201);
+    const { documentId } = await response.json() as { documentId: string };
+    assert.equal(calls, 0);
+    assert.equal((db.sqlite.prepare("SELECT title FROM cloud_documents WHERE id = ?").get(documentId) as { title: string }).title, "Post by @MaxForAI on X");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

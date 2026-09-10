@@ -16,7 +16,7 @@ const encoder = new TextEncoder();
 const MAX_INPUT_CHARS = 40_000;
 const MAX_CUSTOM_PROMPT_CHARS = 4_000;
 const MAX_RESPONSE_BYTES = 256 * 1024;
-const API_KEY_HEADER = "X-Zhiye-LLM-Key";
+export const LLM_KEY_HEADER = "X-Zhiye-LLM-Key";
 const PROVIDERS = new Set([
   "https://api.openai.com/v1/chat/completions",
   "https://api.deepseek.com/chat/completions",
@@ -62,7 +62,7 @@ interface TranslationSegment {
 
 interface LlmSettingsValue extends Omit<LlmSettings, "revision" | "apiKeyConfigured"> {}
 
-interface CloudReply { status?: number; body: unknown }
+export interface CloudReply { status?: number; body: unknown }
 
 function changes(result: { meta: { changes?: number } }) {
   return result.meta.changes ?? 0;
@@ -91,12 +91,22 @@ function model(value: unknown, required = true) {
   return value.trim();
 }
 
-function key(request: Request) {
-  const value = request.headers.get(API_KEY_HEADER)?.trim() || "";
-  if (!value || encoder.encode(value).byteLength > 16 * 1024 || /\p{Cc}/u.test(value)) {
+function usableKey(value: string) {
+  return Boolean(value) && encoder.encode(value).byteLength <= 16 * 1024 && !/\p{Cc}/u.test(value);
+}
+
+export function llmRequestKey(request: Request) {
+  const value = request.headers.get(LLM_KEY_HEADER)?.trim() || "";
+  if (!usableKey(value)) {
     throw new CloudHttpError(409, "LLM_KEY_MISSING", "A page-scoped API key is required");
   }
   return value;
+}
+
+/** Same validation as {@link llmRequestKey}, but an absent key is not an error. */
+export function optionalLlmRequestKey(request: Request) {
+  const value = request.headers.get(LLM_KEY_HEADER)?.trim() || "";
+  return usableKey(value) ? value : null;
 }
 
 export function validateStoredLlmSettings(value: string): LlmSettingsValue {
@@ -121,7 +131,7 @@ export function validateStoredLlmSettings(value: string): LlmSettingsValue {
   };
 }
 
-async function settingsRow(db: D1Database) {
+export async function settingsRow(db: D1Database) {
   const row = await db.prepare("SELECT value, revision FROM app_settings WHERE key = 'llm_settings'")
     .first<{ value: string; revision: number }>();
   if (!row) throw new CloudHttpError(503, "CLOUD_NOT_INITIALIZED", "Cloud AI migration is required");
@@ -299,7 +309,7 @@ async function limitedText(response: Response) {
   return new TextDecoder().decode(bytes);
 }
 
-async function complete(endpointUrl: string, modelName: string, apiKey: string, system: string, user: string, maxTokens = 4096, disableThinking = false, timeoutMs = 30_000) {
+export async function complete(endpointUrl: string, modelName: string, apiKey: string, system: string, user: string, maxTokens = 4096, disableThinking = false, timeoutMs = 30_000) {
   let response: Response;
   try {
     const body: Record<string, unknown> = { model: modelName, temperature: 0, max_tokens: maxTokens, messages: [{ role: "system", content: system }, { role: "user", content: user }] };
@@ -362,7 +372,7 @@ export async function handleAiApi(request: Request, db: D1Database, url: URL): P
     const endpointUrl = endpoint(body.endpointUrl);
     const modelName = model(body.model);
     const started = Date.now();
-    await complete(endpointUrl, modelName, key(request), "This is a connection test. Reply briefly.", "ZHIYE_OK", 16);
+    await complete(endpointUrl, modelName, llmRequestKey(request), "This is a connection test. Reply briefly.", "ZHIYE_OK", 16);
     return { body: { ok: true, target: "remote", model: modelName, endpointId: await endpointId(endpointUrl), durationMs: Date.now() - started } };
   }
   if (url.pathname === "/api/settings/llm/disable" && request.method === "POST") {
@@ -433,7 +443,7 @@ export async function handleAiApi(request: Request, db: D1Database, url: URL): P
     const completed = await complete(
       row.value.remote.endpointUrl,
       row.value.remote.model,
-      key(request),
+      llmRequestKey(request),
       systemPrompt(type, language, prompt),
       sentTexts[0]!,
       type === "translation" ? 16_384 : 4_096,

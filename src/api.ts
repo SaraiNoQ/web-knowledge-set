@@ -656,6 +656,23 @@ export const api = {
     });
   },
 
+  /**
+   * Cloud capture leaves the publisher's own title. This asks the configured
+   * cloud AI to replace it, and returns null when cloud AI cannot be used.
+   */
+  async autoTitleDocument(id: string, revision: number) {
+    if (!cloudRuntime) return null;
+    const settings = await api.getLlmSettings();
+    if (!settings.enabled) return null;
+    const headers = cloudLlmHeaders(settings.remote.endpointUrl);
+    if (!headers["X-Zhiye-LLM-Key"]) return null;
+    return request<KnowledgeDocument>(`/api/documents/${encodeURIComponent(id)}/auto-title`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ revision }),
+    });
+  },
+
   retryDocument(id: string) {
     return request<KnowledgeDocument>(`/api/documents/${encodeURIComponent(id)}/retry`, {
       method: "POST",
