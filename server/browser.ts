@@ -9,14 +9,24 @@ export interface BrowserResult {
   status: number | null;
 }
 
-export function browserLaunchOptions(proxyServer: string) {
+export function browserLaunchOptions(
+  proxyServer: string,
+  // Default reads the real process uid so tests can exercise both branches.
+  isRoot: boolean = typeof process.getuid === "function" && process.getuid() === 0,
+) {
+  // Chromium refuses to start its sandbox when the process runs as root
+  // ("Running as root without --no-sandbox is not supported", crbug.com/638180),
+  // so the sandbox is kept on for non-root (the intended hardening) and only
+  // disabled for root, where it is impossible. Prefer running the service as a
+  // non-root user so the sandbox can stay enabled.
   return {
     headless: true,
-    chromiumSandbox: true,
+    chromiumSandbox: !isRoot,
     proxy: { server: proxyServer, bypass: "<-loopback>" },
     args: [
       "--proxy-bypass-list=<-loopback>",
       "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+      ...(isRoot ? ["--no-sandbox"] : []),
     ],
   };
 }
