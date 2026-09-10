@@ -40,4 +40,10 @@ Cloudflare Web 的正式文档和抓取任务均支持 revision 保护的回收�
 - 部署前需要 Cloudflare 账户授权、受管域名、D1/R2/Queues/Browser Rendering 资源标识和 Access 配置。缺少其中任一项时，只能完成源码与配置准备，不能宣称已上线。
 - 本地数据迁移必须通过已验证的导出与用户明确导入，不从服务器目录静默复制，也不把 Cloudflare Web 当作同步副本。
 
+## 部署记录
+
+- 2026-09-10 · `c89df85` · 抓取后自动中文标题。`zhiye-web` Version ID `b174f3ec-74c2-4865-bbdc-d76f0983d408`，`zhiye-clip` Version ID `819defe0-7f35-4c68-aa55-7dc89fea3fcc`；无 D1 迁移。从 `123.207.203.208:/root/dev/zhiye` 用 `cloud/wrangler.web.jsonc` 与 `cloud/wrangler.clip.jsonc` 部署，部署前 `check`/`test`/`build`/`cloud:check`/`cloud:bundle` 全部通过。
+- 未登录边界复验：`/`、`/api/documents`、`/health` 与 `POST /api/documents/<id>/auto-title` 均返回 Access 302，`clip.sarainoq.cn` 剪藏端点返回 403。
+- 待补：以所有者身份完成抓取、扩展剪藏与本地抓取三端的真实标题替换验证；扩展弹窗的“AI 标题”开关需要新的 AMO 签名包才能到达用户，服务端剪藏改动向后兼容旧扩展。
+
 相关官方资料：[Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/)、[D1 限制](https://developers.cloudflare.com/d1/platform/limits/)、[R2](https://developers.cloudflare.com/r2/)、[Browser Run](https://developers.cloudflare.com/browser-run/)、[Queues](https://developers.cloudflare.com/queues/reference/how-queues-works/)、[Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/)。
