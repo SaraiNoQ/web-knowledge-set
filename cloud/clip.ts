@@ -14,30 +14,35 @@ import {
 } from "./extension";
 import { fetchDocumentAssets } from "./assets";
 import type { R2Bucket } from "./backup";
-import { optionalLlmRequestKey, settingsRow } from "./ai";
+import { llmRequestKeyState, settingsRow } from "./ai";
 import { generateDocumentTitle } from "./title";
 
 interface ClipEnv { DB: D1Database; IMAGES: R2Bucket }
 
+interface ClipTitle { title: string | null; error: string | null }
+
 /**
- * The extension only sends a key when the user asked for an AI title. Any
- * failure here is swallowed so a clip is never lost over its title.
+ * The extension only sends a key when the user asked for an AI title. A failure
+ * is reported back to the popup as a stable code, but never fails the clip.
  */
-async function clipTitle(db: D1Database, key: string, markdown: string) {
+async function clipTitle(db: D1Database, key: string, markdown: string): Promise<ClipTitle> {
   try {
     const settings = await settingsRow(db);
-    if (!settings.value.enabled) return null;
-    return await generateDocumentTitle(
+    if (!settings.value.enabled) return { title: null, error: "LLM_DISABLED" };
+    const title = await generateDocumentTitle(
       { endpointUrl: settings.value.remote.endpointUrl, model: settings.value.remote.model },
       key,
       markdown,
     );
+    if (!title) return { title: null, error: "TITLE_UNUSABLE" };
+    return { title, error: null };
   } catch (error) {
+    const code = error instanceof CloudHttpError ? error.code : "TITLE_FAILED";
     console.error("[clip] auto title failed", JSON.stringify({
-      code: error instanceof CloudHttpError ? error.code : "TITLE_FAILED",
+      code,
       error: error instanceof Error ? error.message : String(error),
     }));
-    return null;
+    return { title: null, error: code };
   }
 }
 
@@ -81,10 +86,11 @@ export async function handleClipRequest(request: Request, env: ClipEnv) {
       if (new TextEncoder().encode(rewritten.markdown).byteLength > MAX_CLOUD_ROW_TEXT_BYTES) {
         throw new CloudHttpError(413, "MARKDOWN_TOO_LARGE", "markdown exceeds the D1 row budget");
       }
-      const key = optionalLlmRequestKey(request);
-      const title = key ? await clipTitle(db, key, rewritten.markdown) : null;
-      const clipped = { ...input, markdown: rewritten.markdown, ...(title ? { title } : {}) };
-      return json(await createClip(db, tokenHash, clipped), 201, cors);
+      const { key, invalid } = llmRequestKeyState(request);
+      const generated = key ? await clipTitle(db, key, rewritten.markdown) : null;
+      const clipped = { ...input, markdown: rewritten.markdown, ...(generated?.title ? { title: generated.title } : {}) };
+      const saved = await createClip(db, tokenHash, clipped);
+      return json({ ...saved, aiTitleError: generated?.error ?? (invalid ? "LLM_KEY_INVALID" : null) }, 201, cors);
     }
     throw new CloudHttpError(404, "NOT_FOUND", "Endpoint not found");
   } catch (error) {

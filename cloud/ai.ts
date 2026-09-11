@@ -103,10 +103,15 @@ export function llmRequestKey(request: Request) {
   return value;
 }
 
-/** Same validation as {@link llmRequestKey}, but an absent key is not an error. */
-export function optionalLlmRequestKey(request: Request) {
+/**
+ * A key that is present but unusable (oversized or carrying control characters,
+ * for example a paste with an embedded newline) is reported as `invalid` rather
+ * than as "no key", so a caller cannot read it as "the user did not opt in".
+ */
+export function llmRequestKeyState(request: Request) {
   const value = request.headers.get(LLM_KEY_HEADER)?.trim() || "";
-  return usableKey(value) ? value : null;
+  if (!value) return { key: null, invalid: false };
+  return usableKey(value) ? { key: value, invalid: false } : { key: null, invalid: true };
 }
 
 export function validateStoredLlmSettings(value: string): LlmSettingsValue {

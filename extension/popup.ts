@@ -29,7 +29,9 @@ async function token() {
 }
 
 async function responseJson(response: Response) {
-  const payload = await response.json().catch(() => null) as { error?: { code?: string }; token?: string; documentId?: string } | null;
+  const payload = await response.json().catch(() => null) as {
+    error?: { code?: string }; token?: string; documentId?: string; aiTitleError?: string | null;
+  } | null;
   if (!response.ok) throw new Error(payload?.error?.code ?? `HTTP_${response.status}`);
   return payload ?? {};
 }
@@ -50,11 +52,14 @@ async function showState() {
   clipPanel.hidden = !paired;
 }
 
-/** The key is only sent to clip.sarainoq.cn when the user opts in for that save. */
-async function aiTitleKey() {
-  const stored = await webext.storage.local.get(["llmTitle", "llmKey"]);
-  const key = typeof stored.llmKey === "string" ? stored.llmKey.trim() : "";
-  return stored.llmTitle === true && key ? key : null;
+/**
+ * Reads the key from the live field. The field is restored from storage on open
+ * but only written back on its change event, so reading storage here could leave
+ * out a key the user typed or pasted just before saving.
+ */
+function typedAiTitleKey() {
+  const key = aiKeyInput.value.trim();
+  return aiTitleInput.checked && key ? key : null;
 }
 
 async function loadAiSettings() {
@@ -119,7 +124,7 @@ extractButton.addEventListener("click", async () => {
     metadata = { author: result.author, publishedAt: result.publishedAt };
     count.textContent = `${result.markdown.length.toLocaleString()} 字符`;
     clipForm.hidden = false;
-    message(await aiTitleKey()
+    message(typedAiTitleKey()
       ? "请核对正文后保存；保存时会用 AI 换成 20 字以内的中文标题。"
       : "请核对正文后保存。保存时会尝试缓存图片，失败才保留原链接。");
   } catch (error) {
@@ -133,7 +138,11 @@ clipForm.addEventListener("submit", async (event) => {
   try {
     const currentToken = await token();
     if (!currentToken) throw new Error("EXTENSION_UNAUTHORIZED");
-    const key = await aiTitleKey();
+    const key = typedAiTitleKey();
+    // Best-effort persistence: a storage failure must not fail the save, and an
+    // empty field must never overwrite a stored key. Unchecking the box still
+    // clears the stored key through the checkbox handler.
+    if (key) await webext.storage.local.set({ llmTitle: true, llmKey: key }).catch(() => {});
     const response = await fetch(`${API}/api/browser-extension/clips`, {
       method: "POST",
       headers: {
@@ -152,7 +161,9 @@ clipForm.addEventListener("submit", async (event) => {
     const payload = await responseJson(response);
     const notified = payload.documentId ? await notifyOpenLibraries(payload.documentId).catch(() => false) : false;
     clipForm.hidden = true;
-    message(notified ? "已保存，织页目录已自动刷新。" : "已保存为织页中的新副本。");
+    if (!key) message(notified ? "已保存，织页目录已自动刷新。" : "已保存为织页中的新副本。");
+    else if (payload.aiTitleError) message(`已保存；AI 标题未生成（${payload.aiTitleError}），已保留原标题。`, true);
+    else message(notified ? "已保存，标题已换成中文，织页目录已自动刷新。" : "已保存，标题已换成中文。");
   } catch (error) {
     const code = (error as Error).message;
     if (code === "EXTENSION_UNAUTHORIZED") {

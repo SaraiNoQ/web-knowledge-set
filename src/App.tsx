@@ -946,6 +946,12 @@ export default function App() {
     if (!autoTitleActive) return;
     const controller = new AbortController();
     let running = false;
+    // Giving up is reported: otherwise a document silently keeps the title the
+    // publisher happened to use, which reads as "the feature did nothing".
+    const giveUp = (error: unknown) => {
+      const code = error instanceof ApiRequestError ? error.code : "";
+      toast.error(code ? `AI 标题未能生成（${code}），已保留原标题。` : "AI 标题未能生成，已保留原标题。");
+    };
     const attempt = async () => {
       for (const id of [...pendingTitlesRef.current]) {
         if (controller.signal.aborted) return;
@@ -954,7 +960,7 @@ export default function App() {
           document = await api.getDocument(id, controller.signal);
         } catch (error) {
           if ((error as Error).name === "AbortError") return;
-          if (!retryAutoTitle(id)) dropAutoTitle(id);
+          if (!retryAutoTitle(id)) { dropAutoTitle(id); giveUp(error); }
           continue;
         }
         if (document.deletedAt || (document.status !== "ready" && !ACTIVE_STATUSES.has(document.status))) {
@@ -981,7 +987,7 @@ export default function App() {
           dropAutoTitle(id);
         } catch (error) {
           if ((error as Error).name === "AbortError") return;
-          if (!retryAutoTitle(id)) dropAutoTitle(id);
+          if (!retryAutoTitle(id)) { dropAutoTitle(id); giveUp(error); }
         }
       }
     };
@@ -994,7 +1000,7 @@ export default function App() {
       window.clearInterval(timer);
       controller.abort();
     };
-  }, [autoTitleActive, dropAutoTitle, installCurrentDocument, retryAutoTitle, updateListItem]);
+  }, [autoTitleActive, dropAutoTitle, installCurrentDocument, retryAutoTitle, toast, updateListItem]);
 
   const trackOrganizationTask = useCallback(function track<T>(request: Promise<T>) {
     organizationInFlight.current = true;

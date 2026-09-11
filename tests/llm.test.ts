@@ -1085,10 +1085,13 @@ test("capture title generation uses the configured model and falls back on unusa
   const root = mkdtempSync(join(tmpdir(), "zhiye-title-"));
   const replies: Array<{ content: string; finish: string }> = [];
   let sentPrompt = "";
+  let sentSystem = "";
   const provider = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk;
-    sentPrompt = (JSON.parse(body) as { messages: Array<{ content: string }> }).messages[1]!.content;
+    const messages = (JSON.parse(body) as { messages: Array<{ content: string }> }).messages;
+    sentPrompt = messages[1]!.content;
+    sentSystem = messages[0]!.content;
     const reply = replies.shift() ?? { content: "", finish: "stop" };
     response.writeHead(200, { "Content-Type": "application/json" });
     response.end(JSON.stringify({ choices: [{ message: { content: reply.content }, finish_reason: reply.finish }] }));
@@ -1109,6 +1112,15 @@ test("capture title generation uses the configured model and falls back on unusa
     replies.push({ content: "「新模型发布」", finish: "stop" });
     assert.equal(await generate("# Post by @MaxForAI on X\n\n新模型发布了。"), "新模型发布");
     assert.match(sentPrompt, /新模型发布了/u);
+    assert.match(sentSystem, /为这份文档写一个简体中文标题/u);
+
+    // An English or over-long first reply is retried once, with the retry
+    // instruction in the system prompt rather than the first-attempt one.
+    replies.push({ content: "AI Weekly Roundup", finish: "stop" });
+    replies.push({ content: "新模型发布", finish: "stop" });
+    assert.equal(await generate("正文"), "新模型发布");
+    assert.match(sentPrompt, /AI Weekly Roundup/u);
+    assert.match(sentSystem, /上一次的回答不能直接用作标题/u);
 
     replies.push({ content: "这段模型解释远远长于二十个字，显然不是一个可以使用的标题", finish: "stop" });
     assert.equal(await generate("正文"), null);

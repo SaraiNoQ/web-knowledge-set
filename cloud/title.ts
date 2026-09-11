@@ -1,4 +1,10 @@
-import { normalizeGeneratedTitle, TITLE_SYSTEM_PROMPT, titleSource } from "../shared/title";
+import {
+  normalizeGeneratedTitle,
+  TITLE_REPAIR_SYSTEM_PROMPT,
+  TITLE_SYSTEM_PROMPT,
+  titleRepairPrompt,
+  titleSource,
+} from "../shared/title";
 import { complete, llmRequestKey, settingsRow, type CloudReply } from "./ai";
 import { CloudHttpError, getDocument, jsonObject, type D1Database } from "./extension";
 
@@ -12,24 +18,25 @@ export interface TitleSettings {
   model: string;
 }
 
+function ask(settings: TitleSettings, apiKey: string, system: string, user: string) {
+  return complete(settings.endpointUrl, settings.model, apiKey, system, user, TITLE_MAX_TOKENS, true, TITLE_TIMEOUT_MS);
+}
+
 /**
  * Returns a usable Chinese title, or null when the model answered with
- * something that is not a short single-line title. Callers keep the captured
- * title in that case rather than failing the capture.
+ * something that is not a short single-line Chinese title. A first reply that
+ * misses the cap or the language is retried once before giving up, so callers
+ * keep the captured title only when the model failed twice.
  */
 export async function generateDocumentTitle(settings: TitleSettings, apiKey: string, markdown: string) {
-  const completed = await complete(
-    settings.endpointUrl,
-    settings.model,
-    apiKey,
-    TITLE_SYSTEM_PROMPT,
-    titleSource(markdown),
-    TITLE_MAX_TOKENS,
-    true,
-    TITLE_TIMEOUT_MS,
-  );
-  if (completed.finishReason === "length") return null;
-  return normalizeGeneratedTitle(completed.output);
+  const first = await ask(settings, apiKey, TITLE_SYSTEM_PROMPT, titleSource(markdown));
+  if (first.finishReason !== "length") {
+    const title = normalizeGeneratedTitle(first.output);
+    if (title) return title;
+  }
+  const repaired = await ask(settings, apiKey, TITLE_REPAIR_SYSTEM_PROMPT, titleRepairPrompt(first.output, markdown));
+  if (repaired.finishReason === "length") return null;
+  return normalizeGeneratedTitle(repaired.output);
 }
 
 export async function handleTitleApi(request: Request, db: D1Database, url: URL): Promise<CloudReply | null> {

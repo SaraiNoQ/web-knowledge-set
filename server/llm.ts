@@ -23,7 +23,13 @@ import type {
   UpdateLlmSettingsInput,
 } from "../shared/types.js";
 import { TRANSLATION_LANGUAGES } from "../shared/types.js";
-import { normalizeGeneratedTitle, TITLE_SYSTEM_PROMPT, titleSource } from "../shared/title.js";
+import {
+  normalizeGeneratedTitle,
+  TITLE_REPAIR_SYSTEM_PROMPT,
+  TITLE_SYSTEM_PROMPT,
+  titleRepairPrompt,
+  titleSource,
+} from "../shared/title.js";
 import { derivedInputHash, type KnowledgeDatabase } from "./db.js";
 import { isPublicIp } from "./url-security.js";
 
@@ -619,7 +625,7 @@ function usage(value: unknown): DerivedResultUsage | null {
 type CompletionRequest =
   | { kind: "derived"; preview: DerivedTaskPreview; sentText: string }
   | { kind: "probe"; target: { kind: LlmEndpointKind; url: string }; model: string }
-  | { kind: "title"; target: { kind: LlmEndpointKind; url: string }; model: string; sentText: string };
+  | { kind: "title"; target: { kind: LlmEndpointKind; url: string }; model: string; system: string; sentText: string };
 
 async function requestCompletion(
   input: CompletionRequest,
@@ -662,7 +668,7 @@ async function requestCompletion(
     ]
     : input.kind === "title"
       ? [
-        { role: "system", content: TITLE_SYSTEM_PROMPT },
+        { role: "system", content: input.system },
         { role: "user", content: input.sentText },
       ]
       : [
@@ -848,8 +854,8 @@ function apiKeyForCredential(credential: LlmCredential | null, endpointUrl: stri
 
 /**
  * Generates the Chinese title for a freshly captured document. Returns null
- * whenever the configured model cannot be used or answers with something that
- * is not a short single-line title, so capture keeps its own title instead.
+ * whenever the configured model cannot be used or answers twice with something
+ * that is not a short single-line Chinese title, so capture keeps its own title.
  */
 export function createDocumentTitle(options: {
   database: () => KnowledgeDatabase | null;
@@ -868,20 +874,27 @@ export function createDocumentTitle(options: {
     if (!selected.endpointUrl || !selected.model || (settings.target === "local" && !settings.local.trusted)) return null;
     const apiKey = settings.target === "remote" ? apiKeyForCredential(credential, settings.remote.endpointUrl) : "";
     if (settings.target === "remote" && !apiKey) return null;
-    const completed = await requestCompletion(
+    const ask = (system: string, sentText: string) => requestCompletion(
       {
         kind: "title",
         target: { kind: settings.target, url: selected.endpointUrl },
         model: selected.model,
-        sentText: titleSource(markdown),
+        system,
+        sentText,
       },
       apiKey,
       new AbortController().signal,
       resolver,
       TITLE_TIMEOUT_MS,
     );
-    if (completed.finishReason === "length") return null;
-    return normalizeGeneratedTitle(completed.output);
+    const first = await ask(TITLE_SYSTEM_PROMPT, titleSource(markdown));
+    if (first.finishReason !== "length") {
+      const title = normalizeGeneratedTitle(first.output);
+      if (title) return title;
+    }
+    const repaired = await ask(TITLE_REPAIR_SYSTEM_PROMPT, titleRepairPrompt(first.output, markdown));
+    if (repaired.finishReason === "length") return null;
+    return normalizeGeneratedTitle(repaired.output);
   };
 }
 

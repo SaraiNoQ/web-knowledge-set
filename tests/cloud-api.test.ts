@@ -1234,6 +1234,31 @@ test("cloud auto-title replaces a captured title through the configured model", 
   }
 });
 
+test("cloud auto-title asks the model to redo a reply that missed the cap", async () => {
+  const originalFetch = globalThis.fetch;
+  const { env, db } = sqliteEnvironment();
+  setCloudAiEnabled(db, true);
+  insertCapturedDocument(db, "chatty-doc", "Post by @MaxForAI on X", "# Post by @MaxForAI on X\n\n新模型发布了。");
+  const replies = ["这一篇文章主要介绍了某个模型的最新进展和相关讨论", "新模型发布"];
+  const sent: Array<{ system: string; user: string }> = [];
+  globalThis.fetch = async (_input, init) => {
+    const messages = (JSON.parse(String(init?.body)) as { messages: Array<{ content: string }> }).messages;
+    sent.push({ system: messages[0]!.content, user: messages[1]!.content });
+    return titleReply(replies.shift()!);
+  };
+  try {
+    const response = await handleRequest(autoTitleRequest("chatty-doc"), env);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json() as { title: string }).title, "新模型发布");
+    assert.equal(sent.length, 2);
+    assert.match(sent[1]!.system, /上一次的回答不能直接用作标题/u);
+    assert.match(sent[1]!.user, /这一篇文章主要介绍了某个模型的最新进展和相关讨论/u);
+    assert.match(sent[1]!.user, /新模型发布了/u);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("cloud auto-title stays inert while cloud AI is disabled", async () => {
   const originalFetch = globalThis.fetch;
   const { env, db } = sqliteEnvironment();
@@ -1284,9 +1309,48 @@ test("clip auto-title uses the key the extension opted into", async () => {
   try {
     const response = await handleClipRequest(pairedClipRequest(token, "# Post by @MaxForAI on X\n\n新模型发布了。", "extension-key"), env);
     assert.equal(response.status, 201);
-    const { documentId } = await response.json() as { documentId: string };
+    const { documentId, aiTitleError } = await response.json() as { documentId: string; aiTitleError: string | null };
+    assert.equal(aiTitleError, null);
     assert.equal(authorization, "Bearer extension-key");
     assert.equal((db.sqlite.prepare("SELECT title FROM cloud_documents WHERE id = ?").get(documentId) as { title: string }).title, "新模型发布");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("clip reports a title it could not generate and keeps the captured one", async () => {
+  const originalFetch = globalThis.fetch;
+  const { env, db } = sqliteEnvironment();
+  setCloudAiEnabled(db, true);
+  const token = "A".repeat(43);
+  pairExtension(db, token);
+  globalThis.fetch = async () => titleReply("AI Weekly Roundup");
+  try {
+    const response = await handleClipRequest(pairedClipRequest(token, "# Post by @MaxForAI on X", "extension-key"), env);
+    assert.equal(response.status, 201);
+    const { documentId, aiTitleError } = await response.json() as { documentId: string; aiTitleError: string | null };
+    assert.equal(aiTitleError, "TITLE_UNUSABLE");
+    assert.equal((db.sqlite.prepare("SELECT title FROM cloud_documents WHERE id = ?").get(documentId) as { title: string }).title, "Post by @MaxForAI on X");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("clip reports an unusable AI key instead of claiming the title succeeded", async () => {
+  const originalFetch = globalThis.fetch;
+  const { env, db } = sqliteEnvironment();
+  setCloudAiEnabled(db, true);
+  const token = "A".repeat(43);
+  pairExtension(db, token);
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; return titleReply("新模型发布"); };
+  try {
+    const response = await handleClipRequest(pairedClipRequest(token, "# Post by @MaxForAI on X", "k".repeat(17_000)), env);
+    assert.equal(response.status, 201);
+    const { documentId, aiTitleError } = await response.json() as { documentId: string; aiTitleError: string | null };
+    assert.equal(aiTitleError, "LLM_KEY_INVALID");
+    assert.equal(calls, 0);
+    assert.equal((db.sqlite.prepare("SELECT title FROM cloud_documents WHERE id = ?").get(documentId) as { title: string }).title, "Post by @MaxForAI on X");
   } finally {
     globalThis.fetch = originalFetch;
   }
