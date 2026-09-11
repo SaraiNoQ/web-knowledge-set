@@ -30,7 +30,8 @@ pnpm firefox:amo
 
 - `0.3.4` · 源码提交 `8cf7246` · 固定 ID `clipper@zhiye.sarainoq.cn`。
 - 门禁：`pnpm check`、`pnpm test`（148 通过、1 跳过）、`pnpm build` 通过；`pnpm firefox:amo` 通过，`web-ext 10.6.0 lint` 为 0 errors、0 notices，仅剩 3 条已审查的 Defuddle 0.19.2 `UNSAFE_VAR_ASSIGNMENT` 警告。
-- 以 `web-ext 10.6.0` 对编译目录 `dist/extensions/zhiye-clipper-firefox`（而非源代码 ZIP）执行 **unlisted** 自签名；AMO 返回版本 `3058733`，产物 `dist/extensions/amo-signed/3058733-0.3.4.xpi`，SHA-256 `1f24cba7d36502ab10f6e078b8a138a97f65c7a0d876965299c91d9cc089aff9`。
+- 以 `web-ext 10.6.0` 对编译目录 `dist/extensions/zhiye-clipper-firefox`（而非源代码 ZIP）执行 **unlisted** 自签名；AMO 返回版本 `3058733`，SHA-256 `1f24cba7d36502ab10f6e078b8a138a97f65c7a0d876965299c91d9cc089aff9`。
+- 签名产物必须存放于 `dist/` **之外**（例如 `amo-signed/`）：`pnpm build` 会清空 `dist/`，放在里面的 `.xpi` 会在下一次构建时丢失；AMO 已拒绝重复版本，只能从 API 重新取回：`GET /api/v5/addons/addon/clipper@zhiye.sarainoq.cn/versions/0.3.4/`（unlisted 需 JWT，下载 `file.url` 也要带同一个 JWT）。
 - 复核：包内 `manifest.json` 为 `0.3.4`，`popup.html` 含 `ai-panel`，`META-INF/` 含 cose/rsa 签名文件。
 - 该 XPI 属自签名产物，不进 Git，仓库也不记录任何 AMO 凭据；安装包由所有者自行分发。
 - 待补：（可选）在 AMO Developer Hub 以 “On this site” 提交审核 `zhiye-clipper-firefox.zip` + `zhiye-clipper-firefox-source.zip`，通过后再把产品文档改为正式安装链接。
