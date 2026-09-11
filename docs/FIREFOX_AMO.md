@@ -26,6 +26,15 @@ pnpm firefox:amo
 
 审核备注：扩展必须先在受 Cloudflare Access 保护的织页“帮助 → 浏览器扩展”生成一次性配对码。审核者可检查弹窗、提取预览和权限边界而无需测试账号；完整保存流程需要站点所有者提供的临时 Access 测试身份与配对码，提交前不得在仓库中保存这些凭据。
 
+## 签名记录
+
+- `0.3.4` · 源码提交 `8cf7246` · 固定 ID `clipper@zhiye.sarainoq.cn`。
+- 门禁：`pnpm check`、`pnpm test`（148 通过、1 跳过）、`pnpm build` 通过；`pnpm firefox:amo` 通过，`web-ext 10.6.0 lint` 为 0 errors、0 notices，仅剩 3 条已审查的 Defuddle 0.19.2 `UNSAFE_VAR_ASSIGNMENT` 警告。
+- 以 `web-ext 10.6.0` 对编译目录 `dist/extensions/zhiye-clipper-firefox`（而非源代码 ZIP）执行 **unlisted** 自签名；AMO 返回版本 `3058733`，产物 `dist/extensions/amo-signed/3058733-0.3.4.xpi`，SHA-256 `1f24cba7d36502ab10f6e078b8a138a97f65c7a0d876965299c91d9cc089aff9`。
+- 复核：包内 `manifest.json` 为 `0.3.4`，`popup.html` 含 `ai-panel`，`META-INF/` 含 cose/rsa 签名文件。
+- 该 XPI 属自签名产物，不进 Git，仓库也不记录任何 AMO 凭据；安装包由所有者自行分发。
+- 待补：（可选）在 AMO Developer Hub 以 “On this site” 提交审核 `zhiye-clipper-firefox.zip` + `zhiye-clipper-firefox-source.zip`，通过后再把产品文档改为正式安装链接。
+
 ## 发布门禁
 
 1. `pnpm check`、`pnpm test`、`pnpm build` 全部通过。
