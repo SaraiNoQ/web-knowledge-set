@@ -20,9 +20,9 @@ pnpm firefox:amo
 - 支持网站：`https://github.com/SaraiNoQ/web-knowledge-set`
 - 隐私政策：`https://github.com/SaraiNoQ/web-knowledge-set/blob/main/docs/PRIVACY.md`
 
-权限说明：`activeTab` 只在用户点击“提取当前页面”后读取当前标签页；`scripting` 在当前页面执行本地正文提取器，并在保存后向已打开的织页页面发送刷新事件；`storage` 保存经配对获得的撤销型令牌；两个主机权限分别限定内容保存与织页页面刷新，不读取其他标签页。
+权限说明：`activeTab` 只在用户点击“提取当前页面”后读取当前标签页；`scripting` 在当前页面执行本地正文提取器，并在保存后向已打开的织页页面发送刷新事件；`storage` 保存经配对获得的撤销型令牌，以及用户可选填写的云端 AI 密钥；两个主机权限分别限定内容保存与织页页面刷新，不读取其他标签页。
 
-数据声明：扩展在用户主动配对或确认保存时传输配对码/撤销型令牌（`authenticationInfo`）、来源 URL（`browsingActivity`）、网页正文（`websiteContent`），正文可能包含聊天或消息（`personalCommunications`）。不采集遥测、Cookie、历史、密码或支付数据；正文只发送到用户使用的 `clip.sarainoq.cn` 织页服务。
+数据声明：扩展在用户主动配对或确认保存时传输配对码/撤销型令牌（`authenticationInfo`）、来源 URL（`browsingActivity`）、网页正文（`websiteContent`），正文可能包含聊天或消息（`personalCommunications`）。弹窗的“AI 标题”默认关闭：只有用户勾选并填入自己的云端 AI 密钥后，该密钥才随剪藏请求发给 `clip.sarainoq.cn` 用于生成中文标题，取消勾选会立即清除本地密钥。不采集遥测、Cookie、历史、密码或支付数据；正文只发送到用户使用的 `clip.sarainoq.cn` 织页服务。
 
 审核备注：扩展必须先在受 Cloudflare Access 保护的织页“帮助 → 浏览器扩展”生成一次性配对码。审核者可检查弹窗、提取预览和权限边界而无需测试账号；完整保存流程需要站点所有者提供的临时 Access 测试身份与配对码，提交前不得在仓库中保存这些凭据。
 
