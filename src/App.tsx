@@ -966,6 +966,9 @@ export default function App() {
           const updated = await api.autoTitleDocument(id, document.revision);
           if (updated) {
             updateListItem(updated);
+            // The folder view fetches its own rows and only reloads on this
+            // counter; without it the new title waits for a manual refresh.
+            setListRefresh((value) => value + 1);
             // The open editor reads `draft`, not `currentDoc`, and the autosave
             // compares the two: installing only the document would mark it dirty
             // and write the captured title back over the generated one.
