@@ -44,6 +44,7 @@ Cloudflare Web 的正式文档和抓取任务均支持 revision 保护的回收�
 
 - 2026-09-10 · `c89df85` · 抓取后自动中文标题。`zhiye-web` Version ID `b174f3ec-74c2-4865-bbdc-d76f0983d408`，`zhiye-clip` Version ID `819defe0-7f35-4c68-aa55-7dc89fea3fcc`；无 D1 迁移。从 `123.207.203.208:/root/dev/zhiye` 用 `cloud/wrangler.web.jsonc` 与 `cloud/wrangler.clip.jsonc` 部署，部署前 `check`/`test`/`build`/`cloud:check`/`cloud:bundle` 全部通过。
 - 未登录边界复验：`/`、`/api/documents`、`/health` 与 `POST /api/documents/<id>/auto-title` 均返回 Access 302，`clip.sarainoq.cn` 剪藏端点返回 403。
-- 待补：以所有者身份完成抓取、扩展剪藏与本地抓取三端的真实标题替换验证；扩展弹窗的“AI 标题”开关需要新的 AMO 签名包才能到达用户，服务端剪藏改动向后兼容旧扩展。
+- 2026-09-11 · `4ae2850` + `8cf7246` · 左侧目录实时刷新与扩展 `0.3.4`。`zhiye-web` Version ID `5a3282be-9bad-4633-bc64-c2c463c5bffc`；`zhiye-clip` 本轮无改动，保持 `819defe0-7f35-4c68-aa55-7dc89fea3fcc`；无 D1 迁移。部署前 `check` 与 `build` 通过、`test` 148 通过 1 跳过。该版本同时把 `0.3.4` 的 Chrome/Firefox 下载包发布到“帮助 → 浏览器扩展”。未登录边界复验同上（`/`、`/api/documents`、`POST /api/documents/<id>/auto-title` 均为 Access 302）。
+- 待补：以所有者身份完成抓取、扩展剪藏与本地抓取三端的真实标题替换验证；`0.3.4` 已在 AMO 自签名（unlisted，见 [FIREFOX_AMO.md](./FIREFOX_AMO.md)），若要走商店安装仍需提交审核并更新安装链接。
 
 相关官方资料：[Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/)、[D1 限制](https://developers.cloudflare.com/d1/platform/limits/)、[R2](https://developers.cloudflare.com/r2/)、[Browser Run](https://developers.cloudflare.com/browser-run/)、[Queues](https://developers.cloudflare.com/queues/reference/how-queues-works/)、[Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/)。
