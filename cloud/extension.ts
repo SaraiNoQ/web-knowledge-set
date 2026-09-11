@@ -413,6 +413,7 @@ export async function createClip(db: D1Database, tokenHash: string, input: Retur
 
 interface DocumentSummaryRow {
   id: string;
+  kind: "article" | "paper";
   sourceUrl: string;
   finalUrl: string | null;
   canonicalUrl: string | null;
@@ -436,6 +437,7 @@ interface DocumentRow extends DocumentSummaryRow {
 function summary(row: DocumentSummaryRow) {
   return {
     id: row.id,
+    kind: row.kind,
     title: row.title,
     sourceUrl: row.sourceUrl,
     finalUrl: row.finalUrl,
@@ -458,7 +460,7 @@ function summary(row: DocumentSummaryRow) {
 }
 
 const summaryColumns = `id, source_url AS sourceUrl, final_url AS finalUrl, canonical_url AS canonicalUrl,
-  title, author, status, folder_id AS folderId, favorite, revision, deleted_at AS deletedAt,
+  kind, title, author, status, folder_id AS folderId, favorite, revision, deleted_at AS deletedAt,
   created_at AS createdAt, updated_at AS updatedAt`;
 
 export async function listDocuments(db: D1Database, url: URL, window?: { limit: number; offset: number }) {
@@ -481,11 +483,20 @@ export async function listDocuments(db: D1Database, url: URL, window?: { limit: 
   }
   if (query) {
     const scope = url.searchParams.get("scope") || "all";
-    const columns = scope === "title" ? ["title"] : scope === "body" ? ["markdown"] :
-      scope === "source" ? ["source_url"] : scope === "all" ? ["title", "markdown", "source_url"] : null;
-    if (!columns) throw new CloudHttpError(400, "INVALID_SCOPE", "Unknown search scope");
-    conditions.push(`(${columns.map((column) => `${column} LIKE ?`).join(" OR ")})`);
-    values.push(...columns.map(() => `%${query}%`));
+    const pattern = `%${query}%`;
+    if (scope === "title") {
+      conditions.push("title LIKE ?");
+      values.push(pattern);
+    } else if (scope === "source") {
+      conditions.push("(source_url LIKE ? OR (kind = 'paper' AND EXISTS (SELECT 1 FROM cloud_papers p WHERE p.id = cloud_documents.id AND p.source_url LIKE ?)))");
+      values.push(pattern, pattern);
+    } else if (scope === "body") {
+      conditions.push("(markdown LIKE ? OR (kind = 'paper' AND EXISTS (SELECT 1 FROM cloud_paper_pages pp WHERE pp.paper_id = cloud_documents.id AND (pp.original_json LIKE ? OR pp.translation_json LIKE ?))))");
+      values.push(pattern, pattern, pattern);
+    } else if (scope === "all") {
+      conditions.push("(title LIKE ? OR markdown LIKE ? OR source_url LIKE ? OR (kind = 'paper' AND EXISTS (SELECT 1 FROM cloud_paper_pages pp WHERE pp.paper_id = cloud_documents.id AND (pp.original_json LIKE ? OR pp.translation_json LIKE ?))))");
+      values.push(pattern, pattern, pattern, pattern, pattern);
+    } else throw new CloudHttpError(400, "INVALID_SCOPE", "Unknown search scope");
   }
   const favorite = url.searchParams.get("favorite");
   if (favorite !== null) {

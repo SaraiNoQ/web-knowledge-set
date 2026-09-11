@@ -2,6 +2,8 @@
 
 新增功能必须先登记再开发；只有实现、服务器门禁与独立审查全部通过后，才将对应项勾选并划掉。
 
+- [ ] **论文知识与逐页中英文对照阅读**：论文作为独立于网页文章的知识类型，混合进入统一资料库并保留 `paper` 数据域；支持 arXiv 页面/公开 PDF URL 和用户上传 PDF，使用已配置多模态 LLM 生成分页原文块、中文译文块与图表说明，PDF.js 只负责原文显示；译文按块编辑并带 revision 冲突保护，原始 PDF 只读保存。
+
 - [x] ~~**1.0.1 当前源码打包**：统一 Node、Cargo、Tauri 与 macOS 包版本为 `1.0.1`，从当前 `main` 生成 Apple Silicon DMG；产物继续明确标注 ad-hoc 签名、未公证且无自动更新。~~
 - [x] ~~**1.0.2 当前源码打包与桌面图标**：统一版本源并从最新 `main` 生成 Apple Silicon `.app` artifact 和 GitHub Release DMG；使用织页“纸页 + 交织线”图标，包内代码签名为 ad-hoc linker-signed，未使用 Developer ID、未公证且无自动更新。~~
 - [x] ~~**1.0.4 当前源码打包与 AI 连接修复发布**：统一 Node、Cargo、Tauri、Info.plist 与 macOS workflow 版本为 `1.0.4`；从包含安全公网 DNS 解析修复的 `main` 生成 Apple Silicon DMG、校验清单并发布 GitHub Release，明确标注 ad-hoc 签名、未公证且无自动更新。~~

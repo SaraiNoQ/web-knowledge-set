@@ -625,7 +625,8 @@ function usage(value: unknown): DerivedResultUsage | null {
 type CompletionRequest =
   | { kind: "derived"; preview: DerivedTaskPreview; sentText: string }
   | { kind: "probe"; target: { kind: LlmEndpointKind; url: string }; model: string }
-  | { kind: "title"; target: { kind: LlmEndpointKind; url: string }; model: string; system: string; sentText: string };
+  | { kind: "title"; target: { kind: LlmEndpointKind; url: string }; model: string; system: string; sentText: string }
+  | { kind: "paper"; target: { kind: LlmEndpointKind; url: string }; model: string; system: string; pdf: Buffer };
 
 async function requestCompletion(
   input: CompletionRequest,
@@ -666,6 +667,14 @@ async function requestCompletion(
       { role: "system", content: "This is a connection test. Reply with exactly ZHIYE_OK and nothing else." },
       { role: "user", content: "Reply with exactly ZHIYE_OK." },
     ]
+    : input.kind === "paper"
+      ? [
+        { role: "system", content: input.system },
+        { role: "user", content: [
+          { type: "text", text: "Extract this paper into the required page JSON. Return JSON only." },
+          { type: "file", file: { filename: "paper.pdf", file_data: `data:application/pdf;base64,${input.pdf.toString("base64")}` } },
+        ] },
+      ]
     : input.kind === "title"
       ? [
         { role: "system", content: input.system },
@@ -678,7 +687,7 @@ async function requestCompletion(
   const body = Buffer.from(JSON.stringify({
     model,
     temperature: 0,
-    ...(input.kind === "probe" ? { max_tokens: 16 } : input.kind === "title" ? { max_tokens: TITLE_MAX_TOKENS } : {}),
+    ...(input.kind === "probe" ? { max_tokens: 16 } : input.kind === "title" ? { max_tokens: TITLE_MAX_TOKENS } : input.kind === "paper" ? { max_tokens: 32_000 } : {}),
     messages,
   }));
   const started = Date.now();
@@ -793,6 +802,25 @@ async function requestCompletion(
     durationMs: Math.min(Date.now() - started, 86_400_000),
     finishReason: typeof first.finish_reason === "string" ? first.finish_reason : null,
   };
+}
+
+export function requestPaperCompletion(input: {
+  target: { kind: LlmEndpointKind; url: string };
+  model: string;
+  system: string;
+  pdf: Buffer;
+  apiKey: string;
+  signal: AbortSignal;
+  resolver?: ResolveLlmTarget;
+  timeoutMs?: number;
+}) {
+  return requestCompletion(
+    { kind: "paper", target: input.target, model: input.model, system: input.system, pdf: input.pdf },
+    input.apiKey,
+    input.signal,
+    input.resolver ?? resolveLlmTarget,
+    input.timeoutMs ?? REQUEST_TIMEOUT_MS,
+  );
 }
 
 function errorValue(error: unknown) {

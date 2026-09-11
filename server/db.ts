@@ -1,5 +1,5 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { chmodSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, rmSync, unlinkSync } from "node:fs";
+import { chmodSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -40,6 +40,12 @@ import type {
   LlmEndpointKind,
   LlmSettings,
   OnboardingState,
+  PaperBlock,
+  PaperDocument,
+  PaperExtractionTask,
+  PaperPage,
+  PaperStatus,
+  PaperSummary,
   RecentFilter,
   SaveDerivedResultInput,
   TagMutationResponse,
@@ -550,6 +556,70 @@ const migrations = [
   CREATE INDEX documents_folder_updated
     ON documents(folder_id, deleted_at, updated_at DESC, id);
   `,
+  `
+  ALTER TABLE documents ADD COLUMN kind TEXT NOT NULL DEFAULT 'article'
+    CHECK (kind IN ('article', 'paper'));
+
+  CREATE TABLE paper_files (
+    hash TEXT PRIMARY KEY
+      CHECK (length(hash) = 64 AND hash NOT GLOB '*[^0-9a-f]*'),
+    mime TEXT NOT NULL CHECK (mime = 'application/pdf'),
+    bytes INTEGER NOT NULL CHECK (bytes > 0),
+    created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE papers (
+    id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('url', 'pdf')),
+    source_url TEXT,
+    original_file_name TEXT,
+    source_hash TEXT NOT NULL REFERENCES paper_files(hash) ON DELETE RESTRICT,
+    page_count INTEGER CHECK (page_count IS NULL OR page_count BETWEEN 1 AND 1000),
+    status TEXT NOT NULL CHECK (status IN ('queued', 'extracting', 'ready', 'failed')),
+    extraction_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE paper_extractions (
+    id TEXT PRIMARY KEY,
+    paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
+    model TEXT,
+    endpoint_id TEXT,
+    prompt_version TEXT,
+    source_hash TEXT NOT NULL REFERENCES paper_files(hash) ON DELETE RESTRICT,
+    page_count INTEGER CHECK (page_count IS NULL OR page_count BETWEEN 1 AND 1000),
+    completed_pages INTEGER NOT NULL DEFAULT 0 CHECK (completed_pages >= 0),
+    error_code TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    finished_at TEXT
+  );
+  CREATE INDEX paper_extractions_paper ON paper_extractions(paper_id, created_at DESC);
+
+  CREATE TABLE paper_pages (
+    paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+    extraction_id TEXT NOT NULL REFERENCES paper_extractions(id) ON DELETE CASCADE,
+    page_number INTEGER NOT NULL CHECK (page_number >= 1),
+    original_json TEXT NOT NULL CHECK (json_valid(original_json)),
+    translation_json TEXT NOT NULL CHECK (json_valid(translation_json)),
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (extraction_id, page_number)
+  );
+  CREATE INDEX paper_pages_current ON paper_pages(paper_id, page_number);
+
+  CREATE TABLE paper_assets (
+    paper_id TEXT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+    extraction_id TEXT NOT NULL REFERENCES paper_extractions(id) ON DELETE CASCADE,
+    page_number INTEGER NOT NULL,
+    block_id TEXT NOT NULL,
+    asset_hash TEXT NOT NULL REFERENCES assets(hash) ON DELETE RESTRICT,
+    PRIMARY KEY (extraction_id, page_number, block_id, asset_hash)
+  );
+  `,
 ];
 
 export const CURRENT_SCHEMA_VERSION = migrations.length;
@@ -579,6 +649,7 @@ export class DatabaseSchemaError extends Error {
 
 interface DocumentRow {
   id: string;
+  kind: "article" | "paper";
   source_url: string;
   final_url: string | null;
   canonical_url: string | null;
@@ -599,6 +670,49 @@ interface DocumentRow {
   deleted_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface PaperRow {
+  id: string;
+  kind: "paper";
+  source_url: string;
+  title: string;
+  author: string | null;
+  folder_id: string | null;
+  favorite: number;
+  archived_at: string | null;
+  revision: number;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+  source_kind: "url" | "pdf";
+  paper_source_url: string | null;
+  original_file_name: string | null;
+  source_hash: string;
+  page_count: number | null;
+  paper_status: PaperStatus;
+  extraction_id: string | null;
+}
+
+interface PaperPageRow {
+  paper_id: string;
+  extraction_id: string;
+  page_number: number;
+  original_json: string;
+  translation_json: string;
+  revision: number;
+}
+
+interface PaperExtractionRow {
+  id: string;
+  paper_id: string;
+  status: PaperExtractionTask["status"];
+  page_count: number | null;
+  completed_pages: number;
+  error_code: string | null;
+  error_message: string | null;
+  created_at: string;
+  finished_at: string | null;
 }
 
 interface CollectionRow {
@@ -1551,7 +1665,9 @@ export class KnowledgeDatabase {
         .prepare(
           `SELECT DISTINCT 'assets/' || a.hash AS path
            FROM assets a JOIN document_assets da ON da.asset_hash = a.hash
-           WHERE da.status = 'ready' ORDER BY path`,
+           WHERE da.status = 'ready'
+           UNION SELECT DISTINCT 'assets/' || hash AS path FROM paper_files
+           ORDER BY path`,
         )
         .all() as Array<{ path: string }>
     ).map(({ path }) => path);
@@ -1664,6 +1780,7 @@ export class KnowledgeDatabase {
   private toDocument(row: DocumentRow): KnowledgeDocument {
     return {
       id: row.id,
+      kind: row.kind,
       title: row.title,
       sourceUrl: row.source_url,
       finalUrl: row.final_url,
@@ -1733,6 +1850,242 @@ export class KnowledgeDatabase {
       | DocumentRow
       | undefined;
     return row ? this.toDocument(row) : null;
+  }
+
+  private toPaperSummary(row: PaperRow): PaperSummary {
+    return {
+      id: row.id,
+      kind: "paper",
+      title: row.title,
+      sourceUrl: row.paper_source_url || row.source_url,
+      author: row.author,
+      status: row.paper_status,
+      errorCode: null,
+      errorMessage: null,
+      folderId: row.folder_id,
+      favorite: Boolean(row.favorite),
+      archivedAt: row.archived_at,
+      revision: row.revision,
+      deletedAt: row.deleted_at,
+      pageCount: row.page_count,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private toPaperPage(row: PaperPageRow): PaperPage {
+    return {
+      paperId: row.paper_id,
+      extractionId: row.extraction_id,
+      pageNumber: row.page_number,
+      originalBlocks: JSON.parse(row.original_json) as PaperBlock[],
+      translationBlocks: JSON.parse(row.translation_json) as PaperBlock[],
+      revision: row.revision,
+    };
+  }
+
+  private paperRow(id: string) {
+    return this.sql.prepare(
+      `SELECT d.id, d.kind, d.source_url, d.title, d.author, d.folder_id, d.favorite,
+              d.archived_at, d.revision, d.deleted_at, d.created_at, d.updated_at,
+              p.source_kind, p.source_url AS paper_source_url, p.original_file_name,
+              p.source_hash, p.page_count, p.status AS paper_status, p.extraction_id
+       FROM documents d JOIN papers p ON p.id = d.id
+       WHERE d.id = ? AND d.kind = 'paper'`,
+    ).get(id) as PaperRow | undefined;
+  }
+
+  getPaper(id: string): PaperDocument | null {
+    const row = this.paperRow(id);
+    if (!row) return null;
+    const pages = row.extraction_id
+      ? (this.sql.prepare(
+        `SELECT paper_id, extraction_id, page_number, original_json, translation_json, revision
+         FROM paper_pages WHERE paper_id = ? AND extraction_id = ? ORDER BY page_number`,
+      ).all(id, row.extraction_id) as unknown as PaperPageRow[]).map((page) => this.toPaperPage(page))
+      : [];
+    return {
+      ...this.toPaperSummary(row),
+      sourceKind: row.source_kind,
+      originalFileName: row.original_file_name,
+      sourceHash: row.source_hash,
+      extractionId: row.extraction_id,
+      pages,
+    };
+  }
+
+  getPaperPage(id: string, pageNumber: number): PaperPage | null {
+    const row = this.paperRow(id);
+    if (!row?.extraction_id) return null;
+    const page = this.sql.prepare(
+      `SELECT paper_id, extraction_id, page_number, original_json, translation_json, revision
+       FROM paper_pages WHERE paper_id = ? AND extraction_id = ? AND page_number = ?`,
+    ).get(id, row.extraction_id, pageNumber) as PaperPageRow | undefined;
+    return page ? this.toPaperPage(page) : null;
+  }
+
+  savePaperFile(hash: string, content: Buffer) {
+    if (!/^[a-f0-9]{64}$/u.test(hash) || createHash("sha256").update(content).digest("hex") !== hash) {
+      throw new Error("Paper PDF checksum does not match its content");
+    }
+    const path = this.assetFilePath(hash);
+    try {
+      statSync(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      writeFileSync(path, content, { mode: 0o600, flag: "wx" });
+      syncDirectory(this.assetsDir);
+    }
+    this.sql.prepare(
+      "INSERT INTO paper_files(hash, mime, bytes, created_at) VALUES (?, 'application/pdf', ?, ?) ON CONFLICT(hash) DO NOTHING",
+    ).run(hash, content.byteLength, now());
+  }
+
+  paperFilePath(id: string) {
+    const row = this.paperRow(id);
+    if (!row) return null;
+    return this.assetFilePath(row.source_hash);
+  }
+
+  createPaper(input: {
+    sourceKind: "url" | "pdf";
+    sourceUrl: string | null;
+    originalFileName: string | null;
+    hash: string;
+    content: Buffer;
+  }) {
+    return transaction(this.sql, () => {
+      if (input.sourceUrl) {
+        const existing = this.sql.prepare(
+          "SELECT id FROM papers WHERE source_url = ? AND id IN (SELECT id FROM documents WHERE deleted_at IS NULL)",
+        ).get(input.sourceUrl) as { id: string } | undefined;
+        if (existing) return { created: false as const, duplicate: this.getPaper(existing.id)! };
+      }
+      this.savePaperFile(input.hash, input.content);
+      const id = randomUUID();
+      const timestamp = now();
+      const sourceUrl = input.sourceUrl || `zhiye://paper/${id}`;
+      this.sql.prepare(
+        `INSERT INTO documents(
+           id, kind, source_url, title, markdown, status, revision, created_at, updated_at
+         ) VALUES (?, 'paper', ?, ?, '', 'queued', 1, ?, ?)`,
+      ).run(id, sourceUrl, input.originalFileName || "待提取论文", timestamp, timestamp);
+      this.sql.prepare(
+        `INSERT INTO papers(
+           id, source_kind, source_url, original_file_name, source_hash, status, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)`,
+      ).run(id, input.sourceKind, input.sourceUrl, input.originalFileName, input.hash, timestamp, timestamp);
+      return { created: true as const, paper: this.getPaper(id)! };
+    });
+  }
+
+  createPaperExtraction(id: string) {
+    return transaction(this.sql, () => {
+      const paper = this.paperRow(id);
+      if (!paper) return { kind: "missing" as const };
+      const taskId = randomUUID();
+      const timestamp = now();
+      this.sql.prepare(
+        `INSERT INTO paper_extractions(id, paper_id, status, source_hash, created_at)
+         VALUES (?, ?, 'queued', ?, ?)`,
+      ).run(taskId, id, paper.source_hash, timestamp);
+      this.sql.prepare(
+        "UPDATE papers SET status = 'extracting', extraction_id = ?, updated_at = ? WHERE id = ?",
+      ).run(taskId, timestamp, id);
+      this.sql.prepare(
+        "UPDATE documents SET status = 'extracting', error_code = NULL, error_message = NULL, revision = revision + 1, updated_at = ? WHERE id = ?",
+      ).run(timestamp, id);
+      return { kind: "created" as const, task: this.getPaperExtraction(taskId)! };
+    });
+  }
+
+  getPaperExtraction(id: string): PaperExtractionTask | null {
+    const row = this.sql.prepare("SELECT * FROM paper_extractions WHERE id = ?").get(id) as PaperExtractionRow | undefined;
+    return row ? {
+      id: row.id,
+      paperId: row.paper_id,
+      status: row.status,
+      pageCount: row.page_count,
+      completedPages: row.completed_pages,
+      error: row.error_code ? { code: row.error_code, message: row.error_message || "论文处理失败" } : null,
+      createdAt: row.created_at,
+      finishedAt: row.finished_at,
+    } : null;
+  }
+
+  startPaperExtraction(id: string) {
+    return this.sql.prepare("UPDATE paper_extractions SET status = 'running' WHERE id = ? AND status = 'queued'").run(id).changes === 1;
+  }
+
+  setPaperExtractionMeta(id: string, model: string, endpointId: string, promptVersion: string) {
+    this.sql.prepare("UPDATE paper_extractions SET model = ?, endpoint_id = ?, prompt_version = ? WHERE id = ?")
+      .run(model, endpointId, promptVersion, id);
+  }
+
+  updatePaperExtractionProgress(id: string, completedPages: number, pageCount: number | null) {
+    this.sql.prepare("UPDATE paper_extractions SET completed_pages = ?, page_count = COALESCE(?, page_count) WHERE id = ? AND status = 'running'")
+      .run(completedPages, pageCount, id);
+  }
+
+  completePaperExtraction(id: string, pages: Array<{ pageNumber: number; originalBlocks: PaperBlock[]; translationBlocks: PaperBlock[] }>, title?: string, author?: string | null) {
+    return transaction(this.sql, () => {
+      const task = this.sql.prepare("SELECT * FROM paper_extractions WHERE id = ?").get(id) as PaperExtractionRow | undefined;
+      if (!task) return { kind: "missing" as const };
+      const timestamp = now();
+      this.sql.prepare("DELETE FROM paper_pages WHERE extraction_id = ?").run(id);
+      const insert = this.sql.prepare(
+        `INSERT INTO paper_pages(
+           paper_id, extraction_id, page_number, original_json, translation_json, revision, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+      );
+      for (const page of pages) {
+        insert.run(task.paper_id, id, page.pageNumber, JSON.stringify(page.originalBlocks), JSON.stringify(page.translationBlocks), timestamp, timestamp);
+      }
+      this.sql.prepare(
+        `UPDATE paper_extractions SET status = 'succeeded', page_count = ?, completed_pages = ?, finished_at = ?, error_code = NULL, error_message = NULL WHERE id = ?`,
+      ).run(pages.length, pages.length, timestamp, id);
+      this.sql.prepare(
+        `UPDATE papers SET status = 'ready', page_count = ?, updated_at = ? WHERE id = ?`,
+      ).run(pages.length, timestamp, task.paper_id);
+      this.sql.prepare(
+        `UPDATE documents SET title = COALESCE(NULLIF(?, ''), title), author = ?, status = 'ready', error_code = NULL,
+         error_message = NULL, revision = revision + 1, updated_at = ? WHERE id = ?`,
+      ).run(title || "", author ?? null, timestamp, task.paper_id);
+      return { kind: "completed" as const, paper: this.getPaper(task.paper_id)! };
+    });
+  }
+
+  failPaperExtraction(id: string, code: string, message: string) {
+    return transaction(this.sql, () => {
+      const task = this.sql.prepare("SELECT paper_id FROM paper_extractions WHERE id = ?").get(id) as { paper_id: string } | undefined;
+      if (!task) return { kind: "missing" as const };
+      const timestamp = now();
+      this.sql.prepare(
+        "UPDATE paper_extractions SET status = 'failed', error_code = ?, error_message = ?, finished_at = ? WHERE id = ?",
+      ).run(code, message, timestamp, id);
+      this.sql.prepare(
+        "UPDATE papers SET status = 'failed', updated_at = ? WHERE id = ?",
+      ).run(timestamp, task.paper_id);
+      this.sql.prepare(
+        "UPDATE documents SET status = 'failed', error_code = ?, error_message = ?, revision = revision + 1, updated_at = ? WHERE id = ?",
+      ).run(code, message, timestamp, task.paper_id);
+      return { kind: "failed" as const };
+    });
+  }
+
+  updatePaperPage(id: string, pageNumber: number, revision: number, translationBlocks: PaperBlock[]) {
+    return transaction(this.sql, () => {
+      const page = this.getPaperPage(id, pageNumber);
+      if (!page) return { kind: "missing" as const };
+      if (page.revision !== revision) return { kind: "conflict" as const, page };
+      const timestamp = now();
+      this.sql.prepare(
+        `UPDATE paper_pages SET translation_json = ?, revision = revision + 1, updated_at = ?
+         WHERE paper_id = ? AND extraction_id = ? AND page_number = ? AND revision = ?`,
+      ).run(JSON.stringify(translationBlocks), timestamp, id, page.extractionId, pageNumber, revision);
+      this.sql.prepare("UPDATE documents SET revision = revision + 1, updated_at = ? WHERE id = ?").run(timestamp, id);
+      return { kind: "saved" as const, page: this.getPaperPage(id, pageNumber)! };
+    });
   }
 
   private toDerivedResult(row: DerivedResultRow, currentInputHash: string): DerivedResult {
@@ -1893,13 +2246,13 @@ export class KnowledgeDatabase {
 
   *documentsForPortableExport(documentIds?: string[]) {
     if (!documentIds) {
-      const rows = this.sql.prepare("SELECT * FROM documents WHERE deleted_at IS NULL ORDER BY created_at, id")
+      const rows = this.sql.prepare("SELECT * FROM documents WHERE kind = 'article' AND deleted_at IS NULL ORDER BY created_at, id")
         .iterate() as unknown as Iterable<DocumentRow>;
       for (const row of rows) yield this.toDocument(row);
       return;
     }
     if (!documentIds.length) return;
-    const select = this.sql.prepare("SELECT * FROM documents WHERE id = ? AND deleted_at IS NULL");
+    const select = this.sql.prepare("SELECT * FROM documents WHERE kind = 'article' AND id = ? AND deleted_at IS NULL");
     for (const id of documentIds) {
       const row = select.get(id) as unknown as DocumentRow | undefined;
       if (row) yield this.toDocument(row);
@@ -2560,13 +2913,15 @@ export class KnowledgeDatabase {
     where.push(filters.trash === "only" ? "d.deleted_at IS NOT NULL" : "d.deleted_at IS NULL");
 
     if (filters.q?.trim()) {
-      const terms = searchTerms(filters.q);
+      const queryText = filters.q.trim();
+      const terms = searchTerms(queryText);
       const scope = filters.scope ?? "all";
-      if (scope !== "source" && terms.every((term) => [...term].length >= 3)) {
-        from = "FROM documents_fts CROSS JOIN documents d ON d.rowid = documents_fts.rowid";
-        where.push("documents_fts MATCH ?");
-        const query = ftsQuery(filters.q);
-        params.push(scope === "all" ? query : `${scope === "body" ? "markdown" : "title"} : (${query})`);
+      // ponytail: paper JSON stays searchable without rebuilding the shared FTS table; add a unified FTS index when the corpus makes LIKE scans measurable.
+      if (false) {
+        where.push("(d.rowid IN (SELECT rowid FROM documents_fts WHERE documents_fts MATCH ?) OR (d.kind = 'paper' AND EXISTS (SELECT 1 FROM paper_pages pp WHERE pp.paper_id = d.id AND (pp.original_json LIKE ? ESCAPE '\\' OR pp.translation_json LIKE ? ESCAPE '\\'))))");
+        const query = ftsQuery(queryText);
+        const pattern = `%${escapeLike(queryText)}%`;
+        params.push(scope === "all" ? query : `${scope === "body" ? "markdown" : "title"} : (${query})`, pattern, pattern);
       } else {
         for (const term of terms) {
           const pattern = `%${escapeLike(term)}%`;
@@ -2574,20 +2929,20 @@ export class KnowledgeDatabase {
             where.push("d.title LIKE ? ESCAPE '\\'");
             params.push(pattern);
           } else if (scope === "body") {
-            where.push("d.markdown LIKE ? ESCAPE '\\'");
-            params.push(pattern);
+            where.push("(d.markdown LIKE ? ESCAPE '\\' OR (d.kind = 'paper' AND EXISTS (SELECT 1 FROM paper_pages pp WHERE pp.paper_id = d.id AND (pp.original_json LIKE ? ESCAPE '\\' OR pp.translation_json LIKE ? ESCAPE '\\'))))");
+            params.push(pattern, pattern, pattern);
           } else if (scope === "source") {
             where.push(
               `(d.source_url LIKE ? ESCAPE '\\' OR COALESCE(d.final_url, '') LIKE ? ESCAPE '\\' OR
                 COALESCE(d.canonical_url, '') LIKE ? ESCAPE '\\' OR COALESCE(d.author, '') LIKE ? ESCAPE '\\' OR
-                d.source_note LIKE ? ESCAPE '\\')`,
+                d.source_note LIKE ? ESCAPE '\\' OR (d.kind = 'paper' AND EXISTS (SELECT 1 FROM papers p WHERE p.id = d.id AND p.source_url LIKE ? ESCAPE '\\')))`,
             );
-            params.push(pattern, pattern, pattern, pattern, pattern);
+            params.push(pattern, pattern, pattern, pattern, pattern, pattern);
           } else {
             where.push(
-              "(d.title LIKE ? ESCAPE '\\' OR d.markdown LIKE ? ESCAPE '\\' OR d.source_url LIKE ? ESCAPE '\\')",
+              "(d.title LIKE ? ESCAPE '\\' OR d.markdown LIKE ? ESCAPE '\\' OR d.source_url LIKE ? ESCAPE '\\' OR (d.kind = 'paper' AND (EXISTS (SELECT 1 FROM papers p WHERE p.id = d.id AND p.source_url LIKE ? ESCAPE '\\') OR EXISTS (SELECT 1 FROM paper_pages pp WHERE pp.paper_id = d.id AND (pp.original_json LIKE ? ESCAPE '\\' OR pp.translation_json LIKE ? ESCAPE '\\')))))",
             );
-            params.push(pattern, pattern, pattern);
+            params.push(pattern, pattern, pattern, pattern, pattern, pattern);
           }
         }
       }
@@ -2657,7 +3012,7 @@ export class KnowledgeDatabase {
       .get(...params) as { total: number };
     const rows = this.sql
       .prepare(
-        `SELECT d.id, d.source_url, d.final_url, d.canonical_url, d.title, d.author,
+        `SELECT d.id, d.kind, d.source_url, d.final_url, d.canonical_url, d.title, d.author,
                 NULL AS published_at, '' AS markdown, d.status, d.warning,
                 d.error_code, d.error_message, NULL AS capture_mode,
                 d.favorite, d.archived_at, '' AS source_note, d.folder_id,
@@ -3313,7 +3668,10 @@ export class KnowledgeDatabase {
           )
           .all(id) as Array<{ hash: string }>
       ).map(({ hash }) => hash);
-      const relativePaths = [...snapshotPaths, ...assetHashes.map((hash) => `assets/${hash}`)];
+      const paperFileHashes = current.kind === "paper"
+        ? (this.sql.prepare("SELECT source_hash AS hash FROM papers WHERE id = ?").all(id) as Array<{ hash: string }>).map(({ hash }) => hash)
+        : [];
+      const relativePaths = [...snapshotPaths, ...assetHashes.map((hash) => `assets/${hash}`), ...paperFileHashes.map((hash) => `assets/${hash}`)];
       try {
         for (const relativePath of relativePaths) {
           const path = this.storagePath(relativePath);
@@ -3341,6 +3699,9 @@ export class KnowledgeDatabase {
         this.sql
           .prepare("DELETE FROM assets WHERE hash = ? AND NOT EXISTS (SELECT 1 FROM document_assets WHERE asset_hash = ?)")
           .run(hash, hash);
+      }
+      for (const hash of paperFileHashes) {
+        this.sql.prepare("DELETE FROM paper_files WHERE hash = ? AND NOT EXISTS (SELECT 1 FROM papers WHERE source_hash = ?)").run(hash, hash);
       }
       this.sql.prepare("DELETE FROM tags WHERE NOT EXISTS (SELECT 1 FROM document_tags WHERE tag_id = tags.id)").run();
       return { kind: "deleted" as const };
@@ -3384,13 +3745,16 @@ export class KnowledgeDatabase {
         this.storagePath(path);
         const assetHash = /^assets\/([a-f0-9]{64})$/u.exec(path)?.[1];
         const inUse = assetHash
-          ? this.sql.prepare("SELECT 1 AS found FROM document_assets WHERE asset_hash = ? LIMIT 1").get(assetHash)
+          ? this.sql.prepare("SELECT 1 AS found WHERE EXISTS (SELECT 1 FROM document_assets WHERE asset_hash = ?) OR EXISTS (SELECT 1 FROM paper_files WHERE hash = ?)").get(assetHash, assetHash)
           : this.sql.prepare("SELECT 1 AS found FROM captures WHERE snapshot_path = ? LIMIT 1").get(path);
         if (inUse) {
           referenced.push(path);
           continue;
         }
-        if (assetHash) this.sql.prepare("DELETE FROM assets WHERE hash = ?").run(assetHash);
+        if (assetHash) {
+          this.sql.prepare("DELETE FROM assets WHERE hash = ?").run(assetHash);
+          this.sql.prepare("DELETE FROM paper_files WHERE hash = ?").run(assetHash);
+        }
         const result = this.sql
           .prepare(
             `INSERT INTO file_deletions(path, created_at, updated_at) VALUES (?, ?, ?)

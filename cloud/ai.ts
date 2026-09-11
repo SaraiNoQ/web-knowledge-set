@@ -13,6 +13,14 @@ import type {
 import { CloudHttpError, getDocument, jsonObject, type D1Database } from "./extension";
 
 const encoder = new TextEncoder();
+
+function base64(bytes: Uint8Array) {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+}
 const MAX_INPUT_CHARS = 40_000;
 const MAX_CUSTOM_PROMPT_CHARS = 4_000;
 const MAX_RESPONSE_BYTES = 256 * 1024;
@@ -342,6 +350,43 @@ export async function complete(endpointUrl: string, modelName: string, apiKey: s
   if (typeof output !== "string" || !output.trim()) throw new CloudHttpError(502, "LLM_INVALID_RESPONSE", "LLM response has no text content");
   if (output.includes(apiKey)) throw new CloudHttpError(502, "LLM_SECRET_ECHO", "LLM response contained the API key");
   return { output: output.trim(), usage: payload.usage ?? null, finishReason: typeof payload.choices?.[0]?.finish_reason === "string" ? payload.choices[0].finish_reason : null };
+}
+
+export async function completePaper(endpointUrl: string, modelName: string, apiKey: string, system: string, pdf: Uint8Array, timeoutMs = 120_000) {
+  if (!usableKey(apiKey)) throw new CloudHttpError(409, "LLM_KEY_MISSING", "A page-scoped API key is required");
+  let response: Response;
+  try {
+    response = await fetch(endpointUrl, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: modelName,
+        temperature: 0,
+        max_tokens: 32_000,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: [
+            { type: "text", text: "Extract this paper into the required page JSON. Return JSON only." },
+            { type: "file", file: { filename: "paper.pdf", file_data: `data:application/pdf;base64,${base64(pdf)}` } },
+          ] },
+        ],
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    throw new CloudHttpError(502, (error as Error).name === "TimeoutError" ? "LLM_TIMEOUT" : "LLM_NETWORK_ERROR", "LLM request failed");
+  }
+  const text = await limitedText(response);
+  if (response.status === 401 || response.status === 403) throw new CloudHttpError(401, "LLM_AUTH_FAILED", "LLM credentials were rejected");
+  if (response.status === 429) throw new CloudHttpError(429, "LLM_RATE_LIMITED", "LLM rate limit reached");
+  if (!response.ok) throw new CloudHttpError(502, "LLM_PROTOCOL_REJECTED", "LLM endpoint rejected the request");
+  let payload: { choices?: Array<{ message?: { content?: unknown } }> };
+  try { payload = JSON.parse(text) as typeof payload; }
+  catch { throw new CloudHttpError(502, "LLM_INVALID_RESPONSE", "LLM response is not JSON"); }
+  const output = payload.choices?.[0]?.message?.content;
+  if (typeof output !== "string" || !output.trim()) throw new CloudHttpError(502, "LLM_INVALID_RESPONSE", "LLM response has no text content");
+  if (output.includes(apiKey)) throw new CloudHttpError(502, "LLM_SECRET_ECHO", "LLM response contained the API key");
+  return output.trim();
 }
 
 function resultRow(row: Record<string, unknown>, revision: number): DerivedResult {

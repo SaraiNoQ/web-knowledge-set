@@ -12,9 +12,12 @@ const dataDir = join(root, "data");
 const llmServer = createServer(async (request, response) => {
   const chunks: Buffer[] = [];
   for await (const chunk of request) chunks.push(Buffer.from(chunk));
-  const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { messages?: Array<{ content?: string }> };
-  const system = body.messages?.[0]?.content || "";
-  const content = system.includes("This is a connection test")
+  const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { messages?: Array<{ content?: unknown }> };
+  const system = typeof body.messages?.[0]?.content === "string" ? body.messages[0].content : "";
+  const paperRequest = Array.isArray(body.messages?.[1]?.content);
+  const content = paperRequest
+    ? JSON.stringify({ paper: { title: "E2E 论文", authors: ["测试作者"] }, pages: [{ pageNumber: 1, blocks: [{ id: "p1-b1", type: "paragraph", original: "An e2e paper.", translation: "一篇 E2E 论文。", assetIds: [] }] }] })
+    : system.includes("This is a connection test")
     ? "ZHIYE_OK"
     : system.includes("Translate only")
     ? JSON.stringify((JSON.parse(body.messages?.[1]?.content || "[]") as Array<{ id: string; text: string }>)
@@ -59,9 +62,16 @@ const fetchAsset: AssetFetchFunction = async (url) => {
   }
   throw Object.assign(new Error("测试图片不可用"), { code: "HTTP_ERROR" });
 };
+const database = openDatabase(dataDir);
+database.setLlmSettings({
+  enabled: true,
+  target: "local",
+  remote: { endpointUrl: "https://api.openai.com/v1/chat/completions", model: "" },
+  local: { endpointUrl: "http://127.0.0.1:4175", model: "e2e", trusted: true },
+}, 0, false);
 const app = createApp({
   dataDir,
-  database: openDatabase(dataDir),
+  database,
   staticDir: resolve("dist"),
   bootstrapToken: "e2e-bootstrap-token",
   capture,

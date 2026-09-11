@@ -86,9 +86,10 @@ class SqliteD1Database implements D1Database {
 function migratedCloudDatabase() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
-  for (let version = 1; version <= 8; version += 1) {
+  for (let version = 1; version <= 9; version += 1) {
     sqlite.exec(readFileSync(new URL(`../cloud/migrations/${String(version).padStart(4, "0")}_${[
       "cloud_core", "browser_extension", "cloud_ai", "cloud_backups", "cloud_capture", "cloud_folders", "cloud_trash", "cloud_favorites",
+      "cloud_papers",
     ][version - 1]}.sql`, import.meta.url), "utf8"));
   }
   return new SqliteD1Database(sqlite);
@@ -325,6 +326,30 @@ test("cloud creates a ready blank article in the top level", async () => {
   assert.equal(article.status, "ready");
   assert.equal(article.folderId, null);
   assert.match(article.sourceUrl, /^zhiye:\/\/article\//u);
+});
+
+test("cloud stores paper PDFs as a separate paper item", async () => {
+  const { env, db, bucket, imagesBucket } = sqliteEnvironment();
+  const pdf = Buffer.from("%PDF-1.7\ncloud paper\n", "ascii");
+  const response = await handleRequest(new Request("https://app.example.com/api/papers/upload", {
+    method: "POST",
+    headers: { "Content-Type": "application/pdf", "Content-Length": String(pdf.length), "X-Filename": "cloud-paper.pdf", "X-Zhiye-Data-Epoch": "cloud-test" },
+    body: pdf,
+  }), env);
+  assert.equal(response.status, 201);
+  const body = await response.json() as { paper: { kind: string; sourceKind: string; originalFileName: string; sourceHash: string } };
+  assert.deepEqual({ kind: body.paper.kind, sourceKind: body.paper.sourceKind, originalFileName: body.paper.originalFileName }, { kind: "paper", sourceKind: "pdf", originalFileName: "cloud-paper.pdf" });
+  assert.equal((await imagesBucket.head(`paper/${body.paper.sourceHash}`))?.size, pdf.length);
+  assert.equal((db.sqlite.prepare("SELECT COUNT(*) AS count FROM cloud_papers").get() as { count: number }).count, 1);
+  const backup = await handleRequest(new Request("https://app.example.com/api/data-safety/backups", {
+    method: "POST", headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": String((db.sqlite.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'").get() as { value: string }).value) }, body: "{}",
+  }), env);
+  assert.equal(backup.status, 201, await backup.clone().text());
+  const backupId = (await backup.json() as { id: string }).id;
+  const manifest = JSON.parse(new TextDecoder().decode(bucket.objects.get(`backups/${backupId}.zhiye-cloud-backup`)!.bytes)) as { version: number; papers: unknown[]; paperFiles: unknown[] };
+  assert.equal(manifest.version, 6);
+  assert.equal(manifest.papers.length, 1);
+  assert.equal(manifest.paperFiles.length, 1);
 });
 
 test("cloud favorites documents with revision guards and list filters", async () => {

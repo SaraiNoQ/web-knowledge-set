@@ -22,6 +22,7 @@ import type {
   KnowledgeDocument,
   ImportKind,
   ImportStrategy,
+  PaperBlock,
   RecentFilter,
   StartDerivedTaskInput,
   TranslationLanguage,
@@ -79,6 +80,8 @@ import {
   llmSettingsInput,
   type ResolveLlmTarget,
 } from "./llm.js";
+import { createPaperTasks } from "./paper.js";
+import { safeFetchBinary } from "./safe-fetch.js";
 import {
   createPortableBundle,
   PortableError,
@@ -90,6 +93,7 @@ const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
 const MAX_COMPRESSED_SNAPSHOT_BYTES = 6 * 1024 * 1024;
+const MAX_PAPER_PDF_BYTES = 50 * 1024 * 1024;
 const DATA_EPOCH_HEADER = "X-Zhiye-Data-Epoch";
 const unsafeControl = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
 const JSON_MUTATION_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
@@ -132,6 +136,7 @@ const contentTypes: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".ico": "image/x-icon",
   ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".png": "image/png",
   ".svg": "image/svg+xml",
@@ -356,6 +361,47 @@ const CLOUD_BACKUP_MIME = "application/vnd.zhiye.cloud-backup+json";
 const CLOUD_ZIP_MIME = "application/vnd.zhiye.cloud-backup+zip";
 const CLOUD_ZIP_FORMAT = "zhiye-cloud-backup";
 const CLOUD_ZIP_BODY_LIMIT = 512 * 1024 * 1024;
+
+function paperPdfUrl(value: string) {
+  const url = new URL(value);
+  if (url.hostname === "arxiv.org" && /^(?:\/abs|\/html)\//u.test(url.pathname)) {
+    const id = url.pathname.split("/").filter(Boolean).at(-1)?.replace(/\.pdf$/iu, "");
+    if (id) return `https://arxiv.org/pdf/${id}.pdf`;
+  }
+  return value;
+}
+
+async function fetchPaperPdf(value: string) {
+  const final = await safeFetchBinary(paperPdfUrl(value), {
+    maxBytes: MAX_PAPER_PDF_BYTES,
+    accept: "application/pdf,application/octet-stream;q=0.8",
+  });
+  const contentType = final.contentType.toLowerCase();
+  if (contentType !== "application/pdf" && final.body.subarray(0, 5).toString("ascii") !== "%PDF-") {
+    throw new HttpError(415, "PAPER_PDF_REQUIRED", "论文来源没有返回 PDF 文件");
+  }
+  return { ...final, sourceUrl: value };
+}
+
+function paperBlocksInput(value: unknown): PaperBlock[] {
+  if (!Array.isArray(value) || value.length > 500) throw new HttpError(400, "INVALID_PAPER_PAGE", "translationBlocks is invalid");
+  const allowed = new Set(["heading", "paragraph", "formula", "table", "figure", "caption", "reference"]);
+  return value.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new HttpError(400, "INVALID_PAPER_PAGE", `Block ${index + 1} is invalid`);
+    const item = entry as Record<string, unknown>;
+    if (typeof item.id !== "string" || item.id.length > 200 || typeof item.original !== "string" || typeof item.translation !== "string" ||
+        !allowed.has(String(item.type)) || !Array.isArray(item.assetIds) || item.assetIds.some((asset) => typeof asset !== "string")) {
+      throw new HttpError(400, "INVALID_PAPER_PAGE", `Block ${index + 1} is invalid`);
+    }
+    return {
+      id: item.id,
+      type: item.type as PaperBlock["type"],
+      original: item.original,
+      translation: item.translation,
+      assetIds: [...new Set(item.assetIds as string[])],
+    };
+  });
+}
 
 async function readRequestBody(request: IncomingMessage, bytes: number): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -1263,6 +1309,15 @@ export function createApp(options: AppOptions) {
     apiKeyEndpoint: options.llmApiKeyEndpoint,
     resolveTarget: options.resolveLlmTarget,
   });
+  const paperTasks = createPaperTasks({
+    database: () => {
+      if (!db) throw new LlmError(503, "DATA_UNAVAILABLE", "Knowledge-base data needs recovery");
+      return db;
+    },
+    apiKey: options.llmApiKey,
+    apiKeyEndpoint: options.llmApiKeyEndpoint,
+    resolveTarget: options.resolveLlmTarget,
+  });
   let maintenanceKind: string | null = null;
   let maintenanceDone: Promise<void> | null = null;
   let finishMaintenance: (() => void) | null = null;
@@ -1285,7 +1340,12 @@ export function createApp(options: AppOptions) {
   }
 
   const guardDataMutation = (request: IncomingMessage) => {
-    guardMutation(request);
+    const pathname = new URL(request.url ?? "/", `http://${request.headers.host}`).pathname;
+    if (pathname === "/api/papers/upload") {
+      if (!sameOrigin(request)) throw new HttpError(403, "ORIGIN_REJECTED", "Cross-origin mutations are not allowed");
+      const contentType = request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
+      if (contentType !== "application/pdf" && contentType !== "application/octet-stream") throw new HttpError(415, "PAPER_PDF_REQUIRED", "Content-Type must be application/pdf");
+    } else guardMutation(request);
     const enteringEpoch = request.headers[DATA_EPOCH_HEADER.toLowerCase()];
     assertDataEpoch(enteringEpoch);
     return enteringEpoch;
@@ -1330,9 +1390,11 @@ export function createApp(options: AppOptions) {
     });
     try {
       await derivedTasks.pause();
+      await paperTasks.pause();
       return await operation();
     } finally {
       derivedTasks.resume();
+      paperTasks.resume();
       maintenanceKind = null;
       finishMaintenance?.();
       finishMaintenance = null;
@@ -1622,11 +1684,14 @@ export function createApp(options: AppOptions) {
       if (pathname === "/api/settings/llm/key" && request.method === "PUT") {
         const credential = llmApiKeyInput(await mutationBody(request));
         await derivedTasks.pause();
+        await paperTasks.pause();
         try {
           derivedTasks.setApiKey(credential.apiKey, credential.endpointUrl);
+          paperTasks.setApiKey(credential.apiKey, credential.endpointUrl);
           sendJson(response, 200, derivedTasks.apiKeyStatus());
         } finally {
           derivedTasks.resume();
+          paperTasks.resume();
         }
         return;
       }
@@ -1637,11 +1702,14 @@ export function createApp(options: AppOptions) {
           throw new LlmError(400, "INVALID_LLM_API_KEY", "API key deletion does not accept fields");
         }
         await derivedTasks.pause();
+        await paperTasks.pause();
         try {
           derivedTasks.deleteApiKey();
+          paperTasks.deleteApiKey();
           sendJson(response, 200, derivedTasks.apiKeyStatus());
         } finally {
           derivedTasks.resume();
+          paperTasks.resume();
         }
         return;
       }
@@ -1653,6 +1721,7 @@ export function createApp(options: AppOptions) {
           throw new LlmError(409, "LLM_KEY_MISSING", "Remote LLM use requires a configured API key");
         }
         await derivedTasks.pause();
+        await paperTasks.pause();
         try {
           const result = requireDatabase().setLlmSettings({
             enabled: value.enabled,
@@ -1666,6 +1735,7 @@ export function createApp(options: AppOptions) {
           sendJson(response, 200, result.settings);
         } finally {
           derivedTasks.resume();
+          paperTasks.resume();
         }
         return;
       }
@@ -1678,6 +1748,7 @@ export function createApp(options: AppOptions) {
           throw new HttpError(400, "INVALID_LLM_DISABLE", "revision and deleteResults are required");
         }
         await derivedTasks.pause();
+        await paperTasks.pause();
         try {
           const apiKeyConfigured = derivedTasks.settings().apiKeyConfigured;
           const result = requireDatabase().disableLlm(
@@ -1692,6 +1763,7 @@ export function createApp(options: AppOptions) {
           sendJson(response, 200, { settings: result.settings, deletedResults: result.deletedResults });
         } finally {
           derivedTasks.resume();
+          paperTasks.resume();
         }
         return;
       }
@@ -2191,6 +2263,113 @@ export function createApp(options: AppOptions) {
         return;
       }
 
+      if (pathname === "/api/papers" && request.method === "POST") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length !== 1 || typeof body.url !== "string") {
+          throw new HttpError(400, "INVALID_PAPER_REQUEST", "Only a paper URL may be provided");
+        }
+        const sourceUrl = normalizeUrl(body.url);
+        const fetched = await fetchPaperPdf(sourceUrl);
+        const hash = createHash("sha256").update(fetched.body).digest("hex");
+        const result = requireDatabase().createPaper({
+          sourceKind: "url",
+          sourceUrl,
+          originalFileName: basename(new URL(fetched.finalUrl).pathname) || null,
+          hash,
+          content: fetched.body,
+        });
+        sendJson(response, result.created ? 201 : 200, result);
+        return;
+      }
+
+      if (pathname === "/api/papers/upload" && request.method === "POST") {
+        if (!sameOrigin(request)) throw new HttpError(403, "ORIGIN_REJECTED", "Cross-origin mutations are not allowed");
+        const contentType = request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
+        if (contentType !== "application/pdf" && contentType !== "application/octet-stream") {
+          throw new HttpError(415, "PAPER_PDF_REQUIRED", "Content-Type must be application/pdf");
+        }
+        const pdf = await readBinary(request, MAX_PAPER_PDF_BYTES);
+        if (pdf.subarray(0, 5).toString("ascii") !== "%PDF-") throw new HttpError(415, "PAPER_PDF_REQUIRED", "上传内容不是有效 PDF");
+        const fileName = String(request.headers["x-filename"] ?? "paper.pdf").replace(/[\\/\u0000-\u001f]/gu, "-").slice(0, 255) || "paper.pdf";
+        const hash = createHash("sha256").update(pdf).digest("hex");
+        const result = requireDatabase().createPaper({ sourceKind: "pdf", sourceUrl: null, originalFileName: fileName, hash, content: pdf });
+        sendJson(response, result.created ? 201 : 200, result);
+        return;
+      }
+
+      const paperSourceMatch = pathname.match(/^\/api\/papers\/([^/]+)\/source\.pdf$/u);
+      if (paperSourceMatch && request.method === "GET") {
+        const database = requireDatabase();
+        const id = decodeId(paperSourceMatch[1]);
+        const paper = database.getPaper(id);
+        const path = database.paperFilePath(id);
+        if (!paper || !path || !existsSync(path)) throw new HttpError(404, "PAPER_NOT_FOUND", "Paper not found");
+        const info = statSync(path);
+        response.writeHead(200, {
+          "Content-Type": "application/pdf",
+          "Content-Length": String(info.size),
+          "Content-Disposition": `inline; filename="${(paper.originalFileName || "paper.pdf").replace(/[^\w.-]+/gu, "-")}"`,
+          "Cache-Control": "private, max-age=3600",
+          ...securityHeaders(),
+        });
+        createReadStream(path).on("error", (error) => response.destroy(error)).pipe(response);
+        return;
+      }
+
+      const paperPageMatch = pathname.match(/^\/api\/papers\/([^/]+)\/pages\/([0-9]+)$/u);
+      if (paperPageMatch && request.method === "GET") {
+        const page = requireDatabase().getPaperPage(decodeId(paperPageMatch[1]), Number(paperPageMatch[2]));
+        if (!page) throw new HttpError(404, "PAPER_PAGE_NOT_FOUND", "Paper page not found");
+        sendJson(response, 200, page);
+        return;
+      }
+
+      const paperExtractionMatch = pathname.match(/^\/api\/papers\/([^/]+)\/extractions$/u);
+      if (paperExtractionMatch && request.method === "POST") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length) throw new HttpError(400, "INVALID_PAPER_EXTRACTION", "Extraction request accepts no fields");
+        const task = paperTasks.start(decodeId(paperExtractionMatch[1]));
+        sendJson(response, 202, task);
+        return;
+      }
+
+      const paperTaskMatch = pathname.match(/^\/api\/paper-tasks\/([^/]+)$/u);
+      if (paperTaskMatch && request.method === "GET") {
+        const task = paperTasks.get(decodeId(paperTaskMatch[1]));
+        if (!task) throw new HttpError(404, "PAPER_TASK_NOT_FOUND", "Paper task not found");
+        sendJson(response, 200, task);
+        return;
+      }
+
+      const paperMatch = pathname.match(/^\/api\/papers\/([^/]+)$/u);
+      if (paperMatch && request.method === "GET") {
+        const paper = requireDatabase().getPaper(decodeId(paperMatch[1]));
+        if (!paper) throw new HttpError(404, "PAPER_NOT_FOUND", "Paper not found");
+        sendJson(response, 200, paper);
+        return;
+      }
+
+      const paperPagePatchMatch = pathname.match(/^\/api\/papers\/([^/]+)\/pages\/([0-9]+)$/u);
+      if (paperPagePatchMatch && request.method === "PATCH") {
+        const body = await mutationBody(request);
+        if (!Number.isSafeInteger(body.revision) || typeof body.revision !== "number" || Object.keys(body).some((key) => !["revision", "translationBlocks"].includes(key))) {
+          throw new HttpError(400, "INVALID_PAPER_PAGE", "revision and translationBlocks are required");
+        }
+        const result = requireDatabase().updatePaperPage(
+          decodeId(paperPagePatchMatch[1]),
+          Number(paperPagePatchMatch[2]),
+          body.revision as number,
+          paperBlocksInput(body.translationBlocks),
+        );
+        if (result.kind === "missing") throw new HttpError(404, "PAPER_PAGE_NOT_FOUND", "Paper page not found");
+        if (result.kind === "conflict") {
+          sendJson(response, 409, { error: { code: "PAPER_PAGE_CONFLICT", message: "Paper page changed since it was loaded" }, page: result.page });
+          return;
+        }
+        sendJson(response, 200, result.page);
+        return;
+      }
+
       if (pathname === "/api/documents" && request.method === "POST") {
         const body = await mutationBody(request);
         if (Object.hasOwn(body, "title")) {
@@ -2213,7 +2392,7 @@ export function createApp(options: AppOptions) {
         return;
       }
 
-      if (pathname === "/api/documents" && request.method === "GET") {
+      if ((pathname === "/api/documents" || pathname === "/api/library") && request.method === "GET") {
         sendJson(response, 200, requireDatabase().listDocuments(documentFilters(requestUrl)));
         return;
       }
@@ -2363,6 +2542,7 @@ export function createApp(options: AppOptions) {
           throw new HttpError(400, "CONFIRMATION_REQUIRED", "confirm must be the only field and must be true");
         }
         await derivedTasks.pause();
+        await paperTasks.pause();
         try {
           const deletedResults = requireDatabase().deleteAllDerivedResults();
           derivedTasks.clearHistory();
@@ -2372,6 +2552,7 @@ export function createApp(options: AppOptions) {
           });
         } finally {
           derivedTasks.resume();
+          paperTasks.resume();
         }
         return;
       }
@@ -2874,6 +3055,7 @@ export function createApp(options: AppOptions) {
       closed = true;
       await maintenanceDone;
       await derivedTasks.stop();
+      await paperTasks.pause();
       await worker.stop();
       db?.close();
       db = null;

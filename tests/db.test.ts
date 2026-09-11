@@ -56,7 +56,7 @@ test("v14 recent filters persist in the local database", () => {
     sort: "updated",
   }];
   try {
-    assert.equal(CURRENT_SCHEMA_VERSION, 16);
+    assert.equal(CURRENT_SCHEMA_VERSION, 17);
     assert.deepEqual(fixture.db.getRecentFilters(), { filters: [], revision: 0 });
     assert.deepEqual(fixture.db.getOnboarding(), { completed: false, revision: 0 });
     assert.deepEqual(fixture.db.setOnboarding(true, 0), {
@@ -1455,6 +1455,12 @@ test("schema inspection is read-only and rejects future or incomplete histories"
       DROP TABLE derived_results;
       DROP TABLE import_items;
       DROP TABLE import_batches;
+      DROP TABLE paper_assets;
+      DROP TABLE paper_pages;
+      DROP TABLE paper_extractions;
+      DROP TABLE papers;
+      DROP TABLE paper_files;
+      ALTER TABLE documents DROP COLUMN kind;
       CREATE TABLE import_batches (
         id TEXT PRIMARY KEY,
         kind TEXT NOT NULL CHECK (kind IN ('urls', 'bookmarks', 'markdown')),
@@ -1481,12 +1487,11 @@ test("schema inspection is read-only and rejects future or incomplete histories"
         UNIQUE(batch_id, item_index)
       );
       CREATE INDEX import_items_batch ON import_items(batch_id, item_index);
-      DELETE FROM schema_migrations WHERE version IN (
-        ${CURRENT_SCHEMA_VERSION - 2}, ${CURRENT_SCHEMA_VERSION - 1}, ${CURRENT_SCHEMA_VERSION}
-      );
+      DELETE FROM schema_migrations WHERE version BETWEEN ${CURRENT_SCHEMA_VERSION - 3} AND ${CURRENT_SCHEMA_VERSION};
     `);
     raw.close();
     assert.deepEqual(inspectDatabaseSchema(dataDir).pendingVersions, [
+      CURRENT_SCHEMA_VERSION - 3,
       CURRENT_SCHEMA_VERSION - 2,
       CURRENT_SCHEMA_VERSION - 1,
       CURRENT_SCHEMA_VERSION,

@@ -21,6 +21,7 @@ import {
 } from "./extension";
 import { handleAiApi } from "./ai";
 import { handleTitleApi } from "./title";
+import { deletePaperSource, handlePaperApi, paperSource, paperSourceHash } from "./paper";
 import { handleAssetRequest } from "./assets";
 import { handleBackupApi, type R2Bucket } from "./backup";
 import {
@@ -201,8 +202,11 @@ async function api(request: Request, env: CloudEnv, url: URL) {
     catch { throw new CloudHttpError(400, "INVALID_PATH", "Invalid document identifier"); }
     const body = await jsonObject(request, 4_096);
     const db = epochGuardedDatabase(env.DB, epoch);
-    if (await getDocument(env.DB, id)) await permanentlyDeleteDocument(db, id, body);
+    const document = await getDocument(env.DB, id);
+    const paperHash = document?.kind === "paper" ? await paperSourceHash(env.DB, id) : null;
+    if (document) await permanentlyDeleteDocument(db, id, body);
     else await permanentlyDeleteCaptureJob(db, id, body);
+    if (paperHash) await deletePaperSource(env.DB, env.IMAGES, paperHash);
     return new Response(null, { status: 204, headers: { ...SECURITY_HEADERS, "Cache-Control": "no-store", [DATA_EPOCH_HEADER]: epoch } });
   }
   if (url.pathname === "/api/documents" && request.method === "POST") {
@@ -219,6 +223,21 @@ async function api(request: Request, env: CloudEnv, url: URL) {
     }
     return json(await createCapture(body, { ...env, DB: epochGuardedDatabase(env.DB, epoch) }, epoch), 201, epoch);
   }
+  const paperSourcePath = /^\/api\/papers\/([^/]+)\/source\.pdf$/u.exec(url.pathname);
+  if (paperSourcePath && request.method === "GET") {
+    const object = await paperSource(env.IMAGES, env.DB, decodeURIComponent(paperSourcePath[1]!));
+    return new Response(object.body, {
+      status: 200,
+      headers: { ...SECURITY_HEADERS, "Content-Type": "application/pdf", "Content-Length": String(object.size), "Cache-Control": "private, max-age=3600", [DATA_EPOCH_HEADER]: epoch },
+    });
+  }
+  const paper = await handlePaperApi(
+    request,
+    request.method === "GET" ? env.DB : epochGuardedDatabase(env.DB, epoch),
+    env.IMAGES,
+    url,
+  );
+  if (paper) return json(paper.body, paper.status ?? 200, epoch);
   const retryPath = /^\/api\/documents\/([^/]+)\/retry$/u.exec(url.pathname);
   if (retryPath && request.method === "POST") {
     if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
@@ -301,6 +320,7 @@ async function api(request: Request, env: CloudEnv, url: URL) {
     case "/api/collections":
     case "/api/tags":
       return json([], 200, epoch);
+    case "/api/library":
     case "/api/documents": {
       const pageValue = url.searchParams.get("page") || "1";
       if (!/^[1-9]\d*$/u.test(pageValue)) throw new CloudHttpError(400, "INVALID_PAGE", "page must be a positive integer");

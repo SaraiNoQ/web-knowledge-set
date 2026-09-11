@@ -31,6 +31,7 @@ import type {
   KnowledgeFolder,
   KnowledgeTag,
   OnboardingState,
+  PaperDocument,
   ReextractionPreview,
 } from "../shared/types";
 import { api, ApiRequestError } from "./api";
@@ -43,6 +44,7 @@ import { Diagnostics } from "./components/Diagnostics";
 import { DerivedKnowledge, type DerivedMode } from "./components/DerivedKnowledge";
 import { MarkdownEditor } from "./components/MarkdownEditor";
 import { Onboarding } from "./components/Onboarding";
+import { PaperReader } from "./components/PaperReader";
 import { DocumentDirectoryRow, LibraryDirectory, type MoveDocumentTarget } from "./components/LibraryDirectory";
 import { IconButton, Select } from "./components/ui/Controls";
 import { useDialogs, useToast } from "./components/ui/Feedback";
@@ -546,6 +548,7 @@ export default function App() {
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const [showBackToTitle, setShowBackToTitle] = useState(false);
   const [currentDoc, setCurrentDoc] = useState<KnowledgeDocument | null>(null);
+  const [currentPaper, setCurrentPaper] = useState<PaperDocument | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [tagText, setTagText] = useState("");
   const [sourceMetadata, setSourceMetadata] = useState<SourceMetadataDraft | null>(null);
@@ -572,6 +575,12 @@ export default function App() {
   const [bulkImportError, setBulkImportError] = useState("");
   const [bulkImportNotice, setBulkImportNotice] = useState("");
   const [bulkImportTask, setBulkImportTask] = useState<"validating" | "importing" | null>(null);
+  const [paperImportOpen, setPaperImportOpen] = useState(false);
+  const [paperImportMode, setPaperImportMode] = useState<"url" | "pdf">("url");
+  const [paperImportUrl, setPaperImportUrl] = useState("");
+  const [paperImportFile, setPaperImportFile] = useState<File | null>(null);
+  const [paperImportBusy, setPaperImportBusy] = useState(false);
+  const [paperImportError, setPaperImportError] = useState("");
   const [captureQueue, setCaptureQueue] = useState<CaptureQueueStatus | null>(null);
   const [queueError, setQueueError] = useState("");
   const [queueUpdating, setQueueUpdating] = useState(false);
@@ -1349,6 +1358,7 @@ export default function App() {
   useEffect(() => {
     if (!selectedId) {
       installCurrentDocument(null);
+      setCurrentPaper(null);
       setDraft(null);
       setAssets([]);
       setAssetError("");
@@ -1357,6 +1367,7 @@ export default function App() {
     setCloudEditing(false);
     const controller = new AbortController();
     installCurrentDocument(null);
+    setCurrentPaper(null);
     setDraft(null);
     setAssets([]);
     setAssetError("");
@@ -1391,6 +1402,12 @@ export default function App() {
     ])
       .then(([document, stored]) => {
         installCurrentDocument(document);
+        if (document.kind === "paper") {
+          setDraft(null);
+          return api.getPaper(document.id, controller.signal).then((paper) => {
+            if (!controller.signal.aborted) setCurrentPaper(paper);
+          });
+        }
         if (document.markdown.length > 250_000) setMode("edit");
         const serverDraft = draftOf(document);
         const recovered = stored
@@ -2027,6 +2044,28 @@ export default function App() {
       setBulkImportTask(null);
       setBulkImportBusy(false);
     }
+  };
+
+  const importPaper = async () => {
+    if (paperImportBusy || (paperImportMode === "url" ? !paperImportUrl.trim() : !paperImportFile)) return;
+    setPaperImportBusy(true);
+    setPaperImportError("");
+    try {
+      const result = paperImportMode === "url"
+        ? await api.createPaperFromUrl(paperImportUrl.trim())
+        : await api.uploadPaper(paperImportFile!);
+      const paper = result.paper || result.duplicate;
+      setPaperImportOpen(false);
+      setPaperImportUrl("");
+      setPaperImportFile(null);
+      setListRefresh((value) => value + 1);
+      if (paper?.id) {
+        setSelectedId(paper.id);
+        if (result.created) await api.startPaperExtraction(paper.id);
+      }
+    } catch (error) {
+      setPaperImportError((error as Error).message);
+    } finally { setPaperImportBusy(false); }
   };
 
   const applyBulkImport = async () => {
@@ -3289,7 +3328,7 @@ export default function App() {
           <span><strong>织页</strong><small>ZHIYE · {cloudMode ? "CLOUD" : "LOCAL"} KNOWLEDGE</small></span>
         </button>
         <p className="masthead-note">把散落的网页，<br />织成可阅读的知识。</p>
-        <div className="masthead-actions">{!cloudMode && onboarding !== "unavailable" && <button type="button" className="guide-button" onClick={() => setGuideOpen(true)} disabled={closing}>使用指南</button>}<button type="button" className="shortcut-help-button" aria-keyshortcuts="?" onClick={() => setShortcutHelp(true)} disabled={closing}>帮助</button>{"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}<button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
+        <div className="masthead-actions">{!cloudMode && onboarding !== "unavailable" && <button type="button" className="guide-button" onClick={() => setGuideOpen(true)} disabled={closing}>使用指南</button>}<button type="button" className="guide-button" onClick={() => { setPaperImportOpen(true); setPaperImportError(""); }} disabled={closing}>导入论文</button><button type="button" className="shortcut-help-button" aria-keyshortcuts="?" onClick={() => setShortcutHelp(true)} disabled={closing}>帮助</button>{"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}<button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
           <i />{safetyRecovery ? "恢复模式" : "数据安全"}
         </button></div>
       </header>
@@ -3332,6 +3371,17 @@ export default function App() {
             <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/docs/SUPPORT.md" target="_blank" rel="noreferrer noopener">支持</a>
             <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/docs/SECURITY.md" target="_blank" rel="noreferrer noopener">安全</a>
           </nav>
+        </section>
+      </Modal>}
+
+      {paperImportOpen && <Modal open panel={false} className="shortcut-backdrop" title="导入论文" onClose={() => { if (!paperImportBusy) setPaperImportOpen(false); }}>
+        <section className="shortcut-card paper-import-card">
+          <header><div><span className="eyebrow">NEW PAPER KNOWLEDGE</span><h2>导入一篇论文</h2><p>原始 PDF 会只读保存，再由已配置的 LLM 生成分页对照。</p></div><button type="button" onClick={() => setPaperImportOpen(false)} disabled={paperImportBusy} aria-label="关闭导入论文">×</button></header>
+          <div className="paper-import-tabs" role="tablist" aria-label="论文来源类型"><button type="button" role="tab" aria-selected={paperImportMode === "url"} onClick={() => setPaperImportMode("url")}>公开链接</button><button type="button" role="tab" aria-selected={paperImportMode === "pdf"} onClick={() => setPaperImportMode("pdf")}>上传 PDF</button></div>
+          {paperImportMode === "url" ? <label className="paper-import-field"><span>论文链接</span><input type="url" value={paperImportUrl} onChange={(event) => setPaperImportUrl(event.target.value)} placeholder="https://arxiv.org/abs/..." disabled={paperImportBusy} /><small>支持 arXiv 页面和直接 PDF；IEEE / ACM 等请上传 PDF。</small></label> : <label className="paper-import-upload"><span>选择原始 PDF</span><input type="file" accept="application/pdf,.pdf" onChange={(event) => setPaperImportFile(event.target.files?.[0] || null)} disabled={paperImportBusy} /><strong>{paperImportFile?.name || "尚未选择 PDF"}</strong><small>单文件上限 50 MiB；原始文件不会被 AI 改写。</small></label>}
+          <div className="paper-import-boundary"><strong>AI 发送范围</strong><span>整份 PDF + 页码结构 + 图表说明</span><small>当前模型必须支持 OpenAI-compatible 文件 content-part；不使用本地 PDF 解析。</small></div>
+          {paperImportError && <p className="paper-import-error" role="alert">{paperImportError}</p>}
+          <footer><button type="button" onClick={() => setPaperImportOpen(false)} disabled={paperImportBusy}>取消</button><button type="button" className="primary-button" onClick={() => void importPaper()} disabled={paperImportBusy || (paperImportMode === "url" ? !paperImportUrl.trim() : !paperImportFile)}>{paperImportBusy ? <><Spinner />处理中…</> : "创建论文"}</button></footer>
         </section>
       </Modal>}
 
@@ -3534,6 +3584,7 @@ export default function App() {
             onMove={moveDocumentToFolder}
             onTrash={trashDirectoryDocument}
             onCreateArticle={createArticle}
+            onCreatePaper={() => { setPaperImportOpen(true); setPaperImportError(""); }}
             selectedId={selectedId}
             activeFolderId={currentDoc?.id === selectedId ? currentDoc.folderId : items.find((item) => item.id === selectedId)?.folderId}
             selectedIds={selectedIds}
@@ -3597,10 +3648,12 @@ export default function App() {
               <h2>在左侧选一张织片</h2>
               <p>{cloudMode ? <>选择一篇知识后可阅读、编辑 Markdown、翻译或生成 AI 派生内容。<br />重要变更前可在“数据安全”创建 R2 留档。</> : <>阅读原文、整理标签，或直接修改 Markdown。<br />你的文字会留在本地。</>}</p>
             </div>
-          ) : detailLoading && !currentDoc ? (
+          ) : detailLoading && (!currentDoc || (currentDoc.kind === "paper" && !currentPaper)) ? (
             <StatePanel kind="loading" title="正在展开织片" />
-          ) : detailError && !currentDoc ? (
+          ) : detailError && (!currentDoc || (currentDoc.kind === "paper" && !currentPaper)) ? (
             <StatePanel kind="error" title="无法打开这篇知识">{detailError}</StatePanel>
+          ) : currentPaper && currentDoc ? (
+            <PaperReader paperId={currentPaper.id} onClose={closeDocument} />
           ) : currentDoc && draft && webArticleMode ? (
             <>
               <button type="button" className="mobile-back" onClick={closeDocument}><Icon size={16}><path d="m15 18-6-6 6-6" /></Icon>返回知识库</button>

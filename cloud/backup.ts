@@ -58,7 +58,15 @@ interface ArchiveV5 extends Omit<ArchiveV4, "version"> {
   assets: Array<{ hash: string; mime: string; bytes: number }>;
 }
 
-type Archive = ArchiveV1 | ArchiveV2 | ArchiveV3 | ArchiveV4 | ArchiveV5;
+interface ArchiveV6 extends Omit<ArchiveV5, "version"> {
+  version: 6;
+  papers: Record<string, unknown>[];
+  paperExtractions: Record<string, unknown>[];
+  paperPages: Record<string, unknown>[];
+  paperFiles: Array<{ hash: string; mime: string; bytes: number; r2_key: string }>;
+}
+
+type Archive = ArchiveV1 | ArchiveV2 | ArchiveV3 | ArchiveV4 | ArchiveV5 | ArchiveV6;
 
 function assetHashRefs(markdown: unknown): string[] {
   if (typeof markdown !== "string") return [];
@@ -110,19 +118,22 @@ function parseArchive(bytes: Uint8Array): Archive {
     throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup must be an object");
   }
   const raw = value as Record<string, unknown>;
-  const version = raw.version;
+  const version = typeof raw.version === "number" ? raw.version : 0;
   const topFields = version === 1
     ? ["format", "version", "createdAt", "documents", "derivedResults", "llmSettings"]
-    : ["format", "version", "createdAt", "folders", "documents", "derivedResults", "llmSettings", ...(version === 5 ? ["assets"] : [])];
-  if ((version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5) || !exact(raw, topFields) || raw.format !== "zhiye-cloud-backup" ||
+    : ["format", "version", "createdAt", "folders", "documents", "derivedResults", "llmSettings", ...(version >= 5 ? ["assets"] : []), ...(version === 6 ? ["papers", "paperExtractions", "paperPages", "paperFiles"] : [])];
+  if ((version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6) || !exact(raw, topFields) || raw.format !== "zhiye-cloud-backup" ||
     !timestamp(raw.createdAt) || !Array.isArray(raw.documents) || !Array.isArray(raw.derivedResults) ||
     (version !== 1 && !Array.isArray(raw.folders))) {
     throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup schema is invalid");
   }
-  if (version === 5 && !Array.isArray(raw.assets)) {
+  if (version >= 5 && !Array.isArray(raw.assets)) {
     throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup assets are invalid");
   }
-  if (version === 5) {
+  if (version === 6 && (!Array.isArray(raw.papers) || !Array.isArray(raw.paperExtractions) || !Array.isArray(raw.paperPages) || !Array.isArray(raw.paperFiles))) {
+    throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup paper data is invalid");
+  }
+  if (version >= 5) {
     const seen = new Set<string>();
     for (const row of raw.assets as Array<Record<string, unknown>>) {
       if (!record(row) || !exact(row, ["hash", "mime", "bytes"]) || !/^[a-f0-9]{64}$/u.test(String(row.hash)) ||
@@ -281,7 +292,7 @@ function safeUrl(value: unknown) {
   try {
     const url = new URL(value);
     return ((url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password) ||
-      (url.protocol === "zhiye:" && url.hostname === "article" && /^\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(url.pathname));
+      (url.protocol === "zhiye:" && (url.hostname === "article" || url.hostname === "paper") && /^\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(url.pathname));
   } catch { return false; }
 }
 
@@ -315,7 +326,7 @@ async function snapshot(db: D1Database, images: R2Bucket): Promise<Archive> {
   if (!db.batch) throw new CloudHttpError(503, "CLOUD_BATCH_UNAVAILABLE", "D1 batch API is unavailable");
   const [folders, documents, derived, settings] = await db.batch([
     db.prepare("SELECT * FROM cloud_folders ORDER BY created_at"),
-    db.prepare("SELECT * FROM cloud_documents ORDER BY created_at"),
+    db.prepare("SELECT id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note, revision, created_at, updated_at, folder_id, deleted_at, favorite FROM cloud_documents ORDER BY created_at"),
     db.prepare("SELECT * FROM cloud_derived_results ORDER BY created_at"),
     db.prepare("SELECT value, revision FROM app_settings WHERE key = 'llm_settings'"),
   ]);
@@ -329,7 +340,20 @@ async function snapshot(db: D1Database, images: R2Bucket): Promise<Archive> {
     llmSettings: settings.results[0] as { value: string; revision: number } | undefined ?? null,
   };
   const assets = await referencedAssets(db, base.documents, images);
-  return { ...base, version: 5, assets };
+  const papers = await db.prepare("SELECT * FROM cloud_papers ORDER BY created_at").all<Record<string, unknown>>();
+  if (!papers.results.length) return { ...base, version: 5, assets };
+  const paperExtractions = await db.prepare("SELECT * FROM cloud_paper_extractions ORDER BY created_at").all<Record<string, unknown>>();
+  const paperPages = await db.prepare("SELECT * FROM cloud_paper_pages ORDER BY paper_id, page_number").all<Record<string, unknown>>();
+  const paperFiles = await db.prepare("SELECT hash, mime, bytes, r2_key FROM cloud_paper_files ORDER BY hash").all<Record<string, unknown>>();
+  return {
+    ...base,
+    version: 6,
+    assets,
+    papers: papers.results,
+    paperExtractions: paperExtractions.results,
+    paperPages: paperPages.results,
+    paperFiles: paperFiles.results as ArchiveV6["paperFiles"],
+  };
 }
 
 async function createBackup(db: D1Database, bucket: R2Bucket, images: R2Bucket, reason: "manual" | "pre-restore" = "manual") {
@@ -398,19 +422,33 @@ async function restoreArchive(db: D1Database, archive: Archive, reservation: str
     db.prepare("DELETE FROM browser_extension_pairings"),
     db.prepare("DELETE FROM cloud_capture_jobs"),
     db.prepare("DELETE FROM cloud_derived_results"),
+    db.prepare("DELETE FROM cloud_paper_pages"),
+    db.prepare("DELETE FROM cloud_paper_extractions"),
+    db.prepare("DELETE FROM cloud_papers"),
+    db.prepare("DELETE FROM cloud_paper_files"),
     db.prepare("DELETE FROM cloud_documents"),
     db.prepare("DELETE FROM cloud_folders"),
   ];
   if (archive.version !== 1) for (const row of archive.folders) statements.push(db.prepare(`INSERT INTO cloud_folders(
     id, name, created_at, updated_at
   ) VALUES (?, ?, ?, ?)`).bind(field(row, "id"), field(row, "name"), field(row, "created_at"), field(row, "updated_at")));
+  const paperIds = new Set(archive.version === 6 ? archive.papers.map((row) => String(row.id)) : []);
   for (const row of archive.documents) statements.push(db.prepare(`INSERT INTO cloud_documents(
-    id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note, folder_id, favorite, revision, created_at, updated_at, deleted_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
-    field(row, "id"), field(row, "source_url"), row.final_url ?? null, row.canonical_url ?? null, field(row, "title"), row.author ?? null,
+    id, kind, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note, folder_id, favorite, revision, created_at, updated_at, deleted_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+    field(row, "id"), paperIds.has(String(row.id)) ? "paper" : "article", field(row, "source_url"), row.final_url ?? null, row.canonical_url ?? null, field(row, "title"), row.author ?? null,
     row.published_at ?? null, field(row, "markdown"), field(row, "status"), field(row, "source_note"), archive.version === 1 ? null : row.folder_id,
     archive.version >= 4 ? field(row, "favorite") : 0, field(row, "revision"), field(row, "created_at"), field(row, "updated_at"), archive.version >= 3 ? row.deleted_at : null,
   ));
+  if (archive.version === 6) {
+    for (const row of archive.paperFiles) statements.push(db.prepare("INSERT INTO cloud_paper_files(hash, mime, bytes, r2_key, created_at) VALUES (?, ?, ?, ?, ?)").bind(row.hash, row.mime, row.bytes, row.r2_key, new Date().toISOString()));
+    for (const row of archive.papers) statements.push(db.prepare(`INSERT INTO cloud_papers(id, source_kind, source_url, original_file_name, source_hash, page_count, status, extraction_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(row.id, row.source_kind, row.source_url ?? null, row.original_file_name ?? null, row.source_hash, row.page_count ?? null, row.status, row.extraction_id ?? null, row.created_at, row.updated_at));
+    for (const row of archive.paperExtractions) statements.push(db.prepare(`INSERT INTO cloud_paper_extractions(id, paper_id, status, model, endpoint_id, prompt_version, source_hash, page_count, completed_pages, error_code, error_message, created_at, finished_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(row.id, row.paper_id, row.status, row.model ?? null, row.endpoint_id ?? null, row.prompt_version ?? null, row.source_hash, row.page_count ?? null, row.completed_pages ?? 0, row.error_code ?? null, row.error_message ?? null, row.created_at, row.finished_at ?? null));
+    for (const row of archive.paperPages) statements.push(db.prepare(`INSERT INTO cloud_paper_pages(paper_id, extraction_id, page_number, original_json, translation_json, revision, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(row.paper_id, row.extraction_id, row.page_number, row.original_json, row.translation_json, row.revision, row.created_at, row.updated_at));
+  }
   for (const row of archive.derivedResults) statements.push(db.prepare(`INSERT INTO cloud_derived_results(
     id, document_id, type, target_language, model, endpoint_id, prompt_version, input_hash, output, duration_ms,
     usage_json, source_chars, sent_chars, truncated, pinned, source_revision, created_at
@@ -467,6 +505,20 @@ function streamArchiveZip(archive: Archive, images: R2Bucket): ReadableStream<Ui
           }
           assetStream.push(new Uint8Array(), true);
         }
+        for (const paper of (exported as ArchiveV6).paperFiles ?? []) {
+          const object = await images.get(paper.r2_key);
+          if (!object) throw new CloudHttpError(409, "PAPER_SOURCE_MISSING", "A referenced paper PDF is missing from the store");
+          const paperStream = file(`paper/${paper.hash}`);
+          const reader = object.body.getReader();
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              paperStream.push(value);
+            }
+          } finally { reader.releaseLock(); }
+          paperStream.push(new Uint8Array(), true);
+        }
         archiveZip.end();
       } catch (error) {
         if (!closed) { closed = true; try { controller.error(error); } catch {} }
@@ -477,7 +529,7 @@ function streamArchiveZip(archive: Archive, images: R2Bucket): ReadableStream<Ui
 }
 
 /** Parse an uploaded `.zhiye-cloud-backup` ZIP container into its manifest and asset bytes. */
-function parseCloudZip(bytes: Uint8Array): { archive: Archive; assetBytes: Map<string, Uint8Array> } {
+function parseCloudZip(bytes: Uint8Array): { archive: Archive; assetBytes: Map<string, Uint8Array>; paperBytes: Map<string, Uint8Array> } {
   let unpacked: Record<string, Uint8Array>;
   try { unpacked = unzipSync(bytes); }
   catch { throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup ZIP is invalid"); }
@@ -495,7 +547,13 @@ function parseCloudZip(bytes: Uint8Array): { archive: Archive; assetBytes: Map<s
     if (!value) throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup ZIP is missing an asset");
     assetBytes.set(asset.hash, value);
   }
-  return { archive, assetBytes };
+  const paperBytes = new Map<string, Uint8Array>();
+  for (const paper of (archive as ArchiveV6).paperFiles ?? []) {
+    const value = unpacked[`paper/${paper.hash}`];
+    if (!value) throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup ZIP is missing a paper PDF");
+    paperBytes.set(paper.hash, value);
+  }
+  return { archive, assetBytes, paperBytes };
 }
 
 export async function handleBackupApi(
@@ -529,7 +587,7 @@ export async function handleBackupApi(
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
     if (isZip) {
-      const { archive, assetBytes } = parseCloudZip(bytes);
+      const { archive, assetBytes, paperBytes } = parseCloudZip(bytes);
       for (const [hash, value] of assetBytes) {
         const asset = (archive as ArchiveV5).assets.find((entry) => entry.hash === hash);
         const mime = asset?.mime ?? "application/octet-stream";
@@ -538,6 +596,13 @@ export async function handleBackupApi(
           throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup asset content does not match its hash");
         }
         await images.put(hash, value, { httpMetadata: { contentType: mime } });
+      }
+      for (const [hash, value] of paperBytes) {
+        const file = (archive as ArchiveV6).paperFiles.find((entry) => entry.hash === hash);
+        if (!file || file.bytes !== value.byteLength || await sha256(value) !== hash) {
+          throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud paper content does not match its hash");
+        }
+        await images.put(file.r2_key, value, { httpMetadata: { contentType: file.mime } });
       }
       // The ledger holds the manifest snapshot; the ZIP is the export artifact.
       const manifestBytes = encoder.encode(JSON.stringify(archive));
@@ -568,6 +633,9 @@ export async function handleBackupApi(
       if (!await images.head(asset.hash)) {
         throw new CloudHttpError(409, "ASSET_MISSING", "A referenced image object is missing from the store");
       }
+    }
+    for (const paper of (archive as ArchiveV6).paperFiles ?? []) {
+      if (!await images.head(paper.r2_key)) throw new CloudHttpError(409, "PAPER_SOURCE_MISSING", "A referenced paper PDF is missing from the store");
     }
     return new Response(streamArchiveZip(archive, images), {
       headers: {
