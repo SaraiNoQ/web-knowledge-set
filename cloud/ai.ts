@@ -354,6 +354,9 @@ export async function complete(endpointUrl: string, modelName: string, apiKey: s
 
 export async function completePaper(endpointUrl: string, modelName: string, apiKey: string, system: string, pdf: Uint8Array, timeoutMs = 120_000) {
   if (!usableKey(apiKey)) throw new CloudHttpError(409, "LLM_KEY_MISSING", "A page-scoped API key is required");
+  if (endpointUrl === "https://api.deepseek.com/chat/completions") {
+    throw new CloudHttpError(409, "PAPER_PDF_UNSUPPORTED", "当前 DeepSeek 模型不支持 PDF 文件输入，请切换支持 PDF content-part 的模型或端点");
+  }
   let response: Response;
   try {
     response = await fetch(endpointUrl, {
@@ -370,6 +373,7 @@ export async function completePaper(endpointUrl: string, modelName: string, apiK
             { type: "file", file: { filename: "paper.pdf", file_data: `data:application/pdf;base64,${base64(pdf)}` } },
           ] },
         ],
+        response_format: { type: "json_object" },
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });

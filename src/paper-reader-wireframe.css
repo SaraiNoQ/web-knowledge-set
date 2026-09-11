@@ -244,7 +244,7 @@
 
 .paper-reader { display: grid; min-height: 100%; background: rgba(248, 245, 237, .7); }
 .paper-reader-state { place-items: center; align-content: center; gap: 10px; padding: 50px; text-align: center; }
-.paper-reader-header { display: grid; grid-template-columns: minmax(150px, .7fr) minmax(0, 2fr) minmax(250px, 1fr); align-items: center; gap: 20px; padding: 18px clamp(18px, 3vw, 42px); border-bottom: 1px solid var(--wire-line-strong); background: rgba(250, 247, 239, .86); }
+.paper-reader-header { display: grid; grid-template-columns: minmax(150px, .7fr) minmax(0, 2fr) minmax(250px, 1fr); align-items: center; gap: 20px; padding: 10px clamp(18px, 3vw, 42px); border-bottom: 1px solid var(--wire-line-strong); background: rgba(250, 247, 239, .86); }
 .paper-reader-back { justify-self: start; padding: 0; color: var(--wire-muted); background: transparent; border: 0; font-size: 13px; }
 .paper-reader-back:hover { color: var(--wire-accent); }
 .paper-reader-header h1 { margin: 5px 0 3px; font: 500 clamp(21px, 2vw, 30px)/1.15 var(--font-serif); }

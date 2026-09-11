@@ -19,6 +19,15 @@ test("papers keep an immutable PDF source and revision-guarded translation pages
   assert.equal(created.paper.kind, "paper");
   assert.equal(created.paper.originalFileName, "fixture.pdf");
 
+  const failedTask = database.createPaperExtraction(created.paper.id);
+  assert.equal(failedTask.kind, "created");
+  if (failedTask.kind !== "created") throw new Error("paper failure fixture was not created");
+  database.failPaperExtraction(failedTask.task.id, "PAPER_PDF_UNSUPPORTED", "当前模型不支持论文 PDF 输入");
+  assert.deepEqual(
+    { code: database.getPaper(created.paper.id)?.errorCode, message: database.getPaper(created.paper.id)?.errorMessage },
+    { code: "PAPER_PDF_UNSUPPORTED", message: "当前模型不支持论文 PDF 输入" },
+  );
+
   const task = database.createPaperExtraction(created.paper.id);
   assert.equal(task.kind, "created");
   if (task.kind !== "created") throw new Error("paper extraction task was not created");

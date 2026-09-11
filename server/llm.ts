@@ -688,6 +688,7 @@ async function requestCompletion(
     model,
     temperature: 0,
     ...(input.kind === "probe" ? { max_tokens: 16 } : input.kind === "title" ? { max_tokens: TITLE_MAX_TOKENS } : input.kind === "paper" ? { max_tokens: 32_000 } : {}),
+    ...(input.kind === "paper" ? { response_format: { type: "json_object" } } : {}),
     messages,
   }));
   const started = Date.now();
@@ -814,6 +815,9 @@ export function requestPaperCompletion(input: {
   resolver?: ResolveLlmTarget;
   timeoutMs?: number;
 }) {
+  if (input.target.url === "https://api.deepseek.com/chat/completions") {
+    throw new LlmError(409, "PAPER_PDF_UNSUPPORTED", "当前 DeepSeek 模型不支持 PDF 文件输入，请切换支持 PDF content-part 的模型或端点");
+  }
   return requestCompletion(
     { kind: "paper", target: input.target, model: input.model, system: input.system, pdf: input.pdf },
     input.apiKey,

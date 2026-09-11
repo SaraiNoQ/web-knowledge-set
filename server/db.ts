@@ -692,6 +692,8 @@ interface PaperRow {
   page_count: number | null;
   paper_status: PaperStatus;
   extraction_id: string | null;
+  paper_error_code: string | null;
+  paper_error_message: string | null;
 }
 
 interface PaperPageRow {
@@ -1860,8 +1862,8 @@ export class KnowledgeDatabase {
       sourceUrl: row.paper_source_url || row.source_url,
       author: row.author,
       status: row.paper_status,
-      errorCode: null,
-      errorMessage: null,
+      errorCode: row.paper_error_code,
+      errorMessage: row.paper_error_message,
       folderId: row.folder_id,
       favorite: Boolean(row.favorite),
       archivedAt: row.archived_at,
@@ -1889,8 +1891,10 @@ export class KnowledgeDatabase {
       `SELECT d.id, d.kind, d.source_url, d.title, d.author, d.folder_id, d.favorite,
               d.archived_at, d.revision, d.deleted_at, d.created_at, d.updated_at,
               p.source_kind, p.source_url AS paper_source_url, p.original_file_name,
-              p.source_hash, p.page_count, p.status AS paper_status, p.extraction_id
+              p.source_hash, p.page_count, p.status AS paper_status, p.extraction_id,
+              e.error_code AS paper_error_code, e.error_message AS paper_error_message
        FROM documents d JOIN papers p ON p.id = d.id
+       LEFT JOIN paper_extractions e ON e.id = p.extraction_id
        WHERE d.id = ? AND d.kind = 'paper'`,
     ).get(id) as PaperRow | undefined;
   }

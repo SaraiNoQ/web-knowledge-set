@@ -9,6 +9,13 @@ function labelForBlock(type: PaperBlock["type"]) {
   return ({ heading: "标题", paragraph: "段落", formula: "公式", table: "表格", figure: "图表", caption: "图注", reference: "参考文献" } as const)[type];
 }
 
+function paperFailureMessage(paper: PaperDocument) {
+  if (paper.errorCode === "LLM_PROTOCOL_REJECTED" || paper.errorCode === "LLM_HTTP_ERROR") {
+    return "当前模型或端点拒绝了 PDF 文件输入，请切换支持 PDF content-part 的模型或端点。";
+  }
+  return paper.errorMessage || "模型没有返回可验证的分页结构。";
+}
+
 function PaperCanvas({ paperId, pageNumber }: { paperId: string; pageNumber: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [error, setError] = useState("");
@@ -129,7 +136,7 @@ export function PaperReader({ paperId, onClose }: { paperId: string; onClose: ()
       {error && <div className="paper-reader-notice is-error" role="alert">{error}</div>}
       {notice && <div className="paper-reader-notice" role="status">{notice}<button type="button" aria-label="关闭提示" onClick={() => setNotice("")}>×</button></div>}
 
-      {processing ? <div className="paper-reader-processing"><span className="eyebrow">LLM EXTRACTION</span><h2>{paper.status === "queued" ? "等待开始分页提取" : "正在生成分页对照"}</h2><p>原始 PDF 已保存；模型会按页生成原文块、中文译文和图表说明。</p>{paper.status === "queued" && <Button variant="primary" onClick={() => void startExtraction()}>开始提取</Button>}</div> : paper.status === "failed" ? <div className="paper-reader-processing is-error"><span className="eyebrow">EXTRACTION FAILED</span><h2>论文提取失败</h2><p>{paper.errorMessage || "模型没有返回可验证的分页结构。"}</p><Button onClick={() => void startExtraction()}>重新提取</Button></div> : (
+      {processing ? <div className="paper-reader-processing"><span className="eyebrow">LLM EXTRACTION</span><h2>{paper.status === "queued" ? "等待开始分页提取" : "正在生成分页对照"}</h2><p>原始 PDF 已保存；模型会按页生成原文块、中文译文和图表说明。</p>{paper.status === "queued" && <Button variant="primary" onClick={() => void startExtraction()}>开始提取</Button>}</div> : paper.status === "failed" ? <div className="paper-reader-processing is-error"><span className="eyebrow">EXTRACTION FAILED</span><h2>论文提取失败</h2><p>{paperFailureMessage(paper)}</p><Button onClick={() => void startExtraction()}>重新提取</Button></div> : (
         <div className="paper-reader-body">
           <aside className="paper-reader-pages" aria-label="论文页码"><span className="eyebrow">PAGES · {pages}</span>{Array.from({ length: pages }, (_, index) => { const number = index + 1; return <button key={number} type="button" className={number === pageNumber ? "is-active" : ""} aria-current={number === pageNumber ? "page" : undefined} onClick={() => { if (!editing) setPageNumber(number); }}>{String(number).padStart(2, "0")}</button>; })}</aside>
           <div className="paper-reader-stage">

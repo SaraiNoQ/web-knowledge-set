@@ -14,6 +14,7 @@ import {
   llmConnectionTestInput,
   llmNetworkError,
   markdownTranslationInput,
+  requestPaperCompletion,
   resolveLlmTarget,
 } from "../server/llm.js";
 import type {
@@ -27,6 +28,23 @@ import type {
 test("LLM network failures distinguish rejected TLS certificates", () => {
   assert.equal(llmNetworkError(Object.assign(new Error("certificate"), { code: "SELF_SIGNED_CERT_IN_CHAIN" })).code, "LLM_TLS_ERROR");
   assert.equal(llmNetworkError(Object.assign(new Error("socket"), { code: "ECONNRESET" })).code, "LLM_NETWORK_ERROR");
+});
+
+test("paper extraction rejects DeepSeek PDF input before spending a request", async () => {
+  await assert.rejects(
+    async () => requestPaperCompletion({
+      target: { kind: "remote", url: "https://api.deepseek.com/chat/completions" },
+      model: "deepseek-v4-flash",
+      system: "paper",
+      pdf: Buffer.from("%PDF-1.7\nfixture\n", "ascii"),
+      apiKey: "paper-secret",
+      signal: new AbortController().signal,
+    }),
+    (error: unknown) => {
+      assert.equal((error as { code?: string }).code, "PAPER_PDF_UNSUPPORTED");
+      return true;
+    },
+  );
 });
 
 test("LLM connection probe is strict, document-free, endpoint-bound, and redacted", async () => {

@@ -15,7 +15,7 @@ import {
   type D1Result,
   type D1Statement,
 } from "../cloud/extension.js";
-import { handleAiApi } from "../cloud/ai.js";
+import { completePaper, handleAiApi } from "../cloud/ai.js";
 import { handleClipRequest } from "../cloud/clip.js";
 import { createCapture, handleCaptureQueue } from "../cloud/capture.js";
 import type { DerivedPreview } from "../shared/types.js";
@@ -337,10 +337,21 @@ test("cloud stores paper PDFs as a separate paper item", async () => {
     body: pdf,
   }), env);
   assert.equal(response.status, 201);
-  const body = await response.json() as { paper: { kind: string; sourceKind: string; originalFileName: string; sourceHash: string } };
+  const body = await response.json() as { paper: { id: string; kind: string; sourceKind: string; originalFileName: string; sourceHash: string } };
   assert.deepEqual({ kind: body.paper.kind, sourceKind: body.paper.sourceKind, originalFileName: body.paper.originalFileName }, { kind: "paper", sourceKind: "pdf", originalFileName: "cloud-paper.pdf" });
   assert.equal((await imagesBucket.head(`paper/${body.paper.sourceHash}`))?.size, pdf.length);
   assert.equal((db.sqlite.prepare("SELECT COUNT(*) AS count FROM cloud_papers").get() as { count: number }).count, 1);
+  const failedExtractionId = "paper-error-task";
+  const failedAt = new Date().toISOString();
+  db.sqlite.prepare(`INSERT INTO cloud_paper_extractions(
+    id, paper_id, status, source_hash, error_code, error_message, created_at, finished_at
+  ) VALUES (?, ?, 'failed', ?, ?, ?, ?, ?)`).run(
+    failedExtractionId, body.paper.id, body.paper.sourceHash, "PAPER_PDF_UNSUPPORTED", "当前模型不支持论文 PDF 输入", failedAt, failedAt,
+  );
+  db.sqlite.prepare("UPDATE cloud_papers SET status = 'failed', extraction_id = ? WHERE id = ?").run(failedExtractionId, body.paper.id);
+  const failedPaper = await handleRequest(new Request(`https://app.example.com/api/papers/${body.paper.id}`), env);
+  const failedPaperBody = await failedPaper.json() as { errorCode: string; errorMessage: string };
+  assert.deepEqual({ code: failedPaperBody.errorCode, message: failedPaperBody.errorMessage }, { code: "PAPER_PDF_UNSUPPORTED", message: "当前模型不支持论文 PDF 输入" });
   const backup = await handleRequest(new Request("https://app.example.com/api/data-safety/backups", {
     method: "POST", headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": String((db.sqlite.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'").get() as { value: string }).value) }, body: "{}",
   }), env);
@@ -350,6 +361,22 @@ test("cloud stores paper PDFs as a separate paper item", async () => {
   assert.equal(manifest.version, 6);
   assert.equal(manifest.papers.length, 1);
   assert.equal(manifest.paperFiles.length, 1);
+});
+
+test("cloud paper extraction rejects DeepSeek PDF input before spending a request", async () => {
+  await assert.rejects(
+    () => completePaper(
+      "https://api.deepseek.com/chat/completions",
+      "deepseek-v4-flash",
+      "paper-secret",
+      "paper",
+      new Uint8Array(Buffer.from("%PDF-1.7\nfixture\n", "ascii")),
+    ),
+    (error: unknown) => {
+      assert.equal((error as { code?: string }).code, "PAPER_PDF_UNSUPPORTED");
+      return true;
+    },
+  );
 });
 
 test("cloud favorites documents with revision guards and list filters", async () => {

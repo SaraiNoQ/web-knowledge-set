@@ -62,8 +62,11 @@ async function row(db: D1Database, id: string) {
   return db.prepare(`SELECT d.id, d.source_url AS sourceUrl, d.title, d.author, d.folder_id AS folderId, d.favorite,
     d.revision, d.deleted_at AS deletedAt, d.created_at AS createdAt, d.updated_at AS updatedAt,
     p.source_url AS paperSourceUrl, p.original_file_name AS originalFileName, p.source_hash AS sourceHash,
-    p.page_count AS pageCount, p.status AS paperStatus, p.extraction_id AS extractionId
-    FROM cloud_documents d JOIN cloud_papers p ON p.id = d.id WHERE d.id = ? AND d.kind = 'paper'`).bind(id).first<Record<string, unknown>>();
+    p.page_count AS pageCount, p.status AS paperStatus, p.extraction_id AS extractionId,
+    e.error_code AS errorCode, e.error_message AS errorMessage
+    FROM cloud_documents d JOIN cloud_papers p ON p.id = d.id
+    LEFT JOIN cloud_paper_extractions e ON e.id = p.extraction_id
+    WHERE d.id = ? AND d.kind = 'paper'`).bind(id).first<Record<string, unknown>>();
 }
 
 export async function paperSourceHash(db: D1Database, id: string) {
