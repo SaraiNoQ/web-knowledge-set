@@ -703,6 +703,7 @@ interface PaperPageRow {
   original_json: string;
   translation_json: string;
   revision: number;
+  document_revision: number;
 }
 
 interface PaperExtractionRow {
@@ -1883,6 +1884,7 @@ export class KnowledgeDatabase {
       originalBlocks: JSON.parse(row.original_json) as PaperBlock[],
       translationBlocks: JSON.parse(row.translation_json) as PaperBlock[],
       revision: row.revision,
+      documentRevision: row.document_revision,
     };
   }
 
@@ -1904,8 +1906,10 @@ export class KnowledgeDatabase {
     if (!row) return null;
     const pages = row.extraction_id
       ? (this.sql.prepare(
-        `SELECT paper_id, extraction_id, page_number, original_json, translation_json, revision
-         FROM paper_pages WHERE paper_id = ? AND extraction_id = ? ORDER BY page_number`,
+        `SELECT pp.paper_id, pp.extraction_id, pp.page_number, pp.original_json, pp.translation_json, pp.revision,
+                d.revision AS document_revision
+         FROM paper_pages pp JOIN documents d ON d.id = pp.paper_id
+         WHERE pp.paper_id = ? AND pp.extraction_id = ? ORDER BY pp.page_number`,
       ).all(id, row.extraction_id) as unknown as PaperPageRow[]).map((page) => this.toPaperPage(page))
       : [];
     return {
@@ -1922,8 +1926,10 @@ export class KnowledgeDatabase {
     const row = this.paperRow(id);
     if (!row?.extraction_id) return null;
     const page = this.sql.prepare(
-      `SELECT paper_id, extraction_id, page_number, original_json, translation_json, revision
-       FROM paper_pages WHERE paper_id = ? AND extraction_id = ? AND page_number = ?`,
+      `SELECT pp.paper_id, pp.extraction_id, pp.page_number, pp.original_json, pp.translation_json, pp.revision,
+              d.revision AS document_revision
+       FROM paper_pages pp JOIN documents d ON d.id = pp.paper_id
+       WHERE pp.paper_id = ? AND pp.extraction_id = ? AND pp.page_number = ?`,
     ).get(id, row.extraction_id, pageNumber) as PaperPageRow | undefined;
     return page ? this.toPaperPage(page) : null;
   }
@@ -3673,7 +3679,10 @@ export class KnowledgeDatabase {
           .all(id) as Array<{ hash: string }>
       ).map(({ hash }) => hash);
       const paperFileHashes = current.kind === "paper"
-        ? (this.sql.prepare("SELECT source_hash AS hash FROM papers WHERE id = ?").all(id) as Array<{ hash: string }>).map(({ hash }) => hash)
+        ? (this.sql.prepare(`SELECT p.source_hash AS hash FROM papers p
+             WHERE p.id = ? AND NOT EXISTS (
+               SELECT 1 FROM papers other WHERE other.source_hash = p.source_hash AND other.id <> p.id
+             )`).all(id) as Array<{ hash: string }>).map(({ hash }) => hash)
         : [];
       const relativePaths = [...snapshotPaths, ...assetHashes.map((hash) => `assets/${hash}`), ...paperFileHashes.map((hash) => `assets/${hash}`)];
       try {

@@ -84,13 +84,14 @@ export async function deletePaperSource(db: D1Database, bucket: R2Bucket, source
 export async function getPaper(db: D1Database, id: string): Promise<PaperDocument | null> {
   const value = await row(db, id);
   if (!value) return null;
-  const pages = value.extractionId ? await db.prepare(`SELECT paper_id AS paperId, extraction_id AS extractionId, page_number AS pageNumber,
-    original_json AS originalJson, translation_json AS translationJson, revision FROM cloud_paper_pages
-    WHERE paper_id = ? AND extraction_id = ? ORDER BY page_number`).bind(id, value.extractionId).all<Record<string, unknown>>() : { results: [] };
+  const pages = value.extractionId ? await db.prepare(`SELECT pp.paper_id AS paperId, pp.extraction_id AS extractionId, pp.page_number AS pageNumber,
+    pp.original_json AS originalJson, pp.translation_json AS translationJson, pp.revision, d.revision AS documentRevision
+    FROM cloud_paper_pages pp JOIN cloud_documents d ON d.id = pp.paper_id
+    WHERE pp.paper_id = ? AND pp.extraction_id = ? ORDER BY pp.page_number`).bind(id, value.extractionId).all<Record<string, unknown>>() : { results: [] };
   return {
     ...summary(value), sourceKind: value.paperSourceUrl ? "url" : "pdf", originalFileName: value.originalFileName ? String(value.originalFileName) : null,
     sourceHash: String(value.sourceHash), extractionId: value.extractionId ? String(value.extractionId) : null,
-    pages: pages.results.map((page) => ({ paperId: String(page.paperId), extractionId: String(page.extractionId), pageNumber: Number(page.pageNumber), originalBlocks: JSON.parse(String(page.originalJson)) as PaperBlock[], translationBlocks: JSON.parse(String(page.translationJson)) as PaperBlock[], revision: Number(page.revision) })),
+    pages: pages.results.map((page) => ({ paperId: String(page.paperId), extractionId: String(page.extractionId), pageNumber: Number(page.pageNumber), originalBlocks: JSON.parse(String(page.originalJson)) as PaperBlock[], translationBlocks: JSON.parse(String(page.translationJson)) as PaperBlock[], revision: Number(page.revision), documentRevision: Number(page.documentRevision) })),
   };
 }
 
@@ -193,9 +194,9 @@ export async function handlePaperApi(request: Request, db: D1Database, bucket: R
     const paper = await row(db, id);
     if (!paper || !paper.extractionId) throw new CloudHttpError(404, "PAPER_PAGE_NOT_FOUND", "Paper page not found");
     if (request.method === "GET") {
-      const page = await db.prepare("SELECT paper_id AS paperId, extraction_id AS extractionId, page_number AS pageNumber, original_json AS originalJson, translation_json AS translationJson, revision FROM cloud_paper_pages WHERE paper_id = ? AND extraction_id = ? AND page_number = ?").bind(id, paper.extractionId, number).first<Record<string, unknown>>();
+      const page = await db.prepare("SELECT pp.paper_id AS paperId, pp.extraction_id AS extractionId, pp.page_number AS pageNumber, pp.original_json AS originalJson, pp.translation_json AS translationJson, pp.revision, d.revision AS documentRevision FROM cloud_paper_pages pp JOIN cloud_documents d ON d.id = pp.paper_id WHERE pp.paper_id = ? AND pp.extraction_id = ? AND pp.page_number = ?").bind(id, paper.extractionId, number).first<Record<string, unknown>>();
       if (!page) throw new CloudHttpError(404, "PAPER_PAGE_NOT_FOUND", "Paper page not found");
-      return { body: { paperId: id, extractionId: String(page.extractionId), pageNumber: number, originalBlocks: JSON.parse(String(page.originalJson)), translationBlocks: JSON.parse(String(page.translationJson)), revision: Number(page.revision) } satisfies PaperPage };
+      return { body: { paperId: id, extractionId: String(page.extractionId), pageNumber: number, originalBlocks: JSON.parse(String(page.originalJson)), translationBlocks: JSON.parse(String(page.translationJson)), revision: Number(page.revision), documentRevision: Number(page.documentRevision) } satisfies PaperPage };
     }
     if (request.method === "PATCH") {
       const body = await jsonObject(request, 256 * 1024);

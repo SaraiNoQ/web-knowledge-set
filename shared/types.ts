@@ -21,6 +21,7 @@ export interface PaperPage {
   originalBlocks: PaperBlock[];
   translationBlocks: PaperBlock[];
   revision: number;
+  documentRevision: number;
 }
 
 export interface PaperSummary {

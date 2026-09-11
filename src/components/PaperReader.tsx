@@ -57,7 +57,7 @@ function PaperCanvas({ paperId, pageNumber }: { paperId: string; pageNumber: num
   return <div className="paper-reader-pdf-page"><span className="paper-reader-page-label">ORIGINAL PDF · p.{pageNumber}</span>{error ? <div className="paper-reader-pdf-error" role="alert">{error}</div> : <canvas ref={canvasRef} aria-label={`原始 PDF 第 ${pageNumber} 页`} />}</div>;
 }
 
-export function PaperReader({ paperId, onClose }: { paperId: string; onClose: () => void }) {
+export function PaperReader({ paperId, onClose, onRevisionChange }: { paperId: string; onClose: () => void; onRevisionChange: (paperId: string, revision: number) => void }) {
   const [paper, setPaper] = useState<PaperDocument | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [draftBlocks, setDraftBlocks] = useState<PaperBlock[]>([]);
@@ -65,12 +65,15 @@ export function PaperReader({ paperId, onClose }: { paperId: string; onClose: ()
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const loadSequence = useRef(0);
 
   const load = async (signal?: AbortSignal) => {
+    const sequence = ++loadSequence.current;
     try {
       const next = await api.getPaper(paperId, signal);
-      if (signal?.aborted) return;
+      if (signal?.aborted || sequence !== loadSequence.current) return;
       setPaper(next);
+      onRevisionChange(paperId, next.revision);
       if (next.pages.length && pageNumber > next.pages.length) setPageNumber(next.pages.length);
       setError("");
     } catch (cause) {
@@ -111,7 +114,9 @@ export function PaperReader({ paperId, onClose }: { paperId: string; onClose: ()
     setError("");
     try {
       const updated = await api.updatePaperPage(paperId, page.pageNumber, page.revision, draftBlocks);
-      setPaper((current) => current ? { ...current, pages: current.pages.map((value) => value.pageNumber === updated.pageNumber ? updated : value), revision: current.revision + 1, updatedAt: new Date().toISOString() } : current);
+      const nextPaper = paper ? { ...paper, pages: paper.pages.map((value) => value.pageNumber === updated.pageNumber ? updated : value), revision: updated.documentRevision, updatedAt: new Date().toISOString() } : null;
+      setPaper(nextPaper);
+      if (nextPaper) onRevisionChange(paperId, nextPaper.revision);
       setEditing(false);
       setNotice("本页译文已保存。");
     } catch (cause) {

@@ -928,6 +928,14 @@ export default function App() {
     setSourceMetadata(metadata);
   }, []);
 
+  const updateCurrentPaperRevision = useCallback((paperId: string, revision: number) => {
+    const current = currentDocRef.current;
+    if (!current || current.id !== paperId || current.kind !== "paper" || revision <= current.revision) return;
+    const updated = { ...current, revision };
+    currentDocRef.current = updated;
+    setCurrentDoc(updated);
+  }, []);
+
   const queueAutoTitle = useCallback((id: string) => {
     pendingTitlesRef.current.add(id);
     pendingTitleAttemptsRef.current.set(id, 0);
@@ -3653,7 +3661,7 @@ export default function App() {
           ) : detailError && (!currentDoc || (currentDoc.kind === "paper" && !currentPaper)) ? (
             <StatePanel kind="error" title="无法打开这篇知识">{detailError}</StatePanel>
           ) : currentPaper && currentDoc ? (
-            <PaperReader paperId={currentPaper.id} onClose={closeDocument} />
+            <PaperReader paperId={currentPaper.id} onClose={closeDocument} onRevisionChange={updateCurrentPaperRevision} />
           ) : currentDoc && draft && webArticleMode ? (
             <>
               <button type="button" className="mobile-back" onClick={closeDocument}><Icon size={16}><path d="m15 18-6-6 6-6" /></Icon>返回知识库</button>

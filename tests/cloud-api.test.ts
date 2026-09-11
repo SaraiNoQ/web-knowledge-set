@@ -363,6 +363,38 @@ test("cloud stores paper PDFs as a separate paper item", async () => {
   assert.equal(manifest.paperFiles.length, 1);
 });
 
+test("cloud permanently deletes trashed papers and only removes a shared PDF last", async () => {
+  const { env, db, imagesBucket } = sqliteEnvironment();
+  const pdf = Buffer.from("%PDF-1.7\ncloud delete fixture\n", "ascii");
+  const headers = { "Content-Type": "application/pdf", "Content-Length": String(pdf.length), "X-Filename": "delete.pdf", "X-Zhiye-Data-Epoch": "cloud-test" };
+  const upload = async (fileName: string) => {
+    const response = await handleRequest(new Request("https://app.example.com/api/papers/upload", { method: "POST", headers: { ...headers, "X-Filename": fileName }, body: pdf }), env);
+    assert.equal(response.status, 201);
+    return (await response.json() as { paper: { id: string; sourceHash: string; revision: number } }).paper;
+  };
+  const remove = async (paper: { id: string; revision: number }) => {
+    const epoch = (db.sqlite.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'").get() as { value: string }).value;
+    const trash = await handleRequest(new Request(`https://app.example.com/api/documents/${paper.id}`, {
+      method: "DELETE", headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch }, body: JSON.stringify({ revision: paper.revision }),
+    }), env);
+    assert.equal(trash.status, 200, await trash.clone().text());
+    const deleted = (await trash.json() as { revision: number }).revision;
+    const permanent = await handleRequest(new Request(`https://app.example.com/api/documents/${paper.id}/permanent`, {
+      method: "DELETE", headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch }, body: JSON.stringify({ revision: deleted, draftRevision: null }),
+    }), env);
+    assert.equal(permanent.status, 204, await permanent.clone().text());
+  };
+  const first = await upload("first.pdf");
+  const second = await upload("second.pdf");
+  await remove(first);
+  assert.equal(await imagesBucket.head(`paper/${first.sourceHash}`) !== null, true);
+  assert.equal((db.sqlite.prepare("SELECT COUNT(*) AS count FROM cloud_documents WHERE id = ?").get(first.id) as { count: number }).count, 0);
+  assert.equal((db.sqlite.prepare("SELECT COUNT(*) AS count FROM cloud_papers WHERE id = ?").get(first.id) as { count: number }).count, 0);
+  await remove(second);
+  assert.equal((db.sqlite.prepare("SELECT COUNT(*) AS count FROM cloud_paper_files WHERE hash = ?").get(first.sourceHash) as { count: number }).count, 0);
+  assert.equal(await imagesBucket.head(`paper/${first.sourceHash}`), null);
+});
+
 test("cloud paper extraction rejects DeepSeek PDF input before spending a request", async () => {
   await assert.rejects(
     () => completePaper(
@@ -377,6 +409,34 @@ test("cloud paper extraction rejects DeepSeek PDF input before spending a reques
       return true;
     },
   );
+});
+
+test("cloud paper page updates return the server document revision", async () => {
+  const { env, db } = sqliteEnvironment();
+  const pdf = Buffer.from("%PDF-1.7\ncloud page revision\n", "ascii");
+  const upload = await handleRequest(new Request("https://app.example.com/api/papers/upload", {
+    method: "POST",
+    headers: { "Content-Type": "application/pdf", "Content-Length": String(pdf.length), "X-Filename": "page.pdf", "X-Zhiye-Data-Epoch": "cloud-test" },
+    body: pdf,
+  }), env);
+  const paper = (await upload.json() as { paper: { id: string; sourceHash: string; revision: number } }).paper;
+  const extractionId = `extraction-${paper.id}`;
+  const now = new Date().toISOString();
+  const block = JSON.stringify([{ id: "p1-b1", type: "paragraph", original: "Original", translation: "译文", assetIds: [] }]);
+  db.sqlite.prepare(`INSERT INTO cloud_paper_extractions(id, paper_id, status, source_hash, page_count, completed_pages, created_at, finished_at)
+    VALUES (?, ?, 'succeeded', ?, 1, 1, ?, ?)`).run(extractionId, paper.id, paper.sourceHash, now, now);
+  db.sqlite.prepare("UPDATE cloud_papers SET status = 'ready', extraction_id = ?, page_count = 1 WHERE id = ?").run(extractionId, paper.id);
+  db.sqlite.prepare(`INSERT INTO cloud_paper_pages(paper_id, extraction_id, page_number, original_json, translation_json, revision, created_at, updated_at)
+    VALUES (?, ?, 1, ?, ?, 1, ?, ?)`).run(paper.id, extractionId, block, block, now, now);
+  const epoch = (db.sqlite.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'").get() as { value: string }).value;
+  const response = await handleRequest(new Request(`https://app.example.com/api/papers/${paper.id}/pages/1`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch },
+    body: JSON.stringify({ revision: 1, translationBlocks: [{ id: "p1-b1", type: "paragraph", original: "Original", translation: "更新译文", assetIds: [] }] }),
+  }), env);
+  assert.equal(response.status, 200, await response.clone().text());
+  const page = await response.json() as { revision: number; documentRevision: number; translationBlocks: Array<{ translation: string }> };
+  assert.deepEqual({ revision: page.revision, documentRevision: page.documentRevision, translation: page.translationBlocks[0]?.translation }, { revision: 2, documentRevision: paper.revision, translation: "更新译文" });
 });
 
 test("cloud favorites documents with revision guards and list filters", async () => {
