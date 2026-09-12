@@ -185,7 +185,42 @@ export function PaperReader({ paperId, autoStart, onClose, onRevisionChange }: {
   const driving = useRef(false);
   const resumed = useRef<string | null>(null);
   const columnsRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLElement>(null);
   const dragRef = useRef<{ startX: number; startRatio: number; usable: number } | null>(null);
+
+  // The chrome above the reader (masthead, capture band) changes height with the
+  // window width, so the space left for the reader has to be measured rather
+  // than assumed: a fixed offset leaves a gap at some widths and overflows at
+  // others. The measured value is also what bounds the workspace, so the page
+  // stops scrolling behind the reader.
+  useEffect(() => {
+    const element = rootRef.current;
+    if (!element) return;
+    const root = document.documentElement;
+    const apply = () => {
+      if (!window.matchMedia("(min-width: 761px)").matches) {
+        // Stacked panes are taller than the viewport; the page scrolls instead.
+        root.style.removeProperty("--paper-reader-height");
+        return;
+      }
+      const top = element.getBoundingClientRect().top + window.scrollY;
+      const height = `${Math.max(320, Math.round(window.innerHeight - top))}px`;
+      if (root.style.getPropertyValue("--paper-reader-height") !== height) {
+        root.style.setProperty("--paper-reader-height", height);
+      }
+    };
+    apply();
+    window.addEventListener("resize", apply);
+    // A notice, an import dialog, or any other change to the chrome above moves
+    // the reader, so the measurement follows the body's size.
+    const observer = new ResizeObserver(apply);
+    observer.observe(document.body);
+    return () => {
+      window.removeEventListener("resize", apply);
+      observer.disconnect();
+      root.style.removeProperty("--paper-reader-height");
+    };
+  }, [paperId]);
 
   const clampSplit = (value: number) => Math.max(SPLIT_MIN, Math.min(SPLIT_MAX, value));
 
@@ -329,14 +364,14 @@ export function PaperReader({ paperId, autoStart, onClose, onRevisionChange }: {
     } finally { setSaving(false); }
   };
 
-  if (error && !paper) return <section className="paper-reader paper-reader-state" aria-label="论文阅读器"><button type="button" className="paper-reader-back" onClick={onClose}>← 返回资料库</button><div role="alert"><strong>无法打开论文</strong><p>{error}</p></div></section>;
-  if (!paper) return <section className="paper-reader paper-reader-state" aria-label="论文阅读器"><span className="eyebrow">PAPER READER</span><strong>正在打开论文…</strong></section>;
+  if (error && !paper) return <section ref={rootRef} className="paper-reader paper-reader-state" aria-label="论文阅读器"><button type="button" className="paper-reader-back" onClick={onClose}>← 返回资料库</button><div role="alert"><strong>无法打开论文</strong><p>{error}</p></div></section>;
+  if (!paper) return <section ref={rootRef} className="paper-reader paper-reader-state" aria-label="论文阅读器"><span className="eyebrow">PAPER READER</span><strong>正在打开论文…</strong></section>;
 
   const pages = paper.pageCount || paper.pages.length || 1;
   const processing = paper.status === "queued" || paper.status === "extracting";
   const readOnly = Boolean(paper.deletedAt);
   return (
-    <section className="paper-reader" aria-label="论文对照阅读器">
+    <section ref={rootRef} className="paper-reader" aria-label="论文对照阅读器">
       <header className="paper-reader-header">
         <button type="button" className="paper-reader-back" onClick={onClose}>← 返回资料库</button>
         <div><span className="eyebrow">PAPER READER · {paper.status.toUpperCase()}</span><h1>{paper.title || "未命名论文"}</h1><p>{paper.author || "作者待提取"} · {paper.sourceUrl}</p></div>

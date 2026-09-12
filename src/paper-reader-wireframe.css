@@ -242,7 +242,10 @@
   .paper-wireframe-pagination > button:last-child { justify-self: end; }
 }
 
-.paper-reader { display: flex; flex-direction: column; height: calc(100vh - 264px); min-height: 560px; background: rgba(248, 245, 237, .7); }
+/* The reader fills exactly the space below whatever chrome the app is showing.
+   That chrome is measured at runtime because it changes height with the window
+   width; the fallback only covers the first paint. */
+.paper-reader { display: flex; flex-direction: column; height: var(--paper-reader-height, calc(100vh - 264px)); background: rgba(248, 245, 237, .7); }
 .paper-reader-state { flex: 1 1 auto; min-height: 0; overflow: auto; display: grid; place-items: center; align-content: center; gap: 10px; padding: 50px; text-align: center; }
 .paper-reader-header { display: grid; grid-template-columns: minmax(150px, .7fr) minmax(0, 2fr) minmax(250px, 1fr); align-items: center; gap: 20px; padding: 10px clamp(18px, 3vw, 42px); border-bottom: 1px solid var(--wire-line-strong); background: rgba(250, 247, 239, .86); }
 .paper-reader-back { justify-self: start; padding: 0; color: var(--wire-muted); background: transparent; border: 0; font-size: 13px; }
@@ -322,6 +325,19 @@
 
 @media (max-width: 1100px) {
   .paper-reader-body { grid-template-columns: 52px minmax(0, 1fr); }
+}
+
+/* An open paper owns the viewport: the page itself stops scrolling and the
+   library scrolls inside its own column, so the reader can never leave a gap
+   below itself when the page is scrolled. */
+@media (min-width: 761px) {
+  /* The single row is bounded to the workspace, so the taller column scrolls
+     inside itself instead of being clipped by the workspace. */
+  .workspace.paper-reading { height: var(--paper-reader-height, calc(100vh - 264px)); min-height: 0; grid-template-rows: minmax(0, 1fr); overflow: hidden; }
+  /* The library is a 100vh sticky column on wide screens; that is taller than
+     the space left under the chrome, so it takes the reader's height and keeps
+     its own scrollbar — otherwise its last rows would be unreachable. */
+  .workspace.paper-reading .library-panel { height: var(--paper-reader-height, calc(100vh - 264px)); min-height: 0; overflow-y: auto; }
 }
 
 @media (max-width: 760px) {

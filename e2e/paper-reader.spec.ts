@@ -99,6 +99,20 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
   const readerFits = await page.locator(".paper-reader").evaluate((element) => element.scrollHeight <= element.clientHeight + 1);
   expect(readerFits).toBe(true);
 
+  // The reader must fill exactly the space left under the app's chrome. That
+  // chrome grows as the window narrows, so a fixed offset left a gap at some
+  // widths and pushed the reader past the fold at others.
+  for (const width of [1440, 1000, 800]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect.poll(async () => page.evaluate(() => {
+      const rect = (document.querySelector(".paper-reader") as HTMLElement).getBoundingClientRect();
+      return Math.abs(Math.round(window.innerHeight - rect.bottom));
+    })).toBeLessThanOrEqual(2);
+    const pageScrolls = await page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight + 1);
+    expect(pageScrolls).toBe(false);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+
   // Zoom really rescales the rendered page, and the pane scrolls it rather than
   // pushing the layout taller.
   const canvasWidth = () => page.locator(".paper-reader-pdf-scroll canvas").evaluate((element) => Math.round(element.getBoundingClientRect().width));
