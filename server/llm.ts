@@ -729,6 +729,12 @@ async function requestCompletion(
     temperature: 0,
     ...(input.kind === "probe" ? { max_tokens: 16 } : input.kind === "title" ? { max_tokens: TITLE_MAX_TOKENS } : input.kind === "paper" ? { max_tokens: 32_000 } : input.kind === "paper-images" ? { max_tokens: PAPER_BATCH_MAX_TOKENS } : {}),
     ...(input.kind === "paper" || input.kind === "paper-images" ? { response_format: { type: "json_object" } } : {}),
+    // DeepSeek can spend the whole output budget on reasoning before writing any
+    // content, which for a per-page extraction means an empty reply. This
+    // mirrors what the title path does on the same endpoint.
+    ...((input.kind === "paper" || input.kind === "paper-images") && target.url.href === "https://api.deepseek.com/chat/completions"
+      ? { thinking: { type: "disabled" } }
+      : {}),
     messages,
   }));
   const started = Date.now();

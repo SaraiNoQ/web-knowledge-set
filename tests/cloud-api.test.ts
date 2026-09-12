@@ -16,6 +16,7 @@ import {
   type D1Statement,
 } from "../cloud/extension.js";
 import { completePaper, completePaperImages, handleAiApi } from "../cloud/ai.js";
+import { PaperBatchError, paperBatchInstruction, runPaperBatches } from "../shared/paper.js";
 import { handleClipRequest } from "../cloud/clip.js";
 import { createCapture, handleCaptureQueue } from "../cloud/capture.js";
 import type { DerivedPreview } from "../shared/types.js";
@@ -1660,6 +1661,68 @@ test("clip without an AI key never calls the model and keeps the captured title"
     const { documentId } = await response.json() as { documentId: string };
     assert.equal(calls, 0);
     assert.equal((db.sqlite.prepare("SELECT title FROM cloud_documents WHERE id = ?").get(documentId) as { title: string }).title, "Post by @MaxForAI on X");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("cloud paper batches narrow a reply that ran out of budget before writing anything", async () => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<{ images: number; page: number; thinking: unknown }> = [];
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as { thinking?: unknown; messages: Array<{ content: unknown }> };
+    const parts = body.messages[1]!.content as Array<{ type: string; text?: string }>;
+    const instruction = String(parts[0]!.text);
+    const range = /pages? (\d+)(?: to (\d+))?/u.exec(instruction)!;
+    const page = Number(range[1]);
+    const images = parts.filter((part) => part.type === "image_url").length;
+    sent.push({ images, page, thinking: body.thinking ?? null });
+    // A multi-page batch exhausts the output budget before emitting content; the
+    // narrower range that the driver retries with fits.
+    if (images > 1) {
+      return new Response(JSON.stringify({ choices: [{ finish_reason: "length", message: { content: "" } }] }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({
+      choices: [{
+        finish_reason: "stop",
+        message: {
+          content: JSON.stringify({
+            pages: [{ pageNumber: page, blocks: [{ id: `p${page}-b1`, type: "paragraph", original: `original ${page}`, translation: `译文 ${page}`, assetIds: [] }] }],
+          }),
+        },
+      }],
+    }), { headers: { "Content-Type": "application/json" } });
+  };
+  try {
+    const pages = [1, 2, 3, 4].map((pageNumber) => ({ pageNumber, bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0]) }));
+    const outcome = await runPaperBatches(pages, false, async (batch, first, last, includeMetadata) => {
+      try {
+        return await completePaperImages(
+          "https://api.deepseek.com/chat/completions",
+          "deepseek-flash",
+          "paper-secret",
+          "system",
+          batch,
+          paperBatchInstruction(first, last, includeMetadata),
+        );
+      } catch (error) {
+        // The driver only narrows when the runtime reports the failure code.
+        throw new PaperBatchError(
+          error instanceof CloudHttpError ? error.code : "PAPER_PROCESSING_FAILED",
+          error instanceof Error ? error.message : "Paper extraction failed",
+        );
+      }
+    });
+    assert.equal(outcome.ok, true);
+    assert.deepEqual(outcome.ok && outcome.pages.map((page) => page.pageNumber), [1, 2, 3, 4]);
+    assert.deepEqual(sent.map((entry) => entry.images), [4, 2, 1, 1, 2, 1, 1]);
+    // DeepSeek is asked not to spend the budget on reasoning before the JSON.
+    assert.deepEqual(sent.map((entry) => entry.thinking), [
+      { type: "disabled" }, { type: "disabled" }, { type: "disabled" }, { type: "disabled" },
+      { type: "disabled" }, { type: "disabled" }, { type: "disabled" },
+    ]);
   } finally {
     globalThis.fetch = originalFetch;
   }

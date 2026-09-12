@@ -378,12 +378,18 @@ function providerDetail(text: string, apiKey: string) {
 type PaperContentKind = "pdf" | "image";
 
 async function paperCall(endpointUrl: string, apiKey: string, body: Record<string, unknown>, kind: PaperContentKind, timeoutMs: number) {
+  // DeepSeek can spend the whole output budget on reasoning before writing any
+  // content, which for a per-page extraction means a wasted request and an empty
+  // reply. The title path disables it on this endpoint for the same reason.
+  const requestBody = endpointUrl === "https://api.deepseek.com/chat/completions"
+    ? { ...body, thinking: { type: "disabled" } }
+    : body;
   let response: Response;
   try {
     response = await fetch(endpointUrl, {
       method: "POST",
       headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(requestBody),
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
@@ -405,11 +411,17 @@ async function paperCall(endpointUrl: string, apiKey: string, body: Record<strin
   let payload: { choices?: Array<{ finish_reason?: unknown; message?: { content?: unknown } }> };
   try { payload = JSON.parse(text) as typeof payload; }
   catch { throw new CloudHttpError(502, "LLM_INVALID_RESPONSE", "LLM response is not JSON"); }
-  const output = payload.choices?.[0]?.message?.content;
-  if (typeof output !== "string" || !output.trim()) throw new CloudHttpError(502, "LLM_INVALID_RESPONSE", "LLM response has no text content");
+  const choice = payload.choices?.[0];
+  if (!choice || !choice.message) throw new CloudHttpError(502, "LLM_INVALID_RESPONSE", "LLM response has no message");
+  const output = typeof choice.message.content === "string" ? choice.message.content.trim() : "";
+  const finishReason = typeof choice.finish_reason === "string" ? choice.finish_reason : null;
+  // An empty reply with a finish reason is a reply, not a protocol failure: the
+  // endpoint ran out of budget before writing anything, which is exactly what a
+  // dense page does. Reporting it lets the batch driver narrow the range; a
+  // reply with neither content nor a reason is unusable and is rejected here.
+  if (!output && !finishReason) throw new CloudHttpError(502, "LLM_INVALID_RESPONSE", "LLM response has no text content");
   if (output.includes(apiKey)) throw new CloudHttpError(502, "LLM_SECRET_ECHO", "LLM response contained the API key");
-  const finishReason = payload.choices?.[0]?.finish_reason;
-  return { output: output.trim(), finishReason: typeof finishReason === "string" ? finishReason : null };
+  return { output, finishReason };
 }
 
 // Whole-document path: one request carrying the PDF. Only endpoints that accept
