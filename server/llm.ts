@@ -23,6 +23,7 @@ import type {
   UpdateLlmSettingsInput,
 } from "../shared/types.js";
 import { TRANSLATION_LANGUAGES } from "../shared/types.js";
+import { PAPER_BATCH_MAX_TOKENS, PAPER_PAGE_IMAGE_TYPE } from "../shared/paper.js";
 import {
   normalizeGeneratedTitle,
   TITLE_REPAIR_SYSTEM_PROMPT,
@@ -44,6 +45,7 @@ const MAX_API_KEY_BYTES = 16 * 1024;
 const REQUEST_TIMEOUT_MS = 60_000;
 const TITLE_TIMEOUT_MS = 30_000;
 const TITLE_MAX_TOKENS = 1_024;
+const PROVIDER_DETAIL_BYTES = 8 * 1024;
 const types = new Set<DerivedResultType>(["summary", "outline", "keywords", "tag-suggestions", "translation"]);
 const MAX_TRANSLATION_SEGMENTS = 5_000;
 const MAX_TRANSLATED_SEGMENT_CHARS = 20_000;
@@ -622,11 +624,38 @@ function usage(value: unknown): DerivedResultUsage | null {
   return Object.keys(result).length ? result : null;
 }
 
+// Reads at most a few KiB of a rejected response and returns the provider's own
+// message so a capability failure can name the real reason. Anything that could
+// echo the credential is dropped rather than surfaced.
+async function providerDetail(response: http.IncomingMessage, apiKey: string): Promise<string | null> {
+  try {
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    for await (const value of response) {
+      const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value as Uint8Array);
+      bytes += chunk.length;
+      if (bytes > PROVIDER_DETAIL_BYTES) break;
+      chunks.push(chunk);
+    }
+    const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { error?: unknown; message?: unknown };
+    const error = parsed.error;
+    const detail = typeof error === "string" ? error
+      : error && typeof error === "object" && typeof (error as { message?: unknown }).message === "string" ? (error as { message: string }).message
+        : typeof parsed.message === "string" ? parsed.message : "";
+    const trimmed = detail.replace(/\p{Cc}+/gu, " ").replace(/\s+/gu, " ").trim().slice(0, 300);
+    if (!trimmed || (apiKey && trimmed.includes(apiKey))) return null;
+    return trimmed;
+  } catch {
+    return null;
+  }
+}
+
 type CompletionRequest =
   | { kind: "derived"; preview: DerivedTaskPreview; sentText: string }
   | { kind: "probe"; target: { kind: LlmEndpointKind; url: string }; model: string }
   | { kind: "title"; target: { kind: LlmEndpointKind; url: string }; model: string; system: string; sentText: string }
-  | { kind: "paper"; target: { kind: LlmEndpointKind; url: string }; model: string; system: string; pdf: Buffer };
+  | { kind: "paper"; target: { kind: LlmEndpointKind; url: string }; model: string; system: string; pdf: Buffer }
+  | { kind: "paper-images"; target: { kind: LlmEndpointKind; url: string }; model: string; system: string; instruction: string; pages: Buffer[] };
 
 async function requestCompletion(
   input: CompletionRequest,
@@ -675,6 +704,17 @@ async function requestCompletion(
           { type: "file", file: { filename: "paper.pdf", file_data: `data:application/pdf;base64,${input.pdf.toString("base64")}` } },
         ] },
       ]
+    : input.kind === "paper-images"
+      ? [
+        { role: "system", content: input.system },
+        { role: "user", content: [
+          { type: "text", text: input.instruction },
+          ...input.pages.map((page) => ({
+            type: "image_url",
+            image_url: { url: `data:${PAPER_PAGE_IMAGE_TYPE};base64,${page.toString("base64")}`, detail: "high" },
+          })),
+        ] },
+      ]
     : input.kind === "title"
       ? [
         { role: "system", content: input.system },
@@ -687,8 +727,8 @@ async function requestCompletion(
   const body = Buffer.from(JSON.stringify({
     model,
     temperature: 0,
-    ...(input.kind === "probe" ? { max_tokens: 16 } : input.kind === "title" ? { max_tokens: TITLE_MAX_TOKENS } : input.kind === "paper" ? { max_tokens: 32_000 } : {}),
-    ...(input.kind === "paper" ? { response_format: { type: "json_object" } } : {}),
+    ...(input.kind === "probe" ? { max_tokens: 16 } : input.kind === "title" ? { max_tokens: TITLE_MAX_TOKENS } : input.kind === "paper" ? { max_tokens: 32_000 } : input.kind === "paper-images" ? { max_tokens: PAPER_BATCH_MAX_TOKENS } : {}),
+    ...(input.kind === "paper" || input.kind === "paper-images" ? { response_format: { type: "json_object" } } : {}),
     messages,
   }));
   const started = Date.now();
@@ -722,14 +762,23 @@ async function requestCompletion(
     throw new LlmError(502, "LLM_REDIRECT_REJECTED", "LLM endpoint redirects are not allowed");
   }
   const requestRejected = input.kind === "probe" && (status === 400 || status === 404 || status === 422);
+  // A rejected content part is only distinguishable from any other 4xx by the
+  // provider's own words, so those two kinds read a bounded slice of the error
+  // body before failing. The caller decides whether the code is actionable.
+  const contentRejected = (input.kind === "paper" || input.kind === "paper-images") && (status === 400 || status === 422);
   if ((status < 200 || status >= 300) && !requestRejected) {
+    const detail = contentRejected ? await providerDetail(response, apiKey) : null;
     response.destroy();
     const auth = status === 401 || status === 403;
-    throw new LlmError(
-      status === 429 ? 429 : 502,
-      status === 429 ? "LLM_RATE_LIMITED" : auth ? "LLM_AUTH_FAILED" : "LLM_HTTP_ERROR",
-      auth ? "LLM endpoint rejected its credential" : `LLM endpoint returned HTTP ${status}`,
-    );
+    if (status === 429) throw new LlmError(429, "LLM_RATE_LIMITED", "LLM endpoint rate limited the request");
+    if (auth) throw new LlmError(502, "LLM_AUTH_FAILED", "LLM endpoint rejected its credential");
+    if (contentRejected && input.kind === "paper") {
+      throw new LlmError(400, "PAPER_PDF_UNSUPPORTED", detail ? `当前模型或端点拒绝了 PDF 文件输入：${detail}` : "当前模型或端点拒绝了 PDF 文件输入");
+    }
+    if (contentRejected && input.kind === "paper-images") {
+      throw new LlmError(400, "PAPER_MODEL_NO_VISION", detail ? `当前模型不接受图片输入：${detail}` : "当前模型不接受图片输入，请改用支持视觉的模型");
+    }
+    throw new LlmError(502, "LLM_HTTP_ERROR", `LLM endpoint returned HTTP ${status}${detail ? `: ${detail}` : ""}`);
   }
   const encoding = response.headers["content-encoding"]?.toLowerCase().trim();
   if (encoding && encoding !== "identity") {
@@ -815,11 +864,28 @@ export function requestPaperCompletion(input: {
   resolver?: ResolveLlmTarget;
   timeoutMs?: number;
 }) {
-  if (input.target.url === "https://api.deepseek.com/chat/completions") {
-    throw new LlmError(409, "PAPER_PDF_UNSUPPORTED", "当前 DeepSeek 模型不支持 PDF 文件输入，请切换支持 PDF content-part 的模型或端点");
-  }
   return requestCompletion(
     { kind: "paper", target: input.target, model: input.model, system: input.system, pdf: input.pdf },
+    input.apiKey,
+    input.signal,
+    input.resolver ?? resolveLlmTarget,
+    input.timeoutMs ?? REQUEST_TIMEOUT_MS,
+  );
+}
+
+export function requestPaperImagesCompletion(input: {
+  target: { kind: LlmEndpointKind; url: string };
+  model: string;
+  system: string;
+  instruction: string;
+  pages: Buffer[];
+  apiKey: string;
+  signal: AbortSignal;
+  resolver?: ResolveLlmTarget;
+  timeoutMs?: number;
+}) {
+  return requestCompletion(
+    { kind: "paper-images", target: input.target, model: input.model, system: input.system, instruction: input.instruction, pages: input.pages },
     input.apiKey,
     input.signal,
     input.resolver ?? resolveLlmTarget,

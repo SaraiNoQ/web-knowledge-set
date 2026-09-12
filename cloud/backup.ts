@@ -26,7 +26,8 @@ export interface R2Bucket {
   put(key: string, value: ArrayBuffer | Uint8Array | string | ReadableStream<Uint8Array>, options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }): Promise<unknown>;
   get(key: string): Promise<R2ObjectBody | null>;
   head(key: string): Promise<{ size: number; httpMetadata?: { contentType?: string } } | null>;
-  delete(key: string): Promise<void>;
+  delete(keys: string | string[]): Promise<void>;
+  list(options?: { prefix?: string; cursor?: string }): Promise<{ objects: Array<{ key: string }>; truncated: boolean; cursor?: string }>;
 }
 
 interface BackupReply { status?: number; body: unknown; epoch?: string }

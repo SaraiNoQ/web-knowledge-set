@@ -581,6 +581,7 @@ export default function App() {
   const [paperImportFile, setPaperImportFile] = useState<File | null>(null);
   const [paperImportBusy, setPaperImportBusy] = useState(false);
   const [paperImportError, setPaperImportError] = useState("");
+  const [paperAutoStart, setPaperAutoStart] = useState<string | null>(null);
   const [captureQueue, setCaptureQueue] = useState<CaptureQueueStatus | null>(null);
   const [queueError, setQueueError] = useState("");
   const [queueUpdating, setQueueUpdating] = useState(false);
@@ -2069,7 +2070,9 @@ export default function App() {
       setListRefresh((value) => value + 1);
       if (paper?.id) {
         setSelectedId(paper.id);
-        if (result.created) await api.startPaperExtraction(paper.id);
+        // The reader owns extraction: page images can only be rendered here, so
+        // it hands off to the reader instead of starting a request itself.
+        if (result.created) setPaperAutoStart(paper.id);
       }
     } catch (error) {
       setPaperImportError((error as Error).message);
@@ -3387,7 +3390,7 @@ export default function App() {
           <header><div><span className="eyebrow">NEW PAPER KNOWLEDGE</span><h2>导入一篇论文</h2><p>原始 PDF 会只读保存，再由已配置的 LLM 生成分页对照。</p></div><button type="button" onClick={() => setPaperImportOpen(false)} disabled={paperImportBusy} aria-label="关闭导入论文">×</button></header>
           <div className="paper-import-tabs" role="tablist" aria-label="论文来源类型"><button type="button" role="tab" aria-selected={paperImportMode === "url"} onClick={() => setPaperImportMode("url")}>公开链接</button><button type="button" role="tab" aria-selected={paperImportMode === "pdf"} onClick={() => setPaperImportMode("pdf")}>上传 PDF</button></div>
           {paperImportMode === "url" ? <label className="paper-import-field"><span>论文链接</span><input type="url" value={paperImportUrl} onChange={(event) => setPaperImportUrl(event.target.value)} placeholder="https://arxiv.org/abs/..." disabled={paperImportBusy} /><small>支持 arXiv 页面和直接 PDF；IEEE / ACM 等请上传 PDF。</small></label> : <label className="paper-import-upload"><span>选择原始 PDF</span><input type="file" accept="application/pdf,.pdf" onChange={(event) => setPaperImportFile(event.target.files?.[0] || null)} disabled={paperImportBusy} /><strong>{paperImportFile?.name || "尚未选择 PDF"}</strong><small>单文件上限 50 MiB；原始文件不会被 AI 改写。</small></label>}
-          <div className="paper-import-boundary"><strong>AI 发送范围</strong><span>整份 PDF + 页码结构 + 图表说明</span><small>当前模型必须支持 OpenAI-compatible 文件 content-part；不使用本地 PDF 解析。</small></div>
+          <div className="paper-import-boundary"><strong>AI 发送范围</strong><span>整份 PDF，或逐页页图 + 页码结构 + 图表说明</span><small>默认先发整份 PDF；端点不接受时，浏览器用 PDF.js 把每页渲染成 JPEG 后按批发送。原始文件不会被 AI 改写。</small></div>
           {paperImportError && <p className="paper-import-error" role="alert">{paperImportError}</p>}
           <footer><button type="button" onClick={() => setPaperImportOpen(false)} disabled={paperImportBusy}>取消</button><button type="button" className="primary-button" onClick={() => void importPaper()} disabled={paperImportBusy || (paperImportMode === "url" ? !paperImportUrl.trim() : !paperImportFile)}>{paperImportBusy ? <><Spinner />处理中…</> : "创建论文"}</button></footer>
         </section>
@@ -3661,7 +3664,7 @@ export default function App() {
           ) : detailError && (!currentDoc || (currentDoc.kind === "paper" && !currentPaper)) ? (
             <StatePanel kind="error" title="无法打开这篇知识">{detailError}</StatePanel>
           ) : currentPaper && currentDoc ? (
-            <PaperReader paperId={currentPaper.id} onClose={closeDocument} onRevisionChange={updateCurrentPaperRevision} />
+            <PaperReader paperId={currentPaper.id} autoStart={paperAutoStart === currentPaper.id} onClose={closeDocument} onRevisionChange={updateCurrentPaperRevision} />
           ) : currentDoc && draft && webArticleMode ? (
             <>
               <button type="button" className="mobile-back" onClick={closeDocument}><Icon size={16}><path d="m15 18-6-6 6-6" /></Icon>返回知识库</button>

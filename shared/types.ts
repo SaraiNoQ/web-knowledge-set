@@ -55,11 +55,26 @@ export interface PaperExtractionTask {
   id: string;
   paperId: string;
   status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  contentMode: "pdf" | "image" | null;
   pageCount: number | null;
   completedPages: number;
   error: { code: string; message: string } | null;
   createdAt: string;
   finishedAt: string | null;
+}
+
+// What the next extraction of a paper will send to the model, and which page
+// images are already stored. The client renders only the pages listed as
+// missing, so a retry never re-renders pages it already uploaded.
+export interface PaperExtractionPlan {
+  contentMode: "pdf" | "image";
+  pageCount: number | null;
+  rendered: number[];
+}
+
+export interface PaperPageRenderResult {
+  pageCount: number;
+  rendered: number[];
 }
 
 export type LibraryItemSummary = DocumentSummary | PaperSummary;

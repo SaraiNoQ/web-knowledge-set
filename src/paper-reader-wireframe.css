@@ -258,6 +258,8 @@
 .paper-reader-processing h2 { margin: 0; font: 500 29px/1.15 var(--font-serif); }
 .paper-reader-processing p { max-width: 520px; margin: 0; color: var(--wire-muted); line-height: 1.7; }
 .paper-reader-processing.is-error .eyebrow, .paper-reader-processing.is-error h2 { color: var(--wire-accent); }
+.paper-reader-progress { width: min(420px, 80vw); height: 4px; background: var(--wire-line); overflow: hidden; }
+.paper-reader-progress span { display: block; height: 100%; background: var(--wire-accent); transition: width .3s ease; }
 .paper-reader-body { display: grid; grid-template-columns: 76px minmax(0, 1fr) 220px; min-height: 0; }
 .paper-reader-pages { display: grid; align-content: start; gap: 6px; padding: 22px 12px; background: rgba(231,225,212,.72); border-right: 1px solid var(--wire-line); overflow: auto; }
 .paper-reader-pages .eyebrow { margin-bottom: 5px; writing-mode: vertical-rl; }

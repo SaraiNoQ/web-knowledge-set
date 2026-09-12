@@ -28,6 +28,7 @@ import type {
   TranslationLanguage,
 } from "../shared/types.js";
 import { TRANSLATION_LANGUAGES } from "../shared/types.js";
+import { PAPER_MAX_PAGES, PAPER_PAGE_IMAGE_MAX_BYTES, PAPER_PAGE_IMAGE_TYPE } from "../shared/paper.js";
 import { cacheDocumentAssets, type AssetFetchFunction } from "./assets.js";
 import { createAuth } from "./auth.js";
 import {
@@ -94,6 +95,7 @@ const gunzipAsync = promisify(gunzip);
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
 const MAX_COMPRESSED_SNAPSHOT_BYTES = 6 * 1024 * 1024;
 const MAX_PAPER_PDF_BYTES = 50 * 1024 * 1024;
+const MAX_PAPER_PAGE_IMAGE_BYTES = PAPER_PAGE_IMAGE_MAX_BYTES;
 const DATA_EPOCH_HEADER = "X-Zhiye-Data-Epoch";
 const unsafeControl = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
 const JSON_MUTATION_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
@@ -1345,6 +1347,10 @@ export function createApp(options: AppOptions) {
       if (!sameOrigin(request)) throw new HttpError(403, "ORIGIN_REJECTED", "Cross-origin mutations are not allowed");
       const contentType = request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
       if (contentType !== "application/pdf" && contentType !== "application/octet-stream") throw new HttpError(415, "PAPER_PDF_REQUIRED", "Content-Type must be application/pdf");
+    } else if (/^\/api\/papers\/[^/]+\/pages\/[0-9]+\/image$/u.test(pathname)) {
+      if (!sameOrigin(request)) throw new HttpError(403, "ORIGIN_REJECTED", "Cross-origin mutations are not allowed");
+      const contentType = request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
+      if (contentType !== PAPER_PAGE_IMAGE_TYPE) throw new HttpError(415, "PAPER_PAGE_IMAGE_INVALID", "Content-Type must be image/jpeg");
     } else guardMutation(request);
     const enteringEpoch = request.headers[DATA_EPOCH_HEADER.toLowerCase()];
     assertDataEpoch(enteringEpoch);
@@ -2333,11 +2339,73 @@ export function createApp(options: AppOptions) {
         return;
       }
 
+      const paperPlanMatch = pathname.match(/^\/api\/papers\/([^/]+)\/extraction-plan$/u);
+      if (paperPlanMatch && request.method === "GET") {
+        const plan = paperTasks.plan(decodeId(paperPlanMatch[1]));
+        if (!plan) throw new HttpError(404, "PAPER_NOT_FOUND", "Paper not found");
+        sendJson(response, 200, plan);
+        return;
+      }
+
+      const paperRendersMatch = pathname.match(/^\/api\/papers\/([^/]+)\/page-renders$/u);
+      if (paperRendersMatch && request.method === "POST") {
+        const body = await mutationBody(request);
+        const pageCount = body.pageCount;
+        if (Object.keys(body).length !== 1 || !Number.isSafeInteger(pageCount) || (pageCount as number) < 1 || (pageCount as number) > PAPER_MAX_PAGES) {
+          throw new HttpError(400, "INVALID_PAPER_REQUEST", `pageCount must be an integer between 1 and ${PAPER_MAX_PAGES}`);
+        }
+        const database = requireDatabase();
+        const id = decodeId(paperRendersMatch[1]);
+        if (!database.getPaper(id)) throw new HttpError(404, "PAPER_NOT_FOUND", "Paper not found");
+        database.setPaperPageCount(id, pageCount as number);
+        sendJson(response, 200, { pageCount, rendered: database.paperPageImages(id) });
+        return;
+      }
+
+      const paperPageImageMatch = pathname.match(/^\/api\/papers\/([^/]+)\/pages\/([0-9]+)\/image$/u);
+      if (paperPageImageMatch && request.method === "PUT") {
+        if (!sameOrigin(request)) throw new HttpError(403, "ORIGIN_REJECTED", "Cross-origin mutations are not allowed");
+        const contentType = request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
+        if (contentType !== PAPER_PAGE_IMAGE_TYPE) throw new HttpError(415, "PAPER_PAGE_IMAGE_INVALID", "Content-Type must be image/jpeg");
+        const id = decodeId(paperPageImageMatch[1]);
+        const page = Number(paperPageImageMatch[2]);
+        if (!Number.isSafeInteger(page) || page < 1 || page > PAPER_MAX_PAGES) {
+          throw new HttpError(400, "INVALID_PAPER_REQUEST", `Page number must be between 1 and ${PAPER_MAX_PAGES}`);
+        }
+        const database = requireDatabase();
+        if (!database.getPaper(id)) throw new HttpError(404, "PAPER_NOT_FOUND", "Paper not found");
+        // readBinary serves several raw-body routes and names its own limits for
+        // a ZIP archive; a page image reports the image-sized failure instead.
+        let image: Buffer;
+        try {
+          image = await readBinary(request, MAX_PAPER_PAGE_IMAGE_BYTES);
+        } catch (error) {
+          if (error instanceof HttpError && (error.status === 413 || error.code === "EMPTY_ZIP")) {
+            throw new HttpError(413, "PAPER_PAGE_IMAGE_TOO_LARGE", `页图必须是不超过 ${PAPER_PAGE_IMAGE_MAX_BYTES} 字节的 JPEG`);
+          }
+          throw error;
+        }
+        if (image.length < 3 || image[0] !== 0xff || image[1] !== 0xd8 || image[2] !== 0xff) {
+          throw new HttpError(415, "PAPER_PAGE_IMAGE_INVALID", "A JPEG page image is required");
+        }
+        if (!database.savePaperPageImage(id, page, image)) throw new HttpError(404, "PAPER_NOT_FOUND", "Paper not found");
+        sendJson(response, 200, { pageNumber: page, bytes: image.length });
+        return;
+      }
+
       const paperTaskMatch = pathname.match(/^\/api\/paper-tasks\/([^/]+)$/u);
       if (paperTaskMatch && request.method === "GET") {
         const task = paperTasks.get(decodeId(paperTaskMatch[1]));
         if (!task) throw new HttpError(404, "PAPER_TASK_NOT_FOUND", "Paper task not found");
         sendJson(response, 200, task);
+        return;
+      }
+
+      const paperTaskStepMatch = pathname.match(/^\/api\/paper-tasks\/([^/]+)\/pages$/u);
+      if (paperTaskStepMatch && request.method === "POST") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length) throw new HttpError(400, "INVALID_PAPER_REQUEST", "Advancing a paper task accepts no fields");
+        sendJson(response, 202, await paperTasks.advance(decodeId(paperTaskStepMatch[1])));
         return;
       }
 

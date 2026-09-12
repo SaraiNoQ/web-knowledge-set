@@ -1,6 +1,17 @@
 import type { PaperBlock, PaperDocument, PaperExtractionTask, PaperPage, PaperSummary } from "../shared/types";
-import { completePaper, llmRequestKey, settingsRow } from "./ai";
-import { CloudHttpError, jsonObject, type D1Database } from "./extension";
+import {
+  PAPER_BATCH_PAGES,
+  PAPER_BATCH_SYSTEM_PROMPT,
+  PAPER_MAX_PAGES,
+  PAPER_PAGE_IMAGE_MAX_BYTES,
+  PAPER_PAGE_IMAGE_TYPE,
+  PAPER_PROMPT_VERSION,
+  PaperBatchError,
+  paperBatchInstruction,
+  paperContentMode,
+  runPaperBatches,
+} from "../shared/paper";
+import { completePaper, completePaperImages, llmRequestKey, settingsRow } from "./ai";import { CloudHttpError, jsonObject, type D1Database } from "./extension";
 import { publicUrl } from "./net";
 import type { R2Bucket } from "./backup";
 
@@ -9,7 +20,49 @@ function changes(result: { meta: { changes?: number } }) {
 }
 
 const MAX_PDF_BYTES = 50 * 1024 * 1024;
-const PROMPT = `You extract an academic paper for a bilingual page reader. Return JSON only with paper.title, paper.authors, and pages. Keep one page per PDF page. Each page has blocks with id, type, original, translation, assetIds. Allowed types: heading, paragraph, formula, table, figure, caption, reference. Translate to simplified Chinese and never invent binary image data.`;
+const PDF_PROMPT = `You extract an academic paper for a bilingual page reader. Return JSON only with paper.title, paper.authors, and pages. Keep one page per PDF page. Each page has blocks with id, type, original, translation, assetIds. Allowed types: heading, paragraph, formula, table, figure, caption, reference. Translate to simplified Chinese and never invent binary image data.`;
+// Codes that mean "this endpoint will not take the document as a PDF". They
+// switch the extraction to page images instead of failing the paper.
+const PDF_PATH_REJECTED = new Set(["PAPER_PDF_UNSUPPORTED", "PAPER_RESPONSE_TRUNCATED"]);
+
+function pageImageKey(sourceHash: string, page: number) {
+  return `paper-pages/${sourceHash}/${String(page).padStart(4, "0")}.jpg`;
+}
+
+async function pageImageKeys(bucket: R2Bucket, sourceHash: string) {
+  const keys: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const listing = await bucket.list({ prefix: `paper-pages/${sourceHash}/`, cursor });
+    keys.push(...listing.objects.map((object) => object.key));
+    cursor = listing.truncated ? listing.cursor : undefined;
+  } while (cursor);
+  return keys;
+}
+
+export async function deletePaperPageImages(bucket: R2Bucket, sourceHash: string) {
+  const keys = await pageImageKeys(bucket, sourceHash);
+  if (keys.length) await bucket.delete(keys);
+}
+
+interface ExtractionRow {
+  id: string;
+  status: string;
+  contentMode: string | null;
+  completedPages: number;
+  pageCount: number | null;
+  model: string | null;
+  endpointId: string | null;
+  promptVersion: string | null;
+}
+
+async function latestExtraction(db: D1Database, paperId: string, sourceHash: string) {
+  return db.prepare(`SELECT id, status, content_mode AS contentMode, completed_pages AS completedPages, page_count AS pageCount,
+    model, endpoint_id AS endpointId, prompt_version AS promptVersion
+    FROM cloud_paper_extractions WHERE paper_id = ? AND source_hash = ? ORDER BY created_at DESC, id DESC LIMIT 1`)
+    .bind(paperId, sourceHash).first<ExtractionRow>();
+}
+
 
 async function hash(bytes: Uint8Array) {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as unknown as ArrayBuffer));
@@ -78,6 +131,7 @@ export async function deletePaperSource(db: D1Database, bucket: R2Bucket, source
   await db.prepare("DELETE FROM cloud_paper_files WHERE hash = ? AND NOT EXISTS (SELECT 1 FROM cloud_papers WHERE source_hash = ?)").bind(sourceHash, sourceHash).run();
   if (!await db.prepare("SELECT 1 AS found FROM cloud_paper_files WHERE hash = ?").bind(sourceHash).first()) {
     await bucket.delete(`paper/${sourceHash}`);
+    await deletePaperPageImages(bucket, sourceHash);
   }
 }
 
@@ -119,44 +173,194 @@ async function create(db: D1Database, bucket: R2Bucket, sourceKind: "url" | "pdf
   return { created: true, paper: await getPaper(db, id) };
 }
 
+async function readTask(db: D1Database, taskId: string, fallbackNow: string): Promise<PaperExtractionTask> {
+  const task = await db.prepare(`SELECT id, paper_id AS paperId, status, content_mode AS contentMode, page_count AS pageCount, completed_pages AS completedPages,
+    error_code AS errorCode, error_message AS errorMessage, created_at AS createdAt, finished_at AS finishedAt
+    FROM cloud_paper_extractions WHERE id = ?`).bind(taskId).first<Record<string, unknown>>();
+  const status = task?.status === "queued" || task?.status === "running" || task?.status === "succeeded" || task?.status === "failed" || task?.status === "cancelled" ? task.status : "failed";
+  const contentMode = task?.contentMode === "image" ? "image" : task?.contentMode === "pdf" ? "pdf" : null;
+  return {
+    id: taskId,
+    paperId: String(task?.paperId ?? ""),
+    status,
+    contentMode,
+    pageCount: typeof task?.pageCount === "number" ? task.pageCount : null,
+    completedPages: typeof task?.completedPages === "number" ? task.completedPages : 0,
+    error: task?.errorCode ? { code: String(task.errorCode), message: String(task.errorMessage || "Paper extraction failed") } : null,
+    createdAt: String(task?.createdAt || fallbackNow),
+    finishedAt: task?.finishedAt ? String(task.finishedAt) : null,
+  } satisfies PaperExtractionTask;
+}
+
+async function failTask(db: D1Database, paperId: string, taskId: string, code: string, message: string, now: string) {
+  if (!db.batch) throw new CloudHttpError(500, "CLOUD_DB_UNAVAILABLE", "D1 batch support is required");
+  await db.batch([
+    db.prepare("UPDATE cloud_paper_extractions SET status = 'failed', error_code = ?, error_message = ?, finished_at = ? WHERE id = ?").bind(code, message, now, taskId),
+    db.prepare("UPDATE cloud_papers SET status = 'failed', updated_at = ? WHERE id = ?").bind(now, paperId),
+  ]);
+}
+
+// One model call for one ordered range of rendered pages, narrowed by the shared
+// driver whenever a reply is truncated or unusable.
+function extractPageRange(endpointUrl: string, model: string, apiKey: string, pages: Array<{ pageNumber: number; bytes: Uint8Array }>, includeMetadata: boolean) {
+  return runPaperBatches(pages, includeMetadata, async (batch, first, last, withMetadata) => {
+    try {
+      return await completePaperImages(
+        endpointUrl, model, apiKey, PAPER_BATCH_SYSTEM_PROMPT, batch,
+        paperBatchInstruction(first, last, withMetadata),
+      );
+    } catch (error) {
+      throw new PaperBatchError(
+        error instanceof CloudHttpError ? error.code : "PAPER_PROCESSING_FAILED",
+        error instanceof Error ? error.message : "Paper extraction failed",
+      );
+    }
+  });
+}
+
 async function extraction(db: D1Database, bucket: R2Bucket, request: Request, id: string) {
   const paper = await row(db, id);
   if (!paper) throw new CloudHttpError(404, "PAPER_NOT_FOUND", "Paper not found");
   const settings = await settingsRow(db);
   if (!settings.value.enabled) throw new CloudHttpError(409, "LLM_DISABLED", "Cloud AI is disabled");
-  const taskId = crypto.randomUUID();
+  const endpointUrl = settings.value.remote.endpointUrl;
+  const model = settings.value.remote.model;
+  // Resolving the key before any write means a missing or unusable key fails
+  // the request instead of leaving a task that can only fail later.
+  const apiKey = llmRequestKey(request);
+  const sourceHash = String(paper.sourceHash);
+  const endpointId = `endpoint-${(await hash(new TextEncoder().encode(endpointUrl))).slice(0, 16)}`;
   const now = new Date().toISOString();
-  const endpointId = `endpoint-${(await hash(new TextEncoder().encode(settings.value.remote.endpointUrl))).slice(0, 16)}`;
   if (!db.batch) throw new CloudHttpError(500, "CLOUD_DB_UNAVAILABLE", "D1 batch support is required");
-  await db.batch([
-    db.prepare("INSERT INTO cloud_paper_extractions(id, paper_id, status, model, endpoint_id, prompt_version, source_hash, created_at) VALUES (?, ?, 'running', ?, ?, 'paper-extraction-v1', ?, ?)").bind(taskId, id, settings.value.remote.model, endpointId, paper.sourceHash, now),
-    db.prepare("UPDATE cloud_papers SET status = 'extracting', extraction_id = ?, updated_at = ? WHERE id = ?").bind(taskId, now, id),
-  ]);
+
+  const latest = await latestExtraction(db, id, sourceHash);
+  const contentMode: "pdf" | "image" = latest?.contentMode === "image" ? "image" : paperContentMode(endpointUrl);
+  const pageCount = paper.pageCount == null ? null : Number(paper.pageCount);
+  if (contentMode === "image") {
+    const rendered = await pageImageKeys(bucket, sourceHash);
+    if (!pageCount || pageCount < 1 || pageCount > PAPER_MAX_PAGES) {
+      throw new CloudHttpError(409, "PAPER_PAGE_COUNT_REQUIRED", "Render the paper pages before extracting them as images");
+    }
+    if (rendered.length < pageCount) {
+      throw new CloudHttpError(409, "PAPER_PAGE_IMAGES_REQUIRED", "Every page image must be uploaded before image extraction starts");
+    }
+  }
+
+  // Continue an interrupted image extraction instead of paying for the pages
+  // that already succeeded, as long as nothing that shapes the output changed.
+  // A run interrupted before its first batch is resumed too, otherwise its row
+  // would stay running forever and a second driver would pay for it again.
+  const resumable = latest?.status === "running" || (latest?.status === "failed" && latest.completedPages > 0);
+  const resume = contentMode === "image" && latest && resumable && latest.contentMode === "image"
+    && latest.model === model && latest.endpointId === endpointId && latest.promptVersion === PAPER_PROMPT_VERSION
+    ? latest
+    : null;
+  const taskId = resume?.id ?? crypto.randomUUID();
+  if (resume) {
+    await db.batch([
+      db.prepare("UPDATE cloud_paper_extractions SET status = 'running', error_code = NULL, error_message = NULL, finished_at = NULL WHERE id = ? AND status IN ('running', 'failed')").bind(taskId),
+      db.prepare("UPDATE cloud_papers SET status = 'extracting', extraction_id = ?, updated_at = ? WHERE id = ?").bind(taskId, now, id),
+    ]);
+  } else {
+    await db.batch([
+      db.prepare(`INSERT INTO cloud_paper_extractions(id, paper_id, status, content_mode, model, endpoint_id, prompt_version, source_hash, page_count, created_at)
+        VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)`).bind(taskId, id, contentMode, model, endpointId, PAPER_PROMPT_VERSION, sourceHash, pageCount, now),
+      db.prepare("UPDATE cloud_papers SET status = 'extracting', extraction_id = ?, updated_at = ? WHERE id = ?").bind(taskId, now, id),
+    ]);
+  }
+
+  if (contentMode === "pdf") {
+    try {
+      const object = await bucket.get(`paper/${sourceHash}`);
+      if (!object) throw new CloudHttpError(404, "PAPER_SOURCE_MISSING", "Paper PDF is missing from R2");
+      const answer = await completePaper(endpointUrl, model, apiKey, PDF_PROMPT, new Uint8Array(await object.arrayBuffer()));
+      if (answer.finishReason === "length") throw new CloudHttpError(502, "PAPER_RESPONSE_TRUNCATED", "整篇论文超出单次回答上限");
+      const output = parsed(answer.output);
+      const statements = output.pages.map((page) => db.prepare(`INSERT INTO cloud_paper_pages(paper_id, extraction_id, page_number, original_json, translation_json, revision, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 1, ?, ?)`).bind(id, taskId, page.pageNumber, JSON.stringify(page.originalBlocks), JSON.stringify(page.translationBlocks), now, now));
+      statements.push(db.prepare("UPDATE cloud_paper_extractions SET status = 'succeeded', page_count = ?, completed_pages = ?, finished_at = ? WHERE id = ?").bind(output.pages.length, output.pages.length, now, taskId));
+      statements.push(db.prepare("UPDATE cloud_papers SET status = 'ready', page_count = ?, updated_at = ? WHERE id = ?").bind(output.pages.length, now, id));
+      statements.push(db.prepare("UPDATE cloud_documents SET title = ?, author = ?, updated_at = ? WHERE id = ?").bind(output.title, output.authors, now, id));
+      await db.batch(statements);
+    } catch (error) {
+      const code = error instanceof CloudHttpError ? error.code : "PAPER_PROCESSING_FAILED";
+      const message = error instanceof Error ? error.message : "Paper extraction failed";
+      if (PDF_PATH_REJECTED.has(code)) {
+        // The endpoint will not take the document whole. Commit the task to page
+        // images so the client renders and uploads them, then continues here.
+        await db.batch([
+          db.prepare("UPDATE cloud_paper_extractions SET status = 'failed', content_mode = 'image', error_code = 'PAPER_PAGE_IMAGES_REQUIRED', error_message = ?, finished_at = ? WHERE id = ?").bind(message, now, taskId),
+          db.prepare("UPDATE cloud_papers SET status = 'failed', updated_at = ? WHERE id = ?").bind(now, id),
+        ]);
+      } else {
+        await failTask(db, id, taskId, code, message, now);
+      }
+    }
+    return await readTask(db, taskId, now);
+  }
+
+  // Image mode: the key is page-scoped and travels per request, so the client
+  // drives one batch at a time instead of a queue consumer holding it.
+  return await readTask(db, taskId, now);
+}
+
+// Advances one running image extraction by exactly one batch. The page-scoped
+// key arrives on this request, which is the only reason the batches are not run
+// by a queue consumer.
+async function extractionStep(db: D1Database, bucket: R2Bucket, request: Request, taskId: string) {
+  const now = new Date().toISOString();
+  const current = await db.prepare(`SELECT id, paper_id AS paperId, status, content_mode AS contentMode, completed_pages AS completedPages,
+    page_count AS pageCount, source_hash AS sourceHash FROM cloud_paper_extractions WHERE id = ?`)
+    .bind(taskId).first<{ id: string; paperId: string; status: string; contentMode: string | null; completedPages: number; pageCount: number | null; sourceHash: string }>();
+  if (!current) throw new CloudHttpError(404, "PAPER_TASK_NOT_FOUND", "Paper task not found");
+  if (current.status !== "running" || current.contentMode !== "image") return await readTask(db, taskId, now);
+  const settings = await settingsRow(db);
+  if (!settings.value.enabled) throw new CloudHttpError(409, "LLM_DISABLED", "Cloud AI is disabled");
+  const apiKey = llmRequestKey(request);
+  const pageCount = current.pageCount ?? 0;
+  if (pageCount < 1 || pageCount > PAPER_MAX_PAGES) {
+    throw new CloudHttpError(409, "PAPER_PAGE_COUNT_REQUIRED", "The paper page count is unknown");
+  }
+  const from = current.completedPages + 1;
+  const to = Math.min(pageCount, from + PAPER_BATCH_PAGES - 1);
   try {
-    const object = await bucket.get(`paper/${paper.sourceHash}`);
-    if (!object) throw new CloudHttpError(404, "PAPER_SOURCE_MISSING", "Paper PDF is missing from R2");
-    const output = parsed(await completePaper(settings.value.remote.endpointUrl, settings.value.remote.model, llmRequestKey(request), PROMPT, new Uint8Array(await object.arrayBuffer())));
-    const statements = output.pages.map((page) => db.prepare(`INSERT INTO cloud_paper_pages(paper_id, extraction_id, page_number, original_json, translation_json, revision, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 1, ?, ?)`).bind(id, taskId, page.pageNumber, JSON.stringify(page.originalBlocks), JSON.stringify(page.translationBlocks), now, now));
-    statements.push(db.prepare("UPDATE cloud_paper_extractions SET status = 'succeeded', page_count = ?, completed_pages = ?, finished_at = ? WHERE id = ?").bind(output.pages.length, output.pages.length, now, taskId));
-    statements.push(db.prepare("UPDATE cloud_papers SET status = 'ready', page_count = ?, updated_at = ? WHERE id = ?").bind(output.pages.length, now, id));
-    statements.push(db.prepare("UPDATE cloud_documents SET title = ?, author = ?, updated_at = ? WHERE id = ?").bind(output.title, output.authors, now, id));
+    const pages: Array<{ pageNumber: number; bytes: Uint8Array }> = [];
+    for (let page = from; page <= to; page += 1) {
+      const object = await bucket.get(pageImageKey(current.sourceHash, page));
+      if (!object) throw new CloudHttpError(409, "PAPER_PAGE_IMAGES_REQUIRED", `第 ${page} 页的页图尚未上传`);
+      pages.push({ pageNumber: page, bytes: new Uint8Array(await object.arrayBuffer()) });
+    }
+    const output = await extractPageRange(settings.value.remote.endpointUrl, settings.value.remote.model, apiKey, pages, from === 1);
+    if (!output.ok) throw new CloudHttpError(502, output.code, output.message);
+    if (!db.batch) throw new CloudHttpError(500, "CLOUD_DB_UNAVAILABLE", "D1 batch support is required");
+    // A batch response carries one block list per page; both reader columns hold
+    // it, exactly as the whole-PDF path does, because the model returns the
+    // source text and its translation together.
+    const statements = output.pages.map((page) => {
+      const blocks = JSON.stringify(page.originalBlocks);
+      return db.prepare(`INSERT INTO cloud_paper_pages(paper_id, extraction_id, page_number, original_json, translation_json, revision, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+      ON CONFLICT(extraction_id, page_number) DO UPDATE SET original_json = excluded.original_json,
+        translation_json = excluded.translation_json, revision = revision + 1, updated_at = excluded.updated_at`)
+        .bind(current.paperId, taskId, page.pageNumber, blocks, blocks, now, now);
+    });
+    // Compare-and-swap: a second tab advancing the same task must not double-count.
+    statements.push(db.prepare(`UPDATE cloud_paper_extractions SET completed_pages = ?, page_count = COALESCE(page_count, ?)
+      WHERE id = ? AND status = 'running' AND completed_pages = ?`).bind(to, pageCount, taskId, current.completedPages));
+    if (output.title) statements.push(db.prepare("UPDATE cloud_documents SET title = ?, author = COALESCE(?, author), updated_at = ? WHERE id = ?").bind(output.title, output.authors, now, current.paperId));
+    if (to >= pageCount) {
+      statements.push(db.prepare("UPDATE cloud_paper_extractions SET status = 'succeeded', completed_pages = ?, page_count = ?, finished_at = ? WHERE id = ? AND status = 'running'").bind(pageCount, pageCount, now, taskId));
+      statements.push(db.prepare("UPDATE cloud_papers SET status = 'ready', page_count = ?, updated_at = ? WHERE id = ?").bind(pageCount, now, current.paperId));
+    }
     await db.batch(statements);
   } catch (error) {
     const code = error instanceof CloudHttpError ? error.code : "PAPER_PROCESSING_FAILED";
     const message = error instanceof Error ? error.message : "Paper extraction failed";
-    if (!db.batch) throw new CloudHttpError(500, "CLOUD_DB_UNAVAILABLE", "D1 batch support is required");
-    await db.batch([
-      db.prepare("UPDATE cloud_paper_extractions SET status = 'failed', error_code = ?, error_message = ?, finished_at = ? WHERE id = ?").bind(code, message, now, taskId),
-      db.prepare("UPDATE cloud_papers SET status = 'failed', updated_at = ? WHERE id = ?").bind(now, id),
-    ]);
+    await failTask(db, current.paperId, taskId, code, message, now);
   }
-  const task = await db.prepare("SELECT id, paper_id AS paperId, status, page_count AS pageCount, completed_pages AS completedPages, error_code AS errorCode, error_message AS errorMessage, created_at AS createdAt, finished_at AS finishedAt FROM cloud_paper_extractions WHERE id = ?").bind(taskId).first<Record<string, unknown>>();
-  const status = task?.status === "queued" || task?.status === "running" || task?.status === "succeeded" || task?.status === "failed" || task?.status === "cancelled" ? task.status : "failed";
-  const pageCount = typeof task?.pageCount === "number" ? task.pageCount : null;
-  const completedPages = typeof task?.completedPages === "number" ? task.completedPages : 0;
-  return { id: taskId, paperId: id, status, pageCount, completedPages, error: task?.errorCode ? { code: String(task.errorCode), message: String(task.errorMessage || "Paper extraction failed") } : null, createdAt: String(task?.createdAt || now), finishedAt: task?.finishedAt ? String(task.finishedAt) : null } satisfies PaperExtractionTask;
+  return await readTask(db, taskId, now);
 }
+
 
 export async function handlePaperApi(request: Request, db: D1Database, bucket: R2Bucket, url: URL) {
   if (url.pathname === "/api/papers" && request.method === "POST") {
@@ -181,11 +385,66 @@ export async function handlePaperApi(request: Request, db: D1Database, bucket: R
   }
   const extractionPath = /^\/api\/papers\/([^/]+)\/extractions$/u.exec(url.pathname);
   if (extractionPath && request.method === "POST") return { status: 202, body: await extraction(db, bucket, request, decodeURIComponent(extractionPath[1]!)) };
+  const planPath = /^\/api\/papers\/([^/]+)\/extraction-plan$/u.exec(url.pathname);
+  if (planPath && request.method === "GET") {
+    const id = decodeURIComponent(planPath[1]!);
+    const paper = await row(db, id);
+    if (!paper) throw new CloudHttpError(404, "PAPER_NOT_FOUND", "Paper not found");
+    const settings = await settingsRow(db);
+    const sourceHash = String(paper.sourceHash);
+    const latest = await latestExtraction(db, id, sourceHash);
+    const contentMode: "pdf" | "image" = latest?.contentMode === "image" ? "image" : paperContentMode(settings.value.remote.endpointUrl);
+    const rendered = (await pageImageKeys(bucket, sourceHash))
+      .map((key) => Number(key.slice(key.lastIndexOf("/") + 1, -4)))
+      .filter((page) => Number.isSafeInteger(page) && page >= 1)
+      .sort((left, right) => left - right);
+    return { body: { contentMode, pageCount: paper.pageCount == null ? null : Number(paper.pageCount), rendered } };
+  }
+  const renderPath = /^\/api\/papers\/([^/]+)\/page-renders$/u.exec(url.pathname);
+  if (renderPath && request.method === "POST") {
+    const id = decodeURIComponent(renderPath[1]!);
+    const body = await jsonObject(request, 4_096);
+    if (Object.keys(body).length !== 1 || !Number.isSafeInteger(body.pageCount) || (body.pageCount as number) < 1 || (body.pageCount as number) > PAPER_MAX_PAGES) {
+      throw new CloudHttpError(400, "INVALID_PAPER_REQUEST", `pageCount must be an integer between 1 and ${PAPER_MAX_PAGES}`);
+    }
+    const paper = await row(db, id);
+    if (!paper) throw new CloudHttpError(404, "PAPER_NOT_FOUND", "Paper not found");
+    const pageCount = body.pageCount as number;
+    const now = new Date().toISOString();
+    await db.prepare("UPDATE cloud_papers SET page_count = ?, updated_at = ? WHERE id = ?").bind(pageCount, now, id).run();
+    return { body: { pageCount, rendered: await pageImageKeys(bucket, String(paper.sourceHash)) } };
+  }
+  const pageImagePath = /^\/api\/papers\/([^/]+)\/pages\/([0-9]+)\/image$/u.exec(url.pathname);
+  if (pageImagePath && request.method === "PUT") {
+    const id = decodeURIComponent(pageImagePath[1]!);
+    const page = Number(pageImagePath[2]);
+    if (!Number.isSafeInteger(page) || page < 1 || page > PAPER_MAX_PAGES) {
+      throw new CloudHttpError(400, "INVALID_PAPER_REQUEST", `Page number must be between 1 and ${PAPER_MAX_PAGES}`);
+    }
+    const paper = await row(db, id);
+    if (!paper) throw new CloudHttpError(404, "PAPER_NOT_FOUND", "Paper not found");
+    const declared = Number(request.headers.get("content-length") || 0);
+    if (!Number.isSafeInteger(declared) || declared < 1 || declared > PAPER_PAGE_IMAGE_MAX_BYTES) {
+      throw new CloudHttpError(413, "PAPER_PAGE_IMAGE_TOO_LARGE", `A page image must be a JPEG under ${PAPER_PAGE_IMAGE_MAX_BYTES} bytes`);
+    }
+    const bytes = new Uint8Array(await request.arrayBuffer());
+    if (bytes.byteLength < 3 || bytes.byteLength > PAPER_PAGE_IMAGE_MAX_BYTES) throw new CloudHttpError(413, "PAPER_PAGE_IMAGE_TOO_LARGE", "A page image must be a JPEG under the size limit");
+    if (bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) throw new CloudHttpError(415, "PAPER_PAGE_IMAGE_INVALID", "A JPEG page image is required");
+    await bucket.put(pageImageKey(String(paper.sourceHash), page), bytes, { httpMetadata: { contentType: PAPER_PAGE_IMAGE_TYPE } });
+    return { body: { pageNumber: page, bytes: bytes.byteLength } };
+  }
   const taskPath = /^\/api\/paper-tasks\/([^/]+)$/u.exec(url.pathname);
   if (taskPath && request.method === "GET") {
-    const task = await db.prepare("SELECT id, paper_id AS paperId, status, page_count AS pageCount, completed_pages AS completedPages, error_code AS errorCode, error_message AS errorMessage, created_at AS createdAt, finished_at AS finishedAt FROM cloud_paper_extractions WHERE id = ?").bind(decodeURIComponent(taskPath[1]!)).first<Record<string, unknown>>();
-    if (!task) throw new CloudHttpError(404, "PAPER_TASK_NOT_FOUND", "Paper task not found");
-    return { body: { id: String(task.id), paperId: String(task.paperId), status: task.status, pageCount: task.pageCount || null, completedPages: task.completedPages || 0, error: task.errorCode ? { code: String(task.errorCode), message: String(task.errorMessage || "Paper extraction failed") } : null, createdAt: String(task.createdAt), finishedAt: task.finishedAt ? String(task.finishedAt) : null } };
+    const taskId = decodeURIComponent(taskPath[1]!);
+    const exists = await db.prepare("SELECT 1 AS found FROM cloud_paper_extractions WHERE id = ?").bind(taskId).first();
+    if (!exists) throw new CloudHttpError(404, "PAPER_TASK_NOT_FOUND", "Paper task not found");
+    return { body: await readTask(db, taskId, new Date().toISOString()) };
+  }
+  const taskStepPath = /^\/api\/paper-tasks\/([^/]+)\/pages$/u.exec(url.pathname);
+  if (taskStepPath && request.method === "POST") {
+    const body = await jsonObject(request, 4_096);
+    if (Object.keys(body).length) throw new CloudHttpError(400, "INVALID_PAPER_REQUEST", "Advancing a paper task accepts no fields");
+    return { status: 202, body: await extractionStep(db, bucket, request, decodeURIComponent(taskStepPath[1]!)) };
   }
   const pagePath = /^\/api\/papers\/([^/]+)\/pages\/([0-9]+)$/u.exec(url.pathname);
   if (pagePath) {

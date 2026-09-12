@@ -15,7 +15,7 @@ import {
   type D1Result,
   type D1Statement,
 } from "../cloud/extension.js";
-import { completePaper, handleAiApi } from "../cloud/ai.js";
+import { completePaper, completePaperImages, handleAiApi } from "../cloud/ai.js";
 import { handleClipRequest } from "../cloud/clip.js";
 import { createCapture, handleCaptureQueue } from "../cloud/capture.js";
 import type { DerivedPreview } from "../shared/types.js";
@@ -86,10 +86,10 @@ class SqliteD1Database implements D1Database {
 function migratedCloudDatabase() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
-  for (let version = 1; version <= 9; version += 1) {
+  for (let version = 1; version <= 10; version += 1) {
     sqlite.exec(readFileSync(new URL(`../cloud/migrations/${String(version).padStart(4, "0")}_${[
       "cloud_core", "browser_extension", "cloud_ai", "cloud_backups", "cloud_capture", "cloud_folders", "cloud_trash", "cloud_favorites",
-      "cloud_papers",
+      "cloud_papers", "cloud_paper_content_mode",
     ][version - 1]}.sql`, import.meta.url), "utf8"));
   }
   return new SqliteD1Database(sqlite);
@@ -119,8 +119,15 @@ function memoryBucket() {
       const object = objects.get(key);
       return object ? { size: object.bytes.byteLength, httpMetadata: object.contentType ? { contentType: object.contentType } : undefined } : null;
     },
-    async delete(key: string) {
-      objects.delete(key);
+    async delete(key: string | string[]) {
+      for (const value of Array.isArray(key) ? key : [key]) objects.delete(value);
+    },
+    async list(options?: { prefix?: string; cursor?: string }) {
+      const prefix = options?.prefix ?? "";
+      return {
+        objects: [...objects.keys()].filter((key) => key.startsWith(prefix)).sort().map((key) => ({ key })),
+        truncated: false,
+      };
     },
   };
 }
@@ -395,20 +402,175 @@ test("cloud permanently deletes trashed papers and only removes a shared PDF las
   assert.equal(await imagesBucket.head(`paper/${first.sourceHash}`), null);
 });
 
-test("cloud paper extraction rejects DeepSeek PDF input before spending a request", async () => {
-  await assert.rejects(
-    () => completePaper(
-      "https://api.deepseek.com/chat/completions",
-      "deepseek-v4-flash",
-      "paper-secret",
-      "paper",
-      new Uint8Array(Buffer.from("%PDF-1.7\nfixture\n", "ascii")),
-    ),
-    (error: unknown) => {
-      assert.equal((error as { code?: string }).code, "PAPER_PDF_UNSUPPORTED");
-      return true;
-    },
-  );
+test("cloud paper calls report a rejected content part as its own failure", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ error: { message: "this model does not support file input" } }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    await assert.rejects(
+      () => completePaper(
+        "https://api.deepseek.com/chat/completions",
+        "deepseek-flash",
+        "paper-secret",
+        "paper",
+        new Uint8Array(Buffer.from("%PDF-1.7\nfixture\n", "ascii")),
+      ),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, "PAPER_PDF_UNSUPPORTED");
+        assert.match((error as Error).message, /does not support file input/u);
+        return true;
+      },
+    );
+    await assert.rejects(
+      () => completePaperImages(
+        "https://api.deepseek.com/chat/completions",
+        "deepseek-chat",
+        "paper-secret",
+        "paper",
+        [{ pageNumber: 1, bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0]) }],
+        "Transcribe page 1.",
+      ),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, "PAPER_MODEL_NO_VISION");
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(calls, 2);
+});
+
+test("cloud paper extraction drives page images when the endpoint cannot take the PDF", async () => {
+  const originalFetch = globalThis.fetch;
+  const { env, db, imagesBucket } = sqliteEnvironment();
+  const epoch = (db.sqlite.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'").get() as { value: string }).value;
+  db.sqlite.prepare("UPDATE app_settings SET value = ?, revision = revision + 1 WHERE key = 'llm_settings'").run(JSON.stringify({
+    enabled: true,
+    target: "remote",
+    remote: { endpointUrl: "https://api.deepseek.com/chat/completions", model: "deepseek-flash" },
+    local: { endpointUrl: "", model: "", trusted: false },
+  }));
+  const pdf = Buffer.from("%PDF-1.7\ncloud paper\n", "ascii");
+  const upload = await handleRequest(new Request("https://app.example.com/api/papers/upload", {
+    method: "POST",
+    headers: { "Content-Type": "application/pdf", "Content-Length": String(pdf.length), "X-Filename": "paged.pdf", "X-Zhiye-Data-Epoch": epoch },
+    body: pdf,
+  }), env);
+  const paper = (await upload.json() as { paper: { id: string; sourceHash: string } }).paper;
+  const extractionRequest = () => new Request(`https://app.example.com/api/papers/${paper.id}/extractions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch, "X-Zhiye-LLM-Key": "page-scoped-key" },
+    body: "{}",
+  });
+
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; return new Response("{}", { headers: { "Content-Type": "application/json" } }); };
+  try {
+    const plan = await handleRequest(new Request(`https://app.example.com/api/papers/${paper.id}/extraction-plan`), env);
+    assert.deepEqual(await plan.json(), { contentMode: "image", pageCount: null, rendered: [] });
+
+    // Without the page count the image path stops before spending a request.
+    const early = await handleRequest(extractionRequest(), env);
+    assert.equal(early.status, 409);
+    assert.equal(((await early.json()) as { error: { code: string } }).error.code, "PAPER_PAGE_COUNT_REQUIRED");
+    assert.equal(calls, 0);
+
+    const renders = await handleRequest(new Request(`https://app.example.com/api/papers/${paper.id}/page-renders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch },
+      body: JSON.stringify({ pageCount: 1 }),
+    }), env);
+    assert.deepEqual(await renders.json(), { pageCount: 1, rendered: [] });
+
+    // Page images are JPEG only, and the stored key is derived from the PDF hash.
+    const notJpeg = await handleRequest(new Request(`https://app.example.com/api/papers/${paper.id}/pages/1/image`, {
+      method: "PUT",
+      headers: { "Content-Type": "image/jpeg", "Content-Length": "4", "X-Zhiye-Data-Epoch": epoch },
+      body: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+    }), env);
+    assert.equal(notJpeg.status, 415);
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0xff, 0xd9]);
+    const stored = await handleRequest(new Request(`https://app.example.com/api/papers/${paper.id}/pages/1/image`, {
+      method: "PUT",
+      headers: { "Content-Type": "image/jpeg", "Content-Length": String(jpeg.length), "X-Zhiye-Data-Epoch": epoch },
+      body: jpeg,
+    }), env);
+    assert.equal(stored.status, 200);
+    assert.equal((await imagesBucket.head(`paper-pages/${paper.sourceHash}/0001.jpg`))?.size, jpeg.length);
+
+    // The plan now knows the page, so a retry never re-renders it.
+    const replanned = await handleRequest(new Request(`https://app.example.com/api/papers/${paper.id}/extraction-plan`), env);
+    assert.deepEqual(await replanned.json(), { contentMode: "image", pageCount: 1, rendered: [1] });
+
+    let sent: { maxTokens: number; system: string; parts: Array<{ type: string; image_url?: { url: string; detail: string } }> } | null = null;
+    globalThis.fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { max_tokens: number; messages: Array<{ content: unknown }> };
+      sent = {
+        maxTokens: body.max_tokens,
+        system: String(body.messages[0]!.content),
+        parts: body.messages[1]!.content as Array<{ type: string; image_url?: { url: string; detail: string } }>,
+      };
+      return new Response(JSON.stringify({
+        choices: [{
+          finish_reason: "stop",
+          message: {
+            content: JSON.stringify({
+              paper: { title: "页图论文", authors: ["甲"] },
+              pages: [{ pageNumber: 1, blocks: [{ id: "p1-b1", type: "paragraph", original: "From the page image.", translation: "来自页图。", assetIds: [] }] }],
+            }),
+          },
+        }],
+      }), { headers: { "Content-Type": "application/json" } });
+    };
+
+    const started = await handleRequest(extractionRequest(), env);
+    assert.equal(started.status, 202);
+    const task = await started.json() as { id: string; status: string; contentMode: string; pageCount: number | null };
+    assert.deepEqual({ status: task.status, contentMode: task.contentMode, pageCount: task.pageCount }, { status: "running", contentMode: "image", pageCount: 1 });
+
+    const stepRequest = (headers: Record<string, string> = {}) => new Request(`https://app.example.com/api/paper-tasks/${task.id}/pages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch, "X-Zhiye-LLM-Key": "page-scoped-key", ...headers },
+      body: "{}",
+    });
+
+    // Every batch carries the page-scoped key, so a batch without one is
+    // refused instead of being sent to the provider unauthenticated.
+    const noKey = await handleRequest(stepRequest({ "X-Zhiye-LLM-Key": "" }), env);
+    assert.equal(noKey.status, 409);
+    assert.equal(((await noKey.json()) as { error: { code: string } }).error.code, "LLM_KEY_MISSING");
+
+    const step = await handleRequest(stepRequest(), env);
+    assert.equal(step.status, 202);
+    const done = await step.json() as { status: string; completedPages: number; pageCount: number; contentMode: string };
+    assert.deepEqual({ status: done.status, completedPages: done.completedPages, pageCount: done.pageCount }, { status: "succeeded", completedPages: 1, pageCount: 1 });
+    assert.deepEqual(sent!.parts.map((part) => part.type), ["text", "image_url"]);
+    assert.equal(sent!.parts[1]!.image_url!.url, `data:image/jpeg;base64,${jpeg.toString("base64")}`);
+    assert.equal(sent!.parts[1]!.image_url!.detail, "high");
+    assert.match(sent!.system, /page images in ascending page order/u);
+    assert.equal(sent!.maxTokens, 12_000);
+
+    // A finished task is not advanced again: the client loop stops here.
+    const again = await handleRequest(stepRequest(), env);
+    assert.equal((await again.json() as { status: string }).status, "succeeded");
+
+    const paperBody = await (await handleRequest(new Request(`https://app.example.com/api/papers/${paper.id}`), env)).json() as {
+      status: string; title: string; pageCount: number; pages: Array<{ translationBlocks: Array<{ translation: string }> }>;
+    };
+    assert.equal(paperBody.status, "ready");
+    assert.equal(paperBody.title, "页图论文");
+    assert.equal(paperBody.pageCount, 1);
+    assert.equal(paperBody.pages[0]!.translationBlocks[0]!.translation, "来自页图。");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("cloud paper page updates return the server document revision", async () => {

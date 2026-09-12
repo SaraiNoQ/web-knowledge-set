@@ -2,6 +2,7 @@ import { fromMarkdown, type Options as FromMarkdownOptions } from "mdast-util-fr
 import remarkGfm from "remark-gfm";
 
 import { TRANSLATION_LANGUAGES } from "../shared/types";
+import { PAPER_BATCH_MAX_TOKENS, PAPER_PAGE_IMAGE_TYPE } from "../shared/paper";
 import type {
   DerivedPreview,
   DerivedResult,
@@ -352,29 +353,37 @@ export async function complete(endpointUrl: string, modelName: string, apiKey: s
   return { output: output.trim(), usage: payload.usage ?? null, finishReason: typeof payload.choices?.[0]?.finish_reason === "string" ? payload.choices[0].finish_reason : null };
 }
 
-export async function completePaper(endpointUrl: string, modelName: string, apiKey: string, system: string, pdf: Uint8Array, timeoutMs = 120_000) {
-  if (!usableKey(apiKey)) throw new CloudHttpError(409, "LLM_KEY_MISSING", "A page-scoped API key is required");
-  if (endpointUrl === "https://api.deepseek.com/chat/completions") {
-    throw new CloudHttpError(409, "PAPER_PDF_UNSUPPORTED", "当前 DeepSeek 模型不支持 PDF 文件输入，请切换支持 PDF content-part 的模型或端点");
+const PROVIDER_DETAIL_CHARS = 300;
+const CONTROL_CHARACTERS = /\p{Cc}+/gu;
+
+// A bounded, sanitized slice of the provider's own error text. Without it a
+// rejected content part is indistinguishable from any other 4xx, and the user
+// is told to switch models for reasons the provider never gave.
+function providerDetail(text: string, apiKey: string) {
+  let detail = "";
+  try {
+    const payload = JSON.parse(text) as { error?: unknown; message?: unknown };
+    const error = payload.error;
+    if (typeof error === "string") detail = error;
+    else if (error && typeof error === "object" && typeof (error as { message?: unknown }).message === "string") detail = (error as { message: string }).message;
+    else if (typeof payload.message === "string") detail = payload.message;
+  } catch {
+    return null;
   }
+  const trimmed = detail.replace(CONTROL_CHARACTERS, " ").replace(/\s+/gu, " ").trim().slice(0, PROVIDER_DETAIL_CHARS);
+  if (!trimmed || (apiKey && trimmed.includes(apiKey))) return null;
+  return trimmed;
+}
+
+type PaperContentKind = "pdf" | "image";
+
+async function paperCall(endpointUrl: string, apiKey: string, body: Record<string, unknown>, kind: PaperContentKind, timeoutMs: number) {
   let response: Response;
   try {
     response = await fetch(endpointUrl, {
       method: "POST",
       headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: modelName,
-        temperature: 0,
-        max_tokens: 32_000,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: [
-            { type: "text", text: "Extract this paper into the required page JSON. Return JSON only." },
-            { type: "file", file: { filename: "paper.pdf", file_data: `data:application/pdf;base64,${base64(pdf)}` } },
-          ] },
-        ],
-        response_format: { type: "json_object" },
-      }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
@@ -383,15 +392,78 @@ export async function completePaper(endpointUrl: string, modelName: string, apiK
   const text = await limitedText(response);
   if (response.status === 401 || response.status === 403) throw new CloudHttpError(401, "LLM_AUTH_FAILED", "LLM credentials were rejected");
   if (response.status === 429) throw new CloudHttpError(429, "LLM_RATE_LIMITED", "LLM rate limit reached");
-  if (!response.ok) throw new CloudHttpError(502, "LLM_PROTOCOL_REJECTED", "LLM endpoint rejected the request");
-  let payload: { choices?: Array<{ message?: { content?: unknown } }> };
+  if (!response.ok) {
+    const detail = providerDetail(text, apiKey);
+    if (response.status === 400 && kind === "pdf") {
+      throw new CloudHttpError(400, "PAPER_PDF_UNSUPPORTED", detail ? `当前模型或端点拒绝了 PDF 文件输入：${detail}` : "当前模型或端点拒绝了 PDF 文件输入");
+    }
+    if (response.status === 400 && kind === "image") {
+      throw new CloudHttpError(400, "PAPER_MODEL_NO_VISION", detail ? `当前模型不接受图片输入：${detail}` : "当前模型不接受图片输入，请改用支持视觉的模型");
+    }
+    throw new CloudHttpError(502, "LLM_PROTOCOL_REJECTED", detail ? `LLM endpoint rejected the request: ${detail}` : "LLM endpoint rejected the request");
+  }
+  let payload: { choices?: Array<{ finish_reason?: unknown; message?: { content?: unknown } }> };
   try { payload = JSON.parse(text) as typeof payload; }
   catch { throw new CloudHttpError(502, "LLM_INVALID_RESPONSE", "LLM response is not JSON"); }
   const output = payload.choices?.[0]?.message?.content;
   if (typeof output !== "string" || !output.trim()) throw new CloudHttpError(502, "LLM_INVALID_RESPONSE", "LLM response has no text content");
   if (output.includes(apiKey)) throw new CloudHttpError(502, "LLM_SECRET_ECHO", "LLM response contained the API key");
-  return output.trim();
+  const finishReason = payload.choices?.[0]?.finish_reason;
+  return { output: output.trim(), finishReason: typeof finishReason === "string" ? finishReason : null };
 }
+
+// Whole-document path: one request carrying the PDF. Only endpoints that accept
+// a PDF file part get here; callers route by paperContentMode() and fall back to
+// page images when this rejects or the answer does not fit the response budget.
+export async function completePaper(endpointUrl: string, modelName: string, apiKey: string, system: string, pdf: Uint8Array, timeoutMs = 120_000) {
+  if (!usableKey(apiKey)) throw new CloudHttpError(409, "LLM_KEY_MISSING", "A page-scoped API key is required");
+  return await paperCall(endpointUrl, apiKey, {
+    model: modelName,
+    temperature: 0,
+    max_tokens: 32_000,
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: [
+        { type: "text", text: "Extract this paper into the required page JSON. Return JSON only." },
+        { type: "file", file: { filename: "paper.pdf", file_data: `data:application/pdf;base64,${base64(pdf)}` } },
+      ] },
+    ],
+    response_format: { type: "json_object" },
+  }, "pdf", timeoutMs);
+}
+
+// Page-image path: one request per batch of rendered pages. This is the only
+// route for models that reject PDF file parts, and it keeps every response
+// inside the output budget no matter how long the paper is.
+export async function completePaperImages(
+  endpointUrl: string,
+  modelName: string,
+  apiKey: string,
+  system: string,
+  pages: Array<{ pageNumber: number; bytes: Uint8Array }>,
+  instruction: string,
+  timeoutMs = 120_000,
+) {
+  if (!usableKey(apiKey)) throw new CloudHttpError(409, "LLM_KEY_MISSING", "A page-scoped API key is required");
+  if (!pages.length) throw new CloudHttpError(400, "PAPER_PAGE_IMAGES_REQUIRED", "No rendered paper pages were supplied");
+  return await paperCall(endpointUrl, apiKey, {
+    model: modelName,
+    temperature: 0,
+    max_tokens: PAPER_BATCH_MAX_TOKENS,
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: [
+        { type: "text", text: instruction },
+        ...pages.map((page) => ({
+          type: "image_url",
+          image_url: { url: `data:${PAPER_PAGE_IMAGE_TYPE};base64,${base64(page.bytes)}`, detail: "high" },
+        })),
+      ] },
+    ],
+    response_format: { type: "json_object" },
+  }, "image", timeoutMs);
+}
+
 
 function resultRow(row: Record<string, unknown>, revision: number): DerivedResult {
   return {

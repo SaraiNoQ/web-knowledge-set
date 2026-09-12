@@ -51,6 +51,7 @@ import type {
   TagMutationResponse,
 } from "../shared/types.js";
 import { TRANSLATION_LANGUAGES } from "../shared/types.js";
+import { PAPER_MAX_PAGES } from "../shared/paper.js";
 
 const PAGE_SIZE = 30;
 
@@ -620,6 +621,10 @@ const migrations = [
     PRIMARY KEY (extraction_id, page_number, block_id, asset_hash)
   );
   `,
+  `
+  ALTER TABLE paper_extractions ADD COLUMN content_mode TEXT
+    CHECK (content_mode IS NULL OR content_mode IN ('pdf', 'image'));
+  `,
 ];
 
 export const CURRENT_SCHEMA_VERSION = migrations.length;
@@ -710,6 +715,11 @@ interface PaperExtractionRow {
   id: string;
   paper_id: string;
   status: PaperExtractionTask["status"];
+  content_mode: string | null;
+  model: string | null;
+  endpoint_id: string | null;
+  prompt_version: string | null;
+  source_hash: string;
   page_count: number | null;
   completed_pages: number;
   error_code: string | null;
@@ -1989,16 +1999,16 @@ export class KnowledgeDatabase {
     });
   }
 
-  createPaperExtraction(id: string) {
+  createPaperExtraction(id: string, contentMode: "pdf" | "image", pageCount: number | null) {
     return transaction(this.sql, () => {
       const paper = this.paperRow(id);
       if (!paper) return { kind: "missing" as const };
       const taskId = randomUUID();
       const timestamp = now();
       this.sql.prepare(
-        `INSERT INTO paper_extractions(id, paper_id, status, source_hash, created_at)
-         VALUES (?, ?, 'queued', ?, ?)`,
-      ).run(taskId, id, paper.source_hash, timestamp);
+        `INSERT INTO paper_extractions(id, paper_id, status, content_mode, source_hash, page_count, created_at)
+         VALUES (?, ?, 'queued', ?, ?, ?, ?)`,
+      ).run(taskId, id, contentMode, paper.source_hash, pageCount, timestamp);
       this.sql.prepare(
         "UPDATE papers SET status = 'extracting', extraction_id = ?, updated_at = ? WHERE id = ?",
       ).run(taskId, timestamp, id);
@@ -2009,12 +2019,132 @@ export class KnowledgeDatabase {
     });
   }
 
+  // Reuses an interrupted image extraction so the pages that already succeeded
+  // are not paid for again. A failed task with no completed page is discarded
+  // instead: nothing about it is worth carrying forward.
+  latestPaperExtraction(id: string): { id: string; status: PaperExtractionTask["status"]; contentMode: "pdf" | "image" | null; completedPages: number; model: string | null; endpointId: string | null; promptVersion: string | null } | null {
+    const paper = this.paperRow(id);
+    if (!paper) return null;
+    const row = this.sql.prepare(
+      "SELECT id, status, content_mode, completed_pages, model, endpoint_id, prompt_version FROM paper_extractions WHERE paper_id = ? AND source_hash = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+    ).get(id, paper.source_hash) as { id: string; status: PaperExtractionTask["status"]; content_mode: string | null; completed_pages: number; model: string | null; endpoint_id: string | null; prompt_version: string | null } | undefined;
+    if (!row) return null;
+    return {
+      id: row.id,
+      status: row.status,
+      contentMode: row.content_mode === "image" ? "image" : row.content_mode === "pdf" ? "pdf" : null,
+      completedPages: row.completed_pages,
+      model: row.model,
+      endpointId: row.endpoint_id,
+      promptVersion: row.prompt_version,
+    };
+  }
+
+  resumePaperExtraction(id: string) {
+    return transaction(this.sql, () => {
+      const task = this.sql.prepare("SELECT paper_id FROM paper_extractions WHERE id = ?").get(id) as { paper_id: string } | undefined;
+      if (!task) return { kind: "missing" as const };
+      const timestamp = now();
+      this.sql.prepare(
+        "UPDATE paper_extractions SET status = 'running', error_code = NULL, error_message = NULL, finished_at = NULL WHERE id = ? AND status IN ('running', 'failed')",
+      ).run(id);
+      this.sql.prepare("UPDATE papers SET status = 'extracting', extraction_id = ?, updated_at = ? WHERE id = ?").run(id, timestamp, task.paper_id);
+      this.sql.prepare(
+        "UPDATE documents SET status = 'extracting', error_code = NULL, error_message = NULL, revision = revision + 1, updated_at = ? WHERE id = ?",
+      ).run(timestamp, task.paper_id);
+      return { kind: "resumed" as const, task: this.getPaperExtraction(id)! };
+    });
+  }
+
+  setPaperPageCount(id: string, pageCount: number) {
+    this.sql.prepare("UPDATE papers SET page_count = ?, updated_at = ? WHERE id = ?").run(pageCount, now(), id);
+  }
+
+  paperPageImages(id: string): number[] {
+    const paper = this.paperRow(id);
+    if (!paper) return [];
+    const root = join(this.dataDir, "paper-pages", paper.source_hash);
+    let entries: string[];
+    try { entries = readdirSync(root); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+    return entries
+      .map((name) => (/^([0-9]{4})\.jpg$/u.exec(name) ?? [])[1])
+      .filter((value): value is string => Boolean(value))
+      .map((value) => Number.parseInt(value, 10))
+      .filter((page) => Number.isSafeInteger(page) && page >= 1)
+      .sort((left, right) => left - right);
+  }
+
+  paperPageImagePath(id: string, page: number): string | null {
+    if (!Number.isSafeInteger(page) || page < 1 || page > PAPER_MAX_PAGES) return null;
+    const paper = this.paperRow(id);
+    if (!paper) return null;
+    return join(this.dataDir, "paper-pages", paper.source_hash, `${String(page).padStart(4, "0")}.jpg`);
+  }
+
+  savePaperPageImage(id: string, page: number, content: Buffer) {
+    const path = this.paperPageImagePath(id, page);
+    if (!path) return false;
+    const directory = dirname(path);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    writeFileSync(path, content, { mode: 0o600 });
+    return true;
+  }
+
+  deletePaperPageImages(hash: string) {
+    if (!/^[a-f0-9]{64}$/u.test(hash)) throw new Error("Asset hash is invalid");
+    rmSync(join(this.dataDir, "paper-pages", hash), { recursive: true, force: true });
+  }
+
+  // Appends one batch of pages and advances the task. Completion is decided
+  // here rather than by the caller so a batch that happens to be the last one
+  // cannot leave the task running.
+  appendPaperPages(id: string, pages: Array<{ pageNumber: number; originalBlocks: PaperBlock[]; translationBlocks: PaperBlock[] }>, title: string | null, author: string | null) {
+    return transaction(this.sql, () => {
+      const task = this.sql.prepare("SELECT * FROM paper_extractions WHERE id = ?").get(id) as PaperExtractionRow | undefined;
+      if (!task) return { kind: "missing" as const };
+      const timestamp = now();
+      const insert = this.sql.prepare(
+        `INSERT INTO paper_pages(
+           paper_id, extraction_id, page_number, original_json, translation_json, revision, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+         ON CONFLICT(extraction_id, page_number) DO UPDATE SET
+           original_json = excluded.original_json, translation_json = excluded.translation_json,
+           revision = revision + 1, updated_at = excluded.updated_at`,
+      );
+      for (const page of pages) {
+        insert.run(task.paper_id, id, page.pageNumber, JSON.stringify(page.originalBlocks), JSON.stringify(page.translationBlocks), timestamp, timestamp);
+      }
+      const pageCount = this.sql.prepare("SELECT page_count AS pageCount FROM papers WHERE id = ?").get(task.paper_id) as { pageCount: number | null } | undefined;
+      const target = pageCount?.pageCount ?? null;
+      const completedPages = this.sql.prepare("SELECT COUNT(*) AS done FROM paper_pages WHERE extraction_id = ?").get(id) as { done: number };
+      this.sql.prepare("UPDATE paper_extractions SET completed_pages = ?, page_count = COALESCE(?, page_count) WHERE id = ? AND status = 'running'")
+        .run(completedPages.done, target, id);
+      if (title) {
+        this.sql.prepare("UPDATE documents SET title = ?, author = COALESCE(?, author), updated_at = ? WHERE id = ?").run(title, author, timestamp, task.paper_id);
+      }
+      if (target === null || completedPages.done < target) return { kind: "progress" as const, completedPages: completedPages.done, pageCount: target };
+      this.sql.prepare(
+        `UPDATE paper_extractions SET status = 'succeeded', page_count = ?, completed_pages = ?, finished_at = ?, error_code = NULL, error_message = NULL WHERE id = ? AND status = 'running'`,
+      ).run(target, target, timestamp, id);
+      this.sql.prepare("UPDATE papers SET status = 'ready', page_count = ?, updated_at = ? WHERE id = ?").run(target, timestamp, task.paper_id);
+      this.sql.prepare(
+        "UPDATE documents SET status = 'ready', error_code = NULL, error_message = NULL, revision = revision + 1, updated_at = ? WHERE id = ?",
+      ).run(timestamp, task.paper_id);
+      return { kind: "completed" as const, paper: this.getPaper(task.paper_id)! };
+    });
+  }
+
   getPaperExtraction(id: string): PaperExtractionTask | null {
     const row = this.sql.prepare("SELECT * FROM paper_extractions WHERE id = ?").get(id) as PaperExtractionRow | undefined;
     return row ? {
       id: row.id,
       paperId: row.paper_id,
       status: row.status,
+      contentMode: row.content_mode === "image" ? "image" : row.content_mode === "pdf" ? "pdf" : null,
       pageCount: row.page_count,
       completedPages: row.completed_pages,
       error: row.error_code ? { code: row.error_code, message: row.error_message || "论文处理失败" } : null,
@@ -2062,6 +2192,25 @@ export class KnowledgeDatabase {
          error_message = NULL, revision = revision + 1, updated_at = ? WHERE id = ?`,
       ).run(title || "", author ?? null, timestamp, task.paper_id);
       return { kind: "completed" as const, paper: this.getPaper(task.paper_id)! };
+    });
+  }
+
+  // The endpoint refused the document as a whole. The task keeps its failure so
+  // the reader can report why, but it is now committed to page images, so the
+  // retry after rendering does not repeat a request that already failed.
+  switchPaperExtractionToImages(id: string, code: string, message: string) {
+    return transaction(this.sql, () => {
+      const task = this.sql.prepare("SELECT paper_id FROM paper_extractions WHERE id = ?").get(id) as { paper_id: string } | undefined;
+      if (!task) return { kind: "missing" as const };
+      const timestamp = now();
+      this.sql.prepare(
+        "UPDATE paper_extractions SET status = 'failed', content_mode = 'image', error_code = ?, error_message = ?, finished_at = ? WHERE id = ?",
+      ).run(code, message, timestamp, id);
+      this.sql.prepare("UPDATE papers SET status = 'failed', updated_at = ? WHERE id = ?").run(timestamp, task.paper_id);
+      this.sql.prepare(
+        "UPDATE documents SET status = 'failed', error_code = ?, error_message = ?, revision = revision + 1, updated_at = ? WHERE id = ?",
+      ).run(code, message, timestamp, task.paper_id);
+      return { kind: "failed" as const };
     });
   }
 
@@ -3717,9 +3866,14 @@ export class KnowledgeDatabase {
         this.sql.prepare("DELETE FROM paper_files WHERE hash = ? AND NOT EXISTS (SELECT 1 FROM papers WHERE source_hash = ?)").run(hash, hash);
       }
       this.sql.prepare("DELETE FROM tags WHERE NOT EXISTS (SELECT 1 FROM document_tags WHERE tag_id = tags.id)").run();
-      return { kind: "deleted" as const };
+      return { kind: "deleted" as const, removedPaperHashes: paperFileHashes };
     });
-    if (result.kind === "deleted") this.processPendingFileDeletions();
+    if (result.kind === "deleted") {
+      this.processPendingFileDeletions();
+      // Page images are removed only after the deletion has committed: rolling
+      // the transaction back must not leave a surviving paper without them.
+      for (const hash of result.removedPaperHashes) this.deletePaperPageImages(hash);
+    }
     return result;
   }
 

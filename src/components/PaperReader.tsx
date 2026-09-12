@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PaperBlock, PaperDocument, PaperPage } from "../../shared/types";
 import { api } from "../api";
+import { runPaperExtraction, type PaperExtractionProgress } from "../paper-extraction";
 import { Button } from "./ui/Controls";
 
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -10,11 +11,36 @@ function labelForBlock(type: PaperBlock["type"]) {
 }
 
 function paperFailureMessage(paper: PaperDocument) {
-  if (paper.errorCode === "LLM_PROTOCOL_REJECTED" || paper.errorCode === "LLM_HTTP_ERROR") {
-    return "当前模型或端点拒绝了 PDF 文件输入，请切换支持 PDF content-part 的模型或端点。";
+  switch (paper.errorCode) {
+    case "PAPER_PAGE_IMAGES_REQUIRED":
+      return "当前模型需要逐页图片：请在阅读器里渲染页图后重新提取。";
+    case "PAPER_MODEL_NO_VISION":
+      return "当前模型既不接受整份 PDF，也不接受图片输入，请在 AI 设置里改用支持视觉的模型（例如 deepseek-flash）。";
+    case "PAPER_PAGE_COUNT_REQUIRED":
+      return "还没有登记论文页数，请重新提取以渲染页图。";
+    case "PAPER_PAGE_OVERFLOW":
+      return paper.errorMessage || "有一页的内容超出单次回答上限，无法分页提取。";
+    case "PAPER_RESPONSE_TRUNCATED":
+      return "模型在单次回答里放不下整篇论文，重新提取会改用逐页图片分批处理。";
+    case "PAPER_PDF_UNSUPPORTED":
+      return "当前模型或端点不接受整份 PDF，重新提取会改用逐页图片分批处理。";
+    case "LLM_PROTOCOL_REJECTED":
+    case "LLM_HTTP_ERROR":
+      return "当前模型或端点拒绝了 PDF 文件输入，请切换支持 PDF content-part 的模型或端点。";
+    default:
+      return paper.errorMessage || "模型没有返回可验证的分页结构。";
   }
-  return paper.errorMessage || "模型没有返回可验证的分页结构。";
 }
+
+function progressText(progress: PaperExtractionProgress) {
+  const total = progress.total ? ` ${progress.done}/${progress.total}` : "";
+  switch (progress.stage) {
+    case "rendering": return `正在渲染页图${total}，完成后按页发送给模型`;
+    case "extracting": return `正在生成分页对照${total}，每批完成后立即保存`;
+    default: return "正在确认这篇论文的发送方式";
+  }
+}
+
 
 function PaperCanvas({ paperId, pageNumber }: { paperId: string; pageNumber: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -57,7 +83,7 @@ function PaperCanvas({ paperId, pageNumber }: { paperId: string; pageNumber: num
   return <div className="paper-reader-pdf-page"><span className="paper-reader-page-label">ORIGINAL PDF · p.{pageNumber}</span>{error ? <div className="paper-reader-pdf-error" role="alert">{error}</div> : <canvas ref={canvasRef} aria-label={`原始 PDF 第 ${pageNumber} 页`} />}</div>;
 }
 
-export function PaperReader({ paperId, onClose, onRevisionChange }: { paperId: string; onClose: () => void; onRevisionChange: (paperId: string, revision: number) => void }) {
+export function PaperReader({ paperId, autoStart, onClose, onRevisionChange }: { paperId: string; autoStart?: boolean; onClose: () => void; onRevisionChange: (paperId: string, revision: number) => void }) {
   const [paper, setPaper] = useState<PaperDocument | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [draftBlocks, setDraftBlocks] = useState<PaperBlock[]>([]);
@@ -65,7 +91,10 @@ export function PaperReader({ paperId, onClose, onRevisionChange }: { paperId: s
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [progress, setProgress] = useState<PaperExtractionProgress | null>(null);
   const loadSequence = useRef(0);
+  const driving = useRef(false);
+  const resumed = useRef<string | null>(null);
 
   const load = async (signal?: AbortSignal) => {
     const sequence = ++loadSequence.current;
@@ -81,6 +110,24 @@ export function PaperReader({ paperId, onClose, onRevisionChange }: { paperId: s
     }
   };
 
+  // Everything the extraction needs beyond the saved PDF — the page images —
+  // only exists in this browser, so this component drives the run and the
+  // batches rather than waiting on a server-side worker.
+  const drive = useCallback(async () => {
+    if (driving.current) return;
+    driving.current = true;
+    setError("");
+    try {
+      await runPaperExtraction(paperId, { onProgress: setProgress });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "论文处理失败");
+    } finally {
+      driving.current = false;
+      setProgress(null);
+      await load();
+    }
+  }, [paperId]);
+
   useEffect(() => {
     const controller = new AbortController();
     void load(controller.signal);
@@ -93,20 +140,31 @@ export function PaperReader({ paperId, onClose, onRevisionChange }: { paperId: s
     return () => window.clearInterval(timer);
   }, [paper?.status, paperId]);
 
+  useEffect(() => {
+    if (autoStart && paper && paper.status === "queued") void drive();
+  }, [autoStart, paper?.status, drive]);
+
+  // An image extraction left mid-flight by a closed tab has no driver. Only
+  // resume when the plan says images: a PDF run in flight is already working.
+  useEffect(() => {
+    if (!paper || paper.status !== "extracting" || driving.current || resumed.current === paper.id) return;
+    resumed.current = paper.id;
+    void (async () => {
+      try {
+        const plan = await api.planPaperExtraction(paper.id);
+        if (plan.contentMode === "image") await drive();
+      } catch {
+        // The poller keeps showing the paper state; the user can retry.
+      }
+    })();
+  }, [paper?.status, paper?.id, drive]);
+
   const page = useMemo<PaperPage | null>(() => paper?.pages.find((item) => item.pageNumber === pageNumber) ?? null, [paper, pageNumber]);
 
   useEffect(() => {
     if (!page || editing) return;
     setDraftBlocks(page.translationBlocks.map((block) => ({ ...block, assetIds: [...block.assetIds] })));
   }, [page?.paperId, page?.pageNumber, page?.revision, editing]);
-
-  const startExtraction = async () => {
-    setError("");
-    try {
-      await api.startPaperExtraction(paperId);
-      await load();
-    } catch (cause) { setError((cause as Error).message); }
-  };
 
   const save = async () => {
     if (!page) return;
@@ -141,7 +199,7 @@ export function PaperReader({ paperId, onClose, onRevisionChange }: { paperId: s
       {error && <div className="paper-reader-notice is-error" role="alert">{error}</div>}
       {notice && <div className="paper-reader-notice" role="status">{notice}<button type="button" aria-label="关闭提示" onClick={() => setNotice("")}>×</button></div>}
 
-      {processing ? <div className="paper-reader-processing"><span className="eyebrow">LLM EXTRACTION</span><h2>{paper.status === "queued" ? "等待开始分页提取" : "正在生成分页对照"}</h2><p>原始 PDF 已保存；模型会按页生成原文块、中文译文和图表说明。</p>{paper.status === "queued" && <Button variant="primary" onClick={() => void startExtraction()}>开始提取</Button>}</div> : paper.status === "failed" ? <div className="paper-reader-processing is-error"><span className="eyebrow">EXTRACTION FAILED</span><h2>论文提取失败</h2><p>{paperFailureMessage(paper)}</p><Button onClick={() => void startExtraction()}>重新提取</Button></div> : (
+      {processing ? <div className="paper-reader-processing"><span className="eyebrow">LLM EXTRACTION</span><h2>{paper.status === "queued" && !progress ? "等待开始分页提取" : "正在生成分页对照"}</h2><p>{progress ? progressText(progress) : "原始 PDF 已保存；模型会按页生成原文块、中文译文和图表说明。"}</p>{progress && progress.total > 0 && <div className="paper-reader-progress" role="progressbar" aria-valuemin={0} aria-valuemax={progress.total} aria-valuenow={progress.done}><span style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} /></div>}{paper.status === "queued" && !progress && <Button variant="primary" onClick={() => void drive()}>开始提取</Button>}</div> : paper.status === "failed" ? <div className="paper-reader-processing is-error"><span className="eyebrow">EXTRACTION FAILED</span><h2>论文提取失败</h2><p>{paperFailureMessage(paper)}</p><Button onClick={() => void drive()}>重新提取</Button></div> : (
         <div className="paper-reader-body">
           <aside className="paper-reader-pages" aria-label="论文页码"><span className="eyebrow">PAGES · {pages}</span>{Array.from({ length: pages }, (_, index) => { const number = index + 1; return <button key={number} type="button" className={number === pageNumber ? "is-active" : ""} aria-current={number === pageNumber ? "page" : undefined} onClick={() => { if (!editing) setPageNumber(number); }}>{String(number).padStart(2, "0")}</button>; })}</aside>
           <div className="paper-reader-stage">

@@ -29,8 +29,10 @@ import type {
   ImportPreview,
   OnboardingState,
   PaperDocument,
+  PaperExtractionPlan,
   PaperExtractionTask,
   PaperPage,
+  PaperPageRenderResult,
   ImportStrategy,
   KnowledgeCollection,
   KnowledgeDocument,
@@ -48,6 +50,7 @@ import type {
   UpdateLlmSettingsInput,
 } from "../shared/types";
 import { isAbortError, userErrorMessage } from "./error-messages";
+import { PAPER_PAGE_IMAGE_TYPE } from "../shared/paper";
 import {
   cloudLlmCredentialHeaders,
   cloudLlmCredentialMatches,
@@ -631,12 +634,46 @@ export const api = {
     return request<PaperPage>(`/api/papers/${encodeURIComponent(id)}/pages/${page}`, { signal });
   },
 
-  async startPaperExtraction(id: string) {
+  async startPaperExtraction(id: string, signal?: AbortSignal) {
     const headers = cloudRuntime ? cloudLlmHeaders((await api.getLlmSettings()).remote.endpointUrl) : {};
     return request<PaperExtractionTask>(`/api/papers/${encodeURIComponent(id)}/extractions`, {
       method: "POST",
       headers,
       body: JSON.stringify({}),
+      signal,
+    });
+  },
+
+  planPaperExtraction(id: string, signal?: AbortSignal) {
+    return request<PaperExtractionPlan>(`/api/papers/${encodeURIComponent(id)}/extraction-plan`, { signal });
+  },
+
+  registerPaperPageCount(id: string, pageCount: number, signal?: AbortSignal) {
+    return request<PaperPageRenderResult>(`/api/papers/${encodeURIComponent(id)}/page-renders`, {
+      method: "POST",
+      body: JSON.stringify({ pageCount }),
+      signal,
+    });
+  },
+
+  uploadPaperPageImage(id: string, page: number, image: Blob, signal?: AbortSignal) {
+    return request<{ pageNumber: number; bytes: number }>(`/api/papers/${encodeURIComponent(id)}/pages/${page}/image`, {
+      method: "PUT",
+      headers: { "Content-Type": PAPER_PAGE_IMAGE_TYPE },
+      body: image,
+      signal,
+    });
+  },
+
+  // One batch per call: the page-scoped key travels on this request, so the
+  // batches have to be driven from here rather than by a server-side worker.
+  async advancePaperTask(id: string, signal?: AbortSignal) {
+    const headers = cloudRuntime ? cloudLlmHeaders((await api.getLlmSettings()).remote.endpointUrl) : {};
+    return request<PaperExtractionTask>(`/api/paper-tasks/${encodeURIComponent(id)}/pages`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+      signal,
     });
   },
 
