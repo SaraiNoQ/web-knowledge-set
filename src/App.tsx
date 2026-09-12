@@ -3546,7 +3546,7 @@ export default function App() {
         </>}
       </section>
 
-      <main className={`workspace ${selectedId ? "has-selection" : ""} ${libraryCollapsed ? "library-collapsed" : ""} ${currentPaper && currentDoc ? "paper-reading" : ""}`}>
+      <main className={`workspace ${selectedId ? "has-selection" : ""} ${libraryCollapsed ? "library-collapsed" : ""}`}>
         <aside id="library-panel" className={`library-panel ${libraryCollapsed ? "is-collapsed" : ""}`} aria-label="知识列表">
           <button type="button" className="library-toggle" aria-expanded={!libraryCollapsed} aria-controls="library-panel" aria-label={libraryCollapsed ? "展开知识织片" : "收起知识织片"} onClick={() => setLibraryCollapsed((value) => !value)}>
             <Icon size={17}><path d={libraryCollapsed ? "m9 6 6 6-6 6" : "m15 6-6 6 6 6"} /></Icon>
