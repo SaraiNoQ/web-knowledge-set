@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   PaperBatchError,
   PAPER_BATCH_PAGES,
+  paperBatchReasonMessage,
   paperContentMode,
   parsePaperBatch,
   runPaperBatches,
@@ -102,4 +103,48 @@ test("a runtime failure keeps its own code and stops the batches", async () => {
   assert.deepEqual(outcome, { ok: false, code: "PAPER_MODEL_NO_VISION", message: "当前模型不接受图片输入" });
   assert.equal(calls, 1);
   assert.equal(PAPER_BATCH_PAGES, 4);
+});
+
+test("a batch reply is accepted when its page numbers match, whatever shape they arrive in", () => {
+  const block = [{ id: "p9-b1", type: "paragraph", original: "o", translation: "t", assetIds: [] }];
+
+  // A one-image request can come back as a bare page rather than a pages array.
+  const bare = parsePaperBatch(JSON.stringify({ pageNumber: 9, blocks: block }), [9], false);
+  assert.equal(bare.ok, true);
+  assert.deepEqual(bare.ok && bare.pages.map((page) => page.pageNumber), [9]);
+
+  // Pages keyed by number, and a page number sent as a string.
+  const keyed = parsePaperBatch(JSON.stringify({ pages: { "9": { pageNumber: "9", blocks: block } } }), [9], false);
+  assert.equal(keyed.ok, true);
+  assert.deepEqual(keyed.ok && keyed.pages.map((page) => page.pageNumber), [9]);
+
+  // Arriving out of order is not a content problem: the pages are placed by the
+  // number they carry.
+  const shuffled = parsePaperBatch(JSON.stringify({ pages: [{ pageNumber: 11, blocks: block }, { pageNumber: 10, blocks: block }] }), [10, 11], false);
+  assert.equal(shuffled.ok, true);
+  assert.deepEqual(shuffled.ok && shuffled.pages.map((page) => page.pageNumber), [10, 11]);
+});
+
+test("an image with nothing transcribable keeps its page instead of failing the paper", () => {
+  // A full-page figure or a blank page can legitimately produce no pages.
+  const empty = parsePaperBatch(JSON.stringify({ pages: [] }), [7], false);
+  assert.equal(empty.ok, true);
+  assert.deepEqual(empty.ok && empty.pages, [{ pageNumber: 7, originalBlocks: [] }]);
+
+  // For a wider range an empty reply is still a mismatch: it says nothing about
+  // which of the requested pages it covered.
+  assert.deepEqual(parsePaperBatch(JSON.stringify({ pages: [] }), [7, 8], false), { ok: false, reason: "pages" });
+  assert.deepEqual(parsePaperBatch(JSON.stringify({ paper: { title: "x" } }), [7], false), { ok: false, reason: "pages" });
+});
+
+test("a rejected batch reports what the model actually returned", () => {
+  const message = paperBatchReasonMessage("pages", JSON.stringify({ pages: [{ pageNumber: "seven", blocks: [] }] }));
+  assert.match(message, /页码与请求不一致/u);
+  assert.match(message, /模型返回：\{"pages":\[\{"pageNumber":"seven","blocks":\[\]\}\]\}/u);
+  // Without a reply there is nothing to append.
+  assert.equal(paperBatchReasonMessage("blocks"), "论文模型返回的内容块无效");
+  // A long reply is bounded so an error message stays readable.
+  const long = paperBatchReasonMessage("json", "x".repeat(500));
+  assert.ok(long.length < 400, `message was ${long.length} characters`);
+  assert.match(long, /…）/u);
 });

@@ -97,6 +97,8 @@ scripts/soak-web-preview.sh --verify-restart rc-0.9.2
 - `PAPER_PAGE_IMAGES_REQUIRED`：有页图尚未上传成功，通常是渲染中途关掉了页面；重新提取会只补缺失的页。
 - `PAPER_MODEL_NO_VISION`：当前模型既不接受 PDF 也不接受图片。请在 AI 设置里改用支持视觉的模型（DeepSeek 端点上只有 `deepseek-flash` 接受图片）。
 - `PAPER_PAGE_OVERFLOW`：**单独一页**的内容超出单次回答上限，通常是整页密集公式或扫描件；该页无法自动分页提取。
+- `PAPER_INVALID_RESPONSE`：模型返回的内容无法按页码使用。提示里会附上模型实际返回的开头（最多 300 字），便于判断是拒绝作答、格式变化还是页码错乱；这一批已按更小范围重试过，仍失败才会报出。
+- 整页图片或不含正文的空白页可以合法地没有任何内容块，这类页会以空页保留，不会让整篇论文失败；原文页图始终在左侧显示。
 - `PAPER_RESPONSE_TRUNCATED` / `PAPER_PDF_UNSUPPORTED`：端点不接受整份 PDF，重新提取会自动改走页图通道。
 - 页图是按 PDF 内容哈希缓存的派生文件，原文 PDF 始终只读保留；删除论文不会影响其他引用同一份 PDF 的论文。
 

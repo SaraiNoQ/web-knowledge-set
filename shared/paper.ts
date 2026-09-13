@@ -96,23 +96,65 @@ function blockList(value: unknown): PaperBlock[] | null {
   return result;
 }
 
+const PAPER_REPLY_EXCERPT_CHARS = 300;
+
+// A bounded one-line excerpt of what the model actually returned. A rejected
+// batch that reports only "the page numbers did not match" cannot be told apart
+// from a refusal, a provider change, or a reply shape the parser was too strict
+// for, which makes the failure impossible to act on.
+export function paperReplyExcerpt(value: string) {
+  const text = value.replace(/\s+/gu, " ").trim();
+  return text.length <= PAPER_REPLY_EXCERPT_CHARS ? text : `${text.slice(0, PAPER_REPLY_EXCERPT_CHARS)}…`;
+}
+
+// The reply may wrap its pages in the documented object, key them by page
+// number, or — for a one-image request — hand back a bare page. Each of those
+// still names the same pages, which is the part that has to match.
+function collectPages(root: Record<string, unknown>): unknown[] | null {
+  const raw = root.pages;
+  if (Array.isArray(raw)) return raw;
+  if (raw && typeof raw === "object") return Object.values(raw as Record<string, unknown>);
+  if (root.pageNumber !== undefined) return [root];
+  return null;
+}
+
+function pageNumberValue(value: unknown) {
+  const page = typeof value === "number"
+    ? value
+    : typeof value === "string" && /^[0-9]{1,6}$/u.test(value.trim()) ? Number(value) : Number.NaN;
+  return Number.isSafeInteger(page) && page >= 1 ? page : null;
+}
+
 // Validates one batch response against the exact page numbers the request asked
-// for. Anything else is rejected rather than salvaged: a page silently attached
-// to the wrong number would put the wrong text beside the original page.
+// for. The numbers must match exactly — a missing, extra, or renumbered page is
+// rejected rather than salvaged, because a page attached to the wrong number
+// would put another page's text beside the original. The order they arrive in is
+// not part of that guarantee, so the pages are placed by number.
 export function parsePaperBatch(value: string, expectedPages: number[], includeMetadata: boolean): PaperBatchParse {
   const root = jsonObject(value);
   if (!root) return { ok: false, reason: "json" };
-  const rawPages = root.pages;
-  if (!Array.isArray(rawPages) || rawPages.length !== expectedPages.length) return { ok: false, reason: "pages" };
+  const entries = collectPages(root);
+  if (!entries) return { ok: false, reason: "pages" };
+  const requested = new Set(expectedPages);
   const pages: PaperBatchPage[] = [];
-  for (const [index, entry] of rawPages.entries()) {
+  for (const entry of entries) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return { ok: false, reason: "structure" };
     const page = entry as Record<string, unknown>;
-    if (page.pageNumber !== expectedPages[index]) return { ok: false, reason: "pages" };
+    const pageNumber = pageNumberValue(page.pageNumber);
+    if (pageNumber === null || !requested.has(pageNumber) || pages.some((item) => item.pageNumber === pageNumber)) {
+      return { ok: false, reason: "pages" };
+    }
     const original = blockList(page.blocks);
     if (!original) return { ok: false, reason: "blocks" };
-    pages.push({ pageNumber: expectedPages[index]!, originalBlocks: original });
+    pages.push({ pageNumber, originalBlocks: original });
   }
+  // A single image can legitimately hold nothing transcribable — a full-page
+  // figure, a blank page — and comes back with no pages at all. That page is
+  // kept with no blocks instead of failing the paper, and the reader still shows
+  // the original page beside it.
+  if (!pages.length && expectedPages.length === 1) pages.push({ pageNumber: expectedPages[0]!, originalBlocks: [] });
+  if (pages.length !== requested.size) return { ok: false, reason: "pages" };
+  pages.sort((left, right) => left.pageNumber - right.pageNumber);
   if (!includeMetadata) return { ok: true, title: null, authors: null, pages };
   const metadata = root.paper && typeof root.paper === "object" && !Array.isArray(root.paper)
     ? root.paper as Record<string, unknown>
@@ -126,13 +168,17 @@ export function parsePaperBatch(value: string, expectedPages: number[], includeM
 
 // A batch whose pages the model returned but with unusable content: retrying the
 // same batch never helps, so the caller narrows the batch instead.
-export function paperBatchReasonMessage(reason: "json" | "structure" | "pages" | "blocks") {
-  switch (reason) {
-    case "json": return "论文模型返回的不是有效 JSON";
-    case "pages": return "论文模型返回的页码与请求不一致";
-    case "blocks": return "论文模型返回的内容块无效";
-    default: return "论文模型返回结构无效";
-  }
+export function paperBatchReasonMessage(reason: "json" | "structure" | "pages" | "blocks", reply?: string) {
+  const base = (() => {
+    switch (reason) {
+      case "json": return "论文模型返回的不是有效 JSON";
+      case "pages": return "论文模型返回的页码与请求不一致";
+      case "blocks": return "论文模型返回的内容块无效";
+      default: return "论文模型返回结构无效";
+    }
+  })();
+  const excerpt = reply ? paperReplyExcerpt(reply) : "";
+  return excerpt ? `${base}（模型返回：${excerpt}）` : base;
 }
 
 export interface PaperBatchAnswer {
@@ -180,7 +226,9 @@ export async function runPaperBatches<T extends { pageNumber: number }>(
     const result = parsePaperBatch(answer.output, item.pages.map((page) => page.pageNumber), item.includeMetadata);
     if (!result.ok) {
       if (item.pages.length === 1) {
-        return { ok: false, code: "PAPER_INVALID_RESPONSE", message: paperBatchReasonMessage(result.reason) };
+        // Nothing narrower left to try, so report the reason together with what
+        // the model actually said.
+        return { ok: false, code: "PAPER_INVALID_RESPONSE", message: paperBatchReasonMessage(result.reason, answer.output) };
       }
       const middle = Math.ceil(item.pages.length / 2);
       pending.unshift({ pages: item.pages.slice(middle), includeMetadata: false });
