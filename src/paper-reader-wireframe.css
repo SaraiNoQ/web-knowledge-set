@@ -242,13 +242,13 @@
   .paper-wireframe-pagination > button:last-child { justify-self: end; }
 }
 
-/* The reader is exactly one viewport tall. That is what lets the page scroll
-   the masthead and capture band away and leave the paper filling the window:
-   the document is only (chrome + one viewport) tall, so at full scroll the
-   reader's top sits at 0 and its bottom exactly at the fold, with nothing left
-   over below it at any scroll position in between. */
-.paper-reader { display: flex; flex-direction: column; height: 100vh; height: 100dvh; background: rgba(248, 245, 237, .7); }
-.paper-reader-state { flex: 1 1 auto; min-height: 0; overflow: auto; display: grid; place-items: center; align-content: center; gap: 10px; padding: 50px; text-align: center; }
+/* The content area — page rail, toolbar and both panes — is exactly one viewport
+   tall, and it sits below the reader's own header in the normal page flow. That
+   way scrolling moves the header (and the app chrome above it) out of the way and
+   leaves the paper filling the whole window, with nothing left over below it at
+   any scroll position in between. */
+.paper-reader { display: flex; flex-direction: column; background: rgba(248, 245, 237, .7); }
+.paper-reader-state { flex: 1 1 auto; min-height: 100vh; overflow: auto; display: grid; place-items: center; align-content: center; gap: 10px; padding: 50px; text-align: center; }
 .paper-reader-header { display: grid; grid-template-columns: minmax(150px, .7fr) minmax(0, 2fr) minmax(250px, 1fr); align-items: center; gap: 20px; padding: 10px clamp(18px, 3vw, 42px); border-bottom: 1px solid var(--wire-line-strong); background: rgba(250, 247, 239, .86); }
 .paper-reader-back { justify-self: start; padding: 0; color: var(--wire-muted); background: transparent; border: 0; font-size: 13px; }
 .paper-reader-back:hover { color: var(--wire-accent); }
@@ -259,13 +259,13 @@
 .paper-reader-notice { display: flex; justify-content: space-between; gap: 14px; margin: 14px clamp(18px, 3vw, 42px) 0; padding: 10px 12px; color: var(--wire-muted); background: rgba(101,112,90,.08); border: 1px solid rgba(101,112,90,.3); font-size: 12px; }
 .paper-reader-notice.is-error { color: var(--wire-accent); background: rgba(189,65,44,.06); border-color: rgba(189,65,44,.35); }
 .paper-reader-notice button { padding: 0; color: inherit; background: transparent; border: 0; font-size: 18px; }
-.paper-reader-processing { flex: 1 1 auto; min-height: 0; overflow: auto; display: grid; place-items: center; align-content: center; gap: 12px; padding: 42px; text-align: center; }
+.paper-reader-processing { flex: 1 1 auto; min-height: 100vh; overflow: auto; display: grid; place-items: center; align-content: center; gap: 12px; padding: 42px; text-align: center; }
 .paper-reader-processing h2 { margin: 0; font: 500 29px/1.15 var(--font-serif); }
 .paper-reader-processing p { max-width: 520px; margin: 0; color: var(--wire-muted); line-height: 1.7; }
 .paper-reader-processing.is-error .eyebrow, .paper-reader-processing.is-error h2 { color: var(--wire-accent); }
 .paper-reader-progress { width: min(420px, 80vw); height: 4px; background: var(--wire-line); overflow: hidden; }
 .paper-reader-progress span { display: block; height: 100%; background: var(--wire-accent); transition: width .3s ease; }
-.paper-reader-body { display: grid; grid-template-columns: 58px minmax(0, 1fr); flex: 1 1 auto; min-height: 0; }
+.paper-reader-body { display: grid; grid-template-columns: 58px minmax(0, 1fr); flex: none; height: 100vh; height: 100dvh; min-height: 0; }
 .paper-reader-pages { display: grid; align-content: start; gap: 6px; padding: 18px 10px; background: rgba(231,225,212,.72); border-right: 1px solid var(--wire-line); overflow-y: auto; overflow-x: hidden; }
 .paper-reader-pages button { min-height: 32px; color: var(--wire-muted); background: transparent; border: 1px solid transparent; font: 10px var(--font-mono); }
 .paper-reader-pages button:hover, .paper-reader-pages button.is-active { color: var(--wire-accent); background: var(--wire-fill); border-color: var(--wire-accent); }
@@ -338,8 +338,8 @@
   .paper-reader-split { display: none; }
   .paper-reader-pdf-page, .paper-reader-translation { min-height: 420px; }
   /* Stacked panes are taller than any viewport, so the page scrolls here
-     instead of the reader clipping content it cannot scroll. */
-  .paper-reader { height: auto; min-height: 0; }
+     instead of the content area clipping what it cannot scroll. */
+  .paper-reader-body { height: auto; }
   .paper-reader-page-toolbar { grid-template-columns: 1fr auto; }
   .paper-reader-page-toolbar span { grid-column: 1 / -1; grid-row: 2; }
 }

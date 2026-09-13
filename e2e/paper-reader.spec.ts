@@ -97,23 +97,32 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
   const readerFits = await page.locator(".paper-reader").evaluate((element) => element.scrollHeight <= element.clientHeight + 1);
   expect(readerFits).toBe(true);
 
-  // The reader is exactly one viewport tall, so scrolling the masthead and the
-  // capture band away leaves the paper filling the window: at full scroll its
-  // top sits at 0 and its bottom at the fold, with nothing left over below it.
+  // The content area is exactly one viewport tall and the reader's own header
+  // sits above it in the page flow, so scrolling past the header and the app
+  // chrome leaves the paper filling the window with nothing left over below it.
   for (const width of [1440, 1000, 800]) {
     await page.setViewportSize({ width, height: 900 });
     await expect.poll(async () => page.evaluate(() => {
-      const reader = document.querySelector(".paper-reader") as HTMLElement;
-      return Math.abs(Math.round(reader.clientHeight - window.innerHeight));
+      const body = document.querySelector(".paper-reader-body") as HTMLElement;
+      return Math.abs(Math.round(body.clientHeight - window.innerHeight));
     })).toBeLessThanOrEqual(2);
     const atBottom = await page.evaluate(() => {
       window.scrollTo(0, 100_000);
-      const rect = (document.querySelector(".paper-reader") as HTMLElement).getBoundingClientRect();
-      return { top: Math.round(rect.top), bottom: Math.round(rect.bottom), inner: window.innerHeight, scrolled: Math.round(window.scrollY) };
+      const body = document.querySelector(".paper-reader-body") as HTMLElement;
+      const header = document.querySelector(".paper-reader-header") as HTMLElement;
+      const rect = body.getBoundingClientRect();
+      return {
+        top: Math.round(rect.top),
+        bottom: Math.round(rect.bottom),
+        inner: window.innerHeight,
+        headerBottom: Math.round(header.getBoundingClientRect().bottom),
+        scrolled: Math.round(window.scrollY),
+      };
     });
-    // The chrome must be scrollable away, and the paper must then fill the window
-    // exactly — no gap below it, no part of it above the fold.
+    // The chrome and the reader's header must be scrollable away, and the paper
+    // must then fill the window exactly.
     expect(atBottom.scrolled).toBeGreaterThan(0);
+    expect(atBottom.headerBottom).toBeLessThanOrEqual(1);
     expect(Math.abs(atBottom.top)).toBeLessThanOrEqual(2);
     expect(Math.abs(atBottom.bottom - atBottom.inner)).toBeLessThanOrEqual(2);
     await page.evaluate(() => window.scrollTo(0, 0));
