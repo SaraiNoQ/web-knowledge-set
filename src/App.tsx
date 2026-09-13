@@ -14,7 +14,6 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   BatchDocumentAction,
   CaptureHistoryItem,
-  CaptureMode,
   CaptureQueueStatus,
   CaptureStatus,
   DocumentAsset,
@@ -56,7 +55,6 @@ declare const __APP_VERSION__: string;
 
 type EditorMode = "edit" | "split" | "preview";
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
-type StatusFilter = CaptureStatus | "";
 type LibraryView = "all" | "favorites" | "trash" | "paper";
 type SearchScope = "all" | "title" | "body" | "source";
 type SortOrder = "updated" | "created" | "title";
@@ -518,14 +516,8 @@ export default function App() {
   const [searchScope, setSearchScope] = useState<SearchScope>("all");
   const [tag, setTag] = useState("");
   const [collectionFilter, setCollectionFilter] = useState("");
-  const [status, setStatus] = useState<StatusFilter>("");
   const [favoriteFilter, setFavoriteFilter] = useState<boolean | undefined>();
-  const [archivedFilter, setArchivedFilter] = useState<boolean | undefined>();
-  const [captureModeFilter, setCaptureModeFilter] = useState<CaptureMode | "">("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
   const [sortOrder, setSortOrder] = useState<SortOrder>("updated");
-  const [unorganizedFilter, setUnorganizedFilter] = useState(false);
   const [libraryView, setLibraryView] = useState<LibraryView>("all");
   // The "论文" view is just the library narrowed to paper knowledge, so the
   // filter is derived rather than kept in its own state that could drift.
@@ -673,8 +665,8 @@ export default function App() {
   currentDocRef.current = currentDoc;
   sourceMetadataRef.current = sourceMetadata;
   const listContextKey = JSON.stringify([
-    query, searchScope, kindFilter, tag, collectionFilter, status, favoriteFilter, archivedFilter,
-    unorganizedFilter, captureModeFilter, dateFrom, dateTo, sortOrder, inTrash, page,
+    query, searchScope, kindFilter, tag, collectionFilter, favoriteFilter,
+    sortOrder, inTrash, page,
   ]);
   listContextRef.current = listContextKey;
 
@@ -1274,13 +1266,7 @@ export default function App() {
             kind: kindFilter,
             tag,
             collectionId: collectionFilter,
-            status,
             favorite: favoriteFilter,
-            archived: archivedFilter,
-            unorganized: unorganizedFilter || undefined,
-            captureMode: captureModeFilter || undefined,
-            from: dateFrom,
-            to: dateTo,
             sort: sortOrder,
             page,
             trash: inTrash ? "only" : undefined,
@@ -1306,7 +1292,7 @@ export default function App() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [archivedFilter, captureModeFilter, collectionFilter, dateFrom, dateTo, favoriteFilter, inTrash, kindFilter, listRefresh, page, query, searchScope, sortOrder, status, tag, unorganizedFilter]);
+  }, [collectionFilter, favoriteFilter, inTrash, kindFilter, listRefresh, page, query, searchScope, sortOrder, tag]);
 
   useEffect(() => {
     if (!inTrash || !items.some(needsCapturePolling)) return;
@@ -1318,13 +1304,7 @@ export default function App() {
           scope: searchScope,
           tag,
           collectionId: collectionFilter,
-          status,
           favorite: favoriteFilter,
-          archived: archivedFilter,
-          unorganized: unorganizedFilter || undefined,
-          captureMode: captureModeFilter || undefined,
-          from: dateFrom,
-          to: dateTo,
           sort: sortOrder,
           page,
           trash: inTrash ? "only" : undefined,
@@ -1347,7 +1327,7 @@ export default function App() {
       window.clearInterval(timer);
       controller.abort();
     };
-  }, [archivedFilter, captureModeFilter, collectionFilter, dateFrom, dateTo, favoriteFilter, inTrash, items, page, query, searchScope, sortOrder, status, tag, unorganizedFilter]);
+  }, [collectionFilter, favoriteFilter, inTrash, items, page, query, searchScope, sortOrder, tag]);
 
   useEffect(() => {
     if (inTrash) setSelectedIds((previous) => new Set(items.filter((item) => previous.has(item.id)).map((item) => item.id)));
@@ -1753,13 +1733,7 @@ export default function App() {
     setSearchScope("all");
     setTag("");
     setCollectionFilter("");
-    setStatus("");
     setFavoriteFilter(undefined);
-    setArchivedFilter(undefined);
-    setUnorganizedFilter(false);
-    setCaptureModeFilter("");
-    setDateFrom("");
-    setDateTo("");
     setSortOrder("updated");
     setPage(1);
     setInTrash(inTargetTrash);
@@ -2551,13 +2525,7 @@ export default function App() {
     setSearchScope("all");
     setTag("");
     setCollectionFilter("");
-    setCaptureModeFilter("");
-    setDateTo("");
     setFavoriteFilter(view === "favorites" ? true : undefined);
-    setArchivedFilter(undefined);
-    setUnorganizedFilter(false);
-    setStatus("");
-    setDateFrom("");
     setImportNotice("");
     return true;
   };
@@ -3263,19 +3231,16 @@ export default function App() {
     }
   };
 
-  const hasActiveFilters = Boolean(query || tag || status || collectionFilter || favoriteFilter !== undefined || archivedFilter !== undefined || unorganizedFilter || captureModeFilter || dateFrom || dateTo);
+  const hasActiveFilters = Boolean(query || tag || collectionFilter || favoriteFilter !== undefined);
   const filteredDescription = useMemo(() => {
     const parts = [
       query && `“${query}”`,
       tag && `#${tag}`,
       collectionFilter && collections.find((value) => value.id === collectionFilter)?.name,
-      status && STATUS_LABEL[status],
       favoriteFilter === true && "已收藏",
-      archivedFilter === true && "已归档",
-      unorganizedFilter && "未整理",
     ].filter(Boolean);
     return parts.length ? parts.join(" · ") : inTrash ? "已移除的网页" : "全部网页";
-  }, [archivedFilter, collectionFilter, collections, favoriteFilter, inTrash, query, status, tag, unorganizedFilter]);
+  }, [collectionFilter, collections, favoriteFilter, inTrash, query, tag]);
   const queueLabel = !captureQueue
     ? "正在读取队列"
     : captureQueue.paused
@@ -3588,9 +3553,8 @@ export default function App() {
           {!inTrash ? <><LibraryDirectory
             folders={folders}
             filters={{
-              q: query, scope: searchScope, kind: kindFilter, tag, collectionId: collectionFilter, status,
-              favorite: favoriteFilter, archived: archivedFilter, unorganized: unorganizedFilter || undefined,
-              captureMode: captureModeFilter || undefined, from: dateFrom, to: dateTo, sort: sortOrder,
+              q: query, scope: searchScope, kind: kindFilter, tag, collectionId: collectionFilter,
+              favorite: favoriteFilter, sort: sortOrder,
             }}
             refreshKey={listRefresh}
             onFoldersChanged={() => void refreshFoldersAndCurrent()}

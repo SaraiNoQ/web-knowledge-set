@@ -132,7 +132,7 @@ export function Onboarding({ state, onComplete, onLater, revisit = false }: {
           {step === 3 && <>
             <h1 id="onboarding-title">找到它，<br />再把它归好。</h1>
             <p className="onboarding-lead">左侧资料库用标题、正文和来源搜索。标签适合描述属性，集合适合组织主题；收藏、归档与回收站让资料库保持清楚。</p>
-            <ol className="onboarding-sequence"><li><span>1</span><div><strong>全文搜索</strong><p>按 ⌘ K 随时聚焦搜索框。</p></div></li><li><span>2</span><div><strong>标签与集合</strong><p>一篇知识可同时属于多个主题。</p></div></li><li><span>3</span><div><strong>状态视图</strong><p>快速查看最近、收藏、失败或回收站内容。</p></div></li></ol>
+            <ol className="onboarding-sequence"><li><span>1</span><div><strong>全文搜索</strong><p>按 ⌘ K 随时聚焦搜索框。</p></div></li><li><span>2</span><div><strong>标签与集合</strong><p>一篇知识可同时属于多个主题。</p></div></li><li><span>3</span><div><strong>视图切换</strong><p>全部、收藏、回收站与论文，一键切换。</p></div></li></ol>
           </>}
 
           {step === 4 && <>

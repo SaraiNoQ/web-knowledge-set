@@ -1,5 +1,26 @@
 import { expect, test } from "@playwright/test";
 
+// Paper extraction refuses to start unless AI is enabled, and the server is
+// shared by every spec file, so state the prerequisite here rather than inherit
+// whatever the seed or an earlier suite left behind.
+test.beforeEach(async ({ request }) => {
+  const response = await request.get("/api/settings/llm");
+  const settings = await response.json() as {
+    enabled: boolean;
+    target: string;
+    remote: { endpointUrl: string; model: string };
+    local: { endpointUrl: string; model: string; trusted: boolean };
+    revision: number;
+  };
+  const { local } = settings;
+  if (settings.enabled && settings.target === "local" && local.endpointUrl && local.model && local.trusted) return;
+  const enabled = await request.put("/api/settings/llm", {
+    data: { enabled: true, target: "local", remote: settings.remote, local, revision: settings.revision },
+    headers: { "X-Zhiye-Data-Epoch": response.headers()["x-zhiye-data-epoch"] },
+  });
+  expect(enabled.ok()).toBe(true);
+});
+
 test("imports a paper and opens the bilingual page reader", async ({ page }) => {
   await page.goto("/");
   // The onboarding screen can render after this check, so wait for the button
