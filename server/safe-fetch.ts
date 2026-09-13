@@ -24,6 +24,7 @@ export interface BinaryFetchResult {
 
 export interface BinaryFetchOptions {
   maxBytes: number;
+  accept?: string;
   resolveTarget?: typeof resolvePublicTarget;
 }
 
@@ -153,7 +154,7 @@ async function fetchBinary(
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new CapturePipelineError("FETCH_TIMEOUT", "图片抓取超时");
     const response = await requestOnce(target.url, target.address, target.family, remaining, signal, {
-      Accept: "image/jpeg,image/png,image/gif,image/webp,image/avif",
+      Accept: options.accept ?? "image/jpeg,image/png,image/gif,image/webp,image/avif",
       "Accept-Encoding": "identity",
       "User-Agent": "Zhiye/0.1 (+local knowledge capture)",
     }).catch((cause: unknown) => {

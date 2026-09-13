@@ -454,12 +454,19 @@ function databaseContents(database: DatabaseSync) {
         .prepare("SELECT 1 AS found FROM sqlite_schema WHERE type = 'table' AND name = 'assets'")
         .get(),
     );
+    const hasPaperFiles = Boolean(
+      database
+        .prepare("SELECT 1 AS found FROM sqlite_schema WHERE type = 'table' AND name = 'paper_files'")
+        .get(),
+    );
     const assets = hasAssets
       ? (
           database.prepare(
             `SELECT DISTINCT 'assets/' || a.hash AS path
              FROM assets a JOIN document_assets da ON da.asset_hash = a.hash
-             WHERE da.status = 'ready' ORDER BY path`,
+             WHERE da.status = 'ready'
+             ${hasPaperFiles ? "UNION SELECT DISTINCT 'assets/' || hash AS path FROM paper_files" : ""}
+             ORDER BY path`,
           ).all() as Array<{
             path: string;
           }>

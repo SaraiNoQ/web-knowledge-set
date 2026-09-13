@@ -28,6 +28,11 @@ import type {
   ImportApplyResult,
   ImportPreview,
   OnboardingState,
+  PaperDocument,
+  PaperExtractionPlan,
+  PaperExtractionTask,
+  PaperPage,
+  PaperPageRenderResult,
   ImportStrategy,
   KnowledgeCollection,
   KnowledgeDocument,
@@ -45,6 +50,7 @@ import type {
   UpdateLlmSettingsInput,
 } from "../shared/types";
 import { isAbortError, userErrorMessage } from "./error-messages";
+import { PAPER_PAGE_IMAGE_TYPE } from "../shared/paper";
 import {
   cloudLlmCredentialHeaders,
   cloudLlmCredentialMatches,
@@ -536,6 +542,7 @@ export const api = {
     const query = new URLSearchParams();
     if (filters.q?.trim()) query.set("q", filters.q.trim());
     if (filters.scope) query.set("scope", filters.scope);
+    if (filters.kind) query.set("kind", filters.kind);
     if (filters.tag) query.set("tag", filters.tag);
     if (filters.collectionId) query.set("collectionId", filters.collectionId);
     if (filters.folderId) query.set("folderId", filters.folderId);
@@ -551,6 +558,21 @@ export const api = {
     if (filters.trash) query.set("trash", filters.trash);
     query.set("page", String(filters.page || 1));
     return request<DocumentListResponse>(`/api/documents?${query}`, { signal });
+  },
+
+  listLibrary(filters: DocumentFilters, signal?: AbortSignal) {
+    const query = new URLSearchParams();
+    if (filters.q?.trim()) query.set("q", filters.q.trim());
+    if (filters.scope) query.set("scope", filters.scope);
+    if (filters.kind) query.set("kind", filters.kind);
+    if (filters.folderId) query.set("folderId", filters.folderId);
+    if (filters.unfiled !== undefined) query.set("unfiled", String(filters.unfiled));
+    if (filters.favorite !== undefined) query.set("favorite", String(filters.favorite));
+    if (filters.archived !== undefined) query.set("archived", String(filters.archived));
+    if (filters.sort) query.set("sort", filters.sort);
+    if (filters.trash) query.set("trash", filters.trash);
+    query.set("page", String(filters.page || 1));
+    return request<DocumentListResponse>(`/api/library?${query}`, { signal });
   },
 
   batchDocuments(body: BatchDocumentsRequest) {
@@ -587,6 +609,89 @@ export const api = {
 
   getDocument(id: string, signal?: AbortSignal) {
     return request<KnowledgeDocument>(`/api/documents/${encodeURIComponent(id)}`, { signal });
+  },
+
+  createPaperFromUrl(url: string, signal?: AbortSignal) {
+    return request<{ created: boolean; paper?: PaperDocument; duplicate?: PaperDocument }>("/api/papers", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+      signal,
+    });
+  },
+
+  uploadPaper(file: File, signal?: AbortSignal) {
+    return request<{ created: boolean; paper?: PaperDocument; duplicate?: PaperDocument }>("/api/papers/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/pdf", "X-Filename": file.name },
+      body: file,
+      signal,
+    });
+  },
+
+  getPaper(id: string, signal?: AbortSignal) {
+    return request<PaperDocument>(`/api/papers/${encodeURIComponent(id)}`, { signal });
+  },
+
+  getPaperPage(id: string, page: number, signal?: AbortSignal) {
+    return request<PaperPage>(`/api/papers/${encodeURIComponent(id)}/pages/${page}`, { signal });
+  },
+
+  async startPaperExtraction(id: string, signal?: AbortSignal) {
+    const headers = cloudRuntime ? cloudLlmHeaders((await api.getLlmSettings()).remote.endpointUrl) : {};
+    return request<PaperExtractionTask>(`/api/papers/${encodeURIComponent(id)}/extractions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+      signal,
+    });
+  },
+
+  planPaperExtraction(id: string, signal?: AbortSignal) {
+    return request<PaperExtractionPlan>(`/api/papers/${encodeURIComponent(id)}/extraction-plan`, { signal });
+  },
+
+  registerPaperPageCount(id: string, pageCount: number, signal?: AbortSignal) {
+    return request<PaperPageRenderResult>(`/api/papers/${encodeURIComponent(id)}/page-renders`, {
+      method: "POST",
+      body: JSON.stringify({ pageCount }),
+      signal,
+    });
+  },
+
+  uploadPaperPageImage(id: string, page: number, image: Blob, signal?: AbortSignal) {
+    return request<{ pageNumber: number; bytes: number }>(`/api/papers/${encodeURIComponent(id)}/pages/${page}/image`, {
+      method: "PUT",
+      headers: { "Content-Type": PAPER_PAGE_IMAGE_TYPE },
+      body: image,
+      signal,
+    });
+  },
+
+  // One batch per call: the page-scoped key travels on this request, so the
+  // batches have to be driven from here rather than by a server-side worker.
+  async advancePaperTask(id: string, signal?: AbortSignal) {
+    const headers = cloudRuntime ? cloudLlmHeaders((await api.getLlmSettings()).remote.endpointUrl) : {};
+    return request<PaperExtractionTask>(`/api/paper-tasks/${encodeURIComponent(id)}/pages`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+      signal,
+    });
+  },
+
+  getPaperTask(id: string, signal?: AbortSignal) {
+    return request<PaperExtractionTask>(`/api/paper-tasks/${encodeURIComponent(id)}`, { signal });
+  },
+
+  updatePaperPage(id: string, page: number, revision: number, translationBlocks: PaperPage["translationBlocks"]) {
+    return request<PaperPage>(`/api/papers/${encodeURIComponent(id)}/pages/${page}`, {
+      method: "PATCH",
+      body: JSON.stringify({ revision, translationBlocks }),
+    });
+  },
+
+  paperSourceUrl(id: string) {
+    return `/api/papers/${encodeURIComponent(id)}/source.pdf`;
   },
 
   getDocumentDuplicate(id: string, signal?: AbortSignal) {

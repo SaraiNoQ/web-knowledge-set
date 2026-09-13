@@ -80,6 +80,17 @@ test("refreshes the directory when the browser extension announces a saved clip"
 });
 
 test("keeps the first-run guide deferrable, reopenable, readable, and durable", async ({ page, context }) => {
+  // The guide's "seen" flag lives in the server database, and an earlier test
+  // in this file dismisses the guide, so reset it instead of assuming order.
+  const onboardingResponse = await page.request.get("/api/settings/onboarding");
+  const onboarding = await onboardingResponse.json() as { completed: boolean; revision: number };
+  if (onboarding.completed) {
+    const reset = await page.request.put("/api/settings/onboarding", {
+      data: { completed: false, revision: onboarding.revision },
+      headers: { "X-Zhiye-Data-Epoch": onboardingResponse.headers()["x-zhiye-data-epoch"] },
+    });
+    expect(reset.ok()).toBe(true);
+  }
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /你的知识/u })).toBeVisible();
   await page.getByRole("button", { name: "稍后设置" }).click();
@@ -208,6 +219,12 @@ test("returns home from the logo and toggles the knowledge sidebar", async ({ pa
   await page.setViewportSize({ width: 800, height: 900 });
   await expect(page.getByRole("navigation", { name: "资料库视图" })).toBeVisible();
   await expect.poll(() => page.locator(".library-tabs").evaluate((element) => getComputedStyle(element).display)).toBe("grid");
+  // The view tabs are one row of four, and the paper view is one of them.
+  const libraryTabs = page.getByRole("navigation", { name: "资料库视图" }).getByRole("button");
+  await expect(libraryTabs).toHaveText(["全部", "收藏", "回收站", "论文"]);
+  await expect.poll(() => page.locator(".library-tabs button").evaluateAll(
+    (buttons) => new Set(buttons.map((button) => Math.round(button.getBoundingClientRect().top))).size,
+  )).toBe(1);
   await page.setViewportSize({ width: 1280, height: 900 });
   await expand.click();
   await expect(page.locator(".workspace")).not.toHaveClass(/library-collapsed/u);
@@ -255,6 +272,20 @@ test("returns home from the logo and toggles the knowledge sidebar", async ({ pa
   await page.getByRole("button", { name: "返回知识库主界面" }).click();
   await page.getByRole("alertdialog", { name: "存在未保存修改" }).getByRole("button", { name: "继续并放弃" }).click();
   await expect(page.getByLabel("网页地址")).toBeVisible();
+
+  // Remove what this test created. A ready document keeps its cached image, so
+  // leaving it behind puts an asset in later exports and duplicates its title.
+  const capturedRow = page.getByRole("region", { name: "根目录内容" }).locator(".directory-document-row")
+    .filter({ has: page.locator('a[href="https://example.com/logo-return"]') });
+  await capturedRow.getByRole("button", { name: "更多操作：远端测试文章" }).click();
+  await page.getByRole("dialog", { name: "操作：远端测试文章" }).getByRole("button", { name: "删除（移入回收站）" }).click();
+  await page.getByRole("alertdialog", { name: "移入回收站" }).getByRole("button", { name: "移入回收站" }).click();
+  await page.getByRole("button", { name: "回收站", exact: true }).click();
+  const trashedRow = page.locator(".document-list .directory-document-row")
+    .filter({ has: page.locator('a[href="https://example.com/logo-return"]') });
+  await trashedRow.getByRole("button", { name: "永久删除：远端测试文章" }).click();
+  await page.getByRole("alertdialog", { name: "永久删除知识" }).getByRole("button", { name: "永久删除" }).click();
+  await expect(trashedRow).toHaveCount(0);
 });
 
 test("creates a folder and moves one knowledge item with the accessible dialog", async ({ page }) => {
@@ -445,6 +476,20 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
     modelRequests.push(route.request().url());
     await route.abort();
   });
+  // The server seeds an enabled local endpoint for the other suites, but this
+  // test asserts against a disabled remote one, so put that in place here
+  // instead of inheriting whatever the seed (or an earlier test) left behind.
+  const settingsResponse = await page.request.get("/api/settings/llm");
+  const stored = await settingsResponse.json() as {
+    remote: { endpointUrl: string; model: string };
+    local: { endpointUrl: string; model: string; trusted: boolean };
+    revision: number;
+  };
+  const preset = await page.request.put("/api/settings/llm", {
+    data: { enabled: false, target: "remote", remote: stored.remote, local: stored.local, revision: stored.revision },
+    headers: { "X-Zhiye-Data-Epoch": settingsResponse.headers()["x-zhiye-data-epoch"] },
+  });
+  expect(preset.ok()).toBe(true);
   await page.goto("/");
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
   await deferSetup.or(page.getByLabel("网页地址")).first().waitFor();

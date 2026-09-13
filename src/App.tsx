@@ -14,7 +14,6 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   BatchDocumentAction,
   CaptureHistoryItem,
-  CaptureMode,
   CaptureQueueStatus,
   CaptureStatus,
   DocumentAsset,
@@ -31,6 +30,7 @@ import type {
   KnowledgeFolder,
   KnowledgeTag,
   OnboardingState,
+  PaperDocument,
   ReextractionPreview,
 } from "../shared/types";
 import { api, ApiRequestError } from "./api";
@@ -43,6 +43,7 @@ import { Diagnostics } from "./components/Diagnostics";
 import { DerivedKnowledge, type DerivedMode } from "./components/DerivedKnowledge";
 import { MarkdownEditor } from "./components/MarkdownEditor";
 import { Onboarding } from "./components/Onboarding";
+import { PaperReader } from "./components/PaperReader";
 import { DocumentDirectoryRow, LibraryDirectory, type MoveDocumentTarget } from "./components/LibraryDirectory";
 import { IconButton, Select } from "./components/ui/Controls";
 import { useDialogs, useToast } from "./components/ui/Feedback";
@@ -54,8 +55,7 @@ declare const __APP_VERSION__: string;
 
 type EditorMode = "edit" | "split" | "preview";
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
-type StatusFilter = CaptureStatus | "";
-type LibraryView = "all" | "recent" | "favorites" | "unorganized" | "archived" | "failed" | "trash";
+type LibraryView = "all" | "favorites" | "trash" | "paper";
 type SearchScope = "all" | "title" | "body" | "source";
 type SortOrder = "updated" | "created" | "title";
 
@@ -516,15 +516,12 @@ export default function App() {
   const [searchScope, setSearchScope] = useState<SearchScope>("all");
   const [tag, setTag] = useState("");
   const [collectionFilter, setCollectionFilter] = useState("");
-  const [status, setStatus] = useState<StatusFilter>("");
   const [favoriteFilter, setFavoriteFilter] = useState<boolean | undefined>();
-  const [archivedFilter, setArchivedFilter] = useState<boolean | undefined>();
-  const [captureModeFilter, setCaptureModeFilter] = useState<CaptureMode | "">("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
   const [sortOrder, setSortOrder] = useState<SortOrder>("updated");
-  const [unorganizedFilter, setUnorganizedFilter] = useState(false);
   const [libraryView, setLibraryView] = useState<LibraryView>("all");
+  // The "论文" view is just the library narrowed to paper knowledge, so the
+  // filter is derived rather than kept in its own state that could drift.
+  const kindFilter = libraryView === "paper" ? "paper" : undefined;
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [batchAction, setBatchAction] = useState<BatchDocumentAction | "">("");
   const [batchCollectionId, setBatchCollectionId] = useState("");
@@ -546,6 +543,7 @@ export default function App() {
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const [showBackToTitle, setShowBackToTitle] = useState(false);
   const [currentDoc, setCurrentDoc] = useState<KnowledgeDocument | null>(null);
+  const [currentPaper, setCurrentPaper] = useState<PaperDocument | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [tagText, setTagText] = useState("");
   const [sourceMetadata, setSourceMetadata] = useState<SourceMetadataDraft | null>(null);
@@ -572,6 +570,13 @@ export default function App() {
   const [bulkImportError, setBulkImportError] = useState("");
   const [bulkImportNotice, setBulkImportNotice] = useState("");
   const [bulkImportTask, setBulkImportTask] = useState<"validating" | "importing" | null>(null);
+  const [paperImportOpen, setPaperImportOpen] = useState(false);
+  const [paperImportMode, setPaperImportMode] = useState<"url" | "pdf">("url");
+  const [paperImportUrl, setPaperImportUrl] = useState("");
+  const [paperImportFile, setPaperImportFile] = useState<File | null>(null);
+  const [paperImportBusy, setPaperImportBusy] = useState(false);
+  const [paperImportError, setPaperImportError] = useState("");
+  const [paperAutoStart, setPaperAutoStart] = useState<string | null>(null);
   const [captureQueue, setCaptureQueue] = useState<CaptureQueueStatus | null>(null);
   const [queueError, setQueueError] = useState("");
   const [queueUpdating, setQueueUpdating] = useState(false);
@@ -660,8 +665,8 @@ export default function App() {
   currentDocRef.current = currentDoc;
   sourceMetadataRef.current = sourceMetadata;
   const listContextKey = JSON.stringify([
-    query, searchScope, tag, collectionFilter, status, favoriteFilter, archivedFilter,
-    unorganizedFilter, captureModeFilter, dateFrom, dateTo, sortOrder, inTrash, page,
+    query, searchScope, kindFilter, tag, collectionFilter, favoriteFilter,
+    sortOrder, inTrash, page,
   ]);
   listContextRef.current = listContextKey;
 
@@ -917,6 +922,14 @@ export default function App() {
     sourceMetadataRef.current = metadata;
     setCurrentDoc(document);
     setSourceMetadata(metadata);
+  }, []);
+
+  const updateCurrentPaperRevision = useCallback((paperId: string, revision: number) => {
+    const current = currentDocRef.current;
+    if (!current || current.id !== paperId || current.kind !== "paper" || revision <= current.revision) return;
+    const updated = { ...current, revision };
+    currentDocRef.current = updated;
+    setCurrentDoc(updated);
   }, []);
 
   const queueAutoTitle = useCallback((id: string) => {
@@ -1250,15 +1263,10 @@ export default function App() {
           {
             q: query,
             scope: searchScope,
+            kind: kindFilter,
             tag,
             collectionId: collectionFilter,
-            status,
             favorite: favoriteFilter,
-            archived: archivedFilter,
-            unorganized: unorganizedFilter || undefined,
-            captureMode: captureModeFilter || undefined,
-            from: dateFrom,
-            to: dateTo,
             sort: sortOrder,
             page,
             trash: inTrash ? "only" : undefined,
@@ -1284,7 +1292,7 @@ export default function App() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [archivedFilter, captureModeFilter, collectionFilter, dateFrom, dateTo, favoriteFilter, inTrash, listRefresh, page, query, searchScope, sortOrder, status, tag, unorganizedFilter]);
+  }, [collectionFilter, favoriteFilter, inTrash, kindFilter, listRefresh, page, query, searchScope, sortOrder, tag]);
 
   useEffect(() => {
     if (!inTrash || !items.some(needsCapturePolling)) return;
@@ -1296,13 +1304,7 @@ export default function App() {
           scope: searchScope,
           tag,
           collectionId: collectionFilter,
-          status,
           favorite: favoriteFilter,
-          archived: archivedFilter,
-          unorganized: unorganizedFilter || undefined,
-          captureMode: captureModeFilter || undefined,
-          from: dateFrom,
-          to: dateTo,
           sort: sortOrder,
           page,
           trash: inTrash ? "only" : undefined,
@@ -1325,7 +1327,7 @@ export default function App() {
       window.clearInterval(timer);
       controller.abort();
     };
-  }, [archivedFilter, captureModeFilter, collectionFilter, dateFrom, dateTo, favoriteFilter, inTrash, items, page, query, searchScope, sortOrder, status, tag, unorganizedFilter]);
+  }, [collectionFilter, favoriteFilter, inTrash, items, page, query, searchScope, sortOrder, tag]);
 
   useEffect(() => {
     if (inTrash) setSelectedIds((previous) => new Set(items.filter((item) => previous.has(item.id)).map((item) => item.id)));
@@ -1349,6 +1351,7 @@ export default function App() {
   useEffect(() => {
     if (!selectedId) {
       installCurrentDocument(null);
+      setCurrentPaper(null);
       setDraft(null);
       setAssets([]);
       setAssetError("");
@@ -1357,6 +1360,7 @@ export default function App() {
     setCloudEditing(false);
     const controller = new AbortController();
     installCurrentDocument(null);
+    setCurrentPaper(null);
     setDraft(null);
     setAssets([]);
     setAssetError("");
@@ -1391,6 +1395,12 @@ export default function App() {
     ])
       .then(([document, stored]) => {
         installCurrentDocument(document);
+        if (document.kind === "paper") {
+          setDraft(null);
+          return api.getPaper(document.id, controller.signal).then((paper) => {
+            if (!controller.signal.aborted) setCurrentPaper(paper);
+          });
+        }
         if (document.markdown.length > 250_000) setMode("edit");
         const serverDraft = draftOf(document);
         const recovered = stored
@@ -1723,13 +1733,7 @@ export default function App() {
     setSearchScope("all");
     setTag("");
     setCollectionFilter("");
-    setStatus("");
     setFavoriteFilter(undefined);
-    setArchivedFilter(undefined);
-    setUnorganizedFilter(false);
-    setCaptureModeFilter("");
-    setDateFrom("");
-    setDateTo("");
     setSortOrder("updated");
     setPage(1);
     setInTrash(inTargetTrash);
@@ -2027,6 +2031,30 @@ export default function App() {
       setBulkImportTask(null);
       setBulkImportBusy(false);
     }
+  };
+
+  const importPaper = async () => {
+    if (paperImportBusy || (paperImportMode === "url" ? !paperImportUrl.trim() : !paperImportFile)) return;
+    setPaperImportBusy(true);
+    setPaperImportError("");
+    try {
+      const result = paperImportMode === "url"
+        ? await api.createPaperFromUrl(paperImportUrl.trim())
+        : await api.uploadPaper(paperImportFile!);
+      const paper = result.paper || result.duplicate;
+      setPaperImportOpen(false);
+      setPaperImportUrl("");
+      setPaperImportFile(null);
+      setListRefresh((value) => value + 1);
+      if (paper?.id) {
+        setSelectedId(paper.id);
+        // The reader owns extraction: page images can only be rendered here, so
+        // it hands off to the reader instead of starting a request itself.
+        if (result.created) setPaperAutoStart(paper.id);
+      }
+    } catch (error) {
+      setPaperImportError((error as Error).message);
+    } finally { setPaperImportBusy(false); }
   };
 
   const applyBulkImport = async () => {
@@ -2497,13 +2525,7 @@ export default function App() {
     setSearchScope("all");
     setTag("");
     setCollectionFilter("");
-    setCaptureModeFilter("");
-    setDateTo("");
     setFavoriteFilter(view === "favorites" ? true : undefined);
-    setArchivedFilter(view === "archived" ? true : view === "unorganized" ? false : undefined);
-    setUnorganizedFilter(view === "unorganized");
-    setStatus(view === "failed" ? "failed" : "");
-    setDateFrom(view === "recent" ? new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10) : "");
     setImportNotice("");
     return true;
   };
@@ -3209,19 +3231,16 @@ export default function App() {
     }
   };
 
-  const hasActiveFilters = Boolean(query || tag || status || collectionFilter || favoriteFilter !== undefined || archivedFilter !== undefined || unorganizedFilter || captureModeFilter || dateFrom || dateTo);
+  const hasActiveFilters = Boolean(query || tag || collectionFilter || favoriteFilter !== undefined);
   const filteredDescription = useMemo(() => {
     const parts = [
       query && `“${query}”`,
       tag && `#${tag}`,
       collectionFilter && collections.find((value) => value.id === collectionFilter)?.name,
-      status && STATUS_LABEL[status],
       favoriteFilter === true && "已收藏",
-      archivedFilter === true && "已归档",
-      unorganizedFilter && "未整理",
     ].filter(Boolean);
     return parts.length ? parts.join(" · ") : inTrash ? "已移除的网页" : "全部网页";
-  }, [archivedFilter, collectionFilter, collections, favoriteFilter, inTrash, query, status, tag, unorganizedFilter]);
+  }, [collectionFilter, collections, favoriteFilter, inTrash, query, tag]);
   const queueLabel = !captureQueue
     ? "正在读取队列"
     : captureQueue.paused
@@ -3289,7 +3308,7 @@ export default function App() {
           <span><strong>织页</strong><small>ZHIYE · {cloudMode ? "CLOUD" : "LOCAL"} KNOWLEDGE</small></span>
         </button>
         <p className="masthead-note">把散落的网页，<br />织成可阅读的知识。</p>
-        <div className="masthead-actions">{!cloudMode && onboarding !== "unavailable" && <button type="button" className="guide-button" onClick={() => setGuideOpen(true)} disabled={closing}>使用指南</button>}<button type="button" className="shortcut-help-button" aria-keyshortcuts="?" onClick={() => setShortcutHelp(true)} disabled={closing}>帮助</button>{"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}<button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
+        <div className="masthead-actions">{!cloudMode && onboarding !== "unavailable" && <button type="button" className="guide-button" onClick={() => setGuideOpen(true)} disabled={closing}>使用指南</button>}<button type="button" className="guide-button" onClick={() => { setPaperImportOpen(true); setPaperImportError(""); }} disabled={closing}>导入论文</button><button type="button" className="shortcut-help-button" aria-keyshortcuts="?" onClick={() => setShortcutHelp(true)} disabled={closing}>帮助</button>{"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}<button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
           <i />{safetyRecovery ? "恢复模式" : "数据安全"}
         </button></div>
       </header>
@@ -3332,6 +3351,17 @@ export default function App() {
             <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/docs/SUPPORT.md" target="_blank" rel="noreferrer noopener">支持</a>
             <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/docs/SECURITY.md" target="_blank" rel="noreferrer noopener">安全</a>
           </nav>
+        </section>
+      </Modal>}
+
+      {paperImportOpen && <Modal open panel={false} className="shortcut-backdrop" title="导入论文" onClose={() => { if (!paperImportBusy) setPaperImportOpen(false); }}>
+        <section className="shortcut-card paper-import-card">
+          <header><div><span className="eyebrow">NEW PAPER KNOWLEDGE</span><h2>导入一篇论文</h2><p>原始 PDF 会只读保存，再由已配置的 LLM 生成分页对照。</p></div><button type="button" onClick={() => setPaperImportOpen(false)} disabled={paperImportBusy} aria-label="关闭导入论文">×</button></header>
+          <div className="paper-import-tabs" role="tablist" aria-label="论文来源类型"><button type="button" role="tab" aria-selected={paperImportMode === "url"} onClick={() => setPaperImportMode("url")}>公开链接</button><button type="button" role="tab" aria-selected={paperImportMode === "pdf"} onClick={() => setPaperImportMode("pdf")}>上传 PDF</button></div>
+          {paperImportMode === "url" ? <label className="paper-import-field"><span>论文链接</span><input type="url" value={paperImportUrl} onChange={(event) => setPaperImportUrl(event.target.value)} placeholder="https://arxiv.org/abs/..." disabled={paperImportBusy} /><small>支持 arXiv 页面和直接 PDF；IEEE / ACM 等请上传 PDF。</small></label> : <label className="paper-import-upload"><span>选择原始 PDF</span><input type="file" accept="application/pdf,.pdf" onChange={(event) => setPaperImportFile(event.target.files?.[0] || null)} disabled={paperImportBusy} /><strong>{paperImportFile?.name || "尚未选择 PDF"}</strong><small>单文件上限 50 MiB；原始文件不会被 AI 改写。</small></label>}
+          <div className="paper-import-boundary"><strong>AI 发送范围</strong><span>整份 PDF，或逐页页图 + 页码结构 + 图表说明</span><small>默认先发整份 PDF；端点不接受时，浏览器用 PDF.js 把每页渲染成 JPEG 后按批发送。原始文件不会被 AI 改写。</small></div>
+          {paperImportError && <p className="paper-import-error" role="alert">{paperImportError}</p>}
+          <footer><button type="button" onClick={() => setPaperImportOpen(false)} disabled={paperImportBusy}>取消</button><button type="button" className="primary-button" onClick={() => void importPaper()} disabled={paperImportBusy || (paperImportMode === "url" ? !paperImportUrl.trim() : !paperImportFile)}>{paperImportBusy ? <><Spinner />处理中…</> : "创建论文"}</button></footer>
         </section>
       </Modal>}
 
@@ -3504,8 +3534,7 @@ export default function App() {
 
           <nav className="library-tabs" aria-label="资料库视图">
             {([
-              ["all", "全部"], ["recent", "最近"], ["favorites", "收藏"], ["unorganized", "未整理"],
-              ["archived", "归档"], ["failed", "失败"], ["trash", "回收站"],
+              ["all", "全部"], ["favorites", "收藏"], ["trash", "回收站"], ["paper", "论文"],
             ] as Array<[LibraryView, string]>).map(([value, label]) => (
               <button key={value} type="button" aria-pressed={libraryView === value} onClick={() => void applyLibraryView(value)} disabled={listLoading || batchBusy}>{label}</button>
             ))}
@@ -3524,9 +3553,8 @@ export default function App() {
           {!inTrash ? <><LibraryDirectory
             folders={folders}
             filters={{
-              q: query, scope: searchScope, tag, collectionId: collectionFilter, status,
-              favorite: favoriteFilter, archived: archivedFilter, unorganized: unorganizedFilter || undefined,
-              captureMode: captureModeFilter || undefined, from: dateFrom, to: dateTo, sort: sortOrder,
+              q: query, scope: searchScope, kind: kindFilter, tag, collectionId: collectionFilter,
+              favorite: favoriteFilter, sort: sortOrder,
             }}
             refreshKey={listRefresh}
             onFoldersChanged={() => void refreshFoldersAndCurrent()}
@@ -3534,6 +3562,7 @@ export default function App() {
             onMove={moveDocumentToFolder}
             onTrash={trashDirectoryDocument}
             onCreateArticle={createArticle}
+            onCreatePaper={() => { setPaperImportOpen(true); setPaperImportError(""); }}
             selectedId={selectedId}
             activeFolderId={currentDoc?.id === selectedId ? currentDoc.folderId : items.find((item) => item.id === selectedId)?.folderId}
             selectedIds={selectedIds}
@@ -3597,10 +3626,12 @@ export default function App() {
               <h2>在左侧选一张织片</h2>
               <p>{cloudMode ? <>选择一篇知识后可阅读、编辑 Markdown、翻译或生成 AI 派生内容。<br />重要变更前可在“数据安全”创建 R2 留档。</> : <>阅读原文、整理标签，或直接修改 Markdown。<br />你的文字会留在本地。</>}</p>
             </div>
-          ) : detailLoading && !currentDoc ? (
+          ) : detailLoading && (!currentDoc || (currentDoc.kind === "paper" && !currentPaper)) ? (
             <StatePanel kind="loading" title="正在展开织片" />
-          ) : detailError && !currentDoc ? (
+          ) : detailError && (!currentDoc || (currentDoc.kind === "paper" && !currentPaper)) ? (
             <StatePanel kind="error" title="无法打开这篇知识">{detailError}</StatePanel>
+          ) : currentPaper && currentDoc ? (
+            <PaperReader paperId={currentPaper.id} autoStart={paperAutoStart === currentPaper.id} onClose={closeDocument} onRevisionChange={updateCurrentPaperRevision} />
           ) : currentDoc && draft && webArticleMode ? (
             <>
               <button type="button" className="mobile-back" onClick={closeDocument}><Icon size={16}><path d="m15 18-6-6 6-6" /></Icon>返回知识库</button>

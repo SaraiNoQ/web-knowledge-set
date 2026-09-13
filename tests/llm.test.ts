@@ -14,6 +14,8 @@ import {
   llmConnectionTestInput,
   llmNetworkError,
   markdownTranslationInput,
+  requestPaperCompletion,
+  requestPaperImagesCompletion,
   resolveLlmTarget,
 } from "../server/llm.js";
 import type {
@@ -27,6 +29,64 @@ import type {
 test("LLM network failures distinguish rejected TLS certificates", () => {
   assert.equal(llmNetworkError(Object.assign(new Error("certificate"), { code: "SELF_SIGNED_CERT_IN_CHAIN" })).code, "LLM_TLS_ERROR");
   assert.equal(llmNetworkError(Object.assign(new Error("socket"), { code: "ECONNRESET" })).code, "LLM_NETWORK_ERROR");
+});
+
+test("paper page-image requests carry image parts and name a missing vision capability", async () => {
+  const requests: Array<{ authorization: string | undefined; body: string }> = [];
+  let status = 200;
+  let payload: unknown = { choices: [{ message: { content: "{}" }, finish_reason: "stop" }] };
+  const provider = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    requests.push({ authorization: request.headers.authorization, body: Buffer.concat(chunks).toString("utf8") });
+    response.writeHead(status, { "Content-Type": "application/json" });
+    response.end(JSON.stringify(payload));
+  });
+  await new Promise<void>((resolve) => provider.listen(0, "127.0.0.1", resolve));
+  const address = provider.address();
+  assert.ok(address && typeof address !== "string");
+  const target = { kind: "remote" as const, url: "https://api.deepseek.com/chat/completions" };
+  const resolver = async () => ({ url: new URL(`http://127.0.0.1:${address.port}/chat/completions`), address: "127.0.0.1", family: 4 });
+  const page = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+  try {
+    const answer = await requestPaperImagesCompletion({
+      target,
+      model: "deepseek-flash",
+      system: "system",
+      instruction: "Transcribe page 1.",
+      pages: [page],
+      apiKey: "paper-secret",
+      signal: new AbortController().signal,
+      resolver,
+    });
+    assert.equal(answer.finishReason, "stop");
+    const body = JSON.parse(requests[0]!.body) as { max_tokens: number; response_format: unknown; messages: Array<{ role: string; content: unknown }> };
+    assert.equal(body.max_tokens, 12_000);
+    assert.deepEqual(body.response_format, { type: "json_object" });
+    assert.deepEqual(body.messages[1]!.content, [
+      { type: "text", text: "Transcribe page 1." },
+      { type: "image_url", image_url: { url: `data:image/jpeg;base64,${page.toString("base64")}`, detail: "high" } },
+    ]);
+    assert.equal(requests[0]!.authorization, "Bearer paper-secret");
+
+    // An endpoint that takes PDFs still has to be told when the model itself
+    // cannot read images, instead of being retried as a PDF by the caller.
+    status = 400;
+    payload = { error: { message: "this model does not support image input" } };
+    await assert.rejects(
+      () => requestPaperImagesCompletion({
+        target, model: "deepseek-chat", system: "system", instruction: "Transcribe page 1.",
+        pages: [page], apiKey: "paper-secret", signal: new AbortController().signal, resolver,
+      }),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, "PAPER_MODEL_NO_VISION");
+        assert.match((error as Error).message, /does not support image input/u);
+        return true;
+      },
+    );
+  } finally {
+    await new Promise<void>((resolve) => provider.close(() => resolve()));
+  }
 });
 
 test("LLM connection probe is strict, document-free, endpoint-bound, and redacted", async () => {

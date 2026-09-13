@@ -1,5 +1,84 @@
 export type CaptureStatus = "queued" | "fetching" | "extracting" | "ready" | "failed";
 
+export type LibraryItemKind = "article" | "paper";
+
+export type PaperStatus = "queued" | "extracting" | "ready" | "failed";
+
+export type PaperBlockType = "heading" | "paragraph" | "formula" | "table" | "figure" | "caption" | "reference";
+
+export interface PaperBlock {
+  id: string;
+  type: PaperBlockType;
+  original: string;
+  translation: string;
+  assetIds: string[];
+}
+
+export interface PaperPage {
+  paperId: string;
+  extractionId: string;
+  pageNumber: number;
+  originalBlocks: PaperBlock[];
+  translationBlocks: PaperBlock[];
+  revision: number;
+  documentRevision: number;
+}
+
+export interface PaperSummary {
+  id: string;
+  kind: "paper";
+  title: string;
+  sourceUrl: string;
+  author: string | null;
+  status: PaperStatus;
+  errorCode: string | null;
+  errorMessage: string | null;
+  folderId: string | null;
+  favorite: boolean;
+  archivedAt: string | null;
+  revision: number;
+  deletedAt: string | null;
+  pageCount: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PaperDocument extends PaperSummary {
+  sourceKind: "url" | "pdf";
+  originalFileName: string | null;
+  sourceHash: string;
+  extractionId: string | null;
+  pages: PaperPage[];
+}
+
+export interface PaperExtractionTask {
+  id: string;
+  paperId: string;
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  contentMode: "pdf" | "image" | null;
+  pageCount: number | null;
+  completedPages: number;
+  error: { code: string; message: string } | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
+// What the next extraction of a paper will send to the model, and which page
+// images are already stored. The client renders only the pages listed as
+// missing, so a retry never re-renders pages it already uploaded.
+export interface PaperExtractionPlan {
+  contentMode: "pdf" | "image";
+  pageCount: number | null;
+  rendered: number[];
+}
+
+export interface PaperPageRenderResult {
+  pageCount: number;
+  rendered: number[];
+}
+
+export type LibraryItemSummary = DocumentSummary | PaperSummary;
+
 export type CaptureMode = "http" | "browser";
 
 export type CaptureErrorCode =
@@ -60,6 +139,7 @@ export interface DeleteFolderResponse {
 
 export interface DocumentSummary {
   id: string;
+  kind: LibraryItemKind;
   title: string;
   sourceUrl: string;
   finalUrl: string | null;
@@ -271,6 +351,7 @@ export type DocumentSort = "updated" | "created" | "title";
 export interface DocumentFilters {
   q?: string;
   scope?: DocumentSearchScope;
+  kind?: LibraryItemKind;
   tag?: string;
   collectionId?: string;
   folderId?: string;

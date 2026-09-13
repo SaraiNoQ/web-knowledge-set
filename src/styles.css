@@ -513,8 +513,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   letter-spacing: .08em;
 }
 
-.library-tabs button:nth-child(4n), .library-tabs button:last-child { border-right: 0; }
-.library-tabs button:nth-child(n+5) { border-top: 1px solid var(--line); }
+.library-tabs button:last-child { border-right: 0; }
 .library-tabs button[aria-pressed="true"] { color: #fff9ee; background: var(--ink); }
 
 .filters { display: grid; min-width: 0; margin: 0; padding: 0; gap: 9px; border: 0; }
@@ -2047,6 +2046,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 }
 .directory-title.document-row::before { display: none; }
 .directory-title.document-row:hover, .directory-title.document-row.is-selected { padding: 5px 4px; background: transparent; }
+.directory-kind-badge { display: inline-block; margin-right: 7px; padding: 2px 4px; color: var(--vermilion); border: 1px solid rgba(189,65,44,.35); font: 600 9px/1 var(--font-mono); letter-spacing: .06em; vertical-align: 1px; }
 .directory-document-row.is-selected .directory-title { padding-left: 10px; }
 .directory-external { display: grid; place-items: center; min-height: 30px; color: var(--ink-faint); text-decoration: none; }
 .directory-external:hover { color: var(--vermilion); }
