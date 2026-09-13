@@ -517,6 +517,39 @@ test("folders are single-parent, filterable, revision guarded, and delete to roo
   }
 });
 
+test("knowledge map returns articles and papers with stable cursors and archive filtering", () => {
+  const fixture = database();
+  try {
+    const folder = fixture.db.createFolder("研究").folder;
+    const article = fixture.db.createArticle("A archived article");
+    const secondArticle = fixture.db.createArticle("B article");
+    const paperFile = Buffer.from("%PDF-1.7\nknowledge map fixture\n", "ascii");
+    const paper = fixture.db.createPaper({
+      sourceKind: "pdf", sourceUrl: null, originalFileName: "map.pdf",
+      hash: createHash("sha256").update(paperFile).digest("hex"), content: paperFile,
+    });
+    assert.equal(paper.created, true);
+    if (!paper.created) return;
+    fixture.db.updateDocument(paper.paper.id, paper.paper.revision, { folderId: folder.id });
+    fixture.db.sql.prepare("UPDATE documents SET archived_at = ? WHERE id = ?").run(new Date().toISOString(), article.id);
+    const first = fixture.db.listKnowledgeMap({ cursor: 0, limit: 1 });
+    const second = fixture.db.listKnowledgeMap({ cursor: Number(first.nextCursor), limit: 1 });
+    assert.equal(first.total, 2);
+    assert.deepEqual(first.items.map(({ id }) => id), [secondArticle.id]);
+    assert.deepEqual(second.items.map(({ id }) => id), [paper.paper.id]);
+    assert.equal(second.items[0]?.kind, "paper");
+    assert.equal(second.items[0]?.folderName, "研究");
+    assert.equal(second.nextCursor, null);
+    const archived = fixture.db.listKnowledgeMap({ cursor: 0, limit: 3, includeArchived: true });
+    assert.deepEqual(archived.items.map(({ id }) => id), [article.id, secondArticle.id, paper.paper.id]);
+    assert.equal(archived.total, 3);
+    fixture.db.softDeleteDocument(secondArticle.id, fixture.db.getDocument(secondArticle.id)!.revision);
+    assert.equal(fixture.db.listKnowledgeMap({ cursor: 0, limit: 10, includeArchived: true }).total, 2);
+  } finally {
+    fixture.close();
+  }
+});
+
 test("Markdown folder imports distinguish missing, null, and named updates", () => {
   const fixture = database();
   try {

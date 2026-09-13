@@ -2472,6 +2472,32 @@ export function createApp(options: AppOptions) {
         return;
       }
 
+      if (pathname === "/api/knowledge-map" && request.method === "GET") {
+        const allowed = new Set(["cursor", "limit", "q", "kind", "folderId", "favorite", "includeArchived"]);
+        for (const key of requestUrl.searchParams.keys()) {
+          if (!allowed.has(key) || requestUrl.searchParams.getAll(key).length !== 1) {
+            throw new HttpError(400, "INVALID_FILTER", "Knowledge map filters must be known and appear once");
+          }
+        }
+        const cursorValue = requestUrl.searchParams.get("cursor") ?? "0";
+        const limitValue = requestUrl.searchParams.get("limit") ?? "250";
+        if (!/^(?:0|[1-9]\d*)$/u.test(cursorValue) || Number(cursorValue) > 1_000_000 || !/^[1-9]\d*$/u.test(limitValue) || Number(limitValue) > 500) {
+          throw new HttpError(400, "INVALID_PAGE", "Knowledge map cursor or limit is invalid");
+        }
+        const q = requestUrl.searchParams.get("q")?.trim() || undefined;
+        if (q && q.length > 200) throw new HttpError(400, "INVALID_QUERY", "Knowledge map title query is too long");
+        const kindValue = requestUrl.searchParams.get("kind") ?? undefined;
+        if (kindValue && kindValue !== "article" && kindValue !== "paper") throw new HttpError(400, "INVALID_FILTER", "kind must be article or paper");
+        const folderValue = requestUrl.searchParams.get("folderId");
+        const favorite = strictBoolean(requestUrl.searchParams.get("favorite"), "favorite");
+        const includeArchived = strictBoolean(requestUrl.searchParams.get("includeArchived"), "includeArchived") ?? false;
+        sendJson(response, 200, requireDatabase().listKnowledgeMap({
+          cursor: Number(cursorValue), limit: Number(limitValue), q, kind: kindValue as LibraryItemKind | undefined,
+          folderId: folderValue === null ? undefined : folderIdValue(folderValue), favorite, includeArchived,
+        }));
+        return;
+      }
+
       if (pathname === "/api/tags/manage" && request.method === "GET") {
         sendJson(response, 200, requireDatabase().listManagedTags());
         return;

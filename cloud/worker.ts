@@ -10,6 +10,7 @@ import {
   jsonObject,
   listDocuments as listCloudDocuments,
   listFolders,
+  listKnowledgeMap,
   listPairings,
   recoverExpiredRestore,
   restoreDocument,
@@ -114,6 +115,9 @@ async function api(request: Request, env: CloudEnv, url: URL) {
   }
   if (epoch.startsWith("restore:")) {
     return json({ error: { code: "CLOUD_MAINTENANCE", message: "Cloud restore is in progress" } }, 503);
+  }
+  if (url.pathname === "/api/knowledge-map" && request.method === "GET") {
+    return json(await listKnowledgeMap(env.DB, url), 200, epoch);
   }
   if (url.pathname === "/api/settings/browser-extension/pairing-code" && request.method === "POST") {
     if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) {

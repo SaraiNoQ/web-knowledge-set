@@ -294,6 +294,59 @@ test("cloud core serves the existing empty-library startup contract", async () =
   assert.equal(asset.headers.get("X-Frame-Options"), "DENY");
 });
 
+test("cloud knowledge map cursor covers more than the library page and includes paper metadata", async () => {
+  const { env, db } = sqliteEnvironment();
+  const createdAt = "2026-09-14T00:00:00.000Z";
+  const folderId = "00000000-0000-4000-8000-000000000001";
+  db.sqlite.prepare("INSERT INTO cloud_folders(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)")
+    .run(folderId, "研究", createdAt, createdAt);
+  const insert = db.sqlite.prepare("INSERT INTO cloud_documents(id, source_url, title, markdown, status, source_note, revision, created_at, updated_at, folder_id, kind) VALUES (?, ?, ?, '', 'ready', 'test', 1, ?, ?, ?, ?)");
+  for (let index = 0; index < 30; index += 1) {
+    const title = "文章 " + String(index).padStart(2, "0");
+    insert.run("map-article-" + index, "https://example.com/map-" + index, title, createdAt, createdAt, null, "article");
+  }
+  const hash = "a".repeat(64);
+  db.sqlite.prepare("INSERT INTO cloud_paper_files(hash, mime, bytes, r2_key, created_at) VALUES (?, 'application/pdf', 5, ?, ?)")
+    .run(hash, "paper/" + hash, createdAt);
+  insert.run("map-paper", "zhiye://paper/map-paper", "论文", createdAt, createdAt, folderId, "paper");
+  db.sqlite.prepare("INSERT INTO cloud_papers(id, source_kind, source_url, original_file_name, source_hash, page_count, status, created_at, updated_at) VALUES (?, 'pdf', NULL, 'map.pdf', ?, NULL, 'queued', ?, ?)")
+    .run("map-paper", hash, createdAt, createdAt);
+  const insertJob = db.sqlite.prepare("INSERT INTO cloud_capture_jobs(id, url, status, error_code, created_at, updated_at, folder_id, revision) VALUES (?, ?, ?, ?, ?, ?, ?, 1)");
+  insertJob.run("map-pending", "https://example.com/pending", "queued", null, createdAt, createdAt, null);
+  insertJob.run("map-failed", "https://example.com/failed", "failed", "BROWSER_FAILED", createdAt, createdAt, folderId);
+  db.sqlite.prepare("UPDATE cloud_documents SET favorite = 1 WHERE id = ?").run("map-article-0");
+
+  const firstResponse = await handleRequest(new Request("https://app.example.com/api/knowledge-map?cursor=0&limit=30"), env);
+  assert.equal(firstResponse.status, 200);
+  const first = await firstResponse.json() as { items: Array<{ id: string; kind: string; status: string }>; total: number; nextCursor: string | null };
+  assert.equal(first.items.length, 30);
+  assert.equal(first.total, 33);
+  assert.equal(first.nextCursor, "30");
+  const secondResponse = await handleRequest(new Request("https://app.example.com/api/knowledge-map?cursor=30&limit=30"), env);
+  const second = await secondResponse.json() as { items: Array<{ id: string; kind: string; folderName: string | null; status: string }>; nextCursor: string | null };
+  const nodes = [...first.items, ...second.items];
+  assert.equal(nodes.find(({ id }) => id === "map-pending")?.status, "queued");
+  assert.equal(nodes.find(({ id }) => id === "map-failed")?.status, "failed");
+  assert.deepEqual(second.items.filter(({ kind }) => kind === "paper").map(({ id, folderName, status }) => ({ id, folderName, status })), [
+    { id: "map-paper", folderName: "研究", status: "queued" },
+  ]);
+  assert.equal(second.nextCursor, null);
+  const papers = await handleRequest(new Request("https://app.example.com/api/knowledge-map?kind=paper"), env);
+  assert.equal((await papers.json() as { total: number }).total, 1);
+  const articles = await handleRequest(new Request("https://app.example.com/api/knowledge-map?kind=article"), env);
+  assert.equal((await articles.json() as { total: number }).total, 32);
+  const folderFilter = await handleRequest(new Request("https://app.example.com/api/knowledge-map?folderId=" + folderId), env);
+  assert.deepEqual(((await folderFilter.json()) as { items: Array<{ id: string }> }).items.map(({ id }) => id).sort(), ["map-failed", "map-paper"]);
+  const favorites = await handleRequest(new Request("https://app.example.com/api/knowledge-map?favorite=true"), env);
+  assert.deepEqual(((await favorites.json()) as { items: Array<{ id: string }> }).items.map(({ id }) => id), ["map-article-0"]);
+  const nonFavorites = await handleRequest(new Request("https://app.example.com/api/knowledge-map?favorite=false"), env);
+  assert.equal((await nonFavorites.json() as { total: number }).total, 32);
+  const captureSearch = await handleRequest(new Request("https://app.example.com/api/knowledge-map?q=pending"), env);
+  assert.equal(((await captureSearch.json()) as { items: Array<{ id: string }> }).items[0]?.id, "map-pending");
+  const invalid = await handleRequest(new Request("https://app.example.com/api/knowledge-map?cursor=nope"), env);
+  assert.equal(invalid.status, 400);
+});
+
 test("cloud folders create, rename, move documents and jobs, then delete to unfiled", async () => {
   const { env, db } = sqliteEnvironment();
   const now = "2026-08-18T00:00:00.000Z";

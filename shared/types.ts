@@ -132,6 +132,27 @@ export interface KnowledgeFolder {
   updatedAt: string;
 }
 
+export interface KnowledgeMapNode {
+  id: string;
+  kind: LibraryItemKind;
+  title: string;
+  folderId: string | null;
+  folderName: string | null;
+  status: CaptureStatus | PaperStatus;
+  favorite: boolean;
+  archivedAt: string | null;
+  updatedAt: string;
+  pageCount: number | null;
+  semanticState: "unavailable" | "pending" | "indexing" | "ready" | "failed";
+}
+
+export interface KnowledgeMapResponse {
+  items: KnowledgeMapNode[];
+  folders: Array<Pick<KnowledgeFolder, "id" | "name">>;
+  total: number;
+  nextCursor: string | null;
+}
+
 export interface DeleteFolderResponse {
   deleted: true;
   affectedDocuments: number;

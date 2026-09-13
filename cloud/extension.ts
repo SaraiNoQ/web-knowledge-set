@@ -214,6 +214,80 @@ export async function listFolders(db: D1Database) {
   return rows.results;
 }
 
+export async function listKnowledgeMap(db: D1Database, url: URL) {
+  const allowed = new Set(["cursor", "limit", "q", "kind", "folderId", "favorite"]);
+  for (const key of url.searchParams.keys()) {
+    if (!allowed.has(key) || url.searchParams.getAll(key).length !== 1) {
+      throw new CloudHttpError(400, "INVALID_FILTER", "Knowledge map filters must be known and appear once");
+    }
+  }
+  const cursorValue = url.searchParams.get("cursor") ?? "0";
+  const limitValue = url.searchParams.get("limit") ?? "250";
+  if (!/^(?:0|[1-9]\d*)$/u.test(cursorValue) || Number(cursorValue) > 1_000_000 || !/^[1-9]\d*$/u.test(limitValue) || Number(limitValue) > 500) {
+    throw new CloudHttpError(400, "INVALID_PAGE", "Knowledge map cursor or limit is invalid");
+  }
+  const query = (url.searchParams.get("q") ?? "").trim();
+  if (query.length > 200) throw new CloudHttpError(400, "INVALID_QUERY", "Knowledge map title query is too long");
+  const kind = url.searchParams.get("kind");
+  if (kind !== null && kind !== "article" && kind !== "paper") throw new CloudHttpError(400, "INVALID_FILTER", "kind must be article or paper");
+  const folderId = url.searchParams.has("folderId") ? folderIdValue(url.searchParams.get("folderId")) : null;
+  const favoriteValue = url.searchParams.get("favorite");
+  if (favoriteValue !== null && favoriteValue !== "true" && favoriteValue !== "false") throw new CloudHttpError(400, "INVALID_FILTER", "favorite must be true or false");
+  const documentWhere = ["d.deleted_at IS NULL"];
+  const jobWhere = ["j.deleted_at IS NULL", "NOT EXISTS (SELECT 1 FROM cloud_documents existing WHERE existing.id = j.id)"];
+  const documentValues: unknown[] = [];
+  const jobValues: unknown[] = [];
+  if (query) {
+    const pattern = "%" + query.replace(/[\\%_]/gu, "\\$&") + "%";
+    documentWhere.push("d.title LIKE ? ESCAPE '\\'");
+    jobWhere.push("j.url LIKE ? ESCAPE '\\'");
+    documentValues.push(pattern);
+    jobValues.push(pattern);
+  }
+  if (kind) {
+    documentWhere.push("d.kind = ?");
+    documentValues.push(kind);
+    if (kind === "paper") jobWhere.push("0");
+  }
+  if (folderId) {
+    documentWhere.push("d.folder_id = ?");
+    jobWhere.push("j.folder_id = ?");
+    documentValues.push(folderId);
+    jobValues.push(folderId);
+  }
+  if (favoriteValue !== null) {
+    documentWhere.push("d.favorite = ?");
+    documentValues.push(favoriteValue === "true" ? 1 : 0);
+    if (favoriteValue === "true") jobWhere.push("0");
+  }
+  const documentCondition = documentWhere.join(" AND ");
+  const jobCondition = jobWhere.join(" AND ");
+  const union = "SELECT d.id, d.kind, d.title, d.folder_id AS folderId, f.name AS folderName, " +
+    "COALESCE(p.status, d.status) AS status, d.favorite, d.updated_at AS updatedAt, p.page_count AS pageCount " +
+    "FROM cloud_documents d LEFT JOIN cloud_folders f ON f.id = d.folder_id LEFT JOIN cloud_papers p ON p.id = d.id " +
+    "WHERE " + documentCondition + " UNION ALL " +
+    "SELECT j.id, 'article' AS kind, j.url AS title, j.folder_id AS folderId, f.name AS folderName, " +
+    "j.status, 0 AS favorite, j.updated_at AS updatedAt, NULL AS pageCount " +
+    "FROM cloud_capture_jobs j LEFT JOIN cloud_folders f ON f.id = j.folder_id WHERE " + jobCondition;
+  const values = [...documentValues, ...jobValues];
+  const count = await db.prepare("SELECT COUNT(*) AS total FROM (" + union + ") map").bind(...values).first<{ total: number }>();
+  const rows = await db.prepare("SELECT * FROM (" + union + ") map ORDER BY title COLLATE NOCASE, id LIMIT ? OFFSET ?")
+    .bind(...values, Number(limitValue), Number(cursorValue)).all<Record<string, unknown>>();
+  const total = Number(count?.total ?? 0);
+  const next = Number(cursorValue) + rows.results.length;
+  return {
+    items: rows.results.map((row) => ({
+      id: String(row.id), kind: row.kind as "article" | "paper", title: String(row.title),
+      folderId: row.folderId ? String(row.folderId) : null, folderName: row.folderName ? String(row.folderName) : null,
+      status: row.status as "ready" | "queued" | "fetching" | "extracting" | "failed", favorite: Boolean(row.favorite), archivedAt: null,
+      updatedAt: String(row.updatedAt), pageCount: row.pageCount == null ? null : Number(row.pageCount),
+      semanticState: "unavailable" as const,
+    })),
+    folders: (await listFolders(db)).map(({ id, name }) => ({ id, name })),
+    total, nextCursor: next < total ? String(next) : null,
+  };
+}
+
 export async function createFolder(db: D1Database, body: Record<string, unknown>) {
   const name = folderName(body);
   const id = crypto.randomUUID();

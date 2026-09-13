@@ -3192,6 +3192,33 @@ export class KnowledgeDatabase {
     };
   }
 
+  listKnowledgeMap(input: { cursor: number; limit: number; q?: string; kind?: "article" | "paper"; folderId?: string; favorite?: boolean; includeArchived?: boolean }) {
+    const where = ["d.deleted_at IS NULL"];
+    const values: Array<string | number> = [];
+    if (!input.includeArchived) where.push("d.archived_at IS NULL");
+    if (input.q) { where.push("d.title LIKE ? ESCAPE '\\'"); values.push(`%${escapeLike(input.q)}%`); }
+    if (input.kind) { where.push("d.kind = ?"); values.push(input.kind); }
+    if (input.folderId) { where.push("d.folder_id = ?"); values.push(input.folderId); }
+    if (input.favorite !== undefined) { where.push("d.favorite = ?"); values.push(Number(input.favorite)); }
+    const condition = where.join(" AND ");
+    const total = Number((this.sql.prepare(`SELECT COUNT(*) AS total FROM documents d WHERE ${condition}`).get(...values) as { total: number }).total);
+    const rows = this.sql.prepare(`SELECT d.id, d.kind, d.title, d.folder_id AS folderId, f.name AS folderName,
+      d.status, d.favorite, d.archived_at AS archivedAt, d.updated_at AS updatedAt, p.page_count AS pageCount
+      FROM documents d LEFT JOIN folders f ON f.id = d.folder_id LEFT JOIN papers p ON p.id = d.id
+      WHERE ${condition} ORDER BY d.title COLLATE NOCASE, d.id LIMIT ? OFFSET ?`)
+      .all(...values, input.limit, input.cursor) as Array<{
+        id: string; kind: "article" | "paper"; title: string; folderId: string | null; folderName: string | null;
+        status: CaptureStatus; favorite: number; archivedAt: string | null; updatedAt: string; pageCount: number | null;
+      }>;
+    const end = input.cursor + rows.length;
+    return {
+      items: rows.map((row) => ({ ...row, favorite: Boolean(row.favorite), semanticState: "unavailable" as const })),
+      folders: this.listFolders().map(({ id, name }) => ({ id, name })),
+      total,
+      nextCursor: end < total ? String(end) : null,
+    };
+  }
+
   listTags(trash?: "only") {
     return (
       this.sql

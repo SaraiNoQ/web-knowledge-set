@@ -37,6 +37,8 @@ import type {
   KnowledgeCollection,
   KnowledgeDocument,
   KnowledgeFolder,
+  KnowledgeMapResponse,
+  LibraryItemKind,
   KnowledgeTag,
   LlmConnectionTestInput,
   LlmConnectionTestResult,
@@ -573,6 +575,17 @@ export const api = {
     if (filters.trash) query.set("trash", filters.trash);
     query.set("page", String(filters.page || 1));
     return request<DocumentListResponse>(`/api/library?${query}`, { signal });
+  },
+
+  async listKnowledgeMap(filters: { cursor?: string; q?: string; kind?: LibraryItemKind; folderId?: string; favorite?: boolean; includeArchived?: boolean }, signal?: AbortSignal) {
+    const query = new URLSearchParams({ limit: "250" });
+    if (filters.cursor) query.set("cursor", filters.cursor);
+    if (filters.q?.trim()) query.set("q", filters.q.trim());
+    if (filters.kind) query.set("kind", filters.kind);
+    if (filters.folderId) query.set("folderId", filters.folderId);
+    if (filters.favorite !== undefined) query.set("favorite", String(filters.favorite));
+    if (filters.includeArchived) query.set("includeArchived", "true");
+    return request<KnowledgeMapResponse>(`/api/knowledge-map?${query}`, { signal });
   },
 
   batchDocuments(body: BatchDocumentsRequest) {

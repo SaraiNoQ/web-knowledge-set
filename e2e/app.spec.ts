@@ -347,6 +347,32 @@ test("creates a top-level blank article from the directory menu", async ({ page 
   await expect(page.getByRole("region", { name: "根目录内容" }).getByRole("button", { name: "未命名文章", exact: true })).toHaveAttribute("aria-current", "true");
 });
 
+test("knowledge map selects a node and returns from the existing reader to the same map", async ({ page }) => {
+  await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
+  if (await deferSetup.isVisible()) await deferSetup.click();
+  await page.getByRole("button", { name: "新建", exact: true }).click();
+  await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文章" }).click();
+  await expect(page.getByLabel("文档标题")).toHaveValue("未命名文章");
+  await page.keyboard.press("Escape");
+  await expect(page.getByLabel("网页地址")).toBeVisible();
+  await page.getByRole("button", { name: "知识地图" }).click();
+  await expect(page.getByRole("heading", { name: "知识地图", exact: true })).toBeVisible();
+  const graphCanvas = page.locator(".map-canvas-inner canvas");
+  await expect(graphCanvas).toBeVisible();
+  await expect.poll(() => graphCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.width > 0 && canvas.height > 0)).toBe(true);
+  await page.getByText(/^节点列表/u).click();
+  await page.locator(".map-accessible-list").getByRole("button", { name: "未命名文章" }).last().click();
+  await page.getByRole("button", { name: "打开阅读" }).click();
+  await expect(page.getByLabel("文档标题")).toHaveValue("未命名文章");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("heading", { name: "知识地图", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "关闭详情" }).click();
+  await expect(page.getByRole("button", { name: "单篇关联" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "全库" })).toHaveAttribute("aria-pressed", "true");
+});
+
 test("renders a stored cloud image URI through the same-origin asset route", async ({ page }) => {
   const hash = "a".repeat(64);
   await page.route(`**/api/assets/${hash}`, (route) => route.fulfill({
