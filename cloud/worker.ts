@@ -325,7 +325,9 @@ async function api(request: Request, env: CloudEnv, url: URL) {
       const pageValue = url.searchParams.get("page") || "1";
       if (!/^[1-9]\d*$/u.test(pageValue)) throw new CloudHttpError(400, "INVALID_PAGE", "page must be a positive integer");
       const page = Number.parseInt(pageValue, 10);
-      if (!url.searchParams.get("q") && !url.searchParams.get("status")) {
+      // Pending captures are articles, and the local service lists them as
+      // article-kind documents too, so only a paper view drops them.
+      if (!url.searchParams.get("q") && !url.searchParams.get("status") && url.searchParams.get("kind") !== "paper") {
         const limit = page * 30;
         const [documents, jobs] = await Promise.all([
           listCloudDocuments(env.DB, url, { limit, offset: 0 }),

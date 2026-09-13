@@ -183,6 +183,19 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
   expect(stacked.clipped).toBe(false);
   await page.setViewportSize({ width: 1440, height: 900 });
 
+  // The "论文" view narrows the very same listing to paper knowledge.
+  const paperListing = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return url.pathname === "/api/documents" && url.searchParams.get("kind") === "paper";
+  });
+  await page.getByRole("navigation", { name: "资料库视图" }).getByRole("button", { name: "论文", exact: true }).click();
+  await paperListing;
+  await expect(page.locator(".directory-title", { hasText: "E2E 论文" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "资料库视图" }).getByRole("button", { name: "论文", exact: true })).toHaveAttribute("aria-pressed", "true");
+  // Reopen it so the cleanup below still trashes the document the reader holds.
+  await page.locator(".directory-title", { hasText: "E2E 论文" }).click();
+  await expect(page.getByRole("heading", { name: "E2E 论文" })).toBeVisible({ timeout: 15_000 });
+
   await page.getByRole("button", { name: "更多操作：E2E 论文" }).click();
   await page.getByRole("dialog", { name: "操作：E2E 论文" }).getByRole("button", { name: "删除（移入回收站）" }).click();
   await page.getByRole("alertdialog", { name: "移入回收站" }).getByRole("button", { name: "移入回收站" }).click();

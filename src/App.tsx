@@ -57,7 +57,7 @@ declare const __APP_VERSION__: string;
 type EditorMode = "edit" | "split" | "preview";
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
 type StatusFilter = CaptureStatus | "";
-type LibraryView = "all" | "recent" | "favorites" | "unorganized" | "archived" | "failed" | "trash";
+type LibraryView = "all" | "favorites" | "trash" | "paper";
 type SearchScope = "all" | "title" | "body" | "source";
 type SortOrder = "updated" | "created" | "title";
 
@@ -527,6 +527,9 @@ export default function App() {
   const [sortOrder, setSortOrder] = useState<SortOrder>("updated");
   const [unorganizedFilter, setUnorganizedFilter] = useState(false);
   const [libraryView, setLibraryView] = useState<LibraryView>("all");
+  // The "论文" view is just the library narrowed to paper knowledge, so the
+  // filter is derived rather than kept in its own state that could drift.
+  const kindFilter = libraryView === "paper" ? "paper" : undefined;
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [batchAction, setBatchAction] = useState<BatchDocumentAction | "">("");
   const [batchCollectionId, setBatchCollectionId] = useState("");
@@ -670,7 +673,7 @@ export default function App() {
   currentDocRef.current = currentDoc;
   sourceMetadataRef.current = sourceMetadata;
   const listContextKey = JSON.stringify([
-    query, searchScope, tag, collectionFilter, status, favoriteFilter, archivedFilter,
+    query, searchScope, kindFilter, tag, collectionFilter, status, favoriteFilter, archivedFilter,
     unorganizedFilter, captureModeFilter, dateFrom, dateTo, sortOrder, inTrash, page,
   ]);
   listContextRef.current = listContextKey;
@@ -1268,6 +1271,7 @@ export default function App() {
           {
             q: query,
             scope: searchScope,
+            kind: kindFilter,
             tag,
             collectionId: collectionFilter,
             status,
@@ -1302,7 +1306,7 @@ export default function App() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [archivedFilter, captureModeFilter, collectionFilter, dateFrom, dateTo, favoriteFilter, inTrash, listRefresh, page, query, searchScope, sortOrder, status, tag, unorganizedFilter]);
+  }, [archivedFilter, captureModeFilter, collectionFilter, dateFrom, dateTo, favoriteFilter, inTrash, kindFilter, listRefresh, page, query, searchScope, sortOrder, status, tag, unorganizedFilter]);
 
   useEffect(() => {
     if (!inTrash || !items.some(needsCapturePolling)) return;
@@ -2550,10 +2554,10 @@ export default function App() {
     setCaptureModeFilter("");
     setDateTo("");
     setFavoriteFilter(view === "favorites" ? true : undefined);
-    setArchivedFilter(view === "archived" ? true : view === "unorganized" ? false : undefined);
-    setUnorganizedFilter(view === "unorganized");
-    setStatus(view === "failed" ? "failed" : "");
-    setDateFrom(view === "recent" ? new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10) : "");
+    setArchivedFilter(undefined);
+    setUnorganizedFilter(false);
+    setStatus("");
+    setDateFrom("");
     setImportNotice("");
     return true;
   };
@@ -3565,8 +3569,7 @@ export default function App() {
 
           <nav className="library-tabs" aria-label="资料库视图">
             {([
-              ["all", "全部"], ["recent", "最近"], ["favorites", "收藏"], ["unorganized", "未整理"],
-              ["archived", "归档"], ["failed", "失败"], ["trash", "回收站"],
+              ["all", "全部"], ["favorites", "收藏"], ["trash", "回收站"], ["paper", "论文"],
             ] as Array<[LibraryView, string]>).map(([value, label]) => (
               <button key={value} type="button" aria-pressed={libraryView === value} onClick={() => void applyLibraryView(value)} disabled={listLoading || batchBusy}>{label}</button>
             ))}
@@ -3585,7 +3588,7 @@ export default function App() {
           {!inTrash ? <><LibraryDirectory
             folders={folders}
             filters={{
-              q: query, scope: searchScope, tag, collectionId: collectionFilter, status,
+              q: query, scope: searchScope, kind: kindFilter, tag, collectionId: collectionFilter, status,
               favorite: favoriteFilter, archived: archivedFilter, unorganized: unorganizedFilter || undefined,
               captureMode: captureModeFilter || undefined, from: dateFrom, to: dateTo, sort: sortOrder,
             }}

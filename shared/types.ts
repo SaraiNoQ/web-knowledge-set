@@ -351,6 +351,7 @@ export type DocumentSort = "updated" | "created" | "title";
 export interface DocumentFilters {
   q?: string;
   scope?: DocumentSearchScope;
+  kind?: LibraryItemKind;
   tag?: string;
   collectionId?: string;
   folderId?: string;

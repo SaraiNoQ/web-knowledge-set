@@ -489,6 +489,13 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     assert.equal((await fetch(`${base}/api/documents?folderId=${folder.id}&unfiled=false`, {
       headers: { Cookie: cookie },
     })).status, 400);
+    // The "论文" view is a kind filter over the same listing.
+    assert.equal(((await (await fetch(`${base}/api/library?kind=paper`, {
+      headers: { Cookie: cookie },
+    })).json()) as DocumentListResponse).total, 0);
+    const unknownKind = await fetch(`${base}/api/library?kind=book`, { headers: { Cookie: cookie } });
+    assert.equal(unknownKind.status, 400);
+    assert.equal(((await unknownKind.json()) as { error: { code: string } }).error.code, "INVALID_FILTER");
     const folderExport = await (await fetch(`${base}/api/documents/${cancellable.id}/export.md`, {
       headers: { Cookie: cookie },
     })).text();

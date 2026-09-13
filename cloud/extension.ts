@@ -472,6 +472,12 @@ export async function listDocuments(db: D1Database, url: URL, window?: { limit: 
   const conditions: string[] = [];
   const values: unknown[] = [];
   conditions.push(documentTrashFilter(url) ? "deleted_at IS NOT NULL" : "deleted_at IS NULL");
+  const kind = url.searchParams.get("kind");
+  if (kind !== null) {
+    if (kind !== "article" && kind !== "paper") throw new CloudHttpError(400, "INVALID_FILTER", "kind must be article or paper");
+    conditions.push("kind = ?");
+    values.push(kind);
+  }
   const folder = documentFolderFilter(url);
   if (folder.folderId) {
     conditions.push("folder_id = ?");

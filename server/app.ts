@@ -22,6 +22,7 @@ import type {
   KnowledgeDocument,
   ImportKind,
   ImportStrategy,
+  LibraryItemKind,
   PaperBlock,
   RecentFilter,
   StartDerivedTaskInput,
@@ -115,12 +116,13 @@ const captureErrorCodes = new Set<CaptureErrorCode>([
 const statuses = new Set<CaptureStatus>(["queued", "fetching", "extracting", "ready", "failed"]);
 const captureModes = new Set<CaptureMode>(["http", "browser"]);
 const searchScopes = new Set<DocumentSearchScope>(["all", "title", "body", "source"]);
+const libraryItemKinds = new Set<LibraryItemKind>(["article", "paper"]);
 const documentSorts = new Set<DocumentSort>(["updated", "created", "title"]);
 const derivedResultTypes = new Set<DerivedResultType>(["summary", "outline", "keywords", "tag-suggestions", "translation"]);
 const importKinds = new Set<ImportKind>(["urls", "bookmarks", "markdown"]);
 const importStrategies = new Set<ImportStrategy>(["skip", "copy", "update"]);
 const documentFilterKeys = new Set([
-  "q", "scope", "tag", "collectionId", "folderId", "unfiled", "status", "favorite", "archived", "unorganized",
+  "q", "scope", "kind", "tag", "collectionId", "folderId", "unfiled", "status", "favorite", "archived", "unorganized",
   "from", "to", "captureMode", "sort", "page", "trash",
 ]);
 const batchActions = new Set<BatchDocumentAction>([
@@ -787,6 +789,10 @@ function documentFilters(requestUrl: URL): DocumentFilters {
   const tag = tagValue === null ? undefined : tagNameValue(tagValue);
   const collectionIdValue = requestUrl.searchParams.get("collectionId");
   const collectionId = collectionIdValue === null ? undefined : collectionIdsValue([collectionIdValue])[0];
+  const kindValue = requestUrl.searchParams.get("kind") ?? undefined;
+  if (kindValue && !libraryItemKinds.has(kindValue as LibraryItemKind)) {
+    throw new HttpError(400, "INVALID_FILTER", "Unknown document kind");
+  }
   const folderIdInput = requestUrl.searchParams.get("folderId");
   const folderId = folderIdInput === null ? undefined : folderIdValue(folderIdInput);
   const unfiled = strictBoolean(requestUrl.searchParams.get("unfiled"), "unfiled");
@@ -816,6 +822,7 @@ function documentFilters(requestUrl: URL): DocumentFilters {
   return {
     q,
     scope: scopeValue as DocumentSearchScope | undefined,
+    kind: kindValue as LibraryItemKind | undefined,
     tag,
     collectionId,
     folderId,

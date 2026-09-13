@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -358,6 +359,22 @@ test("documents are queued once, indexed, tagged, and revision guarded", () => {
     assert.equal(fixture.db.listDocuments({ q: "知识" }).total, 1);
     assert.equal(fixture.db.listDocuments({ q: "example.com" }).total, 1);
     assert.equal(fixture.db.listDocuments().pageSize, 30);
+
+    // The library's "论文" view narrows by knowledge kind, so articles and
+    // papers have to stay separable in the same listing.
+    const pdf = Buffer.from("%PDF-1.7\nkind fixture\n", "ascii");
+    const paper = fixture.db.createPaper({
+      sourceKind: "pdf",
+      sourceUrl: null,
+      originalFileName: "kind.pdf",
+      hash: createHash("sha256").update(pdf).digest("hex"),
+      content: pdf,
+    });
+    assert.equal(paper.created, true);
+    if (!paper.created) return;
+    assert.deepEqual(fixture.db.listDocuments({ kind: "paper" }).items.map(({ id }) => id), [paper.paper.id]);
+    assert.deepEqual(fixture.db.listDocuments({ kind: "article" }).items.map(({ id }) => id), [ready.id]);
+    assert.equal(fixture.db.listDocuments().total, 2);
   } finally {
     fixture.close();
   }

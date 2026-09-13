@@ -208,6 +208,12 @@ test("returns home from the logo and toggles the knowledge sidebar", async ({ pa
   await page.setViewportSize({ width: 800, height: 900 });
   await expect(page.getByRole("navigation", { name: "资料库视图" })).toBeVisible();
   await expect.poll(() => page.locator(".library-tabs").evaluate((element) => getComputedStyle(element).display)).toBe("grid");
+  // The view tabs are one row of four, and the paper view is one of them.
+  const libraryTabs = page.getByRole("navigation", { name: "资料库视图" }).getByRole("button");
+  await expect(libraryTabs).toHaveText(["全部", "收藏", "回收站", "论文"]);
+  await expect.poll(() => page.locator(".library-tabs button").evaluateAll(
+    (buttons) => new Set(buttons.map((button) => Math.round(button.getBoundingClientRect().top))).size,
+  )).toBe(1);
   await page.setViewportSize({ width: 1280, height: 900 });
   await expand.click();
   await expect(page.locator(".workspace")).not.toHaveClass(/library-collapsed/u);

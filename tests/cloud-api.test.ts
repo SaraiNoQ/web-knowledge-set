@@ -274,6 +274,22 @@ test("cloud core serves the existing empty-library startup contract", async () =
   assert.ok(preparedSql.some((sql) => sql.includes("cloud_documents") && sql.includes("folder_id IS NOT NULL")));
   assert.ok(preparedSql.some((sql) => sql.includes("cloud_capture_jobs") && sql.includes("folder_id IS NOT NULL")));
 
+  preparedSql = [];
+  const papersOnly = await handleRequest(new Request("https://app.example.com/api/documents?kind=paper&page=1"), environment());
+  assert.equal(papersOnly.status, 200);
+  assert.ok(preparedSql.some((sql) => sql.includes("kind = ?")));
+  // Pending captures are articles, so a paper view must not merge them in.
+  assert.ok(!preparedSql.some((sql) => sql.includes("cloud_capture_jobs")));
+  // An article view is the mirror image: the local service lists a queued
+  // capture as an article-kind document, so the cloud has to merge it too.
+  preparedSql = [];
+  const articlesOnly = await handleRequest(new Request("https://app.example.com/api/documents?kind=article&page=1"), environment());
+  assert.equal(articlesOnly.status, 200);
+  assert.ok(preparedSql.some((sql) => sql.includes("cloud_capture_jobs")));
+  const invalidKind = await handleRequest(new Request("https://app.example.com/api/documents?kind=book"), environment());
+  assert.equal(invalidKind.status, 400);
+  assert.equal((await invalidKind.json() as { error: { code: string } }).error.code, "INVALID_FILTER");
+
   const asset = await handleRequest(new Request("https://app.example.com/"), environment());
   assert.equal(asset.headers.get("X-Frame-Options"), "DENY");
 });

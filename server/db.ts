@@ -3131,6 +3131,10 @@ export class KnowledgeDatabase {
     if (filters.unfiled !== undefined) {
       where.push(filters.unfiled ? "d.folder_id IS NULL" : "d.folder_id IS NOT NULL");
     }
+    if (filters.kind) {
+      where.push("d.kind = ?");
+      params.push(filters.kind);
+    }
     if (filters.status) {
       where.push("d.status = ?");
       params.push(filters.status);
