@@ -412,11 +412,17 @@ test("knowledge map shows model-ranked semantic neighbors and applies the thresh
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
   await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
   if (await deferSetup.isVisible()) await deferSetup.click();
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "知识地图" }).click();
   await page.locator(".map-accessible-list summary").click();
-  await page.locator(".map-accessible-list").getByRole("button", { name: "语义主题甲" }).click();
+  const articleNode = page.locator(".map-accessible-list").getByRole("button", { name: "语义主题甲" });
+  await articleNode.focus();
+  await page.keyboard.press("Enter");
   const detail = page.getByRole("complementary", { name: "资料详情" });
   await expect(detail.getByRole("heading", { name: "语义主题甲" })).toBeVisible();
+  await expect.poll(() => detail.evaluate((element) => getComputedStyle(element).position)).toBe("fixed");
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect.poll(() => detail.evaluate((element) => getComputedStyle(element).position)).not.toBe("fixed");
   await expect(detail).toContainText("语义主题乙");
   await expect(detail).toContainText("模型分数 0.80");
   await expect(page.locator(".knowledge-map")).toContainText("连线不表示引用或事实关系");

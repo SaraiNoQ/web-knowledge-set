@@ -21,7 +21,27 @@ type MapItem = KnowledgeMapNode & { type: "document"; color: string };
 type FolderItem = { id: string; name: string; type: "folder"; color: string };
 type MapNode = MapItem | FolderItem;
 type MapLink = { source: string; target: string; type: "folder" } | { source: string; target: string; type: "semantic"; score: number };
-type GraphMethods = { zoomToFit: (duration?: number, padding?: number) => void; pauseAnimation: () => void; resumeAnimation: () => void };
+type ForceStrength = number | ((value: unknown, index: number, values: unknown[]) => number);
+type D3Force = ((alpha: number) => void) & {
+  strength?: {
+    (): ForceStrength;
+    (value: ForceStrength): unknown;
+  };
+  distanceMax?: {
+    (): number;
+    (value: number): unknown;
+  };
+};
+type GraphMethods = {
+  zoomToFit: (duration?: number, padding?: number) => void;
+  pauseAnimation: () => void;
+  resumeAnimation: () => void;
+  d3Force: {
+    (name: string): D3Force | undefined;
+    (name: string, force: D3Force | null): unknown;
+  };
+  d3ReheatSimulation: () => unknown;
+};
 type SemanticVectorVersion = { id: string; sourceHash: string | null; model: string | null; formatVersion: string | null };
 type SemanticGraphWorkerMessage = { requestId: number; graphKey?: string; result?: SemanticGraphResult; error?: string };
 const EMPTY_SEMANTIC_GRAPH: SemanticGraphResult = { edges: [], neighbors: {} };
@@ -87,6 +107,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
   const [semanticGraph, setSemanticGraph] = useState(EMPTY_SEMANTIC_GRAPH);
   const [semanticThreshold, setSemanticThreshold] = useState(0.6);
   const [paused, setPaused] = useState(false);
+  const [draggingNode, setDraggingNode] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [width, setWidth] = useState(0);
   const [height, setHeight] = useState(0);
@@ -94,6 +115,13 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
   const resizeObserver = useRef<ResizeObserver | null>(null);
   const graph = useRef<GraphMethods | null>(null);
   const mapLoading = useRef(false);
+  const draggingNodeRef = useRef(false);
+  const dragForceSnapshot = useRef<{
+    linkStrength?: ForceStrength;
+    chargeStrength?: ForceStrength;
+    chargeDistanceMax?: number;
+    centerForce?: D3Force;
+  } | null>(null);
   const graphWorker = useRef<Worker | null>(null);
   const graphRequestId = useRef(0);
   const latestGraphRequestId = useRef(0);
@@ -411,9 +439,11 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
     else ctx.arc(node.x, node.y, size, 0, Math.PI * 2);
     ctx.fillStyle = node.type === "folder" ? "#f4f0e7" : node.color;
     ctx.fill();
-    ctx.strokeStyle = isSelected ? "#b64b3b" : "rgba(43, 42, 37, .72)";
-    ctx.lineWidth = (isSelected ? 2.4 : 1.1) / Math.max(scale, .35);
-    ctx.stroke();
+    if (!draggingNode || isSelected || node.id === hoveredId) {
+      ctx.strokeStyle = isSelected ? "#b64b3b" : "rgba(43, 42, 37, .72)";
+      ctx.lineWidth = (isSelected ? 2.4 : 1.1) / Math.max(scale, .35);
+      ctx.stroke();
+    }
     if (isSelected || node.id === hoveredId) {
       ctx.font = (isSelected ? "600 " : "450 ") + Math.max(10, 12 / Math.max(scale, .7)) + "px Georgia, serif";
       ctx.textAlign = "left";
@@ -421,7 +451,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
       ctx.fillStyle = node.type === "folder" ? "#55483a" : "#2d2a25";
       ctx.fillText(node.type === "folder" ? shortTitle(node.name) : shortTitle(node.title), node.x + size + 4, node.y);
     }
-  }, [hoveredId, selectedId]);
+  }, [draggingNode, hoveredId, selectedId]);
 
   const openSelected = () => { if (selected) onOpenDocument(selected.id); };
 
@@ -466,22 +496,55 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
                   nodePointerAreaPaint={(raw: object, color: string, ctx: CanvasRenderingContext2D) => {
                     const node = raw as MapNode & { x?: number; y?: number };
                     if (node.x === undefined || node.y === undefined) return;
+                    const radius = node.type === "folder" ? 9 : node.kind === "paper" ? 8 : 7;
                     ctx.fillStyle = color;
-                    ctx.beginPath();
-                    ctx.arc(node.x, node.y, 13, 0, Math.PI * 2);
-                    ctx.fill();
+                    ctx.fillRect(node.x - radius, node.y - radius, radius * 2, radius * 2);
                   }}
                   linkColor={(link: object) => (link as MapLink).type === "semantic" ? "rgba(103, 93, 133, .58)" : "rgba(109, 103, 88, .44)"}
                   linkWidth={(link: object) => (link as MapLink).type === "semantic" ? 1.35 : 1.1}
                   linkLineDash={(link: object) => (link as MapLink).type === "semantic" ? [4, 3] : []}
+                  linkVisibility={() => !draggingNode}
+                  linkPointerAreaPaint={() => {}}
                   d3AlphaDecay={0.06}
                   cooldownTicks={130}
                   enableNodeDrag
                   onNodeClick={(node: object) => { const item = node as MapNode; if (item.type === "document") { setSelectedId(item.id); setLocalMode(true); } }}
                   onNodeHover={(node: object | null) => setHoveredId(node && "id" in node ? String((node as MapNode).id) : null)}
+                  onNodeDrag={() => {
+                    if (draggingNodeRef.current) return;
+                    draggingNodeRef.current = true;
+                    setDraggingNode(true);
+                    const linkForce = graph.current?.d3Force("link");
+                    const chargeForce = graph.current?.d3Force("charge");
+                    dragForceSnapshot.current = {
+                      linkStrength: linkForce?.strength?.(),
+                      chargeStrength: chargeForce?.strength?.(),
+                      chargeDistanceMax: chargeForce?.distanceMax?.(),
+                      centerForce: graph.current?.d3Force("center"),
+                    };
+                    linkForce?.strength?.(0);
+                    chargeForce?.strength?.(0);
+                    graph.current?.d3Force("center", null);
+                    if (paused) graph.current?.resumeAnimation();
+                  }}
+                  onNodeDragEnd={() => {
+                    if (!draggingNodeRef.current) return;
+                    draggingNodeRef.current = false;
+                    setDraggingNode(false);
+                    const snapshot = dragForceSnapshot.current;
+                    const linkForce = graph.current?.d3Force("link");
+                    const chargeForce = graph.current?.d3Force("charge");
+                    if (snapshot?.linkStrength !== undefined) linkForce?.strength?.(snapshot.linkStrength);
+                    if (snapshot?.chargeStrength !== undefined) chargeForce?.strength?.(snapshot.chargeStrength);
+                    if (snapshot?.chargeDistanceMax !== undefined) chargeForce?.distanceMax?.(snapshot.chargeDistanceMax);
+                    if (snapshot?.centerForce) graph.current?.d3Force("center", snapshot.centerForce);
+                    dragForceSnapshot.current = null;
+                    if (!paused) graph.current?.d3ReheatSimulation();
+                    else graph.current?.pauseAnimation();
+                  }}
                 />}
                 <div className="map-canvas-toolbar"><button type="button" onClick={fit} aria-label="适应画布">适应画布</button><button type="button" onClick={togglePause} aria-pressed={paused}>{paused ? "继续布局" : "暂停布局"}</button></div>
-                <span className="map-coordinate-note">位置仅用于排布，不代表相似度。</span>
+                <span className="map-coordinate-note">{draggingNode ? "拖动时暂时隐藏连线，松开后恢复。" : "位置仅用于排布，不代表相似度。"}</span>
               </div>}
         </div>
         <aside className={"knowledge-map-detail " + (selected ? "is-open" : "")} aria-label="资料详情">

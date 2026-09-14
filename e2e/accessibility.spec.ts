@@ -70,6 +70,10 @@ test("has no serious or critical accessibility violations in primary workflows",
     await expect(page.getByLabel("网页地址")).toBeVisible();
     await expect(page.locator(".document-list .state-loading")).toHaveCount(0);
     await expectNoHighImpactViolations(page, "资料库");
+    const librarySelect = page.getByRole("combobox").first();
+    const selectedValueId = await librarySelect.locator("span").first().getAttribute("id");
+    expect(selectedValueId).toBeTruthy();
+    expect((await librarySelect.getAttribute("aria-describedby"))?.split(/\s+/u)).toContain(selectedValueId);
 
     const readyRow = page.locator(".document-row-wrap").filter({ hasText: "已就绪" }).first();
     if (await readyRow.count()) {
@@ -98,6 +102,12 @@ test("has no serious or critical accessibility violations in primary workflows",
     await expect(page.getByRole("checkbox", { name: "允许自动建立语义关联" })).not.toBeChecked();
     await expectNoHighImpactViolations(page, "AI 设置");
     await page.getByRole("button", { name: "返回资料库" }).click();
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("button", { name: "知识地图" }).click();
+    await expect(page.getByRole("heading", { name: "知识地图", exact: true })).toBeVisible();
+    await expectNoHighImpactViolations(page, "知识地图");
+    await page.getByRole("button", { name: "返回列表" }).click();
 
     await page.getByRole("button", { name: "数据安全", exact: true }).click();
     await expect(page.getByRole("heading", { name: "数据安全" })).toBeVisible();

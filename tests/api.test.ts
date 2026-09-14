@@ -34,7 +34,7 @@ import type {
   RecentFilter,
   ReextractionPreview,
 } from "../shared/types.js";
-import { SEMANTIC_EMBEDDINGS_URL } from "../shared/semantic.js";
+import { SEMANTIC_EMBEDDINGS_URL, SEMANTIC_FORMAT_VERSION } from "../shared/semantic.js";
 
 const mutableFs = createRequire(import.meta.url)("node:fs") as {
   fsyncSync: typeof fsyncSync;
@@ -519,6 +519,11 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     ).json()) as DataSafetyStatus;
     assert.equal(dataSafety.mode, "ready");
     assert.equal(dataSafety.health?.database.integrityCheck[0], "ok");
+    const semanticSettings = app.db.setSemanticSettings({ enabled: true, model: "BAAI/bge-m3", revision: 0 }, true);
+    assert.equal(semanticSettings.kind, "updated");
+    app.db.sql.prepare("INSERT INTO semantic_indexes(document_id,source_hash,model,format_version,state,chunk_total,chunk_done,vector_json,updated_at) " +
+      "VALUES (?,?,'BAAI/bge-m3',?,'ready',1,1,'[1,0]',?)")
+      .run(cancellable.id, "d".repeat(64), SEMANTIC_FORMAT_VERSION, new Date().toISOString());
     const manualBackup = await fetch(`${base}/api/data-safety/backups`, {
       method: "POST",
       headers: jsonHeaders,
@@ -1265,6 +1270,8 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     ).json()) as KnowledgeDocument;
     assert.equal(afterRestore.revision, beforeRestore.revision);
     assert.equal(afterRestore.sourceNote, "Primary source note");
+    assert.equal(app.db.getSemanticSettings(true).enabled, false);
+    assert.equal(app.db.semanticVectorPage(0, 10, "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION).total, 0);
     assert.equal(
       ((await (await fetch(`${base}/api/capture-queue`, { headers: { Cookie: cookie } })).json()) as CaptureQueueStatus)
         .paused,

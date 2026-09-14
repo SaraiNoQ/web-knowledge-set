@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { computeSemanticGraph, extendSemanticGraph, SEMANTIC_GRAPH_NEIGHBORS, semanticVectorKey } from "../shared/semantic-graph.js";
+import {
+  appendSemanticGraphState,
+  computeSemanticGraph,
+  createSemanticGraphState,
+  extendSemanticGraph,
+  SEMANTIC_GRAPH_NEIGHBORS,
+  semanticVectorKey,
+} from "../shared/semantic-graph.js";
 import type { SemanticVectorEntry } from "../shared/types.js";
 
 function vector(id: string, value: number[], model = "BAAI/bge-m3"): SemanticVectorEntry {
@@ -42,13 +49,15 @@ test("incremental graph additions match a full graph and version keys isolate mo
     vector("d", [0, 0, 1]), vector("e", [.4, .5, .7]),
   ];
   let indexed = entries.slice(0, 2);
-  let result = computeSemanticGraph(indexed);
+  let state = createSemanticGraphState(indexed);
   for (const next of entries.slice(2)) {
     const expanded = [...indexed, next];
-    result = extendSemanticGraph(indexed, result, expanded)!;
-    assert.deepEqual(result, computeSemanticGraph(expanded));
+    state = appendSemanticGraphState(state, [next]);
+    assert.deepEqual(state.graph, computeSemanticGraph(expanded));
     indexed = expanded;
   }
+  const batched = appendSemanticGraphState(createSemanticGraphState(entries.slice(0, 2)), entries.slice(2, 4));
+  assert.deepEqual(batched.graph, computeSemanticGraph(entries.slice(0, 4)));
 
   assert.equal(extendSemanticGraph(entries.slice(0, 2), computeSemanticGraph(entries.slice(0, 2)), [
     { ...entries[0]!, sourceHash: "f".repeat(64) }, entries[1]!, entries[2]!,
@@ -66,9 +75,9 @@ test("incremental graph additions match a full graph and version keys isolate mo
   const newcomer = vector("new-closest", [Math.cos(.005), Math.sin(.005)]);
   const oldGraph = computeSemanticGraph(crowded);
   assert.equal(oldGraph.neighbors.anchor!.length, SEMANTIC_GRAPH_NEIGHBORS);
-  const expanded = extendSemanticGraph(crowded, oldGraph, [...crowded, newcomer]);
-  assert.deepEqual(expanded, computeSemanticGraph([...crowded, newcomer]));
+  const expanded = appendSemanticGraphState(createSemanticGraphState(crowded), [newcomer]);
+  assert.deepEqual(expanded.graph, computeSemanticGraph([...crowded, newcomer]));
   assert.ok(oldGraph.neighbors.anchor!.some(({ id }) => id === "old-09"));
-  assert.ok(!expanded!.neighbors.anchor!.some(({ id }) => id === "old-09"));
-  assert.ok(expanded!.neighbors.anchor!.some(({ id }) => id === "new-closest"));
+  assert.ok(!expanded.graph.neighbors.anchor!.some(({ id }) => id === "old-09"));
+  assert.ok(expanded.graph.neighbors.anchor!.some(({ id }) => id === "new-closest"));
 });

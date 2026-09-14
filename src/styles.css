@@ -141,7 +141,7 @@ a { color: inherit; }
 .shortcut-card kbd { min-width: 24px; padding: 4px 6px; text-align: center; background: rgba(250,247,239,.8); border: 1px solid var(--line); font: 500 var(--font-small)/1 var(--font-mono); }
 .help-card { width: min(720px, 100%); max-height: calc(100vh - 40px); overflow: auto; }
 .help-overview { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(170px, .7fr); gap: 28px; margin-top: 22px; padding: 22px; background: rgba(235,229,215,.72); border: 1px solid var(--line); }
-.help-overview section > span { color: var(--vermilion); font: 600 var(--font-caption)/1.4 var(--font-mono); letter-spacing: .08em; }
+.help-overview section > span { color: var(--vermilion-dark); font: 600 var(--font-caption)/1.4 var(--font-mono); letter-spacing: .08em; }
 .help-card h3 { margin: 8px 0; font: 500 19px/1.25 var(--font-serif); }
 .help-overview p { margin: 0 0 16px; color: var(--ink-soft); font-size: var(--font-body); line-height: 1.7; }
 .help-overview .guide-button { color: var(--vermilion-dark); }

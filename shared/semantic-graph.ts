@@ -20,6 +20,12 @@ export interface SemanticGraphResult {
   neighbors: Record<string, SemanticGraphNeighbor[]>;
 }
 
+export interface SemanticGraphState {
+  entries: SemanticVectorEntry[];
+  normalized: Map<string, Float32Array>;
+  graph: SemanticGraphResult;
+}
+
 interface Candidate {
   index: number;
   score: number;
@@ -90,9 +96,9 @@ function resultFromTop(entries: SemanticVectorEntry[], top: Candidate[][]): Sema
   return { edges, neighbors };
 }
 
-export function computeSemanticGraph(input: SemanticVectorEntry[]): SemanticGraphResult {
+function buildGraphState(input: SemanticVectorEntry[]): SemanticGraphState {
   const { entries, normalized } = normalizeEntries(input);
-  if (!entries.length) return { edges: [], neighbors: {} };
+  if (!entries.length) return { entries, normalized: new Map(), graph: { edges: [], neighbors: {} } };
   const top = Array.from({ length: entries.length }, () => [] as Candidate[]);
   for (let left = 0; left < entries.length; left += 1) {
     for (let right = left + 1; right < entries.length; right += 1) {
@@ -101,11 +107,75 @@ export function computeSemanticGraph(input: SemanticVectorEntry[]): SemanticGrap
       keepTop(top[right]!, { index: left, score: value }, entries, SEMANTIC_GRAPH_NEIGHBORS);
     }
   }
-  return resultFromTop(entries, top);
+  return {
+    entries,
+    normalized: new Map(entries.map((entry, index) => [entry.id, normalized[index]!])),
+    graph: resultFromTop(entries, top),
+  };
+}
+
+export function createSemanticGraphState(input: SemanticVectorEntry[]) {
+  return buildGraphState(input);
+}
+
+export function computeSemanticGraph(input: SemanticVectorEntry[]): SemanticGraphResult {
+  return buildGraphState(input).graph;
+}
+
+export function appendSemanticGraphState(state: SemanticGraphState, additionsInput: SemanticVectorEntry[]): SemanticGraphState {
+  if (!additionsInput.length) return state;
+  if (state.entries.length + additionsInput.length > SEMANTIC_GRAPH_MAX_NODES) {
+    throw new RangeError("Semantic graph is limited to 1,000 filtered nodes");
+  }
+  const additions = [...additionsInput].sort((left, right) => compareIds(left.id, right.id));
+  const first = state.entries[0] ?? additions[0]!;
+  const dimension = first.vector.length;
+  if (!dimension || dimension > 4_096) throw new TypeError("Semantic graph vector dimension is invalid");
+  const knownIds = new Set(state.entries.map(({ id }) => id));
+  const normalizedAdded = new Map<string, Float32Array>();
+  for (const entry of additions) {
+    if (knownIds.has(entry.id) || entry.model !== first.model || entry.formatVersion !== first.formatVersion ||
+      entry.vector.length !== dimension || entry.vector.some((value) => !Number.isFinite(value))) {
+      throw new TypeError("Semantic graph vectors are incompatible");
+    }
+    knownIds.add(entry.id);
+    const magnitude = Math.sqrt(entry.vector.reduce((sum, value) => sum + value * value, 0));
+    if (!Number.isFinite(magnitude) || magnitude === 0) throw new TypeError("Semantic graph vector norm is invalid");
+    normalizedAdded.set(entry.id, Float32Array.from(entry.vector, (value) => value / magnitude));
+  }
+
+  const entries = [...state.entries, ...additions].sort((left, right) => compareIds(left.id, right.id));
+  const indexById = new Map(entries.map((entry, index) => [entry.id, index]));
+  const normalized = new Map(state.normalized);
+  for (const [id, vector] of normalizedAdded) normalized.set(id, vector);
+  const top = Array.from({ length: entries.length }, () => [] as Candidate[]);
+  for (const old of state.entries) {
+    const oldIndex = indexById.get(old.id)!;
+    const neighbors = state.graph.neighbors[old.id];
+    if (!Array.isArray(neighbors) || neighbors.length !== Math.min(SEMANTIC_GRAPH_NEIGHBORS, state.entries.length - 1)) {
+      throw new TypeError("Semantic graph state is invalid");
+    }
+    for (const neighbor of neighbors) {
+      const index = indexById.get(neighbor.id);
+      if (index === undefined || index === oldIndex || !Number.isFinite(neighbor.score)) throw new TypeError("Semantic graph state is invalid");
+      keepTop(top[oldIndex]!, { index, score: neighbor.score }, entries, SEMANTIC_GRAPH_NEIGHBORS);
+    }
+  }
+
+  const addedIds = new Set(additions.map(({ id }) => id));
+  for (let left = 0; left < entries.length; left += 1) {
+    for (let right = left + 1; right < entries.length; right += 1) {
+      if (!addedIds.has(entries[left]!.id) && !addedIds.has(entries[right]!.id)) continue;
+      const value = score(normalized.get(entries[left]!.id)!, normalized.get(entries[right]!.id)!);
+      keepTop(top[left]!, { index: right, score: value }, entries, SEMANTIC_GRAPH_NEIGHBORS);
+      keepTop(top[right]!, { index: left, score: value }, entries, SEMANTIC_GRAPH_NEIGHBORS);
+    }
+  }
+  return { entries, normalized, graph: resultFromTop(entries, top) };
 }
 
 export function extendSemanticGraph(previousInput: SemanticVectorEntry[], previousGraph: SemanticGraphResult, input: SemanticVectorEntry[]) {
-  const { entries, normalized } = normalizeEntries(input);
+  const { entries } = normalizeEntries(input);
   const previous = [...previousInput].sort((left, right) => compareIds(left.id, right.id));
   if (!previous.length || entries.length <= previous.length) return null;
 
@@ -122,27 +192,7 @@ export function extendSemanticGraph(previousInput: SemanticVectorEntry[], previo
 
   const added = new Set(entries.map((entry, index) => previousIds.has(entry.id) ? -1 : index).filter((index) => index >= 0));
   if (!added.size) return null;
-  const top = Array.from({ length: entries.length }, () => [] as Candidate[]);
-  for (const old of previous) {
-    const oldIndex = currentIndex.get(old.id)!;
-    const neighbors = previousGraph.neighbors[old.id];
-    if (!Array.isArray(neighbors) || neighbors.length !== Math.min(SEMANTIC_GRAPH_NEIGHBORS, previous.length - 1)) return null;
-    const seen = new Set<string>();
-    for (const neighbor of neighbors) {
-      const index = currentIndex.get(neighbor.id);
-      if (index === undefined || index === oldIndex || seen.has(neighbor.id) || !Number.isFinite(neighbor.score)) return null;
-      seen.add(neighbor.id);
-      keepTop(top[oldIndex]!, { index, score: neighbor.score }, entries, SEMANTIC_GRAPH_NEIGHBORS);
-    }
-  }
-
-  for (let left = 0; left < entries.length; left += 1) {
-    for (let right = left + 1; right < entries.length; right += 1) {
-      if (!added.has(left) && !added.has(right)) continue;
-      const value = score(normalized[left]!, normalized[right]!);
-      keepTop(top[left]!, { index: right, score: value }, entries, SEMANTIC_GRAPH_NEIGHBORS);
-      keepTop(top[right]!, { index: left, score: value }, entries, SEMANTIC_GRAPH_NEIGHBORS);
-    }
-  }
-  return resultFromTop(entries, top);
+  const additions = entries.filter((entry, index) => added.has(index));
+  const state = createSemanticGraphState(previous);
+  return appendSemanticGraphState({ ...state, graph: previousGraph }, additions).graph;
 }
