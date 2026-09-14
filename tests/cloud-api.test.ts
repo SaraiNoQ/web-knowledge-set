@@ -417,9 +417,17 @@ test("cloud semantic indexing is opt-in, keeps keys out of D1, resumes batches, 
     assert.ok(authorizations.every((value) => value === "Bearer " + apiKey));
     assert.equal(JSON.stringify(db.sqlite.prepare("SELECT value FROM app_settings WHERE key='semantic_settings'").get()).includes(apiKey), false);
     const vectors = await handleRequest(new Request("https://app.example.com/api/knowledge-map/vectors"), env);
-    const vectorBody = await vectors.json() as { items: Array<{ id: string; vector: number[]; formatVersion: string }> };
+    const vectorBody = await vectors.json() as { items: Array<{ id: string; vector: number[]; formatVersion: string; sourceHash: string; model: string }> };
     assert.deepEqual(vectorBody.items.map(({ id, vector }) => ({ id, vector })), [{ id: document.id, vector: [0.6, 0.8] }]);
     assert.equal(vectorBody.items[0]?.formatVersion, "semantic-text-v1");
+    const readyMap = await handleRequest(new Request("https://app.example.com/api/knowledge-map"), env);
+    const readyNode = ((await readyMap.json() as { items: Array<{ id: string; semanticState: string; semanticSourceHash: string | null; semanticModel: string | null; semanticFormatVersion: string | null }> }).items.find(({ id }) => id === document.id));
+    assert.deepEqual(readyNode && {
+      state: readyNode.semanticState, sourceHash: readyNode.semanticSourceHash, model: readyNode.semanticModel, formatVersion: readyNode.semanticFormatVersion,
+    }, { state: "ready", sourceHash: vectorBody.items[0]?.sourceHash, model: "BAAI/bge-m3", formatVersion: "semantic-text-v1" });
+    const filteredVectors = await handleRequest(new Request("https://app.example.com/api/knowledge-map/vectors?ids=" +
+      encodeURIComponent(JSON.stringify(["missing-id", document.id]))), env);
+    assert.deepEqual((await filteredVectors.json() as { items: Array<{ id: string }> }).items.map(({ id }) => id), [document.id]);
     const staleSettings = await handleRequest(new Request("https://app.example.com/api/settings/semantic", {
       method: "PUT", headers, body: JSON.stringify({ enabled: false, model: "stale-model", revision: initialSettings.revision }),
     }), env);

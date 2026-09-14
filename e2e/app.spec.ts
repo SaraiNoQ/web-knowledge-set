@@ -373,6 +373,86 @@ test("knowledge map selects a node and returns from the existing reader to the s
   await expect(page.getByRole("button", { name: "全库" })).toHaveAttribute("aria-pressed", "true");
 });
 
+test("knowledge map shows model-ranked semantic neighbors and applies the threshold", async ({ page }) => {
+  const contentVersion = { value: 1 };
+  const modelVersion = { value: "BAAI/bge-m3" };
+  let mapRequests = 0;
+  let vectorRequests = 0;
+  const nodes = [
+    { id: "semantic-article", kind: "article", title: "语义主题甲", folderId: null, folderName: null, status: "ready", favorite: false, archivedAt: null, updatedAt: "2026-01-01T00:00:00.000Z", pageCount: null, semanticState: "ready" },
+    { id: "semantic-paper", kind: "paper", title: "语义主题乙", folderId: null, folderName: null, status: "ready", favorite: false, archivedAt: null, updatedAt: "2026-01-02T00:00:00.000Z", pageCount: 4, semanticState: "ready" },
+    { id: "semantic-unrelated", kind: "article", title: "另一主题", folderId: null, folderName: null, status: "ready", favorite: false, archivedAt: null, updatedAt: "2026-01-03T00:00:00.000Z", pageCount: null, semanticState: "ready" },
+  ];
+  const vectorsByVersion = [
+    [
+      { id: "semantic-article", model: "BAAI/bge-m3", formatVersion: "semantic-text-v1", sourceHash: "a".repeat(64), vector: [1, 0, 0] },
+      { id: "semantic-paper", model: "BAAI/bge-m3", formatVersion: "semantic-text-v1", sourceHash: "b".repeat(64), vector: [0.8, 0.6, 0] },
+      { id: "semantic-unrelated", model: "BAAI/bge-m3", formatVersion: "semantic-text-v1", sourceHash: "c".repeat(64), vector: [0, 0, 1] },
+    ],
+    [
+      { id: "semantic-article", model: "BAAI/bge-m3", formatVersion: "semantic-text-v1", sourceHash: "d".repeat(64), vector: [1, 0, 0] },
+      { id: "semantic-paper", model: "BAAI/bge-m3", formatVersion: "semantic-text-v1", sourceHash: "e".repeat(64), vector: [0, 0, 1] },
+      { id: "semantic-unrelated", model: "BAAI/bge-m3", formatVersion: "semantic-text-v1", sourceHash: "f".repeat(64), vector: [0, 1, 0] },
+    ],
+  ];
+  await page.route("**/api/knowledge-map?*", (route) => {
+    mapRequests += 1;
+    const sourceHashes = vectorsByVersion[contentVersion.value - 1]!;
+    return route.fulfill({ json: {
+      items: nodes.map((node, index) => ({ ...node, semanticSourceHash: sourceHashes[index]!.sourceHash, semanticModel: modelVersion.value, semanticFormatVersion: "semantic-text-v1" })),
+      folders: [], total: nodes.length, nextCursor: null,
+    } });
+  });
+  await page.route("**/api/knowledge-map/vectors?*", (route) => {
+    vectorRequests += 1;
+    const vectors = vectorsByVersion[contentVersion.value - 1]!.map((entry) => ({ ...entry, model: modelVersion.value }));
+    return route.fulfill({ json: { items: vectors, total: vectors.length, nextCursor: null } });
+  });
+  await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
+  if (await deferSetup.isVisible()) await deferSetup.click();
+  await page.getByRole("button", { name: "知识地图" }).click();
+  await page.locator(".map-accessible-list summary").click();
+  await page.locator(".map-accessible-list").getByRole("button", { name: "语义主题甲" }).click();
+  const detail = page.getByRole("complementary", { name: "资料详情" });
+  await expect(detail.getByRole("heading", { name: "语义主题甲" })).toBeVisible();
+  await expect(detail).toContainText("语义主题乙");
+  await expect(detail).toContainText("模型分数 0.80");
+  await expect(page.locator(".knowledge-map")).toContainText("连线不表示引用或事实关系");
+  await page.getByRole("slider", { name: "语义推荐阈值" }).press("End");
+  await expect(page.getByRole("slider", { name: "语义推荐阈值" })).toHaveValue("0.9");
+  await expect(detail.getByRole("heading", { name: "语义主题甲" })).toBeVisible();
+  await expect(detail.locator(".map-detail-related").first()).not.toContainText("语义主题乙");
+
+  await page.getByRole("slider", { name: "语义推荐阈值" }).press("Home");
+  await expect(detail).toContainText("语义主题乙");
+  await detail.locator(".map-detail-related").first().getByRole("button", { name: /语义主题乙/u }).click();
+  await expect(detail.getByRole("heading", { name: "语义主题乙" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "单篇关联" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "全库" }).click();
+  await expect(page.getByRole("button", { name: "全库" })).toHaveAttribute("aria-pressed", "true");
+  contentVersion.value = 2;
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("zhiye:extension-saved", { detail: "semantic-refresh" })));
+  await expect.poll(() => vectorRequests).toBe(2);
+  await expect(page.locator(".map-semantic-status")).toHaveCount(0);
+  await expect(detail.locator(".map-detail-related").first()).not.toContainText("语义主题甲");
+
+  expect(vectorRequests).toBe(2);
+  const previousMapRequests = mapRequests;
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("zhiye:extension-saved", { detail: "semantic-progress" })));
+  await expect.poll(() => mapRequests).toBeGreaterThan(previousMapRequests);
+  await expect(page.locator(".map-semantic-status")).toHaveCount(0);
+  expect(vectorRequests).toBe(2);
+
+  const beforeModelChange = mapRequests;
+  modelVersion.value = "test-other-model";
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("zhiye:extension-saved", { detail: "semantic-model-change" })));
+  await expect.poll(() => mapRequests).toBeGreaterThan(beforeModelChange);
+  await expect.poll(() => vectorRequests).toBe(3);
+  await expect(page.locator(".map-semantic-status")).toHaveCount(0);
+});
+
 test("semantic indexing remains opt-in until a credential and model probe are available", async ({ page }) => {
   await page.goto("/");
   const deferSetup = page.getByRole("button", { name: "稍后设置" });

@@ -1650,12 +1650,14 @@ export class KnowledgeDatabase {
     return result.changes === 1;
   }
 
-  semanticVectorPage(cursor: number, limit: number, model: string, formatVersion: string): { items: SemanticVectorEntry[]; total: number; nextCursor: string | null } {
-    const total = Number((this.sql.prepare("SELECT COUNT(*) AS count FROM semantic_indexes WHERE state = 'ready' AND model = ? AND format_version = ?")
-      .get(model, formatVersion) as { count: number }).count);
+  semanticVectorPage(cursor: number, limit: number, model: string, formatVersion: string, ids?: string[]): { items: SemanticVectorEntry[]; total: number; nextCursor: string | null } {
+    const filter = ids ? " AND document_id IN (SELECT value FROM json_each(?))" : "";
+    const values = [model, formatVersion, ...(ids ? [JSON.stringify(ids)] : [])];
+    const total = Number((this.sql.prepare("SELECT COUNT(*) AS count FROM semantic_indexes WHERE state = 'ready' AND model = ? AND format_version = ?" + filter)
+      .get(...values) as { count: number }).count);
     const rows = this.sql.prepare("SELECT document_id AS id, source_hash AS sourceHash, model, format_version AS formatVersion, vector_json AS vectorJson " +
-      "FROM semantic_indexes WHERE state = 'ready' AND model = ? AND format_version = ? ORDER BY document_id LIMIT ? OFFSET ?")
-      .all(model, formatVersion, limit, cursor) as Array<{ id: string; sourceHash: string; model: string; formatVersion: string; vectorJson: string }>;
+      "FROM semantic_indexes WHERE state = 'ready' AND model = ? AND format_version = ?" + filter + " ORDER BY document_id LIMIT ? OFFSET ?")
+      .all(...values, limit, cursor) as Array<{ id: string; sourceHash: string; model: string; formatVersion: string; vectorJson: string }>;
     const next = cursor + rows.length;
     return {
       items: rows.map((row) => ({ id: row.id, sourceHash: row.sourceHash, model: row.model, formatVersion: row.formatVersion, vector: JSON.parse(row.vectorJson) as number[] })),
@@ -3516,14 +3518,21 @@ export class KnowledgeDatabase {
     const rows = this.sql.prepare(`SELECT d.id, d.kind, d.title, d.folder_id AS folderId, f.name AS folderName,
       d.status, d.favorite, d.archived_at AS archivedAt, d.updated_at AS updatedAt, p.page_count AS pageCount,
       CASE WHEN json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.enabled') = 1
-        THEN COALESCE(si.state, 'pending') ELSE 'unavailable' END AS semanticState
+        THEN COALESCE(si.state, 'pending') ELSE 'unavailable' END AS semanticState,
+      CASE WHEN json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.enabled') = 1 AND si.state = 'ready'
+        THEN si.source_hash ELSE NULL END AS semanticSourceHash,
+      CASE WHEN json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.enabled') = 1 AND si.state = 'ready'
+        THEN si.model ELSE NULL END AS semanticModel,
+      CASE WHEN json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.enabled') = 1 AND si.state = 'ready'
+        THEN si.format_version ELSE NULL END AS semanticFormatVersion
       FROM documents d LEFT JOIN folders f ON f.id = d.folder_id LEFT JOIN papers p ON p.id = d.id
       LEFT JOIN semantic_indexes si ON si.document_id = d.id AND si.model = json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.model') AND si.format_version = ?
       WHERE ${condition} ORDER BY d.title COLLATE NOCASE, d.id LIMIT ? OFFSET ?`)
       .all(SEMANTIC_FORMAT_VERSION, ...values, input.limit, input.cursor) as Array<{
         id: string; kind: "article" | "paper"; title: string; folderId: string | null; folderName: string | null;
         status: CaptureStatus; favorite: number; archivedAt: string | null; updatedAt: string; pageCount: number | null;
-        semanticState: KnowledgeMapNode["semanticState"];
+        semanticState: KnowledgeMapNode["semanticState"]; semanticSourceHash: string | null;
+        semanticModel: string | null; semanticFormatVersion: string | null;
       }>;
     const end = input.cursor + rows.length;
     return {

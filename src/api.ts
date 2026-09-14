@@ -368,9 +368,10 @@ export const api = {
     }).then((result) => { wakeSemanticIndexer(); return result; });
   },
 
-  listKnowledgeMapVectors(cursor?: string, signal?: AbortSignal) {
+  listKnowledgeMapVectors(cursor?: string, signal?: AbortSignal, ids?: string[]) {
     const query = new URLSearchParams({ limit: "250" });
     if (cursor) query.set("cursor", cursor);
+    if (ids) query.set("ids", JSON.stringify(ids));
     return request<{ items: SemanticVectorEntry[]; total: number; nextCursor: string | null }>(`/api/knowledge-map/vectors?${query}`, { signal });
   },
 

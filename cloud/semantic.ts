@@ -12,6 +12,7 @@ import {
   SEMANTIC_MAX_ATTEMPTS,
   SEMANTIC_RETRY_DELAYS_MS,
   isRetryableSemanticError,
+  parseSemanticVectorIds,
   splitSemanticSections,
   type SemanticSourceSection,
 } from "../shared/semantic";
@@ -424,7 +425,7 @@ export async function handleSemanticApi(request: Request, db: D1Database, url: U
     return { body: { affectedDocuments: Number(count?.count ?? 0) } };
   }
   if (url.pathname === "/api/knowledge-map/vectors" && request.method === "GET") {
-    const allowed = new Set(["cursor", "limit"]);
+    const allowed = new Set(["cursor", "limit", "ids"]);
     for (const name of url.searchParams.keys()) if (!allowed.has(name) || url.searchParams.getAll(name).length !== 1) {
       throw cloudError(400, "INVALID_SEMANTIC_PAGE", "Vector pagination parameters are invalid");
     }
@@ -433,13 +434,18 @@ export async function handleSemanticApi(request: Request, db: D1Database, url: U
     if (!/^(?:0|[1-9]\d*)$/u.test(cursor) || Number(cursor) > 1_000_000 || !/^[1-9]\d*$/u.test(limit) || Number(limit) > 500) {
       throw cloudError(400, "INVALID_SEMANTIC_PAGE", "Vector pagination parameters are invalid");
     }
+    let ids: string[] | undefined;
+    try { ids = parseSemanticVectorIds(url.searchParams.get("ids")); }
+    catch { throw cloudError(400, "INVALID_SEMANTIC_PAGE", "Vector pagination parameters are invalid"); }
     const current = await settings(db, false);
     if (!current.enabled) return { body: { items: [], total: 0, nextCursor: null } };
-    const count = await db.prepare("SELECT COUNT(*) AS count FROM cloud_semantic_indexes WHERE state='ready' AND model=? AND format_version=?")
-      .bind(current.model, SEMANTIC_FORMAT_VERSION).first<{ count: number }>();
+    const filter = ids ? " AND document_id IN (SELECT value FROM json_each(?))" : "";
+    const values = [current.model, SEMANTIC_FORMAT_VERSION, ...(ids ? [JSON.stringify(ids)] : [])];
+    const count = await db.prepare("SELECT COUNT(*) AS count FROM cloud_semantic_indexes WHERE state='ready' AND model=? AND format_version=?" + filter)
+      .bind(...values).first<{ count: number }>();
     const rows = await db.prepare("SELECT document_id AS id,source_hash AS sourceHash,model,vector_json AS vectorJson " +
-      "FROM cloud_semantic_indexes WHERE state='ready' AND model=? AND format_version=? ORDER BY document_id LIMIT ? OFFSET ?")
-      .bind(current.model, SEMANTIC_FORMAT_VERSION, Number(limit), Number(cursor)).all<Record<string, unknown>>();
+      "FROM cloud_semantic_indexes WHERE state='ready' AND model=? AND format_version=?" + filter + " ORDER BY document_id LIMIT ? OFFSET ?")
+      .bind(...values, Number(limit), Number(cursor)).all<Record<string, unknown>>();
     const total = Number(count?.count ?? 0);
     const next = Number(cursor) + rows.results.length;
     return { body: {

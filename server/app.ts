@@ -84,6 +84,7 @@ import {
 } from "./llm.js";
 import { createPaperTasks } from "./paper.js";
 import { SemanticError, SemanticTasks, semanticApiKeyInput, semanticSettingsInput } from "./semantic.js";
+import { parseSemanticVectorIds } from "../shared/semantic.js";
 import { safeFetchBinary } from "./safe-fetch.js";
 import {
   createPortableBundle,
@@ -1689,7 +1690,7 @@ export function createApp(options: AppOptions) {
         return;
       }
       if (pathname === "/api/knowledge-map/vectors" && request.method === "GET") {
-        for (const key of requestUrl.searchParams.keys()) if (!["cursor", "limit"].includes(key) || requestUrl.searchParams.getAll(key).length !== 1) {
+        for (const key of requestUrl.searchParams.keys()) if (!["cursor", "limit", "ids"].includes(key) || requestUrl.searchParams.getAll(key).length !== 1) {
           throw new SemanticError(400, "INVALID_SEMANTIC_PAGE", "Vector pagination parameters are invalid");
         }
         const cursor = requestUrl.searchParams.get("cursor") ?? "0";
@@ -1697,7 +1698,10 @@ export function createApp(options: AppOptions) {
         if (!/^(?:0|[1-9]\d*)$/u.test(cursor) || Number(cursor) > 1_000_000 || !/^[1-9]\d*$/u.test(limit) || Number(limit) > 500) {
           throw new SemanticError(400, "INVALID_SEMANTIC_PAGE", "Vector pagination parameters are invalid");
         }
-        sendJson(response, 200, semanticTasks.vectors(Number(cursor), Number(limit)));
+        let ids: string[] | undefined;
+        try { ids = parseSemanticVectorIds(requestUrl.searchParams.get("ids")); }
+        catch { throw new SemanticError(400, "INVALID_SEMANTIC_PAGE", "Vector pagination parameters are invalid"); }
+        sendJson(response, 200, semanticTasks.vectors(Number(cursor), Number(limit), ids));
         return;
       }
 

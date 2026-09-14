@@ -146,6 +146,9 @@ export interface KnowledgeMapNode {
   updatedAt: string;
   pageCount: number | null;
   semanticState: SemanticIndexStatus;
+  semanticSourceHash: string | null;
+  semanticModel: string | null;
+  semanticFormatVersion: string | null;
 }
 
 export interface KnowledgeMapResponse {

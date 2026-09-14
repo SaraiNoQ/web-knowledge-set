@@ -42,6 +42,22 @@ export class SemanticEmbeddingError extends Error {
   }
 }
 
+export const SEMANTIC_VECTOR_IDS_PER_REQUEST = 100;
+
+export function parseSemanticVectorIds(value: string | null): string[] | undefined {
+  if (value === null) return undefined;
+  if (value.length > 24_000) throw new SemanticEmbeddingError("INVALID_SEMANTIC_PAGE", "Vector id filter is too large");
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); }
+  catch { throw new SemanticEmbeddingError("INVALID_SEMANTIC_PAGE", "Vector id filter is invalid"); }
+  if (!Array.isArray(parsed) || parsed.length > SEMANTIC_VECTOR_IDS_PER_REQUEST ||
+    parsed.some((id) => typeof id !== "string" || !id.trim() || id.length > 200 || /\p{Cc}/u.test(id)) ||
+    new Set(parsed).size !== parsed.length) {
+    throw new SemanticEmbeddingError("INVALID_SEMANTIC_PAGE", "Vector id filter is invalid");
+  }
+  return parsed as string[];
+}
+
 export async function semanticHash(value: string) {
   const digest = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
   return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");

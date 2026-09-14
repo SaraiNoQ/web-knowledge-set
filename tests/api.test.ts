@@ -1503,8 +1503,20 @@ test("semantic API keys stay in process memory and drive resumable local indexin
     assert.equal(indexedBody.status, "completed", JSON.stringify(indexedBody));
     assert.equal(providerCalls, 2);
     const vectors = await fetch(base + "/api/knowledge-map/vectors", { headers: { Cookie: cookie } });
-    const vectorBody = await vectors.json() as { items: Array<{ id: string; vector: number[] }> };
+    const vectorBody = await vectors.json() as { items: Array<{ id: string; vector: number[]; sourceHash: string; model: string; formatVersion: string }> };
     assert.deepEqual(vectorBody.items.map(({ id, vector }) => ({ id, vector })), [{ id: article.id, vector: [0.6, 0.8] }]);
+    const mapResponse = await fetch(base + "/api/knowledge-map", { headers: { Cookie: cookie } });
+    const mapNode = ((await mapResponse.json()) as { items: Array<{ id: string; semanticState: string; semanticSourceHash: string | null; semanticModel: string | null; semanticFormatVersion: string | null }> }).items[0];
+    assert.deepEqual(mapNode && {
+      id: mapNode.id, semanticState: mapNode.semanticState, sourceHash: mapNode.semanticSourceHash,
+      model: mapNode.semanticModel, formatVersion: mapNode.semanticFormatVersion,
+    }, {
+      id: article.id, semanticState: "ready", sourceHash: vectorBody.items[0]?.sourceHash,
+      model: "BAAI/bge-m3", formatVersion: "semantic-text-v1",
+    });
+    const filteredVectors = await fetch(base + "/api/knowledge-map/vectors?ids=" + encodeURIComponent(JSON.stringify([article.id])), { headers: { Cookie: cookie } });
+    assert.deepEqual((await filteredVectors.json() as { items: Array<{ id: string }> }).items.map(({ id }) => id), [article.id]);
+    assert.equal((await fetch(base + "/api/knowledge-map/vectors?ids=invalid", { headers: { Cookie: cookie } })).status, 400);
     const storedKey = db.sql.prepare("SELECT COUNT(*) AS count FROM app_settings WHERE value LIKE ?").get("%" + secret + "%") as { count: number };
     assert.equal(storedKey.count, 0);
   } finally {

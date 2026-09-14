@@ -131,9 +131,9 @@ export class SemanticTasks {
     return db.clearSemanticIndexes();
   }
 
-  vectors(cursor: number, limit: number) {
+  vectors(cursor: number, limit: number, ids?: string[]) {
     const settings = this.settings();
-    return settings.enabled ? this.database().semanticVectorPage(cursor, limit, settings.model, SEMANTIC_FORMAT_VERSION) : { items: [], total: 0, nextCursor: null };
+    return settings.enabled ? this.database().semanticVectorPage(cursor, limit, settings.model, SEMANTIC_FORMAT_VERSION, ids) : { items: [], total: 0, nextCursor: null };
   }
 
   private result(status: SemanticIndexStepResult["status"], documentId: string | null, errorCode: string | null = null) {

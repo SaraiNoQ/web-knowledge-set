@@ -266,8 +266,14 @@ export async function listKnowledgeMap(db: D1Database, url: URL) {
   const jobCondition = jobWhere.join(" AND ");
   const semanticState = "CASE WHEN json_extract((SELECT value FROM app_settings WHERE key='semantic_settings'),'$.enabled')=1 " +
     "THEN COALESCE(si.state,'pending') ELSE 'unavailable' END AS semanticState";
+  const semanticSourceHash = "CASE WHEN json_extract((SELECT value FROM app_settings WHERE key='semantic_settings'),'$.enabled')=1 " +
+    "AND si.state='ready' THEN si.source_hash ELSE NULL END AS semanticSourceHash";
+  const semanticModel = "CASE WHEN json_extract((SELECT value FROM app_settings WHERE key='semantic_settings'),'$.enabled')=1 " +
+    "AND si.state='ready' THEN si.model ELSE NULL END AS semanticModel";
+  const semanticFormatVersion = "CASE WHEN json_extract((SELECT value FROM app_settings WHERE key='semantic_settings'),'$.enabled')=1 " +
+    "AND si.state='ready' THEN si.format_version ELSE NULL END AS semanticFormatVersion";
   const union = "SELECT d.id, d.kind, d.title, d.folder_id AS folderId, f.name AS folderName, " +
-    "COALESCE(p.status, d.status) AS status, d.favorite, d.updated_at AS updatedAt, p.page_count AS pageCount, " + semanticState +
+    "COALESCE(p.status, d.status) AS status, d.favorite, d.updated_at AS updatedAt, p.page_count AS pageCount, " + semanticState + ", " + semanticSourceHash + ", " + semanticModel + ", " + semanticFormatVersion +
     " FROM cloud_documents d LEFT JOIN cloud_folders f ON f.id = d.folder_id LEFT JOIN cloud_papers p ON p.id = d.id " +
     "LEFT JOIN cloud_semantic_indexes si ON si.document_id=d.id " +
     "AND si.model=json_extract((SELECT value FROM app_settings WHERE key='semantic_settings'),'$.model') " +
@@ -275,7 +281,8 @@ export async function listKnowledgeMap(db: D1Database, url: URL) {
     "WHERE " + documentCondition + " UNION ALL " +
     "SELECT j.id, 'article' AS kind, j.url AS title, j.folder_id AS folderId, f.name AS folderName, " +
     "j.status, 0 AS favorite, j.updated_at AS updatedAt, NULL AS pageCount, " +
-    "CASE WHEN json_extract((SELECT value FROM app_settings WHERE key='semantic_settings'),'$.enabled')=1 THEN 'pending' ELSE 'unavailable' END AS semanticState " +
+    "CASE WHEN json_extract((SELECT value FROM app_settings WHERE key='semantic_settings'),'$.enabled')=1 THEN 'pending' ELSE 'unavailable' END AS semanticState, " +
+    "NULL AS semanticSourceHash, NULL AS semanticModel, NULL AS semanticFormatVersion " +
     "FROM cloud_capture_jobs j LEFT JOIN cloud_folders f ON f.id = j.folder_id WHERE " + jobCondition;
   const values = [...documentValues, ...jobValues];
   const count = await db.prepare("SELECT COUNT(*) AS total FROM (" + union + ") map").bind(...values).first<{ total: number }>();
@@ -290,6 +297,9 @@ export async function listKnowledgeMap(db: D1Database, url: URL) {
       status: row.status as "ready" | "queued" | "fetching" | "extracting" | "failed", favorite: Boolean(row.favorite), archivedAt: null,
       updatedAt: String(row.updatedAt), pageCount: row.pageCount == null ? null : Number(row.pageCount),
       semanticState: row.semanticState as "unavailable" | "pending" | "indexing" | "ready" | "failed",
+      semanticSourceHash: row.semanticSourceHash == null ? null : String(row.semanticSourceHash),
+      semanticModel: row.semanticModel == null ? null : String(row.semanticModel),
+      semanticFormatVersion: row.semanticFormatVersion == null ? null : String(row.semanticFormatVersion),
     })),
     folders: (await listFolders(db)).map(({ id, name }) => ({ id, name })),
     total, nextCursor: next < total ? String(next) : null,
