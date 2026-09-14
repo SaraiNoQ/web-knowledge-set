@@ -1644,6 +1644,27 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .map-open-reader { display: flex; width: 100%; min-height: 40px; align-items: center; justify-content: space-between; padding: 0 11px; color: var(--paper-light); background: var(--vermilion); border: 1px solid var(--vermilion-dark); font-size: var(--font-small); }
 .map-open-reader:hover { background: var(--vermilion-dark); }
 
+.semantic-settings { display: grid; gap: 16px; margin-top: 24px; padding: 22px; background: rgba(244,240,229,.72); border: 1px solid var(--line-strong); }
+.semantic-settings > header h2 { margin: 0; font: 500 21px var(--font-serif); }
+.semantic-settings > header p { margin: 6px 0 0; color: var(--ink-soft); font-size: var(--font-small); }
+.semantic-settings-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.semantic-settings-card { display: grid; align-content: start; gap: 9px; padding: 14px; background: rgba(255,253,247,.66); border: 1px solid var(--line); }
+.semantic-settings-card label { display: grid; gap: 6px; color: var(--ink-soft); font-size: var(--font-caption); }
+.semantic-settings-card input { width: 100%; min-height: 38px; padding: 0 10px; color: var(--ink); background: var(--paper-light); border: 1px solid var(--line-strong); }
+.semantic-settings-card small { color: var(--ink-faint); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.semantic-settings-card > button, .semantic-settings-card > div > button, .semantic-settings > button:not(.primary-button) { width: fit-content; min-height: 33px; padding: 0 10px; color: var(--ink-soft); background: transparent; border: 1px solid var(--line-strong); font-size: var(--font-caption); }
+.semantic-settings-card > div { display: flex; flex-wrap: wrap; gap: 7px; }
+.semantic-settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.semantic-settings-actions > button:not(.primary-button) { min-height: 35px; padding: 0 12px; color: var(--ink-soft); background: transparent; border: 1px solid var(--line-strong); font-size: var(--font-caption); }
+.semantic-settings-actions > label { display: flex; align-items: center; gap: 7px; margin-right: auto; color: var(--ink-soft); font-size: var(--font-caption); }
+.semantic-settings-actions input { accent-color: var(--vermilion); }
+.semantic-progress { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 8px; margin: 0; }
+.semantic-progress > div { display: grid; gap: 5px; min-height: 54px; padding: 9px 10px; border-left: 2px solid var(--moss); background: rgba(235,229,215,.38); }
+.semantic-progress dt { color: var(--ink-faint); font-size: 10px; }
+.semantic-progress dd { margin: 0; color: var(--ink); font: 12px var(--font-mono); }
+.semantic-settings-message { margin: 0; color: var(--moss); font-size: var(--font-caption); }
+.semantic-settings-message.is-error { color: var(--vermilion-dark); }
+
 @media (max-width: 1000px) {
   .knowledge-map-layout { grid-template-columns: 184px minmax(0,1fr) 240px; }
   .knowledge-map-filters { padding-inline: 12px; }
@@ -1683,6 +1704,9 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   .map-coordinate-note { max-width: 150px; font-size: 9px; }
   .map-canvas-toolbar { right: 8px; bottom: 8px; }
   .map-canvas-toolbar button { min-height: 30px; padding-inline: 8px; font-size: 9px; }
+  .semantic-settings { padding: 16px; }
+  .semantic-settings-grid { grid-template-columns: 1fr; }
+  .semantic-progress { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 
 @media (max-width: 520px) {

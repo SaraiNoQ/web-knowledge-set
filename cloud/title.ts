@@ -60,9 +60,15 @@ export async function handleTitleApi(request: Request, db: D1Database, url: URL)
   );
   if (!title) throw new CloudHttpError(502, "TITLE_UNUSABLE", "The model did not return a usable title");
   if (title === document.title) return { body: document };
-  const updated = await db.prepare(`UPDATE cloud_documents SET title = ?, revision = revision + 1, updated_at = ?
-    WHERE id = ? AND revision = ? AND deleted_at IS NULL`)
-    .bind(title, new Date().toISOString(), document.id, document.revision).run();
+  if (!db.batch) throw new CloudHttpError(503, "CLOUD_BATCH_UNAVAILABLE", "D1 batch support is required");
+  const now = new Date().toISOString();
+  const [updated] = await db.batch([
+    db.prepare(`UPDATE cloud_documents SET title = ?, revision = revision + 1, updated_at = ?
+      WHERE id = ? AND revision = ? AND deleted_at IS NULL`).bind(title, now, document.id, document.revision),
+    db.prepare("DELETE FROM cloud_semantic_indexes WHERE document_id = ? AND EXISTS (" +
+      "SELECT 1 FROM cloud_documents WHERE id = ? AND revision = ? AND updated_at = ? AND deleted_at IS NULL)")
+      .bind(document.id, document.id, document.revision + 1, now),
+  ]);
   if (changes(updated) !== 1) {
     const current = await getDocument(db, document.id);
     if (!current) throw new CloudHttpError(404, "DOCUMENT_NOT_FOUND", "Document not found");

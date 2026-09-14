@@ -32,6 +32,8 @@ import type {
   KnowledgeDocument,
   KnowledgeCollection,
   KnowledgeFolder,
+  LibraryItemKind,
+  KnowledgeMapNode,
   KnowledgeTag,
   ImportApplyResult,
   ImportKind,
@@ -48,12 +50,27 @@ import type {
   PaperSummary,
   RecentFilter,
   SaveDerivedResultInput,
+  SemanticSettings,
+  SemanticSettingsInput,
+  SemanticVectorEntry,
   TagMutationResponse,
 } from "../shared/types.js";
 import { TRANSLATION_LANGUAGES } from "../shared/types.js";
 import { PAPER_MAX_PAGES } from "../shared/paper.js";
+import type { SemanticChunk, SemanticSourceSection } from "../shared/semantic.js";
+import {
+  extractSemanticMarkdown,
+  estimateSemanticChunkCount,
+  isRetryableSemanticError,
+  SEMANTIC_FORMAT_VERSION,
+  SEMANTIC_MAX_ATTEMPTS,
+  SEMANTIC_RETRY_DELAYS_MS,
+} from "../shared/semantic.js";
 
 const PAGE_SIZE = 30;
+const SEMANTIC_SOURCE_CURRENT = "EXISTS (SELECT 1 FROM documents d LEFT JOIN papers p ON p.id = d.id " +
+  "WHERE d.id = ? AND d.revision = ? AND d.deleted_at IS NULL AND d.status = 'ready' AND " +
+  "((d.kind = 'article' AND ? IS NULL) OR (d.kind = 'paper' AND p.status = 'ready' AND p.extraction_id = ?)))";
 
 interface StoredLlmSettings {
   enabled: boolean;
@@ -624,6 +641,35 @@ const migrations = [
   `
   ALTER TABLE paper_extractions ADD COLUMN content_mode TEXT
     CHECK (content_mode IS NULL OR content_mode IN ('pdf', 'image'));
+  `,
+  `
+  CREATE TABLE semantic_indexes (
+    document_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+    source_hash TEXT NOT NULL CHECK (length(source_hash) = 64),
+    model TEXT NOT NULL,
+    format_version TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pending', 'indexing', 'ready', 'failed')),
+    chunk_total INTEGER NOT NULL DEFAULT 0 CHECK (chunk_total >= 0),
+    chunk_done INTEGER NOT NULL DEFAULT 0 CHECK (chunk_done >= 0 AND chunk_done <= chunk_total),
+    vector_json TEXT CHECK (vector_json IS NULL OR json_valid(vector_json)),
+    lease_token TEXT,
+    lease_until INTEGER,
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    error_code TEXT,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX semantic_indexes_state ON semantic_indexes(state, updated_at, document_id);
+
+  CREATE TABLE semantic_chunks (
+    document_id TEXT NOT NULL REFERENCES semantic_indexes(document_id) ON DELETE CASCADE,
+    chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
+    page_number INTEGER CHECK (page_number IS NULL OR page_number >= 1),
+    start_offset INTEGER NOT NULL CHECK (start_offset >= 0),
+    end_offset INTEGER NOT NULL CHECK (end_offset >= start_offset),
+    text_hash TEXT NOT NULL CHECK (length(text_hash) = 64),
+    vector_json TEXT NOT NULL CHECK (json_valid(vector_json)),
+    PRIMARY KEY (document_id, chunk_index)
+  );
   `,
 ];
 
@@ -1356,6 +1402,267 @@ export class KnowledgeDatabase {
     }
   }
 
+  private storedSemanticSettings() {
+    const row = this.sql.prepare("SELECT value, revision FROM app_settings WHERE key = 'semantic_settings'")
+      .get() as { value: string; revision: number } | undefined;
+    const stored = row ? JSON.parse(row.value) as { enabled?: unknown; model?: unknown } : null;
+    if (stored && (typeof stored.enabled !== "boolean" || typeof stored.model !== "string")) {
+      throw new Error("Stored semantic settings are invalid");
+    }
+    return { enabled: stored?.enabled === true, model: typeof stored?.model === "string" ? stored.model : "BAAI/bge-m3", revision: row?.revision ?? 0 };
+  }
+
+  private invalidateSemanticIndex(documentId: string) {
+    this.sql.prepare("DELETE FROM semantic_indexes WHERE document_id = ?").run(documentId);
+  }
+
+  getSemanticSettings(apiKeyConfigured = false, includeEstimate = false): SemanticSettings {
+    const stored = this.storedSemanticSettings();
+    const counts = this.sql.prepare([
+      "SELECT SUM(CASE WHEN si.state IS NULL OR si.state = 'pending' THEN 1 ELSE 0 END) AS pending,",
+      "SUM(CASE WHEN si.state = 'indexing' THEN 1 ELSE 0 END) AS indexing,",
+      "SUM(CASE WHEN si.state = 'ready' THEN 1 ELSE 0 END) AS ready,",
+      "SUM(CASE WHEN si.state = 'failed' THEN 1 ELSE 0 END) AS failed,",
+      "COALESCE(SUM(si.chunk_done), 0) AS chunksDone, COALESCE(SUM(si.chunk_total), 0) AS chunksTotal",
+      "FROM documents d LEFT JOIN papers p ON p.id = d.id LEFT JOIN semantic_indexes si ON si.document_id = d.id " +
+      "AND si.model = json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.model') AND si.format_version = ?",
+      "WHERE d.deleted_at IS NULL AND ((d.kind = 'article' AND d.status = 'ready') OR (d.kind = 'paper' AND p.status = 'ready' AND p.extraction_id IS NOT NULL))",
+    ].join(" ")).get(SEMANTIC_FORMAT_VERSION) as { pending: number | null; indexing: number | null; ready: number | null; failed: number | null; chunksDone: number; chunksTotal: number };
+    const runtime = this.sql.prepare("SELECT value FROM app_settings WHERE key = 'semantic_runtime'").get() as { value: string } | undefined;
+    const details = runtime ? JSON.parse(runtime.value) as { consecutiveFailures?: number; lastError?: string | null } : {};
+    const estimateRows = includeEstimate ? this.sql.prepare(
+      "SELECT d.kind, CASE WHEN d.kind = 'article' THEN length(d.markdown) ELSE COALESCE((" +
+      "SELECT SUM(length(json_extract(block.value, '$.original'))) FROM paper_pages page, json_each(page.original_json) block " +
+      "WHERE page.paper_id = d.id AND page.extraction_id = p.extraction_id), 0) END AS sourceChars, " +
+      "si.chunk_total AS chunkTotal, si.chunk_done AS chunkDone FROM documents d LEFT JOIN papers p ON p.id = d.id " +
+      "LEFT JOIN semantic_indexes si ON si.document_id = d.id AND si.model = ? AND si.format_version = ? " +
+      "WHERE d.deleted_at IS NULL AND ((d.kind = 'article' AND d.status = 'ready') OR " +
+      "(d.kind = 'paper' AND p.status = 'ready' AND p.extraction_id IS NOT NULL)) " +
+      "AND (si.state IS NULL OR si.state IN ('pending', 'indexing'))",
+    ).all(stored.model, SEMANTIC_FORMAT_VERSION) as Array<{ sourceChars: number; chunkTotal: number | null; chunkDone: number | null }> : [];
+    const estimatedPendingChunks = includeEstimate ? estimateRows.reduce((sum, row) => sum + (
+      row.chunkTotal ? Math.max(0, row.chunkTotal - Number(row.chunkDone ?? 0)) : estimateSemanticChunkCount(Number(row.sourceChars ?? 0))
+    ), 0) : null;
+    return {
+      ...stored, apiKeyConfigured,
+      pendingDocuments: Number(counts.pending ?? 0), indexingDocuments: Number(counts.indexing ?? 0),
+      indexedDocuments: Number(counts.ready ?? 0), failedDocuments: Number(counts.failed ?? 0),
+      completedChunks: Number(counts.chunksDone), totalChunks: Number(counts.chunksTotal),
+      estimatedPendingChunks,
+      consecutiveFailures: details.consecutiveFailures ?? 0, lastError: details.lastError ?? null,
+    };
+  }
+
+  setSemanticSettings(input: SemanticSettingsInput, apiKeyConfigured = false) {
+    return transaction(this.sql, () => {
+      const current = this.storedSemanticSettings();
+      if (input.revision !== current.revision) return { kind: "conflict" as const, settings: this.getSemanticSettings(apiKeyConfigured) };
+      if (current.model !== input.model && input.enabled) return { kind: "model_change_requires_pause" as const, settings: this.getSemanticSettings(apiKeyConfigured) };
+      const timestamp = now();
+      const value = JSON.stringify({ enabled: input.enabled, model: input.model });
+      const result = input.revision === 0
+        ? this.sql.prepare("INSERT OR IGNORE INTO app_settings(key, value, revision, updated_at) VALUES ('semantic_settings', ?, 1, ?)").run(value, timestamp)
+        : this.sql.prepare("UPDATE app_settings SET value = ?, revision = revision + 1, updated_at = ? WHERE key = 'semantic_settings' AND revision = ?").run(value, timestamp, input.revision);
+      if (result.changes !== 1) return { kind: "conflict" as const, settings: this.getSemanticSettings(apiKeyConfigured) };
+      if (current.model !== input.model) {
+        this.clearSemanticIndexes();
+        this.sql.prepare("DELETE FROM app_settings WHERE key = 'semantic_runtime'").run();
+      }
+      return { kind: "updated" as const, settings: this.getSemanticSettings(apiKeyConfigured) };
+    });
+  }
+
+  recordSemanticFailure(code: string) {
+    return transaction(this.sql, () => {
+      const row = this.sql.prepare("SELECT value FROM app_settings WHERE key = 'semantic_runtime'").get() as { value: string } | undefined;
+      const current = row ? JSON.parse(row.value) as { consecutiveFailures?: number } : {};
+      const consecutiveFailures = (current.consecutiveFailures ?? 0) + 1;
+      const timestamp = now();
+      this.sql.prepare("INSERT INTO app_settings(key, value, revision, updated_at) VALUES ('semantic_runtime', ?, 1, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, revision = app_settings.revision + 1, updated_at = excluded.updated_at")
+        .run(JSON.stringify({ consecutiveFailures, lastError: code }), timestamp);
+      if (consecutiveFailures >= 3 || code === "SEMANTIC_AUTH_FAILED" || code === "SEMANTIC_KEY_INVALID") {
+        this.sql.prepare("UPDATE app_settings SET value = json_set(value, '$.enabled', json('false')), revision = revision + 1, updated_at = ? WHERE key = 'semantic_settings'").run(timestamp);
+      }
+      return consecutiveFailures;
+    });
+  }
+
+  recordSemanticSuccess() {
+    this.sql.prepare("DELETE FROM app_settings WHERE key = 'semantic_runtime'").run();
+  }
+
+  clearSemanticIndexes() {
+    const affectedDocuments = Number((this.sql.prepare("SELECT COUNT(*) AS count FROM semantic_indexes").get() as { count: number }).count);
+    this.sql.prepare("DELETE FROM semantic_indexes").run();
+    this.sql.prepare("DELETE FROM app_settings WHERE key = 'semantic_runtime'").run();
+    return affectedDocuments;
+  }
+
+  disableSemanticAfterRestore() {
+    this.clearSemanticIndexes();
+    this.sql.prepare("UPDATE app_settings SET value = json_set(value, '$.enabled', json('false')), revision = revision + 1, updated_at = ? WHERE key = 'semantic_settings'")
+      .run(now());
+    this.sql.prepare("DELETE FROM app_settings WHERE key = 'semantic_runtime'").run();
+  }
+
+  retrySemanticFailures() {
+    return transaction(this.sql, () => {
+      const count = this.sql.prepare("UPDATE semantic_indexes SET state = 'pending', lease_token = NULL, lease_until = NULL, attempts = 0, error_code = NULL, vector_json = NULL, updated_at = ? WHERE state = 'failed'")
+        .run(now()).changes;
+      this.sql.prepare("DELETE FROM app_settings WHERE key = 'semantic_runtime'").run();
+      return count;
+    });
+  }
+
+  getSemanticSource(id: string): { id: string; title: string; kind: LibraryItemKind; revision: number; extractionId: string | null; sections: SemanticSourceSection[] } | null {
+    const document = this.getDocument(id);
+    if (!document || document.deletedAt || document.status !== "ready") return null;
+    if (document.kind === "article") {
+      const text = extractSemanticMarkdown(document.markdown);
+      return { id, title: document.title, kind: "article", revision: document.revision, extractionId: null, sections: text ? [{ pageNumber: null, text }] : [] };
+    }
+    const paper = this.paperRow(id);
+    if (!paper || paper.paper_status !== "ready" || !paper.extraction_id) return null;
+    const pages = this.sql.prepare("SELECT page_number AS pageNumber, original_json AS originalJson FROM paper_pages WHERE paper_id = ? AND extraction_id = ? ORDER BY page_number")
+      .all(id, paper.extraction_id) as Array<{ pageNumber: number; originalJson: string }>;
+    return {
+      id, title: paper.title, kind: "paper", revision: document.revision, extractionId: paper.extraction_id,
+      sections: pages.map((page) => ({
+        pageNumber: page.pageNumber,
+        text: (JSON.parse(page.originalJson) as PaperBlock[]).map((block) => block.original).filter(Boolean).join("\n"),
+      })).filter((section) => section.text.trim()),
+    };
+  }
+
+  nextSemanticDocument(nowMs: number, model: string, formatVersion: string) {
+    const row = this.sql.prepare("SELECT d.id FROM documents d LEFT JOIN papers p ON p.id = d.id LEFT JOIN semantic_indexes si ON si.document_id = d.id " +
+      "WHERE d.deleted_at IS NULL AND ((d.kind = 'article' AND d.status = 'ready') OR (d.kind = 'paper' AND p.status = 'ready' AND p.extraction_id IS NOT NULL)) " +
+      "AND (si.document_id IS NULL OR si.model <> ? OR si.format_version <> ? OR " +
+      "(si.state = 'pending' AND (si.attempts = 0 OR (si.attempts = 1 AND si.updated_at <= ?) OR (si.attempts = 2 AND si.updated_at <= ?))) OR " +
+      "(si.state = 'indexing' AND COALESCE(si.lease_until, 0) < ?)) " +
+      "ORDER BY d.updated_at, d.id LIMIT 1").get(
+        model, formatVersion,
+        new Date(nowMs - SEMANTIC_RETRY_DELAYS_MS[0]).toISOString(),
+        new Date(nowMs - SEMANTIC_RETRY_DELAYS_MS[1]).toISOString(),
+        nowMs,
+      ) as { id: string } | undefined;
+    return row?.id ?? null;
+  }
+
+  claimSemanticIndex(id: string, sourceRevision: number, extractionId: string | null, settingsRevision: number,
+    sourceHash: string, model: string, formatVersion: string, chunkTotal: number, token: string, nowMs: number, leaseUntil: number) {
+    return transaction(this.sql, () => {
+      const settings = this.storedSemanticSettings();
+      if (!settings.enabled || settings.model !== model || settings.revision !== settingsRevision ||
+        !this.sql.prepare("SELECT " + SEMANTIC_SOURCE_CURRENT).get(id, sourceRevision, extractionId, extractionId)) return false;
+      const current = this.sql.prepare("SELECT source_hash AS sourceHash, model, format_version AS formatVersion FROM semantic_indexes WHERE document_id = ?")
+        .get(id) as { sourceHash: string; model: string; formatVersion: string } | undefined;
+      if (current && (current.sourceHash !== sourceHash || current.model !== model || current.formatVersion !== formatVersion)) {
+        this.sql.prepare("DELETE FROM semantic_indexes WHERE document_id = ?").run(id);
+      }
+      this.sql.prepare("INSERT OR IGNORE INTO semantic_indexes(document_id, source_hash, model, format_version, state, chunk_total, updated_at) " +
+        "SELECT ?, ?, ?, ?, 'pending', ?, ? WHERE " + SEMANTIC_SOURCE_CURRENT)
+        .run(id, sourceHash, model, formatVersion, chunkTotal, now(), id, sourceRevision, extractionId, extractionId);
+      const updated = this.sql.prepare("UPDATE semantic_indexes SET state = 'indexing', chunk_total = ?, lease_token = ?, lease_until = ?, updated_at = ? " +
+        "WHERE document_id = ? AND source_hash = ? AND model = ? AND format_version = ? AND state IN ('pending', 'indexing') " +
+        "AND (lease_token IS NULL OR lease_until IS NULL OR lease_until < ? OR lease_token = ?) " +
+        "AND json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.enabled') = 1 " +
+        "AND json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.model') = ? " +
+        "AND (SELECT revision FROM app_settings WHERE key = 'semantic_settings') = ? AND " + SEMANTIC_SOURCE_CURRENT)
+        .run(chunkTotal, token, leaseUntil, now(), id, sourceHash, model, formatVersion, nowMs, token,
+          model, settingsRevision, id, sourceRevision, extractionId, extractionId);
+      return updated.changes === 1;
+    });
+  }
+
+  missingSemanticChunks(id: string, chunkTotal: number) {
+    const rows = this.sql.prepare("SELECT chunk_index AS chunkIndex FROM semantic_chunks WHERE document_id = ? ORDER BY chunk_index")
+      .all(id) as Array<{ chunkIndex: number }>;
+    const existing = new Set(rows.map(({ chunkIndex }) => chunkIndex));
+    return Array.from({ length: chunkTotal }, (_, index) => index).filter((index) => !existing.has(index));
+  }
+
+  saveSemanticChunks(id: string, sourceRevision: number, extractionId: string | null, settingsRevision: number,
+    sourceHash: string, model: string, formatVersion: string, token: string, chunks: Array<{ chunk: SemanticChunk; vector: number[] }>) {
+    return transaction(this.sql, () => {
+      const claim = this.sql.prepare("SELECT 1 FROM semantic_indexes WHERE document_id = ? AND source_hash = ? AND model = ? AND format_version = ? " +
+        "AND state = 'indexing' AND lease_token = ? AND lease_until >= ? " +
+        "AND json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.enabled') = 1 " +
+        "AND json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.model') = ? " +
+        "AND (SELECT revision FROM app_settings WHERE key = 'semantic_settings') = ? AND " + SEMANTIC_SOURCE_CURRENT)
+        .get(id, sourceHash, model, formatVersion, token, Date.now(), model, settingsRevision,
+          id, sourceRevision, extractionId, extractionId);
+      if (!claim) return false;
+      const insert = this.sql.prepare("INSERT INTO semantic_chunks(document_id, chunk_index, page_number, start_offset, end_offset, text_hash, vector_json) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(document_id, chunk_index) DO UPDATE SET page_number = excluded.page_number, " +
+        "start_offset = excluded.start_offset, end_offset = excluded.end_offset, text_hash = excluded.text_hash, vector_json = excluded.vector_json");
+      for (const { chunk, vector } of chunks) {
+        insert.run(id, chunk.index, chunk.pageNumber, chunk.startOffset, chunk.endOffset, chunk.textHash, JSON.stringify(vector));
+      }
+      const done = this.sql.prepare("SELECT COUNT(*) AS count FROM semantic_chunks WHERE document_id = ?").get(id) as { count: number };
+      this.sql.prepare("UPDATE semantic_indexes SET chunk_done = ?, updated_at = ? WHERE document_id = ? AND lease_token = ?")
+        .run(done.count, now(), id, token);
+      return true;
+    });
+  }
+
+  semanticChunks(id: string) {
+    const rows = this.sql.prepare("SELECT vector_json AS vectorJson FROM semantic_chunks WHERE document_id = ? ORDER BY chunk_index")
+      .all(id) as Array<{ vectorJson: string }>;
+    return rows.map(({ vectorJson }) => JSON.parse(vectorJson) as number[]);
+  }
+
+  releaseSemanticLease(id: string, token: string) {
+    return this.sql.prepare("UPDATE semantic_indexes SET lease_token = NULL, lease_until = NULL, updated_at = ? WHERE document_id = ? AND state = 'indexing' AND lease_token = ?")
+      .run(now(), id, token).changes === 1;
+  }
+
+  completeSemanticIndex(id: string, sourceRevision: number, extractionId: string | null, settingsRevision: number,
+    sourceHash: string, model: string, formatVersion: string, token: string, vector: number[]) {
+    const result = this.sql.prepare("UPDATE semantic_indexes SET state = 'ready', vector_json = ?, lease_token = NULL, lease_until = NULL, " +
+      "error_code = NULL, chunk_done = chunk_total, updated_at = ? WHERE document_id = ? AND source_hash = ? AND model = ? AND format_version = ? " +
+      "AND state = 'indexing' AND lease_token = ? AND lease_until >= ? AND chunk_done = chunk_total " +
+      "AND json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.enabled') = 1 " +
+      "AND json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.model') = ? " +
+      "AND (SELECT revision FROM app_settings WHERE key = 'semantic_settings') = ? AND " + SEMANTIC_SOURCE_CURRENT)
+      .run(JSON.stringify(vector), now(), id, sourceHash, model, formatVersion, token, Date.now(), model, settingsRevision,
+        id, sourceRevision, extractionId, extractionId);
+    return result.changes === 1;
+  }
+
+  failSemanticIndex(id: string, sourceRevision: number, extractionId: string | null, settingsRevision: number,
+    model: string, token: string, code: string) {
+    const current = this.sql.prepare("SELECT attempts FROM semantic_indexes WHERE document_id = ? AND state = 'indexing' AND lease_token = ? " +
+      "AND json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.enabled') = 1 " +
+      "AND json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.model') = ? " +
+      "AND (SELECT revision FROM app_settings WHERE key = 'semantic_settings') = ? AND " + SEMANTIC_SOURCE_CURRENT)
+      .get(id, token, model, settingsRevision, id, sourceRevision, extractionId, extractionId) as { attempts: number } | undefined;
+    if (!current) return false;
+    const attempts = current.attempts + 1;
+    const state = isRetryableSemanticError(code) && attempts < SEMANTIC_MAX_ATTEMPTS ? "pending" : "failed";
+    const result = this.sql.prepare("UPDATE semantic_indexes SET state = ?, attempts = attempts + 1, error_code = ?, " +
+      "lease_token = NULL, lease_until = NULL, updated_at = ? WHERE document_id = ? AND state = 'indexing' AND lease_token = ? " +
+      "AND json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.enabled') = 1 " +
+      "AND json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.model') = ? " +
+      "AND (SELECT revision FROM app_settings WHERE key = 'semantic_settings') = ? AND " + SEMANTIC_SOURCE_CURRENT)
+      .run(state, code, now(), id, token, model, settingsRevision, id, sourceRevision, extractionId, extractionId);
+    if (result.changes === 1 && code !== "SEMANTIC_EMPTY_CONTENT") this.recordSemanticFailure(code);
+    return result.changes === 1;
+  }
+
+  semanticVectorPage(cursor: number, limit: number, model: string, formatVersion: string): { items: SemanticVectorEntry[]; total: number; nextCursor: string | null } {
+    const total = Number((this.sql.prepare("SELECT COUNT(*) AS count FROM semantic_indexes WHERE state = 'ready' AND model = ? AND format_version = ?")
+      .get(model, formatVersion) as { count: number }).count);
+    const rows = this.sql.prepare("SELECT document_id AS id, source_hash AS sourceHash, model, format_version AS formatVersion, vector_json AS vectorJson " +
+      "FROM semantic_indexes WHERE state = 'ready' AND model = ? AND format_version = ? ORDER BY document_id LIMIT ? OFFSET ?")
+      .all(model, formatVersion, limit, cursor) as Array<{ id: string; sourceHash: string; model: string; formatVersion: string; vectorJson: string }>;
+    const next = cursor + rows.length;
+    return {
+      items: rows.map((row) => ({ id: row.id, sourceHash: row.sourceHash, model: row.model, formatVersion: row.formatVersion, vector: JSON.parse(row.vectorJson) as number[] })),
+      total, nextCursor: next < total ? String(next) : null,
+    };
+  }
+
   getRecentFilters(): { filters: RecentFilter[]; revision: number } {
     const row = this.sql
       .prepare("SELECT value, revision FROM app_settings WHERE key = 'recent-filters'")
@@ -2005,6 +2312,7 @@ export class KnowledgeDatabase {
       if (!paper) return { kind: "missing" as const };
       const taskId = randomUUID();
       const timestamp = now();
+      this.invalidateSemanticIndex(id);
       this.sql.prepare(
         `INSERT INTO paper_extractions(id, paper_id, status, content_mode, source_hash, page_count, created_at)
          VALUES (?, ?, 'queued', ?, ?, ?, ?)`,
@@ -2118,6 +2426,7 @@ export class KnowledgeDatabase {
       for (const page of pages) {
         insert.run(task.paper_id, id, page.pageNumber, JSON.stringify(page.originalBlocks), JSON.stringify(page.translationBlocks), timestamp, timestamp);
       }
+      this.invalidateSemanticIndex(task.paper_id);
       const pageCount = this.sql.prepare("SELECT page_count AS pageCount FROM papers WHERE id = ?").get(task.paper_id) as { pageCount: number | null } | undefined;
       const target = pageCount?.pageCount ?? null;
       const completedPages = this.sql.prepare("SELECT COUNT(*) AS done FROM paper_pages WHERE extraction_id = ?").get(id) as { done: number };
@@ -2181,6 +2490,7 @@ export class KnowledgeDatabase {
       for (const page of pages) {
         insert.run(task.paper_id, id, page.pageNumber, JSON.stringify(page.originalBlocks), JSON.stringify(page.translationBlocks), timestamp, timestamp);
       }
+      this.invalidateSemanticIndex(task.paper_id);
       this.sql.prepare(
         `UPDATE paper_extractions SET status = 'succeeded', page_count = ?, completed_pages = ?, finished_at = ?, error_code = NULL, error_message = NULL WHERE id = ?`,
       ).run(pages.length, pages.length, timestamp, id);
@@ -2967,6 +3277,7 @@ export class KnowledgeDatabase {
             this.replaceTags(current.id, payload.tags);
             this.replaceCollections(current.id, this.importCollections(payload.collections, timestamp));
             if (payload.assets) this.replaceImportedAssets(current.id, payload.assets, timestamp);
+            this.invalidateSemanticIndex(current.id);
             this.recordRevision(this.getDocument(current.id)!);
             status = "updated";
             documentId = current.id;
@@ -3203,16 +3514,20 @@ export class KnowledgeDatabase {
     const condition = where.join(" AND ");
     const total = Number((this.sql.prepare(`SELECT COUNT(*) AS total FROM documents d WHERE ${condition}`).get(...values) as { total: number }).total);
     const rows = this.sql.prepare(`SELECT d.id, d.kind, d.title, d.folder_id AS folderId, f.name AS folderName,
-      d.status, d.favorite, d.archived_at AS archivedAt, d.updated_at AS updatedAt, p.page_count AS pageCount
+      d.status, d.favorite, d.archived_at AS archivedAt, d.updated_at AS updatedAt, p.page_count AS pageCount,
+      CASE WHEN json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.enabled') = 1
+        THEN COALESCE(si.state, 'pending') ELSE 'unavailable' END AS semanticState
       FROM documents d LEFT JOIN folders f ON f.id = d.folder_id LEFT JOIN papers p ON p.id = d.id
+      LEFT JOIN semantic_indexes si ON si.document_id = d.id AND si.model = json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.model') AND si.format_version = ?
       WHERE ${condition} ORDER BY d.title COLLATE NOCASE, d.id LIMIT ? OFFSET ?`)
-      .all(...values, input.limit, input.cursor) as Array<{
+      .all(SEMANTIC_FORMAT_VERSION, ...values, input.limit, input.cursor) as Array<{
         id: string; kind: "article" | "paper"; title: string; folderId: string | null; folderName: string | null;
         status: CaptureStatus; favorite: number; archivedAt: string | null; updatedAt: string; pageCount: number | null;
+        semanticState: KnowledgeMapNode["semanticState"];
       }>;
     const end = input.cursor + rows.length;
     return {
-      items: rows.map((row) => ({ ...row, favorite: Boolean(row.favorite), semanticState: "unavailable" as const })),
+      items: rows.map((row) => ({ ...row, favorite: Boolean(row.favorite) })),
       folders: this.listFolders().map(({ id, name }) => ({ id, name })),
       total,
       nextCursor: end < total ? String(end) : null,
@@ -3589,6 +3904,7 @@ export class KnowledgeDatabase {
           this.sql.prepare(`UPDATE documents SET archived_at = NULL WHERE id IN (${placeholders})`).run(...changedIds);
         } else if (action === "trash") {
           this.sql.prepare(`UPDATE documents SET deleted_at = ? WHERE id IN (${placeholders})`).run(timestamp, ...changedIds);
+          for (const id of changedIds) this.invalidateSemanticIndex(id);
         } else if (action === "restore") {
           this.sql.prepare(`UPDATE documents SET deleted_at = NULL WHERE id IN (${placeholders})`).run(...changedIds);
         }
@@ -3676,6 +3992,7 @@ export class KnowledgeDatabase {
           .run(timestamp, id, patch.title, patch.markdown, JSON.stringify(patch.tags));
       }
       const document = this.getDocument(id)!;
+      if (patch.title !== undefined || patch.markdown !== undefined) this.invalidateSemanticIndex(id);
       if (patch.title !== undefined || patch.markdown !== undefined || patch.tags !== undefined) {
         this.recordRevision(document);
       }
@@ -3777,6 +4094,7 @@ export class KnowledgeDatabase {
              revision = revision + 1, updated_at = ? WHERE id = ?`,
         )
         .run(target.title, target.markdown, timestamp, id);
+      this.invalidateSemanticIndex(id);
       this.replaceTags(id, JSON.parse(target.tags_json) as string[]);
       const document = this.getDocument(id)!;
       this.recordRevision(document);
@@ -3794,6 +4112,7 @@ export class KnowledgeDatabase {
       this.sql
         .prepare("UPDATE documents SET deleted_at = ?, revision = revision + 1, updated_at = ? WHERE id = ?")
         .run(timestamp, timestamp, id);
+      this.invalidateSemanticIndex(id);
       return { kind: "deleted" as const, document: this.getDocument(id)! };
     });
   }
@@ -4166,6 +4485,7 @@ export class KnowledgeDatabase {
           timestamp,
           job.documentId,
         );
+      this.invalidateSemanticIndex(job.documentId);
       this.sql
         .prepare(
           `UPDATE captures SET status = 'ready', mode = ?, http_status = ?, snapshot_path = ?,

@@ -35,6 +35,12 @@ function statusLabel(node: KnowledgeMapNode) {
   return labels[node.status] || "状态未知";
 }
 
+function semanticStateLabel(node: KnowledgeMapNode) {
+  if (node.semanticState === "unavailable") return "未启用";
+  if (node.kind === "paper" && node.status !== "ready") return "等待提取";
+  return ({ unavailable: "未启用", pending: "待建立", indexing: "处理中", ready: "已建立", failed: "处理失败" })[node.semanticState];
+}
+
 function shortTitle(value: string) {
   const title = value.trim() || "未命名资料";
   return title.length > 28 ? title.slice(0, 27) + "…" : title;
@@ -212,7 +218,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
           <label className="map-check"><input type="checkbox" checked={showFolders} onChange={(event) => setShowFolders(event.target.checked)} /><span>显示文件夹关系</span></label>
           <div className="map-view-switch" role="group" aria-label="图谱范围"><button type="button" aria-pressed={!localMode} onClick={() => setLocalMode(false)}>全库</button><button type="button" aria-pressed={localMode} disabled={!selected} onClick={() => setLocalMode(true)}>单篇关联</button></div>
           <div className="map-key"><span><i className="map-key-article" />文章</span><span><i className="map-key-paper" />论文</span><span><i className="map-key-folder" />文件夹</span><span><i className="map-key-line" />分类关系</span></div>
-          <p className="map-privacy-note">语义关联尚未启用。分类线只表示文件夹归属。</p>
+          <p className="map-privacy-note">节点显示索引状态；当前连线只表示文件夹归属，不代表引用关系。</p>
           <details className="map-accessible-list"><summary>节点列表（{documents.length}）</summary><ul>{documents.map((item) => <li key={item.id}><button type="button" aria-pressed={selectedId === item.id} onClick={() => { setSelectedId(item.id); setLocalMode(true); }}>{item.title || "未命名资料"}<small>{item.kind === "paper" ? "论文" : "文章"}</small></button></li>)}</ul></details>
         </aside>
         <div className="knowledge-map-canvas" role="region" aria-label="资料关联画布">
@@ -254,7 +260,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
           {selected ? <>
             <span className={"map-kind-mark " + selected.kind} aria-hidden="true" />
             <h3>{selected.title || "未命名资料"}</h3>
-            <dl className="map-metadata"><div><dt>类型</dt><dd>{selected.kind === "paper" ? "论文" : "文章"}</dd></div><div><dt>文件夹</dt><dd>{selected.folderName || "未分类"}</dd></div><div><dt>状态</dt><dd>{statusLabel(selected)}</dd></div><div><dt>语义索引</dt><dd>未启用</dd></div></dl>
+            <dl className="map-metadata"><div><dt>类型</dt><dd>{selected.kind === "paper" ? "论文" : "文章"}</dd></div><div><dt>文件夹</dt><dd>{selected.folderName || "未分类"}</dd></div><div><dt>状态</dt><dd>{statusLabel(selected)}</dd></div><div><dt>语义索引</dt><dd>{semanticStateLabel(selected)}</dd></div></dl>
             <section className="map-detail-related"><h4>文件夹中的其他资料</h4>{selectedFolderPeers.length ? <ul>{selectedFolderPeers.map((peer) => <li key={peer.id}><button type="button" onClick={() => setSelectedId(peer.id)}>{peer.title || "未命名资料"}<small>{peer.kind === "paper" ? "论文" : "文章"}</small></button></li>)}</ul> : <p>目前没有其他同文件夹资料。</p>}</section>
             <button className="map-open-reader" type="button" onClick={openSelected}>打开阅读 <span aria-hidden="true">↗</span></button>
           </> : <p className="map-empty-detail">选择一个节点查看资料信息。</p>}

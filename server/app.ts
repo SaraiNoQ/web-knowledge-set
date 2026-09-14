@@ -83,6 +83,7 @@ import {
   type ResolveLlmTarget,
 } from "./llm.js";
 import { createPaperTasks } from "./paper.js";
+import { SemanticError, SemanticTasks, semanticApiKeyInput, semanticSettingsInput } from "./semantic.js";
 import { safeFetchBinary } from "./safe-fetch.js";
 import {
   createPortableBundle,
@@ -201,6 +202,7 @@ export interface AppOptions {
   onDesktopCloseReady?: (attemptId: string) => void;
   llmApiKey?: string;
   llmApiKeyEndpoint?: string;
+  semanticApiKey?: string;
   resolveLlmTarget?: ResolveLlmTarget;
   appVersion?: string;
   diagnostics?: DiagnosticsLogger;
@@ -1280,6 +1282,7 @@ function serveStatic(request: IncomingMessage, response: ServerResponse, pathnam
 
 export function createApp(options: AppOptions) {
   let db = options.database;
+  let semanticApiKey = options.semanticApiKey ?? null;
   let dataEpoch = randomUUID();
   let recoveryError: unknown = options.recoveryError ?? null;
   const backupRoot = options.backupRoot ?? defaultBackupRoot(options.dataDir);
@@ -1327,6 +1330,10 @@ export function createApp(options: AppOptions) {
     apiKeyEndpoint: options.llmApiKeyEndpoint,
     resolveTarget: options.resolveLlmTarget,
   });
+  const semanticTasks = new SemanticTasks(() => {
+    if (!db) throw new SemanticError(503, "DATA_UNAVAILABLE", "Knowledge-base data needs recovery");
+    return db;
+  }, () => semanticApiKey);
   let maintenanceKind: string | null = null;
   let maintenanceDone: Promise<void> | null = null;
   let finishMaintenance: (() => void) | null = null;
@@ -1619,6 +1626,78 @@ export function createApp(options: AppOptions) {
           throw new HttpError(400, "INVALID_RECENT_FILTERS", "Recent filters do not accept query parameters");
         }
         sendJson(response, 200, requireDatabase().getRecentFilters());
+        return;
+      }
+
+      if (pathname === "/api/settings/semantic" && request.method === "GET") {
+        const estimate = requestUrl.searchParams.get("estimate");
+        if ([...requestUrl.searchParams.keys()].some((key) => key !== "estimate") || requestUrl.searchParams.getAll("estimate").length > 1 || (estimate !== null && estimate !== "true")) {
+          throw new SemanticError(400, "INVALID_SEMANTIC_SETTINGS", "Semantic settings query parameters are invalid");
+        }
+        sendJson(response, 200, semanticTasks.settings(estimate === "true"));
+        return;
+      }
+      if (pathname === "/api/settings/semantic" && request.method === "PUT") {
+        const input = semanticSettingsInput(await mutationBody(request));
+        if (input.enabled && !semanticApiKey) throw new SemanticError(409, "SEMANTIC_KEY_MISSING", "Set the embedding API key before enabling semantic indexing");
+        const result = requireDatabase().setSemanticSettings(input, Boolean(semanticApiKey));
+        if (result.kind === "conflict") throw new SemanticError(409, "SEMANTIC_SETTINGS_CONFLICT", "Semantic settings changed in another window");
+        if (result.kind === "model_change_requires_pause") throw new SemanticError(409, "SEMANTIC_MODEL_CHANGE_REQUIRES_PAUSE", "Pause semantic indexing before changing its model");
+        sendJson(response, 200, result.settings);
+        return;
+      }
+      if (pathname === "/api/settings/semantic/key" && request.method === "GET") {
+        if (requestUrl.searchParams.size) throw new SemanticError(400, "INVALID_SEMANTIC_KEY", "Embedding key status does not accept query parameters");
+        sendJson(response, 200, semanticTasks.apiKeyStatus());
+        return;
+      }
+      if (pathname === "/api/settings/semantic/key" && request.method === "PUT") {
+        semanticApiKey = semanticApiKeyInput(await mutationBody(request));
+        sendJson(response, 200, semanticTasks.apiKeyStatus());
+        return;
+      }
+      if (pathname === "/api/settings/semantic/key" && request.method === "DELETE") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length) throw new SemanticError(400, "INVALID_SEMANTIC_KEY", "Embedding key deletion accepts no fields");
+        semanticApiKey = null;
+        const current = requireDatabase().getSemanticSettings(false);
+        requireDatabase().setSemanticSettings({ enabled: false, model: current.model, revision: current.revision }, false);
+        sendJson(response, 200, semanticTasks.apiKeyStatus());
+        return;
+      }
+      if (pathname === "/api/semantic/test" && request.method === "POST") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length !== 1 || typeof body.model !== "string") throw new SemanticError(400, "INVALID_SEMANTIC_SETTINGS", "model is required");
+        const operation = operationAbort(request, response);
+        try { sendJson(response, 200, await semanticTasks.test(body.model, operation.signal)); }
+        finally { operation.dispose(); }
+        return;
+      }
+      if (pathname === "/api/semantic/index-step" && request.method === "POST") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length) throw new SemanticError(400, "INVALID_SEMANTIC_REQUEST", "Index step accepts no fields");
+        const operation = operationAbort(request, response);
+        try { sendJson(response, 200, await semanticTasks.step(operation.signal, () => enteringDataEpoch === dataEpoch && !maintenanceKind)); }
+        finally { operation.dispose(); }
+        return;
+      }
+      if ((pathname === "/api/semantic/retry" || pathname === "/api/semantic/rebuild") && request.method === "POST") {
+        const body = await mutationBody(request);
+        if (Object.keys(body).length) throw new SemanticError(400, "INVALID_SEMANTIC_REQUEST", "This semantic action accepts no fields");
+        const affectedDocuments = pathname.endsWith("/retry") ? semanticTasks.retryFailures() : semanticTasks.rebuild();
+        sendJson(response, 200, { affectedDocuments });
+        return;
+      }
+      if (pathname === "/api/knowledge-map/vectors" && request.method === "GET") {
+        for (const key of requestUrl.searchParams.keys()) if (!["cursor", "limit"].includes(key) || requestUrl.searchParams.getAll(key).length !== 1) {
+          throw new SemanticError(400, "INVALID_SEMANTIC_PAGE", "Vector pagination parameters are invalid");
+        }
+        const cursor = requestUrl.searchParams.get("cursor") ?? "0";
+        const limit = requestUrl.searchParams.get("limit") ?? "250";
+        if (!/^(?:0|[1-9]\d*)$/u.test(cursor) || Number(cursor) > 1_000_000 || !/^[1-9]\d*$/u.test(limit) || Number(limit) > 500) {
+          throw new SemanticError(400, "INVALID_SEMANTIC_PAGE", "Vector pagination parameters are invalid");
+        }
+        sendJson(response, 200, semanticTasks.vectors(Number(cursor), Number(limit)));
         return;
       }
 
@@ -2167,6 +2246,7 @@ export function createApp(options: AppOptions) {
                 const candidate = openDatabase(stagingDataDir);
                 try {
                   candidate.clearBrowserExtensionPairings();
+                  candidate.disableSemanticAfterRestore();
                   const health = candidate.getDatabaseHealth();
                   if (
                     health.integrityCheck.length !== 1 ||
@@ -2182,6 +2262,8 @@ export function createApp(options: AppOptions) {
             });
             db = openDatabase(options.dataDir);
             db.clearBrowserExtensionPairings();
+            db.disableSemanticAfterRestore();
+            semanticApiKey = null;
             dataEpoch = randomUUID();
             derivedTasks.clearHistory();
             recoveryError = null;
@@ -3118,6 +3200,7 @@ export function createApp(options: AppOptions) {
       if ((request.url ?? "").startsWith("/api/")) response.setHeader(DATA_EPOCH_HEADER, dataEpoch);
       if (error instanceof HttpError) sendError(response, error.status, error.code, error.message);
       else if (error instanceof LlmError) sendError(response, error.status, error.code, error.message);
+      else if (error instanceof SemanticError) sendError(response, error.status, error.code, error.message);
       else if (error instanceof DataSafetyError) sendError(response, error.status, error.code, error.message);
       else if (error instanceof BackupError) {
         sendError(

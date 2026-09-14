@@ -48,6 +48,10 @@ import type {
   RecentFilter,
   RecentFiltersState,
   ReextractionPreview,
+  SemanticIndexStepResult,
+  SemanticSettings,
+  SemanticSettingsInput,
+  SemanticVectorEntry,
   TagMutationResponse,
   UpdateLlmSettingsInput,
 } from "../shared/types";
@@ -59,6 +63,11 @@ import {
   deleteCloudLlmCredential,
   loadCloudLlmCredential,
   saveCloudLlmCredential,
+  cloudSemanticCredentialConfigured,
+  cloudSemanticCredentialHeaders,
+  deleteCloudSemanticCredential,
+  loadCloudSemanticCredential,
+  saveCloudSemanticCredential,
 } from "./cloud-llm-credential";
 
 export type { DataSafetyStatus, DocumentFilters, RecentFilter } from "../shared/types";
@@ -77,6 +86,15 @@ function currentCloudLlmCredential() {
 
 function cloudLlmHeaders(endpointUrl: string): Record<string, string> {
   return cloudRuntime ? cloudLlmCredentialHeaders(currentCloudLlmCredential(), endpointUrl) : {};
+}
+
+function cloudSemanticHeaders(): Record<string, string> {
+  const credential = cloudCredentialStorage() ? loadCloudSemanticCredential(cloudCredentialStorage()!) : null;
+  return cloudRuntime ? cloudSemanticCredentialHeaders(credential) : {};
+}
+
+function wakeSemanticIndexer() {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("zhiye:semantic-wake"));
 }
 
 export class ApiRequestError extends Error {
@@ -268,6 +286,92 @@ export const api = {
       method: "DELETE",
       body: "{}",
     });
+  },
+
+  async getSemanticSettings(signal?: AbortSignal, includeEstimate = false) {
+    const value = await request<SemanticSettings>("/api/settings/semantic" + (includeEstimate ? "?estimate=true" : ""), { signal });
+    return cloudRuntime ? { ...value, apiKeyConfigured: cloudSemanticCredentialConfigured(
+      cloudCredentialStorage() ? loadCloudSemanticCredential(cloudCredentialStorage()!) : null,
+    ) } : value;
+  },
+
+  setSemanticSettings(value: SemanticSettingsInput) {
+    return request<SemanticSettings>("/api/settings/semantic", {
+      method: "PUT", headers: cloudSemanticHeaders(), body: JSON.stringify(value),
+    }).then((result) => { wakeSemanticIndexer(); return result; });
+  },
+
+  setSemanticApiKey(apiKey: string) {
+    if (cloudRuntime) {
+      const storage = cloudCredentialStorage();
+      if (!storage) return Promise.reject(new ApiRequestError("浏览器无法安全保存云端向量密钥。", 0, "SEMANTIC_KEY_STORAGE_FAILED"));
+      try {
+        const credential = saveCloudSemanticCredential(storage, apiKey);
+        wakeSemanticIndexer();
+        return Promise.resolve({ configured: true, endpointUrl: credential.endpointUrl });
+      } catch {
+        return Promise.reject(new ApiRequestError("向量 API 密钥无效或无法保存。", 400, "SEMANTIC_KEY_INVALID"));
+      }
+    }
+    return request<{ configured: boolean; endpointUrl: string | null }>("/api/settings/semantic/key", {
+      method: "PUT", body: JSON.stringify({ apiKey }),
+    }).then((result) => { wakeSemanticIndexer(); return result; });
+  },
+
+  async deleteSemanticApiKey() {
+    if (cloudRuntime) {
+      try {
+        const storage = cloudCredentialStorage();
+        const current = await request<SemanticSettings>("/api/settings/semantic");
+        if (current.enabled) {
+          await request<SemanticSettings>("/api/settings/semantic", {
+            method: "PUT",
+            body: JSON.stringify({ enabled: false, model: current.model, revision: current.revision }),
+          });
+        }
+        if (storage) deleteCloudSemanticCredential(storage);
+        wakeSemanticIndexer();
+        return { configured: false, endpointUrl: null };
+      } catch {
+        throw new ApiRequestError("无法清除向量 API 密钥。", 0, "SEMANTIC_KEY_STORAGE_FAILED");
+      }
+    }
+    const status = await request<{ configured: boolean; endpointUrl: string | null }>("/api/settings/semantic/key", {
+      method: "DELETE", body: "{}",
+    });
+    wakeSemanticIndexer();
+    return status;
+  },
+
+  testSemanticEmbedding(model: string, signal?: AbortSignal) {
+    return request<{ ok: true; model: string; dimension: number }>("/api/semantic/test", {
+      method: "POST", headers: cloudSemanticHeaders(), body: JSON.stringify({ model }), signal,
+    });
+  },
+
+  async advanceSemanticIndex(signal?: AbortSignal) {
+    const result = await request<SemanticIndexStepResult>("/api/semantic/index-step", {
+      method: "POST", headers: cloudSemanticHeaders(), body: JSON.stringify({}), signal,
+    });
+    return result;
+  },
+
+  retrySemanticFailures() {
+    return request<{ affectedDocuments: number }>("/api/semantic/retry", {
+      method: "POST", headers: cloudSemanticHeaders(), body: JSON.stringify({}),
+    }).then((result) => { wakeSemanticIndexer(); return result; });
+  },
+
+  rebuildSemanticIndexes() {
+    return request<{ affectedDocuments: number }>("/api/semantic/rebuild", {
+      method: "POST", headers: cloudSemanticHeaders(), body: JSON.stringify({}),
+    }).then((result) => { wakeSemanticIndexer(); return result; });
+  },
+
+  listKnowledgeMapVectors(cursor?: string, signal?: AbortSignal) {
+    const query = new URLSearchParams({ limit: "250" });
+    if (cursor) query.set("cursor", cursor);
+    return request<{ items: SemanticVectorEntry[]; total: number; nextCursor: string | null }>(`/api/knowledge-map/vectors?${query}`, { signal });
   },
 
   disableLlm(revision: number, deleteResults: boolean) {

@@ -429,6 +429,7 @@ async function restoreArchive(db: D1Database, archive: Archive, reservation: str
     db.prepare("DELETE FROM cloud_paper_files"),
     db.prepare("DELETE FROM cloud_documents"),
     db.prepare("DELETE FROM cloud_folders"),
+    db.prepare("DELETE FROM app_settings WHERE key IN ('semantic_settings', 'semantic_runtime')"),
   ];
   if (archive.version !== 1) for (const row of archive.folders) statements.push(db.prepare(`INSERT INTO cloud_folders(
     id, name, created_at, updated_at

@@ -94,6 +94,8 @@ test("has no serious or critical accessibility violations in primary workflows",
 
     await page.getByRole("button", { name: "AI 设置", exact: true }).click();
     await expect(page.getByRole("heading", { name: "AI 派生设置" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "语义关联" })).toBeVisible();
+    await expect(page.getByRole("checkbox", { name: "允许自动建立语义关联" })).not.toBeChecked();
     await expectNoHighImpactViolations(page, "AI 设置");
     await page.getByRole("button", { name: "返回资料库" }).click();
 

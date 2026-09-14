@@ -534,6 +534,7 @@ export default function App() {
   const [portableNotice, setPortableNotice] = useState("");
   const [portableError, setPortableError] = useState("");
   const [listRefresh, setListRefresh] = useState(0);
+  const [semanticRefresh, setSemanticRefresh] = useState(0);
   const [shortcutHelp, setShortcutHelp] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const [inTrash, setInTrash] = useState(false);
@@ -651,6 +652,7 @@ export default function App() {
   const selectionContextRef = useRef<string | null>(null);
   const selectedDocumentRevisionsRef = useRef(new Map<string, number>());
   const listContextRef = useRef("");
+  const semanticWakeRef = useRef<() => void>(() => undefined);
   const itemsContextRef = useRef("");
   const bulkImportAbortRef = useRef<AbortController | null>(null);
   const externalIntentHandlerRef = useRef<(intents: ExternalIntent[]) => Promise<void>>(async () => undefined);
@@ -1254,6 +1256,44 @@ export default function App() {
     setSaveState("conflict");
     setDraftNotice("检测到另一个窗口写入的草稿，你的当前编辑未被覆盖。");
   }, [installCurrentDocument, updateListItem]);
+
+  useEffect(() => {
+    let running = false;
+    let queued = false;
+    let disposed = false;
+    let controller: AbortController | null = null;
+    const wake = () => {
+      if (disposed) return;
+      if (running) { queued = true; return; }
+      running = true;
+      controller = new AbortController();
+      void (async () => {
+        const settings = await api.getSemanticSettings(controller!.signal);
+        if (!settings.enabled || !settings.apiKeyConfigured) return;
+        const result = await api.advanceSemanticIndex(controller!.signal);
+        if (result.status !== "idle" && result.status !== "busy") setSemanticRefresh((value) => value + 1);
+      })().catch(() => { if (!disposed) setSemanticRefresh((value) => value + 1); }).finally(() => {
+        running = false;
+        controller = null;
+        if (queued && !disposed) { queued = false; wake(); }
+      });
+    };
+    semanticWakeRef.current = wake;
+    const timer = window.setInterval(wake, 60_000);
+    const onVisible = () => { if (document.visibilityState === "visible") wake(); };
+    window.addEventListener("zhiye:semantic-wake", wake);
+    document.addEventListener("visibilitychange", onVisible);
+    wake();
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      window.removeEventListener("zhiye:semantic-wake", wake);
+      document.removeEventListener("visibilitychange", onVisible);
+      controller?.abort();
+    };
+  }, []);
+
+  useEffect(() => { semanticWakeRef.current(); }, [listRefresh]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -3472,7 +3512,7 @@ export default function App() {
       {diagnosticsOpen ? (
         <Diagnostics onClose={() => { setDiagnosticsOpen(false); setSafetyOpen(true); }} />
       ) : aiSettingsOpen ? (
-        <AiSettings cloud={cloudMode} onClose={() => setAiSettingsOpen(false)} />
+        <AiSettings cloud={cloudMode} semanticRefresh={semanticRefresh} onClose={() => setAiSettingsOpen(false)} />
       ) : safetyOpen ? (
         <DataSafety
           cloud={cloudMode}
@@ -3647,7 +3687,7 @@ export default function App() {
         </aside>
 
         <section id="reader-panel" ref={readerPanelRef} className="reader-panel" aria-label="文档工作台" tabIndex={-1}>
-          {graphMounted && <div className={`knowledge-map-host ${graphMode && !selectedId ? "is-active" : "is-dormant"}`} aria-hidden={!graphMode || Boolean(selectedId)}><Suspense fallback={<div className="map-load-fallback" role="status">正在准备知识地图…</div>}><KnowledgeMap active={graphMode && !selectedId} cloud={cloudMode} libraryView={libraryView === "trash" ? "all" : libraryView} query={query} onQueryChange={setQuery} onBack={() => setGraphMode(false)} onOpenDocument={(id) => void openGraphDocument(id)} refreshKey={listRefresh} /></Suspense></div>}
+          {graphMounted && <div className={`knowledge-map-host ${graphMode && !selectedId ? "is-active" : "is-dormant"}`} aria-hidden={!graphMode || Boolean(selectedId)}><Suspense fallback={<div className="map-load-fallback" role="status">正在准备知识地图…</div>}><KnowledgeMap active={graphMode && !selectedId} cloud={cloudMode} libraryView={libraryView === "trash" ? "all" : libraryView} query={query} onQueryChange={setQuery} onBack={() => setGraphMode(false)} onOpenDocument={(id) => void openGraphDocument(id)} refreshKey={listRefresh + semanticRefresh} /></Suspense></div>}
           {graphMode && !selectedId ? null : !selectedId ? (
             <div className="welcome-state">
               <div className="weave-mark" aria-hidden="true"><i /><i /><i /><i /></div>

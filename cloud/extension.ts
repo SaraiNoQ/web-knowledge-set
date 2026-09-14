@@ -1,3 +1,5 @@
+import { SEMANTIC_FORMAT_VERSION } from "../shared/semantic";
+
 export interface D1Result<T = unknown> {
   results: T[];
   meta: { changes?: number };
@@ -262,12 +264,18 @@ export async function listKnowledgeMap(db: D1Database, url: URL) {
   }
   const documentCondition = documentWhere.join(" AND ");
   const jobCondition = jobWhere.join(" AND ");
+  const semanticState = "CASE WHEN json_extract((SELECT value FROM app_settings WHERE key='semantic_settings'),'$.enabled')=1 " +
+    "THEN COALESCE(si.state,'pending') ELSE 'unavailable' END AS semanticState";
   const union = "SELECT d.id, d.kind, d.title, d.folder_id AS folderId, f.name AS folderName, " +
-    "COALESCE(p.status, d.status) AS status, d.favorite, d.updated_at AS updatedAt, p.page_count AS pageCount " +
-    "FROM cloud_documents d LEFT JOIN cloud_folders f ON f.id = d.folder_id LEFT JOIN cloud_papers p ON p.id = d.id " +
+    "COALESCE(p.status, d.status) AS status, d.favorite, d.updated_at AS updatedAt, p.page_count AS pageCount, " + semanticState +
+    " FROM cloud_documents d LEFT JOIN cloud_folders f ON f.id = d.folder_id LEFT JOIN cloud_papers p ON p.id = d.id " +
+    "LEFT JOIN cloud_semantic_indexes si ON si.document_id=d.id " +
+    "AND si.model=json_extract((SELECT value FROM app_settings WHERE key='semantic_settings'),'$.model') " +
+    "AND si.format_version='" + SEMANTIC_FORMAT_VERSION + "' " +
     "WHERE " + documentCondition + " UNION ALL " +
     "SELECT j.id, 'article' AS kind, j.url AS title, j.folder_id AS folderId, f.name AS folderName, " +
-    "j.status, 0 AS favorite, j.updated_at AS updatedAt, NULL AS pageCount " +
+    "j.status, 0 AS favorite, j.updated_at AS updatedAt, NULL AS pageCount, " +
+    "CASE WHEN json_extract((SELECT value FROM app_settings WHERE key='semantic_settings'),'$.enabled')=1 THEN 'pending' ELSE 'unavailable' END AS semanticState " +
     "FROM cloud_capture_jobs j LEFT JOIN cloud_folders f ON f.id = j.folder_id WHERE " + jobCondition;
   const values = [...documentValues, ...jobValues];
   const count = await db.prepare("SELECT COUNT(*) AS total FROM (" + union + ") map").bind(...values).first<{ total: number }>();
@@ -281,7 +289,7 @@ export async function listKnowledgeMap(db: D1Database, url: URL) {
       folderId: row.folderId ? String(row.folderId) : null, folderName: row.folderName ? String(row.folderName) : null,
       status: row.status as "ready" | "queued" | "fetching" | "extracting" | "failed", favorite: Boolean(row.favorite), archivedAt: null,
       updatedAt: String(row.updatedAt), pageCount: row.pageCount == null ? null : Number(row.pageCount),
-      semanticState: "unavailable" as const,
+      semanticState: row.semanticState as "unavailable" | "pending" | "indexing" | "ready" | "failed",
     })),
     folders: (await listFolders(db)).map(({ id, name }) => ({ id, name })),
     total, nextCursor: next < total ? String(next) : null,
@@ -644,9 +652,16 @@ function documentRevision(body: Record<string, unknown>, permanent = false) {
 export async function trashDocument(db: D1Database, id: string, body: Record<string, unknown>) {
   const revision = documentRevision(body);
   const now = new Date().toISOString();
-  const result = await db.prepare(`UPDATE cloud_documents SET deleted_at = ?, revision = revision + 1, updated_at = ?
-    WHERE id = ? AND revision = ? AND deleted_at IS NULL`).bind(now, now, id, revision).run();
-  if (changes(result) === 1) return await getDocument(db, id);
+  if (!db.batch) throw new CloudHttpError(503, "CLOUD_BATCH_UNAVAILABLE", "D1 batch support is required");
+  const [result] = await db.batch([
+    db.prepare(`UPDATE cloud_documents SET deleted_at = ?, revision = revision + 1, updated_at = ?
+      WHERE id = ? AND revision = ? AND deleted_at IS NULL`).bind(now, now, id, revision),
+    db.prepare("DELETE FROM cloud_semantic_indexes WHERE document_id = ? AND EXISTS (" +
+      "SELECT 1 FROM cloud_documents WHERE id = ? AND revision = ? AND deleted_at = ?)").bind(id, id, revision + 1, now),
+  ]);
+  if (changes(result) === 1) {
+    return await getDocument(db, id);
+  }
   const current = await getDocument(db, id);
   if (!current) throw new CloudHttpError(404, "DOCUMENT_NOT_FOUND", "Document not found");
   if (current.revision !== revision) throw new CloudHttpError(409, "DOCUMENT_CONFLICT", "Document was updated elsewhere", current);
@@ -707,10 +722,20 @@ export async function updateDocument(db: D1Database, id: string, body: Record<st
     values.push(body.favorite ? 1 : 0);
   }
   const now = new Date().toISOString();
-  const result = await db.prepare(
+  const update = db.prepare(
     `UPDATE cloud_documents SET ${assignments.join(", ")}, revision = revision + 1, updated_at = ?
      WHERE id = ? AND revision = ? AND deleted_at IS NULL${folderId ? " AND EXISTS (SELECT 1 FROM cloud_folders WHERE id = ?)" : ""}`,
-  ).bind(...values, now, id, body.revision, ...(folderId ? [folderId] : [])).run();
+  ).bind(...values, now, id, body.revision, ...(folderId ? [folderId] : []));
+  let result: D1Result;
+  if (hasTitle) {
+    if (!db.batch) throw new CloudHttpError(503, "CLOUD_BATCH_UNAVAILABLE", "D1 batch support is required");
+    [result] = await db.batch([
+      update,
+      db.prepare("DELETE FROM cloud_semantic_indexes WHERE document_id = ? AND EXISTS (" +
+        "SELECT 1 FROM cloud_documents WHERE id = ? AND revision = ? AND updated_at = ? AND deleted_at IS NULL)")
+        .bind(id, id, Number(body.revision) + 1, now),
+    ]);
+  } else result = await update.run();
   if (changes(result) !== 1) {
     const current = await getDocument(db, id);
     if (!current) throw new CloudHttpError(404, "DOCUMENT_NOT_FOUND", "Document not found");

@@ -22,6 +22,7 @@ import {
 } from "./extension";
 import { handleAiApi } from "./ai";
 import { handleTitleApi } from "./title";
+import { handleSemanticApi } from "./semantic";
 import { deletePaperSource, handlePaperApi, paperSource, paperSourceHash } from "./paper";
 import { handleAssetRequest } from "./assets";
 import { handleBackupApi, type R2Bucket } from "./backup";
@@ -115,6 +116,17 @@ async function api(request: Request, env: CloudEnv, url: URL) {
   }
   if (epoch.startsWith("restore:")) {
     return json({ error: { code: "CLOUD_MAINTENANCE", message: "Cloud restore is in progress" } }, 503);
+  }
+  if (url.pathname.startsWith("/api/semantic/") || url.pathname.startsWith("/api/settings/semantic") || url.pathname === "/api/knowledge-map/vectors") {
+    if (request.method !== "GET" && request.headers.get(DATA_EPOCH_HEADER) !== epoch) {
+      return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
+    }
+    const semantic = await handleSemanticApi(
+      request,
+      request.method === "GET" ? env.DB : epochGuardedDatabase(env.DB, epoch),
+      url,
+    );
+    if (semantic) return json(semantic.body, semantic.status ?? 200, epoch);
   }
   if (url.pathname === "/api/knowledge-map" && request.method === "GET") {
     return json(await listKnowledgeMap(env.DB, url), 200, epoch);

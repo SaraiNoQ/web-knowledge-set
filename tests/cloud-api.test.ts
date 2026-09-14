@@ -87,10 +87,11 @@ class SqliteD1Database implements D1Database {
 function migratedCloudDatabase() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
-  for (let version = 1; version <= 10; version += 1) {
+  for (let version = 1; version <= 11; version += 1) {
     sqlite.exec(readFileSync(new URL(`../cloud/migrations/${String(version).padStart(4, "0")}_${[
       "cloud_core", "browser_extension", "cloud_ai", "cloud_backups", "cloud_capture", "cloud_folders", "cloud_trash", "cloud_favorites",
       "cloud_papers", "cloud_paper_content_mode",
+      "semantic_indexes",
     ][version - 1]}.sql`, import.meta.url), "utf8"));
   }
   return new SqliteD1Database(sqlite);
@@ -345,6 +346,372 @@ test("cloud knowledge map cursor covers more than the library page and includes 
   assert.equal(((await captureSearch.json()) as { items: Array<{ id: string }> }).items[0]?.id, "map-pending");
   const invalid = await handleRequest(new Request("https://app.example.com/api/knowledge-map?cursor=nope"), env);
   assert.equal(invalid.status, 400);
+});
+
+test("cloud semantic indexing is opt-in, keeps keys out of D1, resumes batches, and invalidates changed text", async () => {
+  const originalFetch = globalThis.fetch;
+  const { env, db } = sqliteEnvironment();
+  const epoch = (db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get() as { value: string }).value;
+  const apiKey = "semantic-page-secret";
+  const headers = { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch, "X-Zhiye-Embedding-Key": apiKey };
+  const inputs: string[][] = [];
+  const authorizations: string[] = [];
+  globalThis.fetch = async (url, init) => {
+    assert.equal(String(url), "https://api.siliconflow.cn/v1/embeddings");
+    assert.equal(init?.redirect, "error");
+    authorizations.push(new Headers(init?.headers).get("Authorization") || "");
+    const request = JSON.parse(String(init?.body)) as { input: string[] };
+    inputs.push(request.input);
+    return new Response(JSON.stringify({ data: request.input.map((_, index) => ({ index, embedding: [0.6, 0.8] })) }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    const initial = await handleRequest(new Request("https://app.example.com/api/settings/semantic"), env);
+    const initialSettings = await initial.json() as { enabled: boolean; model: string; revision: number };
+    assert.deepEqual({ enabled: initialSettings.enabled, model: initialSettings.model }, { enabled: false, model: "BAAI/bge-m3" });
+    const denied = await handleRequest(new Request("https://app.example.com/api/settings/semantic", {
+      method: "PUT", headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch },
+      body: JSON.stringify({ enabled: true, model: "BAAI/bge-m3", revision: initialSettings.revision }),
+    }), env);
+    assert.equal(denied.status, 409);
+    assert.equal((await denied.json() as { error: { code: string } }).error.code, "SEMANTIC_KEY_MISSING");
+
+    const enabled = await handleRequest(new Request("https://app.example.com/api/settings/semantic", {
+      method: "PUT", headers, body: JSON.stringify({ enabled: true, model: "BAAI/bge-m3", revision: initialSettings.revision }),
+    }), env);
+    assert.equal(enabled.status, 200);
+    const invalidProbe = await handleRequest(new Request("https://app.example.com/api/semantic/test", {
+      method: "POST", headers, body: JSON.stringify({ model: "" }),
+    }), env);
+    assert.equal(invalidProbe.status, 400);
+    assert.equal((await invalidProbe.json() as { error: { code: string } }).error.code, "INVALID_SEMANTIC_REQUEST");
+    const tested = await handleRequest(new Request("https://app.example.com/api/semantic/test", {
+      method: "POST", headers, body: JSON.stringify({ model: "BAAI/bge-m3" }),
+    }), env);
+    assert.deepEqual(await tested.json(), { ok: true, model: "BAAI/bge-m3", dimension: 2 });
+
+    const created = await handleRequest(new Request("https://app.example.com/api/documents", {
+      method: "POST", headers, body: JSON.stringify({ title: "跨语言检索" }),
+    }), env);
+    const document = (await created.json() as { document: { id: string; revision: number } }).document;
+    const markdown = "# 跨语言检索\n\n" + "研究🙂".repeat(3_200);
+    const updated = await handleRequest(new Request("https://app.example.com/api/documents/" + document.id, {
+      method: "PATCH", headers, body: JSON.stringify({ title: "跨语言检索", markdown, revision: document.revision }),
+    }), env);
+    assert.equal(updated.status, 200);
+    const estimate = await handleRequest(new Request("https://app.example.com/api/settings/semantic?estimate=true"), env);
+    assert.equal((await estimate.json() as { estimatedPendingChunks: number }).estimatedPendingChunks, 8);
+    const step = () => handleRequest(new Request("https://app.example.com/api/semantic/index-step", {
+      method: "POST", headers, body: "{}",
+    }), env);
+    const first = await step();
+    assert.equal((await first.json() as { status: string }).status, "progress");
+    assert.equal(inputs.at(-1)?.length, 4);
+    assert.equal((db.sqlite.prepare("SELECT chunk_done FROM cloud_semantic_indexes WHERE document_id=?").get(document.id) as { chunk_done: number }).chunk_done, 4);
+    const second = await step();
+    assert.equal((await second.json() as { status: string }).status, "completed");
+    assert.equal(inputs.at(-1)?.length, 4);
+    assert.equal((db.sqlite.prepare("SELECT chunk_total, chunk_done FROM cloud_semantic_indexes WHERE document_id=?").get(document.id) as { chunk_total: number; chunk_done: number }).chunk_done, 8);
+    assert.ok(inputs.slice(1).flat().every((text) => text.startsWith("跨语言检索\n\n")));
+    assert.ok(authorizations.every((value) => value === "Bearer " + apiKey));
+    assert.equal(JSON.stringify(db.sqlite.prepare("SELECT value FROM app_settings WHERE key='semantic_settings'").get()).includes(apiKey), false);
+    const vectors = await handleRequest(new Request("https://app.example.com/api/knowledge-map/vectors"), env);
+    const vectorBody = await vectors.json() as { items: Array<{ id: string; vector: number[]; formatVersion: string }> };
+    assert.deepEqual(vectorBody.items.map(({ id, vector }) => ({ id, vector })), [{ id: document.id, vector: [0.6, 0.8] }]);
+    assert.equal(vectorBody.items[0]?.formatVersion, "semantic-text-v1");
+    const staleSettings = await handleRequest(new Request("https://app.example.com/api/settings/semantic", {
+      method: "PUT", headers, body: JSON.stringify({ enabled: false, model: "stale-model", revision: initialSettings.revision }),
+    }), env);
+    assert.equal(staleSettings.status, 409);
+    assert.equal((db.sqlite.prepare("SELECT COUNT(*) AS count FROM cloud_semantic_indexes WHERE document_id=?").get(document.id) as { count: number }).count, 1);
+    db.failBatchOn = /DELETE FROM cloud_semantic_indexes/u;
+    const failedEdit = await handleRequest(new Request("https://app.example.com/api/documents/" + document.id, {
+      method: "PATCH", headers, body: JSON.stringify({ title: "回滚内容", markdown, revision: 2 }),
+    }), env);
+    assert.equal(failedEdit.status, 500);
+    const afterFailedEdit = db.sqlite.prepare("SELECT title,deleted_at AS deletedAt FROM cloud_documents WHERE id=?")
+      .get(document.id) as { title: string; deletedAt: string | null };
+    assert.equal(afterFailedEdit.title, "跨语言检索");
+    assert.equal(afterFailedEdit.deletedAt, null);
+    assert.equal((db.sqlite.prepare("SELECT COUNT(*) AS count FROM cloud_semantic_indexes WHERE document_id=?").get(document.id) as { count: number }).count, 1);
+    const failedTrash = await handleRequest(new Request("https://app.example.com/api/documents/" + document.id, {
+      method: "DELETE", headers, body: JSON.stringify({ revision: 2 }),
+    }), env);
+    assert.equal(failedTrash.status, 500);
+    db.failBatchOn = null;
+    assert.equal((db.sqlite.prepare("SELECT COUNT(*) AS count FROM cloud_semantic_indexes WHERE document_id=?").get(document.id) as { count: number }).count, 1);
+    assert.equal((db.sqlite.prepare("SELECT deleted_at AS deletedAt FROM cloud_documents WHERE id=?").get(document.id) as { deletedAt: string | null }).deletedAt, null);
+    db.sqlite.prepare("UPDATE app_settings SET value=?,revision=revision+1 WHERE key='semantic_settings'")
+      .run(JSON.stringify({ enabled: true, model: "another-model" }));
+    const staleModelMap = await handleRequest(new Request("https://app.example.com/api/knowledge-map"), env);
+    assert.equal(((await staleModelMap.json() as { items: Array<{ id: string; semanticState: string }> }).items.find(({ id }) => id === document.id))?.semanticState, "pending");
+
+    const changed = await handleRequest(new Request("https://app.example.com/api/documents/" + document.id, {
+      method: "PATCH", headers, body: JSON.stringify({ title: "新标题", markdown, revision: 2 }),
+    }), env);
+    assert.equal(changed.status, 200);
+    assert.equal((db.sqlite.prepare("SELECT COUNT(*) AS count FROM cloud_semantic_indexes WHERE document_id=?").get(document.id) as { count: number }).count, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("cloud temporary embedding errors back off before retrying", async () => {
+  const originalFetch = globalThis.fetch;
+  const { env, db } = sqliteEnvironment();
+  const epoch = (db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get() as { value: string }).value;
+  const headers = { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch, "X-Zhiye-Embedding-Key": "retry-key" };
+  let providerCalls = 0;
+  let failOnce = true;
+  globalThis.fetch = async () => {
+    providerCalls += 1;
+    if (failOnce) { failOnce = false; return new Response("{}", { status: 429 }); }
+    return new Response(JSON.stringify({ data: [{ index: 0, embedding: [1, 0] }] }));
+  };
+  try {
+    const initial = await handleRequest(new Request("https://app.example.com/api/settings/semantic"), env);
+    const settings = await initial.json() as { revision: number };
+    await handleRequest(new Request("https://app.example.com/api/settings/semantic", {
+      method: "PUT", headers, body: JSON.stringify({ enabled: true, model: "BAAI/bge-m3", revision: settings.revision }),
+    }), env);
+    const created = await handleRequest(new Request("https://app.example.com/api/documents", {
+      method: "POST", headers, body: JSON.stringify({ title: "Backoff" }),
+    }), env);
+    const document = (await created.json() as { document: { id: string; revision: number } }).document;
+    await handleRequest(new Request("https://app.example.com/api/documents/" + document.id, {
+      method: "PATCH", headers, body: JSON.stringify({ title: "Backoff", markdown: "A short body.", revision: document.revision }),
+    }), env);
+    const step = () => handleRequest(new Request("https://app.example.com/api/semantic/index-step", {
+      method: "POST", headers, body: "{}",
+    }), env);
+    const failed = await step();
+    assert.equal(failed.status, 429);
+    const index = db.sqlite.prepare("SELECT state, attempts FROM cloud_semantic_indexes WHERE document_id=?")
+      .get(document.id) as { state: string; attempts: number };
+    assert.deepEqual({ state: index.state, attempts: index.attempts }, { state: "pending", attempts: 1 });
+    assert.equal((await (await step()).json() as { status: string }).status, "idle");
+    assert.equal(providerCalls, 1);
+    db.sqlite.prepare("UPDATE cloud_semantic_indexes SET updated_at=? WHERE document_id=?")
+      .run(new Date(Date.now() - 61_000).toISOString(), document.id);
+    assert.equal((await (await step()).json() as { status: string }).status, "completed");
+    assert.equal(providerCalls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("empty cloud articles do not pause semantic indexing", async () => {
+  const originalFetch = globalThis.fetch;
+  const { env, db } = sqliteEnvironment();
+  const epoch = (db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get() as { value: string }).value;
+  const headers = { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch, "X-Zhiye-Embedding-Key": "empty-key" };
+  globalThis.fetch = async () => { throw new Error("empty articles must not call the provider"); };
+  try {
+    const initial = await handleRequest(new Request("https://app.example.com/api/settings/semantic"), env);
+    const settings = await initial.json() as { revision: number };
+    await handleRequest(new Request("https://app.example.com/api/settings/semantic", {
+      method: "PUT", headers, body: JSON.stringify({ enabled: true, model: "BAAI/bge-m3", revision: settings.revision }),
+    }), env);
+    const ids: string[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      const created = await handleRequest(new Request("https://app.example.com/api/documents", {
+        method: "POST", headers, body: JSON.stringify({ title: "Blank " + index }),
+      }), env);
+      ids.push((await created.json() as { document: { id: string } }).document.id);
+    }
+    for (const id of ids) {
+      const result = await handleRequest(new Request("https://app.example.com/api/semantic/index-step", {
+        method: "POST", headers, body: "{}",
+      }), env);
+      assert.deepEqual(await result.json().then((value) => {
+        const body = value as { status: string; errorCode: string | null };
+        return { status: body.status, errorCode: body.errorCode };
+      }), { status: "failed", errorCode: "SEMANTIC_EMPTY_CONTENT" });
+    }
+    const current = await handleRequest(new Request("https://app.example.com/api/settings/semantic"), env);
+    const currentSettings = await current.json() as { enabled: boolean; consecutiveFailures: number; failedDocuments: number };
+    assert.equal(currentSettings.enabled, true);
+    assert.equal(currentSettings.consecutiveFailures, 0);
+    assert.equal(currentSettings.failedDocuments, 3);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("cloud semantic indexing pauses after three consecutive provider errors", async () => {
+  const originalFetch = globalThis.fetch;
+  const { env, db } = sqliteEnvironment();
+  const epoch = (db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get() as { value: string }).value;
+  const headers = { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch, "X-Zhiye-Embedding-Key": "circuit-breaker-key" };
+  globalThis.fetch = async () => new Response("{}", { status: 429 });
+  try {
+    const initial = await handleRequest(new Request("https://app.example.com/api/settings/semantic"), env);
+    const settings = await initial.json() as { revision: number };
+    await handleRequest(new Request("https://app.example.com/api/settings/semantic", {
+      method: "PUT", headers, body: JSON.stringify({ enabled: true, model: "BAAI/bge-m3", revision: settings.revision }),
+    }), env);
+    for (let index = 0; index < 3; index += 1) {
+      const created = await handleRequest(new Request("https://app.example.com/api/documents", {
+        method: "POST", headers, body: JSON.stringify({ title: "Rate limited " + index }),
+      }), env);
+      const document = (await created.json() as { document: { id: string; revision: number } }).document;
+      await handleRequest(new Request("https://app.example.com/api/documents/" + document.id, {
+        method: "PATCH", headers, body: JSON.stringify({ title: "Rate limited " + index, markdown: "Body text.", revision: document.revision }),
+      }), env);
+      const step = await handleRequest(new Request("https://app.example.com/api/semantic/index-step", {
+        method: "POST", headers, body: "{}",
+      }), env);
+      assert.equal(step.status, 429);
+    }
+    const current = await handleRequest(new Request("https://app.example.com/api/settings/semantic"), env);
+    const finalSettings = await current.json() as { enabled: boolean; consecutiveFailures: number };
+    assert.equal(finalSettings.enabled, false);
+    assert.equal(finalSettings.consecutiveFailures, 3);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a stale cloud model change cannot clear the cache after a concurrent pause", async () => {
+  const { env, db } = sqliteEnvironment();
+  const epoch = (db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get() as { value: string }).value;
+  const apiKey = "concurrent-settings-key";
+  const headers = { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch, "X-Zhiye-Embedding-Key": apiKey };
+  const initial = await handleRequest(new Request("https://app.example.com/api/settings/semantic"), env);
+  const initialSettings = await initial.json() as { revision: number };
+  await handleRequest(new Request("https://app.example.com/api/settings/semantic", {
+    method: "PUT", headers, body: JSON.stringify({ enabled: true, model: "BAAI/bge-m3", revision: initialSettings.revision }),
+  }), env);
+  const created = await handleRequest(new Request("https://app.example.com/api/documents", {
+    method: "POST", headers, body: JSON.stringify({ title: "Concurrent pause" }),
+  }), env);
+  const document = (await created.json() as { document: { id: string } }).document;
+  db.sqlite.prepare("INSERT INTO cloud_semantic_indexes(document_id,source_hash,model,format_version,state,chunk_total,chunk_done,vector_json,updated_at) " +
+    "VALUES (?,?,?,?,'ready',1,1,'[1,0]',?)")
+    .run(document.id, "a".repeat(64), "BAAI/bge-m3", "semantic-text-v1", new Date().toISOString());
+
+  const originalBatch = db.batch.bind(db);
+  let pauseBeforeBatch = true;
+  db.batch = async (statements) => {
+    if (pauseBeforeBatch) {
+      pauseBeforeBatch = false;
+      db.sqlite.prepare("UPDATE app_settings SET value=?,revision=revision+1 WHERE key='semantic_settings'")
+        .run(JSON.stringify({ enabled: false, model: "BAAI/bge-m3" }));
+    }
+    return await originalBatch(statements);
+  };
+  try {
+    const stale = await handleRequest(new Request("https://app.example.com/api/settings/semantic", {
+      method: "PUT", headers, body: JSON.stringify({ enabled: false, model: "new-model", revision: initialSettings.revision + 1 }),
+    }), env);
+    assert.equal(stale.status, 409);
+    assert.equal((db.sqlite.prepare("SELECT COUNT(*) AS count FROM cloud_semantic_indexes WHERE document_id=?").get(document.id) as { count: number }).count, 1);
+    assert.deepEqual(JSON.parse((db.sqlite.prepare("SELECT value FROM app_settings WHERE key='semantic_settings'").get() as { value: string }).value), {
+      enabled: false, model: "BAAI/bge-m3",
+    });
+  } finally {
+    db.batch = originalBatch;
+  }
+});
+
+test("a cloud source edited during segmentation cannot claim or publish an old vector", async () => {
+  const originalFetch = globalThis.fetch;
+  const { env, db } = sqliteEnvironment();
+  const epoch = (db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get() as { value: string }).value;
+  const headers = { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch, "X-Zhiye-Embedding-Key": "revision-key" };
+  let providerCalls = 0;
+  globalThis.fetch = async () => {
+    providerCalls += 1;
+    throw new Error("stale content must be rejected before the provider call");
+  };
+  try {
+    const initial = await handleRequest(new Request("https://app.example.com/api/settings/semantic"), env);
+    const settings = await initial.json() as { revision: number };
+    await handleRequest(new Request("https://app.example.com/api/settings/semantic", {
+      method: "PUT", headers, body: JSON.stringify({ enabled: true, model: "BAAI/bge-m3", revision: settings.revision }),
+    }), env);
+    const created = await handleRequest(new Request("https://app.example.com/api/documents", {
+      method: "POST", headers, body: JSON.stringify({ title: "Source before edit" }),
+    }), env);
+    const document = (await created.json() as { document: { id: string; revision: number } }).document;
+    await handleRequest(new Request("https://app.example.com/api/documents/" + document.id, {
+      method: "PATCH", headers, body: JSON.stringify({ title: "Source before edit", markdown: "Original body.", revision: document.revision }),
+    }), env);
+
+    const originalBatch = db.batch.bind(db);
+    let editBeforeClaim = true;
+    db.batch = async (statements) => {
+      if (editBeforeClaim) {
+        editBeforeClaim = false;
+        db.sqlite.prepare("UPDATE cloud_documents SET title='Source after edit', markdown='Replacement body.', revision=revision+1 WHERE id=?")
+          .run(document.id);
+      }
+      return await originalBatch(statements);
+    };
+    const step = await handleRequest(new Request("https://app.example.com/api/semantic/index-step", {
+      method: "POST", headers, body: "{}",
+    }), env);
+    db.batch = originalBatch;
+    assert.equal((await step.json() as { status: string }).status, "busy");
+    assert.equal(providerCalls, 0);
+    assert.equal((db.sqlite.prepare("SELECT COUNT(*) AS count FROM cloud_semantic_indexes WHERE document_id=?").get(document.id) as { count: number }).count, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a pause while reading cached chunks stops before a provider request", async () => {
+  const originalFetch = globalThis.fetch;
+  const { env, db } = sqliteEnvironment();
+  const epoch = (db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get() as { value: string }).value;
+  const headers = { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch, "X-Zhiye-Embedding-Key": "pause-key" };
+  let providerCalls = 0;
+  globalThis.fetch = async () => {
+    providerCalls += 1;
+    throw new Error("paused indexing must not call the provider");
+  };
+  const originalPrepare = db.prepare.bind(db);
+  let paused = false;
+  const wrapChunkRead = (statement: D1Statement): D1Statement => ({
+    bind(...values: unknown[]) { return wrapChunkRead(statement.bind(...values)); },
+    first<T>() { return statement.first<T>(); },
+    async all<T>() {
+      const result = await statement.all<T>();
+      if (!paused) {
+        paused = true;
+        db.sqlite.prepare("UPDATE app_settings SET value=json_set(value,'$.enabled',json('false')),revision=revision+1 WHERE key='semantic_settings'").run();
+      }
+      return result;
+    },
+    run<T>() { return statement.run<T>(); },
+  });
+  db.prepare = (sql: string) => sql.includes("SELECT chunk_index AS chunkIndex FROM cloud_semantic_chunks")
+    ? wrapChunkRead(originalPrepare(sql))
+    : originalPrepare(sql);
+  try {
+    const initial = await handleRequest(new Request("https://app.example.com/api/settings/semantic"), env);
+    const settings = await initial.json() as { revision: number };
+    await handleRequest(new Request("https://app.example.com/api/settings/semantic", {
+      method: "PUT", headers, body: JSON.stringify({ enabled: true, model: "BAAI/bge-m3", revision: settings.revision }),
+    }), env);
+    const created = await handleRequest(new Request("https://app.example.com/api/documents", {
+      method: "POST", headers, body: JSON.stringify({ title: "Pause before dispatch" }),
+    }), env);
+    const document = (await created.json() as { document: { id: string; revision: number } }).document;
+    await handleRequest(new Request("https://app.example.com/api/documents/" + document.id, {
+      method: "PATCH", headers, body: JSON.stringify({ title: "Pause before dispatch", markdown: "Content to index.", revision: document.revision }),
+    }), env);
+    const result = await handleRequest(new Request("https://app.example.com/api/semantic/index-step", {
+      method: "POST", headers, body: "{}",
+    }), env);
+    assert.equal((await result.json() as { status: string }).status, "idle");
+    assert.equal(providerCalls, 0);
+    assert.equal((db.sqlite.prepare("SELECT lease_token AS leaseToken FROM cloud_semantic_indexes WHERE document_id=?").get(document.id) as { leaseToken: string | null }).leaseToken, null);
+  } finally {
+    db.prepare = originalPrepare;
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("cloud folders create, rename, move documents and jobs, then delete to unfiled", async () => {
@@ -802,6 +1169,10 @@ test("cloud backup restores v4 favorites and trash, maps v1 documents to default
     .run("document-v2", "https://example.com/v2", "V2", "# V2", now, now, "folder-v2");
   db.sqlite.prepare("UPDATE cloud_documents SET deleted_at = ? WHERE id = 'document-v2'").run(now);
   db.sqlite.prepare("UPDATE cloud_documents SET favorite = 1 WHERE id = 'document-v2'").run();
+  db.sqlite.prepare("UPDATE app_settings SET value = ?, revision = revision + 1 WHERE key = 'semantic_settings'")
+    .run(JSON.stringify({ enabled: true, model: "BAAI/bge-m3" }));
+  db.sqlite.prepare("INSERT INTO cloud_semantic_indexes(document_id,source_hash,model,format_version,state,chunk_total,chunk_done,vector_json,updated_at) VALUES ('document-v2',?,?,?,'ready',1,1,'[1,0]',?)")
+    .run("a".repeat(64), "BAAI/bge-m3", "semantic-text-v1", now);
   const epochHeader = () => ({
     "Content-Type": "application/json",
     "X-Zhiye-Data-Epoch": String((db.sqlite.prepare("SELECT value FROM app_settings WHERE key = 'data_epoch'").get() as { value: string }).value),
@@ -826,6 +1197,8 @@ test("cloud backup restores v4 favorites and trash, maps v1 documents to default
     method: "POST", headers: epochHeader(), body: "{}",
   }), env);
   assert.equal(restored.status, 200);
+  assert.equal(db.sqlite.prepare("SELECT 1 FROM app_settings WHERE key='semantic_settings'").get(), undefined);
+  assert.equal((db.sqlite.prepare("SELECT COUNT(*) AS count FROM cloud_semantic_indexes").get() as { count: number }).count, 0);
   assert.match(restored.headers.get("X-Zhiye-Data-Epoch") || "", /^cloud-/u);
   assert.deepEqual(
     db.sqlite.prepare("SELECT id, folder_id, favorite, deleted_at FROM cloud_documents ORDER BY id").all().map((row) => ({ ...row })),
@@ -1287,6 +1660,11 @@ test("cloud editing increments revision and rejects a stale writer", async () =>
         },
       };
       return statement;
+    },
+    async batch(statements: Array<{ run<T>(): Promise<{ results: T[]; meta: { changes: number } }> }>) {
+      const results = [];
+      for (const statement of statements) results.push(await statement.run());
+      return results;
     },
   };
   const updated = await updateDocument(db, row.id, { title: "New", markdown: "New body", revision: 1 });

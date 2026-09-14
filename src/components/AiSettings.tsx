@@ -6,9 +6,11 @@ import { api } from "../api";
 import { isAbortError, userErrorFrom } from "../error-messages";
 import { Select } from "./ui/Controls";
 import { useDialogs } from "./ui/Feedback";
+import { SemanticSettingsPanel } from "./SemanticSettings";
 
 interface AiSettingsProps {
   cloud?: boolean;
+  semanticRefresh?: number;
   onClose: () => void;
 }
 
@@ -34,7 +36,7 @@ function endpointValue(value: string) {
   }
 }
 
-export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
+export function AiSettings({ cloud = false, semanticRefresh = 0, onClose }: AiSettingsProps) {
   const dialogs = useDialogs();
   const [settings, setSettings] = useState<LlmSettings | null>(null);
   const [target, setTarget] = useState<LlmSettings["target"]>("remote");
@@ -359,6 +361,7 @@ export function AiSettings({ cloud = false, onClose }: AiSettingsProps) {
           {error && <p className="ai-settings-message is-error" role="alert">{error}</p>}
         </div>
       )}
+      <SemanticSettingsPanel cloud={cloud} refreshKey={semanticRefresh} />
     </main>
   );
 }

@@ -373,6 +373,17 @@ test("knowledge map selects a node and returns from the existing reader to the s
   await expect(page.getByRole("button", { name: "全库" })).toHaveAttribute("aria-pressed", "true");
 });
 
+test("semantic indexing remains opt-in until a credential and model probe are available", async ({ page }) => {
+  await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
+  if (await deferSetup.isVisible()) await deferSetup.click();
+  await page.getByRole("button", { name: "AI 设置", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "语义关联" })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "允许自动建立语义关联" })).not.toBeChecked();
+  await expect(page.getByRole("button", { name: "测试向量连接" })).toBeDisabled();
+});
+
 test("renders a stored cloud image URI through the same-origin asset route", async ({ page }) => {
   const hash = "a".repeat(64);
   await page.route(`**/api/assets/${hash}`, (route) => route.fulfill({

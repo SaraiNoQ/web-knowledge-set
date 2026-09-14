@@ -260,12 +260,14 @@ async function extraction(db: D1Database, bucket: R2Bucket, request: Request, id
     await db.batch([
       db.prepare("UPDATE cloud_paper_extractions SET status = 'running', error_code = NULL, error_message = NULL, finished_at = NULL WHERE id = ? AND status IN ('running', 'failed')").bind(taskId),
       db.prepare("UPDATE cloud_papers SET status = 'extracting', extraction_id = ?, updated_at = ? WHERE id = ?").bind(taskId, now, id),
+      db.prepare("DELETE FROM cloud_semantic_indexes WHERE document_id = ?").bind(id),
     ]);
   } else {
     await db.batch([
       db.prepare(`INSERT INTO cloud_paper_extractions(id, paper_id, status, content_mode, model, endpoint_id, prompt_version, source_hash, page_count, created_at)
         VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)`).bind(taskId, id, contentMode, model, endpointId, PAPER_PROMPT_VERSION, sourceHash, pageCount, now),
       db.prepare("UPDATE cloud_papers SET status = 'extracting', extraction_id = ?, updated_at = ? WHERE id = ?").bind(taskId, now, id),
+      db.prepare("DELETE FROM cloud_semantic_indexes WHERE document_id = ?").bind(id),
     ]);
   }
 
@@ -278,6 +280,7 @@ async function extraction(db: D1Database, bucket: R2Bucket, request: Request, id
       const output = parsed(answer.output);
       const statements = output.pages.map((page) => db.prepare(`INSERT INTO cloud_paper_pages(paper_id, extraction_id, page_number, original_json, translation_json, revision, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, 1, ?, ?)`).bind(id, taskId, page.pageNumber, JSON.stringify(page.originalBlocks), JSON.stringify(page.translationBlocks), now, now));
+      statements.push(db.prepare("DELETE FROM cloud_semantic_indexes WHERE document_id = ?").bind(id));
       statements.push(db.prepare("UPDATE cloud_paper_extractions SET status = 'succeeded', page_count = ?, completed_pages = ?, finished_at = ? WHERE id = ?").bind(output.pages.length, output.pages.length, now, taskId));
       statements.push(db.prepare("UPDATE cloud_papers SET status = 'ready', page_count = ?, updated_at = ? WHERE id = ?").bind(output.pages.length, now, id));
       statements.push(db.prepare("UPDATE cloud_documents SET title = ?, author = ?, updated_at = ? WHERE id = ?").bind(output.title, output.authors, now, id));
@@ -344,6 +347,7 @@ async function extractionStep(db: D1Database, bucket: R2Bucket, request: Request
         translation_json = excluded.translation_json, revision = revision + 1, updated_at = excluded.updated_at`)
         .bind(current.paperId, taskId, page.pageNumber, blocks, blocks, now, now);
     });
+    statements.push(db.prepare("DELETE FROM cloud_semantic_indexes WHERE document_id = ?").bind(current.paperId));
     // Compare-and-swap: a second tab advancing the same task must not double-count.
     statements.push(db.prepare(`UPDATE cloud_paper_extractions SET completed_pages = ?, page_count = COALESCE(page_count, ?)
       WHERE id = ? AND status = 'running' AND completed_pages = ?`).bind(to, pageCount, taskId, current.completedPages));
