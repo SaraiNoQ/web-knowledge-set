@@ -151,17 +151,26 @@ async function embedSemanticTextsOnce(
     throw new SemanticEmbeddingError("SEMANTIC_KEY_INVALID", "An embedding API key is required");
   }
   let response: Response;
+  const timeoutSignal = AbortSignal.timeout(30_000);
   try {
-    const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000);
+    const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
     response = await fetcher(SEMANTIC_EMBEDDINGS_URL, {
       method: "POST", redirect: "error",
       headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" },
       body: JSON.stringify({ model: model.trim(), input: texts, encoding_format: "float" }),
       signal: requestSignal,
     });
-  } catch {
+  } catch (cause) {
     if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
-    throw new SemanticEmbeddingError("SEMANTIC_NETWORK_ERROR", "The embedding provider could not be reached");
+    const name = cause instanceof Error && ["Error", "TypeError", "AbortError", "TimeoutError"].includes(cause.name)
+      ? cause.name
+      : "Error";
+    const timedOut = timeoutSignal.aborted;
+    console.error("[semantic] provider transport failure", JSON.stringify({ name, timedOut }));
+    throw new SemanticEmbeddingError(
+      timedOut ? "SEMANTIC_PROVIDER_UNAVAILABLE" : "SEMANTIC_NETWORK_ERROR",
+      timedOut ? "The embedding provider timed out" : "The embedding provider could not be reached",
+    );
   }
   if (response.status === 401 || response.status === 403) throw new SemanticEmbeddingError("SEMANTIC_AUTH_FAILED", "The embedding API key was rejected");
   if (response.status === 429) throw new SemanticEmbeddingError("SEMANTIC_RATE_LIMITED", "The embedding provider is rate limiting requests");

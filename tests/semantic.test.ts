@@ -79,6 +79,26 @@ test("embedding client rejects provider credentials, malformed dimensions, and n
     error instanceof SemanticEmbeddingError && error.code === "SEMANTIC_INVALID_RESPONSE");
 });
 
+test("embedding transport diagnostics omit API keys, input text, and raw errors", async () => {
+  const originalError = console.error;
+  const logs: string[] = [];
+  console.error = (...values: unknown[]) => logs.push(values.map(String).join(" "));
+  try {
+    await assert.rejects(
+      embedSemanticTexts("model", "api-secret", ["private article text"], undefined, async () => {
+        throw new TypeError("fetch failed: api-secret private article text");
+      }),
+      (error: unknown) => error instanceof SemanticEmbeddingError && error.code === "SEMANTIC_NETWORK_ERROR",
+    );
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(logs.length, 1);
+  assert.match(logs[0]!, /TypeError/u);
+  assert.match(logs[0]!, /"timedOut":false/u);
+  assert.doesNotMatch(logs[0]!, /api-secret|private article text|fetch failed/u);
+});
+
 test("embedding client bisects provider-rejected long inputs and still returns one vector per chunk", async () => {
   let calls = 0;
   const vectors = await embedSemanticTexts("model", "key", ["长文本".repeat(300)], undefined, async (_url, init) => {
