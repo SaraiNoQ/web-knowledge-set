@@ -340,10 +340,12 @@ async function step(db: D1Database, request: Request): Promise<SemanticIndexStep
         await releaseLease(db, id, token).catch(() => undefined);
         return empty("idle", id);
       }
+      if (request.signal.aborted) throw request.signal.reason ?? new DOMException("Aborted", "AbortError");
       const indexes = missing.slice(0, SEMANTIC_CHUNKS_PER_STEP);
       const title = Array.from(doc.title).slice(0, 128).join("");
+      // Once dispatched, an indexing batch may finish after the browser disconnects; the provider call has its own timeout.
       const vectors = await embedSemanticTexts(currentSettings.model, apiKey,
-        indexes.map((index) => title + "\n\n" + chunks[index]!.text), request.signal ?? undefined);
+        indexes.map((index) => title + "\n\n" + chunks[index]!.text));
       const saved = await storeChunks(db, doc, sourceHash, currentSettings.model, currentSettings.revision, token,
         indexes.map((index, offset) => ({ chunk: chunks[index]!, vector: vectors[offset]! })));
       if (!saved) {
@@ -393,7 +395,7 @@ export async function handleSemanticApi(request: Request, db: D1Database, url: U
     const body = await jsonObject(request, 8_192);
     if (Object.keys(body).length !== 1 || typeof body.model !== "string") throw cloudError(400, "INVALID_SEMANTIC_SETTINGS", "model is required");
     let vectors: number[][];
-    try { vectors = await embedSemanticTexts(body.model, key(request), ["织页知识地图连接测试"], request.signal ?? undefined); }
+    try { vectors = await embedSemanticTexts(body.model, key(request), ["织页知识地图连接测试"]); }
     catch (cause) {
       if (cause instanceof SemanticEmbeddingError) throw cloudError(
         cause.code === "INVALID_SEMANTIC_REQUEST" ? 400 : cause.code === "SEMANTIC_AUTH_FAILED" ? 401 : cause.code === "SEMANTIC_RATE_LIMITED" ? 429 : 502,

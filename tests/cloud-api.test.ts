@@ -356,11 +356,25 @@ test("cloud semantic indexing is opt-in, keeps keys out of D1, resumes batches, 
   const headers = { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch, "X-Zhiye-Embedding-Key": apiKey };
   const inputs: string[][] = [];
   const authorizations: string[] = [];
+  let disconnectProbe: AbortController | null = null;
+  let probeSignalAbortedAfterDisconnect: boolean | null = null;
+  let disconnectStep: AbortController | null = null;
+  let stepSignalAbortedAfterDisconnect: boolean | null = null;
   globalThis.fetch = async (url, init) => {
     assert.equal(String(url), "https://api.siliconflow.cn/v1/embeddings");
     assert.equal(init?.redirect, "error");
     authorizations.push(new Headers(init?.headers).get("Authorization") || "");
     const request = JSON.parse(String(init?.body)) as { input: string[] };
+    const providerSignal = init?.signal as AbortSignal | null | undefined;
+    if (request.input[0] === "织页知识地图连接测试" && disconnectProbe) {
+      disconnectProbe.abort();
+      disconnectProbe = null;
+      probeSignalAbortedAfterDisconnect = providerSignal?.aborted ?? null;
+    } else if (disconnectStep) {
+      disconnectStep.abort();
+      disconnectStep = null;
+      stepSignalAbortedAfterDisconnect = providerSignal?.aborted ?? null;
+    }
     inputs.push(request.input);
     return new Response(JSON.stringify({ data: request.input.map((_, index) => ({ index, embedding: [0.6, 0.8] })) }), {
       headers: { "Content-Type": "application/json" },
@@ -386,10 +400,13 @@ test("cloud semantic indexing is opt-in, keeps keys out of D1, resumes batches, 
     }), env);
     assert.equal(invalidProbe.status, 400);
     assert.equal((await invalidProbe.json() as { error: { code: string } }).error.code, "INVALID_SEMANTIC_REQUEST");
+    const probeController = new AbortController();
+    disconnectProbe = probeController;
     const tested = await handleRequest(new Request("https://app.example.com/api/semantic/test", {
-      method: "POST", headers, body: JSON.stringify({ model: "BAAI/bge-m3" }),
+      method: "POST", headers, body: JSON.stringify({ model: "BAAI/bge-m3" }), signal: probeController.signal,
     }), env);
     assert.deepEqual(await tested.json(), { ok: true, model: "BAAI/bge-m3", dimension: 2 });
+    assert.equal(probeSignalAbortedAfterDisconnect, false);
 
     const created = await handleRequest(new Request("https://app.example.com/api/documents", {
       method: "POST", headers, body: JSON.stringify({ title: "跨语言检索" }),
@@ -402,11 +419,46 @@ test("cloud semantic indexing is opt-in, keeps keys out of D1, resumes batches, 
     assert.equal(updated.status, 200);
     const estimate = await handleRequest(new Request("https://app.example.com/api/settings/semantic?estimate=true"), env);
     assert.equal((await estimate.json() as { estimatedPendingChunks: number }).estimatedPendingChunks, 8);
-    const step = () => handleRequest(new Request("https://app.example.com/api/semantic/index-step", {
-      method: "POST", headers, body: "{}",
+    const step = (signal?: AbortSignal) => handleRequest(new Request("https://app.example.com/api/semantic/index-step", {
+      method: "POST", headers, body: "{}", ...(signal ? { signal } : {}),
     }), env);
-    const first = await step();
+    const disconnectedSignal = new AbortController();
+    let leaseCheckReached = false;
+    const originalDb = env.DB;
+    const wrapLeaseStatement = (statement: D1Statement): D1Statement => ({
+      bind(...values) { return wrapLeaseStatement(statement.bind(...values)); },
+      async first<T>() {
+        const result = await statement.first<T>();
+        leaseCheckReached = true;
+        disconnectedSignal.abort();
+        return result;
+      },
+      all<T>() { return statement.all<T>(); },
+      run<T>() { return statement.run<T>(); },
+    });
+    env.DB = {
+      prepare(sql) {
+        const statement = originalDb.prepare(sql);
+        return sql.includes("SELECT 1 FROM cloud_semantic_indexes si JOIN cloud_documents d")
+          ? wrapLeaseStatement(statement)
+          : statement;
+      },
+      batch: originalDb.batch!.bind(originalDb),
+    };
+    const callsBeforeDisconnect = inputs.length;
+    let cancelled: Response;
+    try { cancelled = await step(disconnectedSignal.signal); }
+    finally { env.DB = originalDb; }
+    const cancelledBody = await cancelled.json() as { status?: string; error?: { code?: string } };
+    assert.equal(leaseCheckReached, true);
+    assert.equal(cancelled.status, 500, JSON.stringify(cancelledBody));
+    assert.equal(inputs.length, callsBeforeDisconnect);
+    assert.equal((db.sqlite.prepare("SELECT lease_token AS leaseToken FROM cloud_semantic_indexes WHERE document_id=?").get(document.id) as { leaseToken: string | null }).leaseToken, null);
+    const stepController = new AbortController();
+    disconnectStep = stepController;
+    const first = await step(stepController.signal);
     assert.equal((await first.json() as { status: string }).status, "progress");
+    assert.equal(stepSignalAbortedAfterDisconnect, false);
     assert.equal(inputs.at(-1)?.length, 4);
     assert.equal((db.sqlite.prepare("SELECT chunk_done FROM cloud_semantic_indexes WHERE document_id=?").get(document.id) as { chunk_done: number }).chunk_done, 4);
     const second = await step();
