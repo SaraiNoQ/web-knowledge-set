@@ -362,7 +362,7 @@ test("cloud semantic indexing is opt-in, keeps keys out of D1, resumes batches, 
   let stepSignalAbortedAfterDisconnect: boolean | null = null;
   globalThis.fetch = async (url, init) => {
     assert.equal(String(url), "https://api.siliconflow.cn/v1/embeddings");
-    assert.equal(init?.redirect, "error");
+    assert.equal(init?.redirect, "manual");
     authorizations.push(new Headers(init?.headers).get("Authorization") || "");
     const request = JSON.parse(String(init?.body)) as { input: string[] };
     const providerSignal = init?.signal as AbortSignal | null | undefined;

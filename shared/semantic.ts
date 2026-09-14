@@ -155,7 +155,9 @@ async function embedSemanticTextsOnce(
   try {
     const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
     response = await fetcher(SEMANTIC_EMBEDDINGS_URL, {
-      method: "POST", redirect: "error",
+      // Cloudflare's runtime rejects redirect:"error" before the request is sent,
+      // so the redirect is refused after the response instead of by the runtime.
+      method: "POST", redirect: "manual",
       headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" },
       body: JSON.stringify({ model: model.trim(), input: texts, encoding_format: "float" }),
       signal: requestSignal,
@@ -172,6 +174,7 @@ async function embedSemanticTextsOnce(
       timedOut ? "The embedding provider timed out" : "The embedding provider could not be reached",
     );
   }
+  if (response.status >= 300 && response.status < 400) throw new SemanticEmbeddingError("SEMANTIC_REDIRECT_REJECTED", "The embedding provider redirects the request");
   if (response.status === 401 || response.status === 403) throw new SemanticEmbeddingError("SEMANTIC_AUTH_FAILED", "The embedding API key was rejected");
   if (response.status === 429) throw new SemanticEmbeddingError("SEMANTIC_RATE_LIMITED", "The embedding provider is rate limiting requests");
   if (response.status === 413) throw new SemanticEmbeddingError("SEMANTIC_INPUT_TOO_LARGE", "The embedding provider rejected the input size");

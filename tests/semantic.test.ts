@@ -16,6 +16,7 @@ import {
   SEMANTIC_CHUNK_SIZE,
   SEMANTIC_EMBEDDINGS_URL,
   SEMANTIC_FORMAT_VERSION,
+  isRetryableSemanticError,
   SemanticEmbeddingError,
   splitSemanticSections,
 } from "../shared/semantic.js";
@@ -55,7 +56,7 @@ test("embedding client pins the HTTPS provider, caps each batch, and validates u
     requestedUrl = String(url);
     authorization = new Headers(init?.headers).get("Authorization") || "";
     inputs = (JSON.parse(String(init?.body)) as { input: string[] }).input;
-    assert.equal(init?.redirect, "error");
+    assert.equal(init?.redirect, "manual");
     return new Response(JSON.stringify({ data: [
       { index: 1, embedding: [0, 1] },
       { index: 0, embedding: [1, 0] },
@@ -97,6 +98,19 @@ test("embedding transport diagnostics omit API keys, input text, and raw errors"
   assert.match(logs[0]!, /TypeError/u);
   assert.match(logs[0]!, /"timedOut":false/u);
   assert.doesNotMatch(logs[0]!, /api-secret|private article text|fetch failed/u);
+});
+
+test("embedding client refuses a provider redirect instead of following it", async () => {
+  let calls = 0;
+  const redirecting = async () => {
+    calls += 1;
+    return new Response("", { status: 302, headers: { Location: "https://elsewhere.example.com/v1/embeddings" } });
+  };
+  await assert.rejects(embedSemanticTexts("model", "key", ["text"], undefined, redirecting), (error: unknown) =>
+    error instanceof SemanticEmbeddingError && error.code === "SEMANTIC_REDIRECT_REJECTED");
+  assert.equal(calls, 1);
+  // A redirect cannot fix itself, so it must not spend the backoff retries.
+  assert.equal(isRetryableSemanticError("SEMANTIC_REDIRECT_REJECTED"), false);
 });
 
 test("embedding client bisects provider-rejected long inputs and still returns one vector per chunk", async () => {

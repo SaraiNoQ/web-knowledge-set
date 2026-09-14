@@ -132,6 +132,7 @@ scripts/soak-web-preview.sh --verify-restart rc-0.9.2
 - `SEMANTIC_AUTH_FAILED`：清除旧密钥，重新录入并测试；云端密钥单独保存在当前浏览器站点存储。
 - `SEMANTIC_RATE_LIMITED`、`SEMANTIC_NETWORK_ERROR` 或 `SEMANTIC_PROVIDER_UNAVAILABLE`：单篇最多尝试 3 次（首次加两次自动重试），分别等待约 1 分钟和 5 分钟；连续 3 次索引失败会自动暂停，之后可手动重试失败资料。
 - `SEMANTIC_INPUT_TOO_LARGE`：供应商拒绝输入时会递归拆短文本；仍无法通过时查看对应状态，不会静默截断正文。
+- `SEMANTIC_REDIRECT_REJECTED`：端点返回了重定向，织页为保护密钥不会跟随，也不会重试；确认供应商未改址后再运行“连接测试”。
 - 若语义模型改变，旧向量会清除，需重新测试并启用。恢复留档后语义索引默认暂停，用户可在核对密钥后再次启用。
 
 ### 数据库损坏或进入恢复模式

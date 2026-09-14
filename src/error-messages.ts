@@ -73,6 +73,7 @@ const ERROR_MESSAGES: Readonly<Record<string, string>> = {
   SEMANTIC_RATE_LIMITED: "SiliconFlow 暂时限流，织页会按退避间隔重试。",
   SEMANTIC_NETWORK_ERROR: "无法连接 SiliconFlow，织页会按退避间隔重试。",
   SEMANTIC_PROVIDER_UNAVAILABLE: "SiliconFlow 暂时不可用，织页会按退避间隔重试。",
+  SEMANTIC_REDIRECT_REJECTED: "SiliconFlow 返回了不允许的重定向，已停止请求。",
   SEMANTIC_INVALID_RESPONSE: "SiliconFlow 返回了无效向量，当前资料索引未发布。",
   SEMANTIC_INPUT_TOO_LARGE: "供应商仍无法处理这段文本，已标记失败；可稍后重试该资料。",
   SEMANTIC_SETTINGS_CONFLICT: "语义关联设置已在其他窗口更新，请重新打开设置。",

@@ -372,7 +372,9 @@ export async function handlePaperApi(request: Request, db: D1Database, bucket: R
     if (typeof body.url !== "string" || Object.keys(body).length !== 1) throw new CloudHttpError(400, "INVALID_PAPER_REQUEST", "A paper URL is required");
     const sourceUrl = await publicUrl(body.url);
     const pdfUrl = sourceUrl.includes("arxiv.org/abs/") ? sourceUrl.replace("/abs/", "/pdf/") + ".pdf" : sourceUrl;
-    const response = await fetch(pdfUrl, { redirect: "error" });
+    // Cloudflare's runtime rejects redirect:"error" before the request is sent, so
+    // the !response.ok guard below refuses a redirect instead of the runtime.
+    const response = await fetch(pdfUrl, { redirect: "manual" });
     if (!response.ok) throw new CloudHttpError(502, "PAPER_FETCH_FAILED", "Paper PDF could not be fetched");
     return { status: 201, body: await create(db, bucket, "url", sourceUrl, "paper.pdf", new Uint8Array(await response.arrayBuffer())) };
   }
