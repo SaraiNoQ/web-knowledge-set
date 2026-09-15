@@ -1575,8 +1575,8 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .library-view-toggle button[aria-pressed="true"], .map-view-switch button[aria-pressed="true"] { color: var(--ink); background: #fffdf7; box-shadow: 0 1px 3px rgba(43,37,28,.12); }
 .workspace.is-map-mode { display: block; min-height: 0; }
 .workspace.is-map-mode .library-panel { display: none; }
-.workspace.is-map-mode .reader-panel { display: block; min-height: calc(100vh - 246px); }
-.knowledge-map-host { min-height: 600px; height: calc(100vh - 246px); }
+.workspace.is-map-mode .reader-panel { display: block; min-height: 100vh; min-height: 100dvh; }
+.knowledge-map-host { min-height: 600px; height: 100vh; height: 100dvh; }
 .knowledge-map-host.is-dormant { position: fixed; z-index: -1; top: 0; left: -12000px; width: min(1200px, calc(100vw - 40px)); height: min(760px, calc(100vh - 180px)); visibility: hidden; pointer-events: none; }
 .map-load-fallback { display: grid; min-height: 520px; place-items: center; color: var(--ink-soft); font: 14px var(--font-serif); }
 .knowledge-map { display: flex; height: 100%; min-height: 600px; flex-direction: column; background: rgba(250,247,239,.62); }
@@ -1676,16 +1676,16 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   .knowledge-map-detail { padding-inline: 14px; }
 }
 @media (max-width: 820px) {
-  .workspace.is-map-mode .reader-panel { display: block; min-height: calc(100vh - 210px); }
-  .knowledge-map-host { height: calc(100vh - 210px); min-height: 590px; }
+  .workspace.is-map-mode .reader-panel { display: block; }
+  .knowledge-map-host { min-height: 590px; }
   .knowledge-map-layout { grid-template-columns: 170px minmax(0,1fr); }
   .knowledge-map-detail { display: none; }
   .knowledge-map-detail.is-open { position: fixed; z-index: 30; right: 16px; bottom: 16px; display: block; width: min(340px, calc(100vw - 32px)); max-height: min(70vh, 540px); border: 1px solid var(--line-strong); box-shadow: var(--shadow); }
   .map-detail-close { display: inline-block; }
 }
 @media (max-width: 560px) {
-  .workspace.is-map-mode .reader-panel { display: block !important; min-height: calc(100vh - 188px); }
-  .knowledge-map-host { height: calc(100vh - 188px); min-height: 660px; }
+  .workspace.is-map-mode .reader-panel { display: block !important; }
+  .knowledge-map-host { min-height: 660px; }
   .knowledge-map { min-height: 660px; }
   .knowledge-map-head { min-height: 84px; padding: 12px 14px; }
   .knowledge-map-head h2 { font-size: 21px; }

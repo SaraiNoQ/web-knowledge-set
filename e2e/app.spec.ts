@@ -373,6 +373,49 @@ test("knowledge map selects a node and returns from the existing reader to the s
   await expect(page.getByRole("button", { name: "全库" })).toHaveAttribute("aria-pressed", "true");
 });
 
+test("knowledge map fills the window height at the bottom of the page", async ({ page }) => {
+  await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
+  if (await deferSetup.isVisible()) await deferSetup.click();
+  await page.getByRole("button", { name: "知识地图" }).click();
+  await expect(page.getByRole("heading", { name: "知识地图", exact: true })).toBeVisible();
+
+  // The map is one viewport tall and the app chrome above it stays in the page
+  // flow, so scrolling past the chrome leaves the map filling the window - the
+  // canvas region must reach the bottom too, not just the host box.
+  for (const width of [1440, 1000, 800, 560]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect.poll(async () => page.locator(".knowledge-map-host").evaluate((element) =>
+      Math.abs(Math.round(element.clientHeight - window.innerHeight)))).toBeLessThanOrEqual(2);
+    const atBottom = await page.evaluate(() => {
+      window.scrollTo(0, 100_000);
+      const bottomOf = (selector: string) => {
+        const node = document.querySelector(selector) as HTMLElement | null;
+        return node ? Math.round(node.getBoundingClientRect().bottom) : null;
+      };
+      const host = document.querySelector(".knowledge-map-host") as HTMLElement;
+      return {
+        top: Math.round(host.getBoundingClientRect().top),
+        hostBottom: bottomOf(".knowledge-map-host"),
+        mapBottom: bottomOf(".knowledge-map"),
+        canvasBottom: bottomOf(".knowledge-map-canvas"),
+        inner: window.innerHeight,
+        scrolled: Math.round(window.scrollY),
+        overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      };
+    });
+    expect(atBottom.scrolled).toBeGreaterThan(0);
+    expect(atBottom.overflowX).toBeLessThanOrEqual(0);
+    expect(Math.abs(atBottom.top)).toBeLessThanOrEqual(2);
+    for (const bottom of [atBottom.hostBottom, atBottom.mapBottom, atBottom.canvasBottom]) {
+      expect(bottom).not.toBeNull();
+      expect(Math.abs((bottom as number) - atBottom.inner)).toBeLessThanOrEqual(2);
+    }
+    await page.evaluate(() => window.scrollTo(0, 0));
+  }
+});
+
 test("knowledge map shows model-ranked semantic neighbors and applies the threshold", async ({ page }) => {
   const contentVersion = { value: 1 };
   const modelVersion = { value: "BAAI/bge-m3" };
