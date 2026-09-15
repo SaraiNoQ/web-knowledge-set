@@ -15,3 +15,9 @@ desktop-resources/
 .DS_Store
 *.log
 .codegraph/
+
+# Local knowledge-base data and backups: these hold a real library, not source.
+backup/
+backup-backups/
+backup-diagnostics/
+.backup.zhiye.lock
