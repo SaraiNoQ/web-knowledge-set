@@ -104,7 +104,7 @@ scripts/soak-web-preview.sh --verify-restart rc-0.9.2
 
 ### 文章图片无法离线显示
 
-云端剪藏与公开抓取会在服务端按 Markdown 图片节点尝试缓存 JPEG、PNG、GIF、WebP 和 AVIF；引用式图片、图片标题以及带括号或尖括号的 URL 也会处理。服务器声明的类型必须与文件签名一致，默认每张 5 MiB、每篇 32 张、合计 20 MiB。SVG、视频、需要 Cookie 的图片、非公网图片和失败请求不会缓存；Markdown 会保留原始 URL，但 Access 保护下的预览不会为了失败图片偷偷回连原站。若网页声明了独立 `text/markdown` 入口，云端公开抓取会优先读取该入口，避免大 HTML 触发浏览器回退限制。
+云端剪藏与公开抓取会在服务端按 Markdown 图片节点尝试缓存 JPEG、PNG、GIF、WebP 和 AVIF；引用式图片、图片标题以及带括号或尖括号的 URL 也会处理。服务器声明的类型必须与文件签名一致，默认每张 10 MiB、每篇 64 张、合计 64 MiB。SVG、视频、需要 Cookie 的图片、非公网图片和失败请求不会缓存；Markdown 会保留原始 URL，但 Access 保护下的预览不会为了失败图片偷偷回连原站。若网页声明了独立 `text/markdown` 入口，云端公开抓取会优先读取该入口，避免大 HTML 触发浏览器回退限制。
 
 ### 编辑内容未保存或发生冲突
 

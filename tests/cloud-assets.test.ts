@@ -7,6 +7,9 @@ import {
   detectImageMime,
   fetchDocumentAssets,
   handleAssetRequest,
+  MAX_ASSET_BYTES,
+  MAX_ASSETS_PER_DOCUMENT,
+  MAX_DOCUMENT_ASSET_BYTES,
 } from "../cloud/assets.js";
 
 function png() {
@@ -134,4 +137,75 @@ test("handleAssetRequest serves a cached asset with immutable caching and a cont
 
   const notAnAsset = await handleAssetRequest(images as never, new URL("https://app.example.com/api/documents"));
   assert.equal(notAnAsset, null);
+});
+
+test("fetchDocumentAssets caches every image of a media-heavy document up to the count limit", async () => {
+  const images = new MemoryImages();
+  // A GIF-heavy article carried 39 images; exceeding the old 32-image ceiling
+  // left its tail without a cached copy and therefore unrenderable.
+  const count = MAX_ASSETS_PER_DOCUMENT + 6;
+  const markdown = Array.from({ length: count }, (_, index) => `![shot-${index}](https://example.com/${index}.png)`).join("\n\n");
+  const { markdown: rewritten, fetched } = await fetchDocumentAssets(
+    { IMAGES: images as never },
+    markdown,
+    "https://example.com/",
+    { resolve: async () => {}, fetch: async (url) => ({ bytes: new TextEncoder().encode(url), mime: "image/png" }) },
+  );
+
+  // Tiny images never fill the byte budget, so the count is the binding limit.
+  assert.equal(fetched, MAX_ASSETS_PER_DOCUMENT);
+  assert.equal([...rewritten.matchAll(/zhiye:\/\/asset\//gu)].length, MAX_ASSETS_PER_DOCUMENT);
+  assert.match(rewritten, /!\[shot-0\]\(zhiye:\/\/asset\//u);
+  assert.match(rewritten, new RegExp(`!\\[shot-${MAX_ASSETS_PER_DOCUMENT - 1}\\]\\(zhiye:\\/\\/asset\\/`, "u"));
+  assert.match(rewritten, new RegExp(`!\\[shot-${MAX_ASSETS_PER_DOCUMENT}\\]\\(https:\\/\\/example\\.com\\/`, "u"));
+});
+
+test("fetchDocumentAssets stops caching once the per-document byte budget is spent", async () => {
+  const images = new MemoryImages();
+  const markdown = Array.from({ length: 12 }, (_, index) => `![large-${index}](https://example.com/large-${index}.png)`).join("\n\n");
+  // One maximum-size buffer, reused: the budget counts `bytes.length`, so a
+  // shared instance keeps the test's memory flat while still filling the budget.
+  const large = new Uint8Array(MAX_ASSET_BYTES);
+  const { fetched } = await fetchDocumentAssets(
+    { IMAGES: images as never },
+    markdown,
+    "https://example.com/",
+    {
+      resolve: async () => {},
+      fetch: async (_url, maxBytes) => {
+        if (large.byteLength > maxBytes) throw new Error("RESPONSE_TOO_LARGE");
+        return { bytes: large, mime: "image/png" };
+      },
+    },
+  );
+
+  assert.equal(fetched, Math.floor(MAX_DOCUMENT_ASSET_BYTES / MAX_ASSET_BYTES));
+});
+
+test("fetchDocumentAssets returns a failed bucket write's reservation to the budget", async () => {
+  const markdown = Array.from({ length: 8 }, (_, index) => `![large-${index}](https://example.com/large-${index}.png)`).join("\n\n");
+  const large = new Uint8Array(MAX_ASSET_BYTES);
+  let writes = 0;
+  const images = {
+    async put() {
+      writes += 1;
+      if (writes === 2) throw new Error("R2_WRITE_FAILED");
+    },
+  };
+  const { fetched } = await fetchDocumentAssets(
+    { IMAGES: images as never },
+    markdown,
+    "https://example.com/",
+    {
+      resolve: async () => {},
+      fetch: async (_url, maxBytes) => {
+        if (large.byteLength > maxBytes) throw new Error("RESPONSE_TOO_LARGE");
+        return { bytes: large, mime: "image/png" };
+      },
+    },
+  );
+
+  // Eight candidates, one failed write: a reservation leaked by the failed
+  // write would leave the whole document one image short.
+  assert.equal(fetched, Math.floor(MAX_DOCUMENT_ASSET_BYTES / MAX_ASSET_BYTES));
 });
