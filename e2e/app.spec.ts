@@ -56,6 +56,45 @@ test("extension content script preserves ChatGPT rendered math in Chromium", asy
   expect(markdown).not.toContain("visible.png");
 });
 
+test("extension content script drops blank lazy-load placeholders and keeps real images", async ({ page }) => {
+  const coverUrl = "https://picx.zhimg.com/v2-76e720da28a568c43c906dcc240d19ed_b.jpg";
+  const hiddenCoverUrl = "https://pic4.zhimg.com/v2-aabda40c0c21d3f4a9b5a132e553b775_b.jpg";
+  const hydratedUrl = "https://pic2.zhimg.com/v2-6392982dbc08b9fe00ed650e6f0ff9c7_1440w.gif";
+  const illustrationUrl = "https://pic1.zhimg.com/v2-41e4d3e797973f100306afa1caf41862_1440w.jpg";
+  const blankCover = "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%221000%22%20height%3D%22768%22%3E%3C%2Fsvg%3E";
+  const png = await readFile("src-tauri/icons/128x128.png");
+  // The fixture's images are never actually fetched: this test is about which
+  // destinations reach the Markdown, not about rendering them.
+  await page.route("https://pic*.zhimg.com/**", (route) => route.fulfill({ contentType: "image/png", body: png }));
+  await page.route("https://zhuanlan.zhihu.com/**", (route) => route.fulfill({ headers: { "Content-Type": "text/html; charset=utf-8" }, body: `<!doctype html><html><head><title>何为 Bento 式布局</title></head><body><main><article><div class="Post-RichText">
+    <p>正文从这一段落开始，长度足以让提取器把这块识别为文章主体而不是页面装饰。下面依次是两个尚未水合的动图（一个用内联样式隐藏真实封面，一个用 class 隐藏）、一个已经水合的动图、一张普通插图，以及一个真的画得出内容的行内图形。</p>
+    <div class="GifPlayer css-1isopsn"><img class="GifPlayer-cover css-qg9zh5" alt="" src="${blankCover}"><img class="ztext-gif" width="1000" role="presentation" alt="动图封面" src="${coverUrl}" data-thumbnail="${coverUrl}" style="display: none;"><div class="GifPlayer-icon css-d39tw7"></div></div>
+    <p>两段图片之间保留可见文字，这样提取器不会把相邻的图片误判为同一张图的重复渲染，也能让正文边界保持完整。</p>
+    <div class="GifPlayer css-1isopsn"><img class="GifPlayer-cover css-qg9zh5" alt="" src="${blankCover}"><img class="ztext-gif hidden" width="1080" role="presentation" alt="动图封面" src="${hiddenCoverUrl}" data-thumbnail="${hiddenCoverUrl}"></div>
+    <p>再一段可见文字，随后是已经水合的动图，它的地址必须原样保留且不被替换成别的图片。</p>
+    <div class="GifPlayer css-1isopsn"><img class="ztext-gif" width="1080" role="presentation" alt="动图封面" src="${hydratedUrl}" style="display: block;"></div>
+    <p>接下来是普通插图与一个带圆形的行内 SVG，它确实会画出东西，因此必须原样保留在正文里。</p>
+    <img src="${illustrationUrl}" alt="插图">
+    <img src="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2220%22%20height%3D%2220%22%3E%3Ccircle%20cx%3D%2210%22%20cy%3D%2210%22%20r%3D%228%22%2F%3E%3C%2Fsvg%3E" alt="圆点">
+    <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMCIgaGVpZ2h0PSIxMCI+PC9zdmc+" alt="base64 占位">
+    <p>结尾段落同样保留正文级文字长度，确保最后一张图片之后仍有可见内容。</p>
+  </div></article></main></body></html>` }));
+  await page.goto("https://zhuanlan.zhihu.com/p/670367265");
+  await page.addScriptTag({ content: await readFile("dist/extensions/zhiye-clipper-chrome/content.js", "utf8") });
+  const markdown = await page.evaluate(async () => (await (window as typeof window & { __ZHIYE_CLIP_RESULT__: Promise<{ markdown: string }> }).__ZHIYE_CLIP_RESULT__).markdown);
+
+  // Both blank covers become their real picture, whichever channel hid it, and
+  // the hydrated player and the illustration keep their own addresses.
+  const destinations = [...markdown.matchAll(/!\[[^\]]*\]\(<?([^)\s>]+)>?/gu)].map((match) => match[1]!);
+  expect(destinations.filter((url) => url.startsWith("https://"))).toEqual([coverUrl, hiddenCoverUrl, hydratedUrl, illustrationUrl]);
+  expect(markdown).not.toContain("height%3D%22768%22");
+  // The blank base64 placeholder has no picture behind it and must simply go;
+  // the inline SVG that draws a circle is content and must survive.
+  const inlineSvg = destinations.filter((url) => url.startsWith("data:"));
+  expect(inlineSvg).toHaveLength(1);
+  expect(decodeURIComponent(inlineSvg[0]!)).toContain("<circle");
+});
+
 test("refreshes the directory when the browser extension announces a saved clip", async ({ page }) => {
   await page.goto("/");
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
