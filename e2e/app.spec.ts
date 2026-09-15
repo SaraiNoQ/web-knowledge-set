@@ -672,7 +672,8 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await page.getByLabel("AI 远程模型").fill("remote-e2e-model");
   await page.getByLabel("远程模型 API 密钥").fill("e2e-memory-only-key");
   const keyRequest = page.waitForRequest((request) => request.method() === "PUT" && new URL(request.url()).pathname === "/api/settings/llm/key");
-  await page.getByRole("button", { name: "保存密钥" }).click();
+  // The AI dialog also nests the semantic panel, which has its own 保存密钥 button.
+  await page.locator(".ai-keychain").getByRole("button", { name: "保存密钥" }).click();
   expect((await keyRequest).postDataJSON()).toEqual({
     apiKey: "e2e-memory-only-key",
     endpointUrl: "https://api.openai.com/v1/chat/completions",
@@ -703,7 +704,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(page.getByLabel("AI 远程端点地址")).toBeVisible();
   await page.getByLabel("AI 远程端点地址").fill("http://insecure.example.test/v1/chat/completions");
   await page.getByLabel("远程模型 API 密钥").fill("must-not-bind-to-insecure-endpoint");
-  await page.getByRole("button", { name: "保存密钥" }).click();
+  await page.locator(".ai-keychain").getByRole("button", { name: "保存密钥" }).click();
   await expect(page.getByRole("alert")).toContainText("端点地址无效");
   await expect(page.getByText("当前平台未加载密钥", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "删除密钥" }).click();
@@ -1596,7 +1597,7 @@ test("desktop AI settings explains local key failures without cloud wording", as
   await page.getByRole("button", { name: "远程 HTTPS", exact: true }).click();
   await page.getByLabel("AI 远程模型").fill("desktop-e2e-model");
   await page.getByLabel("远程模型 API 密钥").fill("desktop-e2e-key");
-  await page.getByRole("button", { name: "保存密钥", exact: true }).click();
+  await page.locator(".ai-keychain").getByRole("button", { name: "保存密钥", exact: true }).click();
   await expect(page.getByText("密钥已立即生效", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "测试连接", exact: true }).click();
   await expect(page.getByText("AI 端点指向不允许的网络地址", { exact: false })).toBeVisible();
