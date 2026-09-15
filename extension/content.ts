@@ -5,12 +5,58 @@ function text(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+const NON_DRAWING_SVG_CHILDREN = new Set(["title", "desc", "metadata"]);
+
+/** The markup of an inline `data:image/svg+xml` source, or null when there is none. */
+function inlineSvgSource(src: string) {
+  const match = /^data:image\/svg\+xml([^,]*),(.*)$/isu.exec(src.trim());
+  if (!match) return null;
+  const [, meta, body] = match;
+  try {
+    return /;base64/iu.test(meta!) ? atob(body!) : decodeURIComponent(body!);
+  } catch {
+    return null;
+  }
+}
+
+/** Whether an inline SVG draws nothing at all, which makes it a lazy-load placeholder. */
+function paintsNothing(source: string) {
+  const parsed = new DOMParser().parseFromString(source, "image/svg+xml");
+  const root = parsed.documentElement as Element | null;
+  if (root?.localName !== "svg") return false;
+  return ![...root.children].some((child) => !NON_DRAWING_SVG_CHILDREN.has(child.localName.toLowerCase()));
+}
+
 async function extract(): Promise<ZhiyeClipResult> {
   const page = document.cloneNode(true) as Document;
   for (const element of page.querySelectorAll("script, style, noscript, iframe, object, embed, form, input, textarea, select, [contenteditable]")) {
     const presentationOnly = element.getAttribute("contenteditable")?.toLowerCase() === "false"
       && !element.matches("script, style, noscript, iframe, object, embed, form, input, textarea, select");
     if (!presentationOnly) element.remove();
+  }
+  // Zhihu's GIF player covers an unhydrated animation with an `<img>` whose only
+  // paint is an empty inline SVG, and parks the real picture in a sibling that is
+  // hidden until it loads. Such a placeholder shows nothing, but a clip taken
+  // before hydration would hand the image cache a destination it can never fetch,
+  // leaving a broken image where the picture belongs. Give the placeholder the
+  // sibling's picture and drop the sibling rather than un-hiding it: Defuddle
+  // removes hidden elements through several channels of its own, so a sibling
+  // left in place would be lost along with the figure.
+  for (const element of [...page.querySelectorAll("img")]) {
+    const source = inlineSvgSource(element.getAttribute("src") ?? "");
+    if (!source || !paintsNothing(source)) continue;
+    const picture = [...(element.parentElement?.children ?? [])].find((sibling) => (
+      sibling !== element
+      && sibling.localName === "img"
+      && /^https?:/iu.test((sibling.getAttribute("src") ?? "").trim())
+    ));
+    if (!picture) {
+      element.remove();
+      continue;
+    }
+    element.setAttribute("src", picture.getAttribute("src")!);
+    if (!element.getAttribute("alt")) element.setAttribute("alt", picture.getAttribute("alt") ?? "");
+    picture.remove();
   }
   const protectedMath = protectRenderedMath(page);
   for (const element of page.querySelectorAll("button, [contenteditable]")) {

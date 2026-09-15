@@ -20,10 +20,22 @@ import { fromMarkdown } from "mdast-util-from-markdown";
  * unchanged — references live in `markdown` and the bytes live in R2.
  */
 
-export const MAX_ASSETS_PER_DOCUMENT = 32;
-export const MAX_ASSET_BYTES = 5 * 1024 * 1024;
-export const MAX_DOCUMENT_ASSET_BYTES = 20 * 1024 * 1024;
-export const ASSET_CONCURRENCY = 4;
+/**
+ * Per-document asset budget. Media-heavy articles exhaust a small budget well
+ * before their last image: a GIF-heavy explainer measures about 55 MiB across
+ * 39 images, and the original 20 MiB / 32-image budget ran out around the
+ * seventeenth, leaving every later image without a cached copy. Since the
+ * reader never re-connects to the origin, those images render as placeholders.
+ * The per-file bound matches the app's offline-image ceiling, and one
+ * document's total stays inside the cloud archive's decompression limit.
+ * Concurrency is held at three: each in-flight response is buffered twice while
+ * it is read and copied, so a larger per-file bound has to be paid for with
+ * fewer simultaneous files.
+ */
+export const MAX_ASSETS_PER_DOCUMENT = 64;
+export const MAX_ASSET_BYTES = 10 * 1024 * 1024;
+export const MAX_DOCUMENT_ASSET_BYTES = 64 * 1024 * 1024;
+export const ASSET_CONCURRENCY = 3;
 const ASSET_HOST = "asset";
 const ASSET_URI = /^zhiye:\/\/asset\/([a-f0-9]{64})$/u;
 const HASH = /^[a-f0-9]{64}$/u;
@@ -250,7 +262,8 @@ export async function fetchDocumentAssets(
   }).slice(0, MAX_ASSETS_PER_DOCUMENT);
   const rewritten = new Map<ImageDestination, string>();
   let fetched = 0;
-  let totalBytes = 0;
+  let storedBytes = 0;
+  let reservedBytes = 0;
   const rawByUrl = new Map<string, ImageDestination[]>();
   for (const destination of candidates) {
     const list = rawByUrl.get(destination.url!) ?? [];
@@ -261,23 +274,32 @@ export async function fetchDocumentAssets(
   let next = 0;
   const run = async () => {
     while (next < fetcheable.length) {
+      // Only committed bytes are allowed to end the loop for good: charging each
+      // worker its maximum allocation up front made one worker exit while its
+      // peers were still fetching, dropping trailing images that still fit.
+      if (storedBytes >= MAX_DOCUMENT_ASSET_BYTES) break;
       const destination = fetcheable[next++]!;
       const url = destination.url!;
-      const remaining = MAX_DOCUMENT_ASSET_BYTES - totalBytes;
-      if (remaining <= 0) break;
-      const allocation = Math.min(MAX_ASSET_BYTES, remaining);
-      totalBytes += allocation;
+      const allocation = Math.min(MAX_ASSET_BYTES, MAX_DOCUMENT_ASSET_BYTES - storedBytes);
+      let reserved = 0;
       try {
         await resolve(url);
         const asset = await fetchAsset(url, allocation);
+        // Reserve the bytes before the first await: two workers checking the same
+        // stale count would otherwise both commit and overshoot the budget.
+        if (storedBytes + reservedBytes + asset.bytes.length > MAX_DOCUMENT_ASSET_BYTES) continue;
+        reserved = asset.bytes.length;
+        reservedBytes += reserved;
         const hash = await sha256(asset.bytes);
         await env.IMAGES.put(hash, asset.bytes, { httpMetadata: { contentType: asset.mime } });
-        totalBytes = totalBytes - allocation + asset.bytes.length;
+        reservedBytes -= reserved;
+        reserved = 0;
+        storedBytes += asset.bytes.length;
         const uri = assetUri(hash);
         for (const item of rawByUrl.get(url) ?? []) rewritten.set(item, uri);
         fetched += 1;
       } catch {
-        totalBytes -= allocation;
+        reservedBytes -= reserved;
         // A failing image keeps its original URL so the document stays usable.
       }
     }

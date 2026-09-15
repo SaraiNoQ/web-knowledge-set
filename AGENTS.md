@@ -45,7 +45,7 @@
 
 # Firefox extension packaging
 
-- The Firefox and Chrome extension versions are sourced from `extension/manifest.firefox.json` and `extension/manifest.chrome.json`; keep them equal for a release. The current Firefox package is `0.3.5`, with fixed AMO ID `clipper@zhiye.sarainoq.cn`.
+- The Firefox and Chrome extension versions are sourced from `extension/manifest.firefox.json` and `extension/manifest.chrome.json`; keep them equal for a release. The current Firefox package is `0.3.6`, with fixed AMO ID `clipper@zhiye.sarainoq.cn`.
 - Build and validate from the server mirror, not the local source workspace:
 
       cd /root/dev/zhiye
