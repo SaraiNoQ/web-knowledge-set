@@ -80,7 +80,7 @@ snapshots and offline images.
 ### Browser extension
 
 Install `dist/extensions/` (produced by `pnpm build`) unpacked in Chrome, or load it temporarily in Firefox. Current
-version `0.3.5`, **not published to any extension store**.
+version `0.3.6`, **not published to any extension store**.
 
 ## Privacy and boundaries
 
