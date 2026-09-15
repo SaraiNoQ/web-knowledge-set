@@ -68,6 +68,18 @@ const ERROR_MESSAGES: Readonly<Record<string, string>> = {
   LLM_TRANSLATION_TOO_LARGE: "正文超出当前完整翻译限制，请缩小文档后重试。",
   LLM_INTERNAL_ERROR: "AI 任务内部状态异常，请重新预览后再试。",
 
+  SEMANTIC_KEY_MISSING: "请先保存独立的 SiliconFlow 向量 API 密钥。",
+  SEMANTIC_AUTH_FAILED: "SiliconFlow 拒绝了向量 API 密钥；索引已暂停，请更新密钥并重新测试。",
+  SEMANTIC_RATE_LIMITED: "SiliconFlow 暂时限流，织页会按退避间隔重试。",
+  SEMANTIC_NETWORK_ERROR: "无法连接 SiliconFlow，织页会按退避间隔重试。",
+  SEMANTIC_PROVIDER_UNAVAILABLE: "SiliconFlow 暂时不可用，织页会按退避间隔重试。",
+  SEMANTIC_REDIRECT_REJECTED: "SiliconFlow 返回了不允许的重定向，已停止请求。",
+  SEMANTIC_INVALID_RESPONSE: "SiliconFlow 返回了无效向量，当前资料索引未发布。",
+  SEMANTIC_INPUT_TOO_LARGE: "供应商仍无法处理这段文本，已标记失败；可稍后重试该资料。",
+  SEMANTIC_SETTINGS_CONFLICT: "语义关联设置已在其他窗口更新，请重新打开设置。",
+  SEMANTIC_MODEL_CHANGE_REQUIRES_PAUSE: "请先暂停索引，再更换向量模型。",
+  SEMANTIC_KEY_STORAGE_FAILED: "浏览器无法保存或删除云端向量密钥，请检查站点存储权限。",
+
   BACKUP_FAILED: "完整留档创建失败，请检查存储空间后重试。",
   BACKUP_MISSING: "留档文件已不存在，无法继续校验或恢复。",
   BACKUP_DELETE_PENDING: "留档删除尚未完成，请重新点击删除。",

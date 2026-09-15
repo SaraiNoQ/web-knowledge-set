@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  cloudSemanticCredentialConfigured,
+  cloudSemanticCredentialHeaders,
+  deleteCloudSemanticCredential,
+  loadCloudSemanticCredential,
+  saveCloudSemanticCredential,
   cloudLlmCredentialHeaders,
   cloudLlmCredentialMatches,
   deleteCloudLlmCredential,
@@ -42,4 +47,26 @@ test("cloud AI credential survives reload, stays endpoint-bound, and deletes", (
   assert.equal(loadCloudLlmCredential(siteStorage), null);
   assert.equal(siteStorage.length, 0);
   assert.throws(() => saveCloudLlmCredential(siteStorage, "line\nbreak", "https://api.deepseek.com/chat/completions"));
+});
+
+test("cloud semantic key uses isolated storage and the fixed SiliconFlow endpoint", () => {
+  const siteStorage = storage();
+  saveCloudLlmCredential(siteStorage, "chat-key", "https://api.openai.com/v1/chat/completions");
+  saveCloudSemanticCredential(siteStorage, " embedding-key ");
+  const semantic = loadCloudSemanticCredential(siteStorage);
+  assert.deepEqual(semantic, { apiKey: "embedding-key", endpointUrl: "https://api.siliconflow.cn/v1/embeddings" });
+  assert.equal(cloudSemanticCredentialConfigured(semantic), true);
+  assert.deepEqual(cloudSemanticCredentialHeaders(semantic), { "X-Zhiye-Embedding-Key": "embedding-key" });
+  assert.deepEqual(cloudLlmCredentialHeaders(loadCloudLlmCredential(siteStorage), "https://api.openai.com/v1/chat/completions"), {
+    "X-Zhiye-LLM-Key": "chat-key",
+  });
+
+  siteStorage.setItem("zhiye.cloud.semantic-credential.v1", JSON.stringify({ apiKey: "wrong-endpoint", endpointUrl: "https://example.com/embeddings" }));
+  assert.equal(loadCloudSemanticCredential(siteStorage), null);
+  assert.equal(siteStorage.getItem("zhiye.cloud.semantic-credential.v1"), null);
+  assert.equal(loadCloudLlmCredential(siteStorage)?.apiKey, "chat-key");
+  saveCloudSemanticCredential(siteStorage, "embedding-key");
+  deleteCloudSemanticCredential(siteStorage);
+  assert.equal(loadCloudSemanticCredential(siteStorage), null);
+  assert.equal(loadCloudLlmCredential(siteStorage)?.apiKey, "chat-key");
 });

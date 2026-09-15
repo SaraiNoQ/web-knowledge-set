@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { lazy, Suspense } from "react";
 import type { ChangeEvent, FormEvent, KeyboardEvent, ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
@@ -45,6 +46,7 @@ import { MarkdownEditor } from "./components/MarkdownEditor";
 import { Onboarding } from "./components/Onboarding";
 import { PaperReader } from "./components/PaperReader";
 import { DocumentDirectoryRow, LibraryDirectory, type MoveDocumentTarget } from "./components/LibraryDirectory";
+const KnowledgeMap = lazy(() => import("./components/KnowledgeMap"));
 import { IconButton, Select } from "./components/ui/Controls";
 import { useDialogs, useToast } from "./components/ui/Feedback";
 import { Modal } from "./components/ui/Modal";
@@ -532,6 +534,7 @@ export default function App() {
   const [portableNotice, setPortableNotice] = useState("");
   const [portableError, setPortableError] = useState("");
   const [listRefresh, setListRefresh] = useState(0);
+  const [semanticRefresh, setSemanticRefresh] = useState(0);
   const [shortcutHelp, setShortcutHelp] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const [inTrash, setInTrash] = useState(false);
@@ -541,6 +544,9 @@ export default function App() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
+  const [graphMode, setGraphMode] = useState(false);
+  const [graphMounted, setGraphMounted] = useState(false);
+  const graphReturnRef = useRef(false);
   const [showBackToTitle, setShowBackToTitle] = useState(false);
   const [currentDoc, setCurrentDoc] = useState<KnowledgeDocument | null>(null);
   const [currentPaper, setCurrentPaper] = useState<PaperDocument | null>(null);
@@ -646,6 +652,7 @@ export default function App() {
   const selectionContextRef = useRef<string | null>(null);
   const selectedDocumentRevisionsRef = useRef(new Map<string, number>());
   const listContextRef = useRef("");
+  const semanticWakeRef = useRef<() => void>(() => undefined);
   const itemsContextRef = useRef("");
   const bulkImportAbortRef = useRef<AbortController | null>(null);
   const externalIntentHandlerRef = useRef<(intents: ExternalIntent[]) => Promise<void>>(async () => undefined);
@@ -1249,6 +1256,44 @@ export default function App() {
     setSaveState("conflict");
     setDraftNotice("检测到另一个窗口写入的草稿，你的当前编辑未被覆盖。");
   }, [installCurrentDocument, updateListItem]);
+
+  useEffect(() => {
+    let running = false;
+    let queued = false;
+    let disposed = false;
+    let controller: AbortController | null = null;
+    const wake = () => {
+      if (disposed) return;
+      if (running) { queued = true; return; }
+      running = true;
+      controller = new AbortController();
+      void (async () => {
+        const settings = await api.getSemanticSettings(controller!.signal);
+        if (!settings.enabled || !settings.apiKeyConfigured) return;
+        const result = await api.advanceSemanticIndex(controller!.signal);
+        if (result.status !== "idle" && result.status !== "busy") setSemanticRefresh((value) => value + 1);
+      })().catch(() => { if (!disposed) setSemanticRefresh((value) => value + 1); }).finally(() => {
+        running = false;
+        controller = null;
+        if (queued && !disposed) { queued = false; wake(); }
+      });
+    };
+    semanticWakeRef.current = wake;
+    const timer = window.setInterval(wake, 60_000);
+    const onVisible = () => { if (document.visibilityState === "visible") wake(); };
+    window.addEventListener("zhiye:semantic-wake", wake);
+    document.addEventListener("visibilitychange", onVisible);
+    wake();
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      window.removeEventListener("zhiye:semantic-wake", wake);
+      document.removeEventListener("visibilitychange", onVisible);
+      controller?.abort();
+    };
+  }, []);
+
+  useEffect(() => { semanticWakeRef.current(); }, [listRefresh]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -2469,11 +2514,19 @@ export default function App() {
   };
 
   const selectDocument = async (id: string) => {
-    if (closeAttemptRef.current || organizationInFlight.current || id === selectedId || lifecycleAction || restoringRevision !== null) return;
-    if (!await confirmDiscardChanges("当前修改尚未保存，确定离开吗？")) return;
-    if (closeAttemptRef.current || organizationInFlight.current || id === selectedIdRef.current || lifecycleAction || restoringRevision !== null) return;
+    if (closeAttemptRef.current || organizationInFlight.current || id === selectedId || lifecycleAction || restoringRevision !== null) return false;
+    if (!await confirmDiscardChanges("当前修改尚未保存，确定离开吗？")) return false;
+    if (closeAttemptRef.current || organizationInFlight.current || id === selectedIdRef.current || lifecycleAction || restoringRevision !== null) return false;
     invalidateNavigation();
     setSelectedId(id);
+    return true;
+  };
+
+  const openGraphDocument = async (id: string) => {
+    if (await selectDocument(id)) {
+      graphReturnRef.current = true;
+      setGraphMode(false);
+    }
   };
 
   const toggleCloudEditing = async () => {
@@ -2494,12 +2547,20 @@ export default function App() {
     setCloudEditing((value) => !value);
   };
 
+  const dismissSelectedDocument = () => {
+    setSelectedId(null);
+    if (graphReturnRef.current) {
+      graphReturnRef.current = false;
+      setGraphMode(true);
+    }
+  };
+
   const closeDocument = async () => {
     if (closeAttemptRef.current || organizationInFlight.current || lifecycleAction || restoringRevision !== null) return false;
     if (!await confirmDiscardChanges("当前修改尚未保存，确定离开吗？")) return false;
     if (closeAttemptRef.current || organizationInFlight.current || lifecycleAction || restoringRevision !== null) return false;
     invalidateNavigation();
-    setSelectedId(null);
+    dismissSelectedDocument();
     return true;
   };
 
@@ -2515,6 +2576,8 @@ export default function App() {
     if (!await confirmDiscardChanges("当前修改尚未保存，确定离开吗？")) return false;
     if (closeAttemptRef.current || organizationInFlight.current || lifecycleAction || restoringRevision !== null) return false;
     invalidateNavigation();
+    graphReturnRef.current = false;
+    setGraphMode(false);
     setLibraryView(view);
     setInTrash(view === "trash");
     setPage(1);
@@ -2572,7 +2635,7 @@ export default function App() {
           setBatchNotice(`已处理当前页选中的 ${result.affectedDocuments} 篇知识。`);
           if (selectedIdRef.current && (batchAction === "trash" || batchAction === "restore")) {
             invalidateNavigation();
-            setSelectedId(null);
+            dismissSelectedDocument();
           } else if (selectedIdRef.current) {
             try {
               const document = await api.getDocument(selectedIdRef.current);
@@ -2581,7 +2644,7 @@ export default function App() {
               setTagText(document.tags.join(", "));
               updateListItem(document);
             } catch {
-              setSelectedId(null);
+              dismissSelectedDocument();
             }
           }
         }
@@ -2889,7 +2952,7 @@ export default function App() {
       setSelectedIds((previous) => { const next = new Set(previous); next.delete(document.id); return next; });
       setPage(1);
       invalidateNavigation();
-      setSelectedId(null);
+      dismissSelectedDocument();
       focusReader();
     } catch (error) {
       if (error instanceof ApiRequestError && error.code === "DRAFT_EXISTS") {
@@ -3292,6 +3355,7 @@ export default function App() {
     }
   }
 
+  const workspaceClassName = ["workspace", selectedId ? "has-selection" : "", libraryCollapsed ? "library-collapsed" : "", graphMode ? "is-map-mode" : ""].filter(Boolean).join(" ");
   if (onboarding === null || runtimeMode === null) {
     return <main className="onboarding-loading" aria-live="polite"><span className="brand-seal">知</span><p>正在打开知识库…</p></main>;
   }
@@ -3448,7 +3512,7 @@ export default function App() {
       {diagnosticsOpen ? (
         <Diagnostics onClose={() => { setDiagnosticsOpen(false); setSafetyOpen(true); }} />
       ) : aiSettingsOpen ? (
-        <AiSettings cloud={cloudMode} onClose={() => setAiSettingsOpen(false)} />
+        <AiSettings cloud={cloudMode} semanticRefresh={semanticRefresh} onClose={() => setAiSettingsOpen(false)} />
       ) : safetyOpen ? (
         <DataSafety
           cloud={cloudMode}
@@ -3515,7 +3579,7 @@ export default function App() {
         </>}
       </section>
 
-      <main className={`workspace ${selectedId ? "has-selection" : ""} ${libraryCollapsed ? "library-collapsed" : ""}`}>
+      <main className={workspaceClassName}>
         <aside id="library-panel" className={`library-panel ${libraryCollapsed ? "is-collapsed" : ""}`} aria-label="知识列表">
           <button type="button" className="library-toggle" aria-expanded={!libraryCollapsed} aria-controls="library-panel" aria-label={libraryCollapsed ? "展开知识织片" : "收起知识织片"} onClick={() => setLibraryCollapsed((value) => !value)}>
             <Icon size={17}><path d={libraryCollapsed ? "m9 6 6 6-6 6" : "m15 6-6 6 6 6"} /></Icon>
@@ -3531,6 +3595,10 @@ export default function App() {
             <div><span className="eyebrow">02 · {inTrash ? "TRASH" : "LIBRARY"}</span><h2>{inTrash ? "回收站" : "知识织片"}</h2></div>
             <span className="total-count">{total}<small>篇</small></span>
           </div>
+          {!inTrash && <div className="library-view-toggle" role="group" aria-label="资料库显示方式">
+            <button type="button" aria-pressed={!graphMode} onClick={() => setGraphMode(false)}>列表</button>
+            <button type="button" aria-pressed={graphMode} onClick={() => { setGraphMounted(true); setGraphMode(true); }}>知识地图</button>
+          </div>}
 
           <nav className="library-tabs" aria-label="资料库视图">
             {([
@@ -3619,7 +3687,8 @@ export default function App() {
         </aside>
 
         <section id="reader-panel" ref={readerPanelRef} className="reader-panel" aria-label="文档工作台" tabIndex={-1}>
-          {!selectedId ? (
+          {graphMounted && <div className={`knowledge-map-host ${graphMode && !selectedId ? "is-active" : "is-dormant"}`} aria-hidden={!graphMode || Boolean(selectedId)}><Suspense fallback={<div className="map-load-fallback" role="status">正在准备知识地图…</div>}><KnowledgeMap active={graphMode && !selectedId} cloud={cloudMode} libraryView={libraryView === "trash" ? "all" : libraryView} query={query} onQueryChange={setQuery} onBack={() => setGraphMode(false)} onOpenDocument={(id) => void openGraphDocument(id)} refreshKey={listRefresh + semanticRefresh} /></Suspense></div>}
+          {graphMode && !selectedId ? null : !selectedId ? (
             <div className="welcome-state">
               <div className="weave-mark" aria-hidden="true"><i /><i /><i /><i /></div>
               <span className="eyebrow">QUIET WORKBENCH</span>

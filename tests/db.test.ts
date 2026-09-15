@@ -25,6 +25,7 @@ import {
   openDatabase,
 } from "../server/db.js";
 import type { BackupRecord, RecentFilter } from "../shared/types.js";
+import { SEMANTIC_FORMAT_VERSION, SEMANTIC_RETRY_DELAYS_MS } from "../shared/semantic.js";
 import { parseImportRequest } from "../server/import.js";
 import { acquireDataLock } from "../server/lock.js";
 
@@ -57,7 +58,7 @@ test("v14 recent filters persist in the local database", () => {
     sort: "updated",
   }];
   try {
-    assert.equal(CURRENT_SCHEMA_VERSION, 18);
+    assert.equal(CURRENT_SCHEMA_VERSION, 19);
     assert.deepEqual(fixture.db.getRecentFilters(), { filters: [], revision: 0 });
     assert.deepEqual(fixture.db.getOnboarding(), { completed: false, revision: 0 });
     assert.deepEqual(fixture.db.setOnboarding(true, 0), {
@@ -512,6 +513,171 @@ test("folders are single-parent, filterable, revision guarded, and delete to roo
     assert.equal(trashAfterDelete.revision, trashBeforeDelete.revision + 1);
     assert.equal(fixture.db.getFolder(folder.id), null);
     assert.equal(fixture.db.listDocuments({ unfiled: true }).total, 1);
+  } finally {
+    fixture.close();
+  }
+});
+
+test("knowledge map returns articles and papers with stable cursors and archive filtering", () => {
+  const fixture = database();
+  try {
+    const folder = fixture.db.createFolder("研究").folder;
+    const article = fixture.db.createArticle("A archived article");
+    const secondArticle = fixture.db.createArticle("B article");
+    const paperFile = Buffer.from("%PDF-1.7\nknowledge map fixture\n", "ascii");
+    const paper = fixture.db.createPaper({
+      sourceKind: "pdf", sourceUrl: null, originalFileName: "map.pdf",
+      hash: createHash("sha256").update(paperFile).digest("hex"), content: paperFile,
+    });
+    assert.equal(paper.created, true);
+    if (!paper.created) return;
+    fixture.db.updateDocument(paper.paper.id, paper.paper.revision, { folderId: folder.id });
+    fixture.db.sql.prepare("UPDATE documents SET archived_at = ? WHERE id = ?").run(new Date().toISOString(), article.id);
+    const first = fixture.db.listKnowledgeMap({ cursor: 0, limit: 1 });
+    const second = fixture.db.listKnowledgeMap({ cursor: Number(first.nextCursor), limit: 1 });
+    assert.equal(first.total, 2);
+    assert.deepEqual(first.items.map(({ id }) => id), [secondArticle.id]);
+    assert.deepEqual(second.items.map(({ id }) => id), [paper.paper.id]);
+    assert.equal(second.items[0]?.kind, "paper");
+    assert.equal(second.items[0]?.folderName, "研究");
+    assert.equal(second.nextCursor, null);
+    const archived = fixture.db.listKnowledgeMap({ cursor: 0, limit: 3, includeArchived: true });
+    assert.deepEqual(archived.items.map(({ id }) => id), [article.id, secondArticle.id, paper.paper.id]);
+    assert.equal(archived.total, 3);
+    fixture.db.softDeleteDocument(secondArticle.id, fixture.db.getDocument(secondArticle.id)!.revision);
+    assert.equal(fixture.db.listKnowledgeMap({ cursor: 0, limit: 10, includeArchived: true }).total, 2);
+  } finally {
+    fixture.close();
+  }
+});
+
+test("semantic index leases persist chunk vectors, content edits invalidate them, and model changes clear caches", () => {
+  const fixture = database();
+  try {
+    const article = fixture.db.createArticle("Index me");
+    const enabled = fixture.db.setSemanticSettings({ enabled: true, model: "BAAI/bge-m3", revision: 0 }, true);
+    assert.equal(enabled.kind, "updated");
+    if (enabled.kind !== "updated") return;
+    const sourceHash = "a".repeat(64);
+    const textHash = "b".repeat(64);
+    assert.equal(fixture.db.claimSemanticIndex(article.id, article.revision, null, enabled.settings.revision,
+      sourceHash, "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION, 1, "lease", Date.now(), Date.now() + 60_000), true);
+    const chunk = { index: 0, pageNumber: null, startOffset: 0, endOffset: 4, textHash, text: "body", weight: 4 };
+    assert.equal(fixture.db.saveSemanticChunks(article.id, article.revision, null, enabled.settings.revision,
+      sourceHash, "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION, "lease", [{ chunk, vector: [1, 0] }]), true);
+    assert.equal(fixture.db.completeSemanticIndex(article.id, article.revision, null, enabled.settings.revision,
+      sourceHash, "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION, "lease", [1, 0]), true);
+    assert.deepEqual(fixture.db.semanticVectorPage(0, 10, "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION).items.map(({ id, vector }) => ({ id, vector })), [{ id: article.id, vector: [1, 0] }]);
+
+    const current = fixture.db.getDocument(article.id)!;
+    const favorite = fixture.db.updateDocument(article.id, current.revision, { favorite: true });
+    assert.equal(favorite.kind, "updated");
+    assert.equal(fixture.db.semanticVectorPage(0, 10, "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION).total, 1);
+    if (favorite.kind !== "updated") return;
+    const renamed = fixture.db.updateDocument(article.id, favorite.document.revision, { title: "Changed source" });
+    assert.equal(renamed.kind, "updated");
+    assert.equal(fixture.db.semanticVectorPage(0, 10, "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION).total, 0);
+
+    const modelChanged = fixture.db.setSemanticSettings({ enabled: false, model: "new-model", revision: enabled.settings.revision }, true);
+    assert.equal(modelChanged.kind, "updated");
+    if (modelChanged.kind !== "updated") return;
+    assert.equal(modelChanged.settings.indexedDocuments, 0);
+    const resumed = fixture.db.setSemanticSettings({ enabled: true, model: "new-model", revision: modelChanged.settings.revision }, true);
+    assert.equal(resumed.kind, "updated");
+    if (resumed.kind !== "updated") return;
+    fixture.db.disableSemanticAfterRestore();
+    const restored = fixture.db.getSemanticSettings(true);
+    assert.equal(restored.enabled, false);
+    assert.equal(restored.apiKeyConfigured, true);
+    assert.equal(restored.indexedDocuments, 0);
+  } finally {
+    fixture.close();
+  }
+});
+
+test("stale source and model revisions cannot create a local semantic lease", () => {
+  const fixture = database();
+  try {
+    const article = fixture.db.createArticle("Revision-bound source");
+    const enabled = fixture.db.setSemanticSettings({ enabled: true, model: "BAAI/bge-m3", revision: 0 }, true);
+    assert.equal(enabled.kind, "updated");
+    if (enabled.kind !== "updated") return;
+    const first = fixture.db.updateDocument(article.id, article.revision, { markdown: "First source text" });
+    assert.equal(first.kind, "updated");
+    if (first.kind !== "updated") return;
+    const snapshot = fixture.db.getSemanticSource(article.id)!;
+    const edited = fixture.db.updateDocument(article.id, first.document.revision, { markdown: "New source text" });
+    assert.equal(edited.kind, "updated");
+    if (edited.kind !== "updated") return;
+    const staleHash = "d".repeat(64);
+    assert.equal(fixture.db.claimSemanticIndex(article.id, snapshot.revision, snapshot.extractionId, enabled.settings.revision,
+      staleHash, "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION, 1, "stale-source", Date.now(), Date.now() + 60_000), false);
+
+    const current = fixture.db.getSemanticSource(article.id)!;
+    const paused = fixture.db.setSemanticSettings({ enabled: false, model: "new-model", revision: enabled.settings.revision }, true);
+    assert.equal(paused.kind, "updated");
+    if (paused.kind !== "updated") return;
+    const resumed = fixture.db.setSemanticSettings({ enabled: true, model: "new-model", revision: paused.settings.revision }, true);
+    assert.equal(resumed.kind, "updated");
+    if (resumed.kind !== "updated") return;
+    assert.equal(fixture.db.claimSemanticIndex(article.id, current.revision, current.extractionId, enabled.settings.revision,
+      staleHash, "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION, 1, "stale-model", Date.now(), Date.now() + 60_000), false);
+    assert.equal((fixture.db.sql.prepare("SELECT COUNT(*) AS count FROM semantic_indexes").get() as { count: number }).count, 0);
+  } finally {
+    fixture.close();
+  }
+});
+
+test("temporary semantic failures back off twice, then stop after the third attempt", () => {
+  const fixture = database();
+  try {
+    const article = fixture.db.createArticle("Retry embedding");
+    const enabled = fixture.db.setSemanticSettings({ enabled: true, model: "BAAI/bge-m3", revision: 0 }, true);
+    assert.equal(enabled.kind, "updated");
+    const sourceHash = "c".repeat(64);
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const now = Date.now();
+      assert.equal(fixture.db.claimSemanticIndex(article.id, article.revision, null, enabled.settings.revision,
+        sourceHash, "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION,
+        1, `lease-${attempt}`, now, now + 60_000), true);
+      assert.equal(fixture.db.failSemanticIndex(article.id, article.revision, null, enabled.settings.revision,
+        "BAAI/bge-m3", `lease-${attempt}`, "SEMANTIC_NETWORK_ERROR"), true);
+      const index = fixture.db.sql.prepare("SELECT state, attempts FROM semantic_indexes WHERE document_id = ?")
+        .get(article.id) as { state: string; attempts: number };
+      assert.equal(index.attempts, attempt);
+      assert.equal(index.state, attempt < 3 ? "pending" : "failed");
+      if (attempt < 3) {
+        assert.equal(fixture.db.nextSemanticDocument(Date.now(), "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION), null);
+        fixture.db.sql.prepare("UPDATE semantic_indexes SET updated_at = ? WHERE document_id = ?")
+          .run(new Date(Date.now() - SEMANTIC_RETRY_DELAYS_MS[attempt - 1]! - 1_000).toISOString(), article.id);
+        assert.equal(fixture.db.nextSemanticDocument(Date.now(), "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION), article.id);
+      }
+    }
+    assert.equal(fixture.db.getSemanticSettings(true).enabled, false);
+  } finally {
+    fixture.close();
+  }
+});
+
+test("empty semantic sources do not count against the provider failure pause", () => {
+  const fixture = database();
+  try {
+    const enabled = fixture.db.setSemanticSettings({ enabled: true, model: "BAAI/bge-m3", revision: 0 }, true);
+    assert.equal(enabled.kind, "updated");
+    if (enabled.kind !== "updated") return;
+    for (let index = 0; index < 3; index += 1) {
+      const article = fixture.db.createArticle("Blank " + index);
+      const now = Date.now();
+      const token = "empty-lease-" + index;
+      assert.equal(fixture.db.claimSemanticIndex(article.id, article.revision, null, enabled.settings.revision,
+        String(index).padStart(64, "0"), "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION, 0, token, now, now + 60_000), true);
+      assert.equal(fixture.db.failSemanticIndex(article.id, article.revision, null, enabled.settings.revision,
+        "BAAI/bge-m3", token, "SEMANTIC_EMPTY_CONTENT"), true);
+    }
+    const settings = fixture.db.getSemanticSettings(true);
+    assert.equal(settings.enabled, true);
+    assert.equal(settings.consecutiveFailures, 0);
+    assert.equal(settings.failedDocuments, 3);
   } finally {
     fixture.close();
   }
@@ -1463,6 +1629,8 @@ test("schema inspection is read-only and rejects future or incomplete histories"
     const raw = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));
     raw.exec(`
       PRAGMA foreign_keys = OFF;
+      DROP TABLE semantic_chunks;
+      DROP TABLE semantic_indexes;
       DROP INDEX documents_folder_updated;
       ALTER TABLE documents DROP COLUMN folder_id;
       DROP TABLE folders;
@@ -1504,10 +1672,11 @@ test("schema inspection is read-only and rejects future or incomplete histories"
         UNIQUE(batch_id, item_index)
       );
       CREATE INDEX import_items_batch ON import_items(batch_id, item_index);
-      DELETE FROM schema_migrations WHERE version BETWEEN ${CURRENT_SCHEMA_VERSION - 4} AND ${CURRENT_SCHEMA_VERSION};
+      DELETE FROM schema_migrations WHERE version BETWEEN ${CURRENT_SCHEMA_VERSION - 5} AND ${CURRENT_SCHEMA_VERSION};
     `);
     raw.close();
     assert.deepEqual(inspectDatabaseSchema(dataDir).pendingVersions, [
+      CURRENT_SCHEMA_VERSION - 5,
       CURRENT_SCHEMA_VERSION - 4,
       CURRENT_SCHEMA_VERSION - 3,
       CURRENT_SCHEMA_VERSION - 2,

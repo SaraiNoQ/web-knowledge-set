@@ -132,6 +132,71 @@ export interface KnowledgeFolder {
   updatedAt: string;
 }
 
+export type SemanticIndexStatus = "unavailable" | "pending" | "indexing" | "ready" | "failed";
+
+export interface KnowledgeMapNode {
+  id: string;
+  kind: LibraryItemKind;
+  title: string;
+  folderId: string | null;
+  folderName: string | null;
+  status: CaptureStatus | PaperStatus;
+  favorite: boolean;
+  archivedAt: string | null;
+  updatedAt: string;
+  pageCount: number | null;
+  semanticState: SemanticIndexStatus;
+  semanticSourceHash: string | null;
+  semanticModel: string | null;
+  semanticFormatVersion: string | null;
+}
+
+export interface KnowledgeMapResponse {
+  items: KnowledgeMapNode[];
+  folders: Array<Pick<KnowledgeFolder, "id" | "name">>;
+  total: number;
+  nextCursor: string | null;
+}
+
+export interface SemanticSettings {
+  enabled: boolean;
+  model: string;
+  revision: number;
+  apiKeyConfigured: boolean;
+  pendingDocuments: number;
+  indexingDocuments: number;
+  indexedDocuments: number;
+  failedDocuments: number;
+  completedChunks: number;
+  totalChunks: number;
+  estimatedPendingChunks: number | null;
+  consecutiveFailures: number;
+  lastError: string | null;
+}
+
+export interface SemanticSettingsInput {
+  enabled: boolean;
+  model: string;
+  revision: number;
+}
+
+export interface SemanticVectorEntry {
+  id: string;
+  model: string;
+  formatVersion: string;
+  sourceHash: string;
+  vector: number[];
+}
+
+export interface SemanticIndexStepResult {
+  status: "idle" | "busy" | "progress" | "completed" | "failed";
+  documentId: string | null;
+  completedChunks: number;
+  totalChunks: number;
+  pendingDocuments: number;
+  errorCode: string | null;
+}
+
 export interface DeleteFolderResponse {
   deleted: true;
   affectedDocuments: number;

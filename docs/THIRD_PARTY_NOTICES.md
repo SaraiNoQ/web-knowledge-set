@@ -32,8 +32,11 @@ This inventory is generated from the locked production dependency metadata. Bund
 | @lezer/markdown | 1.7.2 | MIT | Marijn Haverbeke | https://www.npmjs.com/package/@lezer/markdown |
 | @marijn/find-cluster-break | 1.0.3 | MIT | Marijn Haverbeke | https://code.haverbeke.berlin/marijn/find-cluster-break |
 | @mixmark-io/domino | 2.2.0 | BSD-2-Clause | Felix Gnass | https://github.com/mixmark-io/domino#readme |
+| @napi-rs/canvas-linux-x64-gnu | 1.0.9 | MIT | — | https://github.com/Brooooooklyn/canvas#readme |
+| @napi-rs/canvas | 1.0.9 | MIT | — | https://github.com/Brooooooklyn/canvas#readme |
 | @tauri-apps/api | 2.11.1 | Apache-2.0 OR MIT | — | https://github.com/tauri-apps/tauri#readme |
 | @tauri-apps/plugin-updater | 2.10.1 | MIT OR Apache-2.0 | — | https://github.com/tauri-apps/plugins-workspace#readme |
+| @tweenjs/tween.js | 25.0.0 | MIT | tween.js contributors | https://github.com/tweenjs/tween.js |
 | @types/debug | 4.1.13 | MIT | — | https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/debug |
 | @types/estree-jsx | 1.0.5 | MIT | — | https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree-jsx |
 | @types/estree | 1.0.9 | MIT | — | https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree |
@@ -46,8 +49,11 @@ This inventory is generated from the locked production dependency metadata. Bund
 | @types/unist | 3.0.3 | MIT | — | https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/unist |
 | @ungap/structured-clone | 1.3.3 | ISC | Andrea Giammarchi | https://github.com/ungap/structured-clone#readme |
 | @xmldom/xmldom | 0.9.10 | MIT | — | https://github.com/xmldom/xmldom |
+| accessor-fn | 1.5.3 | MIT | Vasco Asturiano | https://github.com/vasturiano/accessor-fn |
 | bail | 2.0.2 | MIT | Titus Wormer | https://github.com/wooorm/bail#readme |
+| bezier-js | 6.1.4 | MIT | Pomax | https://github.com/Pomax/bezierjs |
 | boolbase | 2.0.0 | ISC | Felix Boehm | https://github.com/fb55/boolbase |
+| canvas-color-tracker | 1.3.2 | MIT | Vasco Asturiano | https://github.com/vasturiano/canvas-color-tracker |
 | ccount | 2.0.1 | MIT | Titus Wormer | https://github.com/wooorm/ccount#readme |
 | character-entities-html4 | 2.1.0 | MIT | Titus Wormer | https://github.com/wooorm/character-entities-html4#readme |
 | character-entities-legacy | 3.0.0 | MIT | Titus Wormer | https://github.com/wooorm/character-entities-legacy#readme |
@@ -61,6 +67,25 @@ This inventory is generated from the locked production dependency metadata. Bund
 | css-what | 8.0.0 | BSD-2-Clause | Felix Böhm | https://github.com/fb55/css-what#readme |
 | cssom | 0.5.0 | MIT | Nikita Vasilyev | https://github.com/NV/CSSOM#readme |
 | csstype | 3.2.3 | MIT | Fredrik Nicol | https://github.com/frenic/csstype#readme |
+| d3-array | 3.2.4 | ISC | Mike Bostock | https://d3js.org/d3-array/ |
+| d3-binarytree | 1.0.2 | MIT | Vasco Asturiano | https://github.com/vasturiano/d3-binarytree |
+| d3-color | 3.1.0 | ISC | Mike Bostock | https://d3js.org/d3-color/ |
+| d3-dispatch | 3.0.1 | ISC | Mike Bostock | https://d3js.org/d3-dispatch/ |
+| d3-drag | 3.0.0 | ISC | Mike Bostock | https://d3js.org/d3-drag/ |
+| d3-ease | 3.0.1 | BSD-3-Clause | Mike Bostock | https://d3js.org/d3-ease/ |
+| d3-force-3d | 3.0.6 | MIT | Vasco Asturiano | https://github.com/vasturiano/d3-force-3d |
+| d3-format | 3.1.2 | ISC | Mike Bostock | https://d3js.org/d3-format/ |
+| d3-interpolate | 3.0.1 | ISC | Mike Bostock | https://d3js.org/d3-interpolate/ |
+| d3-octree | 1.1.0 | MIT | Vasco Asturiano | https://github.com/vasturiano/d3-octree |
+| d3-quadtree | 3.0.1 | ISC | Mike Bostock | https://d3js.org/d3-quadtree/ |
+| d3-scale-chromatic | 3.1.0 | ISC | Mike Bostock | https://d3js.org/d3-scale-chromatic/ |
+| d3-scale | 4.0.2 | ISC | Mike Bostock | https://d3js.org/d3-scale/ |
+| d3-selection | 3.0.0 | ISC | Mike Bostock | https://d3js.org/d3-selection/ |
+| d3-time-format | 4.1.0 | ISC | Mike Bostock | https://d3js.org/d3-time-format/ |
+| d3-time | 3.1.0 | ISC | Mike Bostock | https://d3js.org/d3-time/ |
+| d3-timer | 3.0.1 | ISC | Mike Bostock | https://d3js.org/d3-timer/ |
+| d3-transition | 3.0.1 | ISC | Mike Bostock | https://d3js.org/d3-transition/ |
+| d3-zoom | 3.0.0 | ISC | Mike Bostock | https://d3js.org/d3-zoom/ |
 | debug | 4.4.3 | MIT | Josh Junon | https://github.com/debug-js/debug#readme |
 | decode-named-character-reference | 1.3.0 | MIT | Titus Wormer | https://github.com/wooorm/decode-named-character-reference#readme |
 | defuddle | 0.19.2 | MIT | kepano | https://github.com/kepano/defuddle |
@@ -82,6 +107,8 @@ This inventory is generated from the locked production dependency metadata. Bund
 | estree-util-is-identifier-name | 3.0.0 | MIT | Titus Wormer | https://github.com/syntax-tree/estree-util-is-identifier-name#readme |
 | extend | 3.0.2 | MIT | Stefan Thomas | https://github.com/justmoon/node-extend#readme |
 | fflate | 0.8.3 | MIT | Arjun Barrett | https://101arrowz.github.io/fflate |
+| float-tooltip | 1.7.5 | MIT | Vasco Asturiano | https://github.com/vasturiano/float-tooltip |
+| force-graph | 1.51.4 | MIT | Vasco Asturiano | https://github.com/vasturiano/force-graph |
 | fsevents | 2.3.2 | MIT | Philipp Dunkel, Ben Noordhuis, Elan Shankar, Paul Miller | https://github.com/fsevents/fsevents |
 | hast-util-from-dom | 5.0.1 | ISC | Keith McKnight | https://github.com/syntax-tree/hast-util-from-dom#readme |
 | hast-util-from-html-isomorphic | 2.0.0 | MIT | Remco Haszing | https://github.com/syntax-tree/hast-util-from-html-isomorphic#readme |
@@ -96,16 +123,23 @@ This inventory is generated from the locked production dependency metadata. Bund
 | html-escaper | 3.0.3 | MIT | Andrea Giammarchi | https://github.com/WebReflection/html-escaper |
 | html-url-attributes | 3.0.1 | MIT | Titus Wormer | https://github.com/rehypejs/rehype-minify/tree/main#readme |
 | htmlparser2 | 10.1.0 | MIT | Felix Boehm | https://github.com/fb55/htmlparser2#readme |
+| index-array-by | 1.4.2 | MIT | Vasco Asturiano | https://github.com/vasturiano/index-array-by |
 | inline-style-parser | 0.2.7 | MIT | — | https://github.com/remarkablemark/inline-style-parser#readme |
+| internmap | 2.0.3 | ISC | Mike Bostock | https://github.com/mbostock/internmap/ |
 | ipaddr.js | 2.5.0 | MIT | whitequark | https://github.com/whitequark/ipaddr.js#readme |
 | is-alphabetical | 2.0.1 | MIT | Titus Wormer | https://github.com/wooorm/is-alphabetical#readme |
 | is-alphanumerical | 2.0.1 | MIT | Titus Wormer | https://github.com/wooorm/is-alphanumerical#readme |
 | is-decimal | 2.0.1 | MIT | Titus Wormer | https://github.com/wooorm/is-decimal#readme |
 | is-hexadecimal | 2.0.1 | MIT | Titus Wormer | https://github.com/wooorm/is-hexadecimal#readme |
 | is-plain-obj | 4.1.0 | MIT | Sindre Sorhus | https://github.com/sindresorhus/is-plain-obj#readme |
+| jerrypick | 1.1.2 | MIT | Vasco Asturiano | https://github.com/vasturiano/jerrypick |
+| js-tokens | 4.0.0 | MIT | Simon Lydell | https://github.com/lydell/js-tokens#readme |
+| kapsule | 1.16.3 | MIT | Vasco Asturiano | https://github.com/vasturiano/kapsule |
 | katex | 0.16.47 | MIT | — | https://katex.org |
 | linkedom | 0.18.13 | ISC | Andrea Giammarchi | https://github.com/WebReflection/linkedom#readme |
+| lodash-es | 4.18.1 | MIT | John-David Dalton | https://lodash.com/custom-builds |
 | longest-streak | 3.1.0 | MIT | Titus Wormer | https://github.com/wooorm/longest-streak#readme |
+| loose-envify | 1.4.0 | MIT | Andres Suarez | https://github.com/zertosh/loose-envify |
 | markdown-table | 3.0.4 | MIT | Titus Wormer | https://github.com/wooorm/markdown-table#readme |
 | mathml-to-latex | 1.8.0 | MIT | Alexandre Nunes | https://github.com/asnunes/mathml-to-latex#readme |
 | mdast-util-find-and-replace | 3.0.2 | MIT | Titus Wormer | https://github.com/syntax-tree/mdast-util-find-and-replace#readme |
@@ -155,12 +189,19 @@ This inventory is generated from the locked production dependency metadata. Bund
 | micromark | 4.0.2 | MIT | Titus Wormer | https://github.com/micromark/micromark/tree/main#readme |
 | ms | 2.1.3 | MIT | — | https://github.com/vercel/ms#readme |
 | nth-check | 3.0.1 | BSD-2-Clause | Felix Boehm | https://github.com/fb55/nth-check |
+| object-assign | 4.1.1 | MIT | Sindre Sorhus | https://github.com/sindresorhus/object-assign#readme |
 | parse-entities | 4.0.2 | MIT | Titus Wormer | https://github.com/wooorm/parse-entities#readme |
 | parse5 | 7.3.0 | MIT | Ivan Nikulin | https://parse5.js.org |
+| pdfjs-dist | 6.3.289 | Apache-2.0 | — | https://mozilla.github.io/pdf.js/ |
 | playwright-core | 1.62.1 | Apache-2.0 | Microsoft Corporation | https://playwright.dev |
 | playwright | 1.62.1 | Apache-2.0 | Microsoft Corporation | https://playwright.dev |
+| preact | 10.29.8 | MIT | — | https://preactjs.com |
+| prop-types | 15.8.1 | MIT | — | https://facebook.github.io/react/ |
 | property-information | 7.2.0 | MIT | Titus Wormer | https://github.com/wooorm/property-information#readme |
 | react-dom | 19.2.8 | MIT | — | https://react.dev/ |
+| react-force-graph-2d | 1.29.1 | MIT | Vasco Asturiano | https://github.com/vasturiano/react-force-graph |
+| react-is | 16.13.1 | MIT | — | https://reactjs.org/ |
+| react-kapsule | 2.6.0 | MIT | Vasco Asturiano | https://github.com/vasturiano/react-kapsule |
 | react-markdown | 10.1.0 | MIT | Espen Hovlandsdal | https://github.com/remarkjs/react-markdown#readme |
 | react | 19.2.8 | MIT | — | https://react.dev/ |
 | rehype-katex | 7.0.1 | MIT | Junyoung Choi | https://github.com/remarkjs/remark-math/tree/main#readme |
@@ -176,6 +217,7 @@ This inventory is generated from the locked production dependency metadata. Bund
 | style-to-js | 1.1.21 | MIT | Mark | https://github.com/remarkablemark/style-to-js#readme |
 | style-to-object | 1.0.14 | MIT | Mark | https://github.com/remarkablemark/style-to-object#readme |
 | temml | 0.13.4 | MIT | — | https://temml.org |
+| tinycolor2 | 1.6.0 | MIT | Brian Grinstead | https://github.com/bgrins/TinyColor#readme |
 | trim-lines | 3.0.1 | MIT | Titus Wormer | https://github.com/wooorm/trim-lines#readme |
 | trough | 2.2.0 | MIT | Titus Wormer | https://github.com/wooorm/trough#readme |
 | turndown | 7.2.4 | MIT | Dom Christie | https://github.com/mixmark-io/turndown#readme |

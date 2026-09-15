@@ -34,6 +34,7 @@ import type {
   RecentFilter,
   ReextractionPreview,
 } from "../shared/types.js";
+import { SEMANTIC_EMBEDDINGS_URL, SEMANTIC_FORMAT_VERSION } from "../shared/semantic.js";
 
 const mutableFs = createRequire(import.meta.url)("node:fs") as {
   fsyncSync: typeof fsyncSync;
@@ -518,6 +519,11 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     ).json()) as DataSafetyStatus;
     assert.equal(dataSafety.mode, "ready");
     assert.equal(dataSafety.health?.database.integrityCheck[0], "ok");
+    const semanticSettings = app.db.setSemanticSettings({ enabled: true, model: "BAAI/bge-m3", revision: 0 }, true);
+    assert.equal(semanticSettings.kind, "updated");
+    app.db.sql.prepare("INSERT INTO semantic_indexes(document_id,source_hash,model,format_version,state,chunk_total,chunk_done,vector_json,updated_at) " +
+      "VALUES (?,?,'BAAI/bge-m3',?,'ready',1,1,'[1,0]',?)")
+      .run(cancellable.id, "d".repeat(64), SEMANTIC_FORMAT_VERSION, new Date().toISOString());
     const manualBackup = await fetch(`${base}/api/data-safety/backups`, {
       method: "POST",
       headers: jsonHeaders,
@@ -1264,6 +1270,8 @@ test("local API authenticates, captures, edits, exports, deduplicates, and retri
     ).json()) as KnowledgeDocument;
     assert.equal(afterRestore.revision, beforeRestore.revision);
     assert.equal(afterRestore.sourceNote, "Primary source note");
+    assert.equal(app.db.getSemanticSettings(true).enabled, false);
+    assert.equal(app.db.semanticVectorPage(0, 10, "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION).total, 0);
     assert.equal(
       ((await (await fetch(`${base}/api/capture-queue`, { headers: { Cookie: cookie } })).json()) as CaptureQueueStatus)
         .paused,
@@ -1436,6 +1444,92 @@ test("asset API exposes ready files and keeps per-image failures separate from c
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await app.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("semantic API keys stay in process memory and drive resumable local indexing", async () => {
+  const originalFetch = globalThis.fetch;
+  const root = mkdtempSync(join(tmpdir(), "zhiye-semantic-api-"));
+  const dataDir = join(root, "data");
+  const db = openDatabase(dataDir);
+  const secret = "local-semantic-secret";
+  let providerCalls = 0;
+  globalThis.fetch = async (input, init) => {
+    if (String(input) !== SEMANTIC_EMBEDDINGS_URL) return await originalFetch(input, init);
+    providerCalls += 1;
+    assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer " + secret);
+    const request = JSON.parse(String(init?.body)) as { input: string[]; model: string };
+    assert.equal(request.model, "BAAI/bge-m3");
+    assert.equal(request.input.length, 1);
+    return new Response(JSON.stringify({ data: [{ index: 0, embedding: [0.6, 0.8] }] }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  const app = createApp({ dataDir, database: db, bootstrapToken: "semantic-bootstrap", sessionToken: "semantic-session", startWorker: false });
+  const server = createServer((request, response) => void app.handler(request, response));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const base = "http://127.0.0.1:" + address.port;
+  try {
+    const launch = await fetch(base + "/launch?token=semantic-bootstrap", { redirect: "manual" });
+    const cookie = (launch.headers.get("set-cookie") ?? "").split(";", 1)[0]!;
+    const settingsResponse = await fetch(base + "/api/settings/semantic", { headers: { Cookie: cookie } });
+    const settings = await settingsResponse.json() as { revision: number; enabled: boolean };
+    assert.equal(settings.enabled, false);
+    const headers = { Cookie: cookie, Origin: base, "X-Zhiye-Data-Epoch": settingsResponse.headers.get("x-zhiye-data-epoch")! };
+    const jsonHeaders = { ...headers, "Content-Type": "application/json" };
+    const call = (path: string, method: string, body: unknown) => fetch(base + path, {
+      method, headers: jsonHeaders, body: JSON.stringify(body),
+    });
+
+    const key = await call("/api/settings/semantic/key", "PUT", { apiKey: secret });
+    assert.equal((await key.json() as { configured: boolean }).configured, true);
+    const enabled = await call("/api/settings/semantic", "PUT", { enabled: true, model: "BAAI/bge-m3", revision: settings.revision });
+    assert.equal(enabled.status, 200);
+    const invalidProbe = await call("/api/semantic/test", "POST", { model: "" });
+    assert.equal(invalidProbe.status, 400);
+    assert.equal((await invalidProbe.json() as { error: { code: string } }).error.code, "INVALID_SEMANTIC_REQUEST");
+    const probe = await call("/api/semantic/test", "POST", { model: "BAAI/bge-m3" });
+    assert.deepEqual(await probe.json(), { ok: true, model: "BAAI/bge-m3", dimension: 2 });
+
+    const created = await call("/api/documents", "POST", { title: "Local map source" });
+    const article = (await created.json() as { document: { id: string; revision: number } }).document;
+    const edited = await call("/api/documents/" + article.id, "PATCH", {
+      title: "Local map source", markdown: "# Local map source\n\n语义关联正文。", revision: article.revision,
+    });
+    assert.equal(edited.status, 200);
+    const estimate = await fetch(base + "/api/settings/semantic?estimate=true", { headers: { Cookie: cookie } });
+    assert.equal((await estimate.json() as { estimatedPendingChunks: number }).estimatedPendingChunks, 1);
+    const indexed = await call("/api/semantic/index-step", "POST", {});
+    const indexedBody = await indexed.json() as { status?: string; error?: unknown };
+    const indexState = db.sql.prepare("SELECT state, error_code, chunk_total, chunk_done FROM semantic_indexes WHERE document_id = ?")
+      .get(article.id) as { state: string; error_code: string | null; chunk_total: number; chunk_done: number } | undefined;
+    assert.equal(indexed.status, 200, JSON.stringify({ indexedBody, providerCalls, indexState }));
+    assert.equal(indexedBody.status, "completed", JSON.stringify(indexedBody));
+    assert.equal(providerCalls, 2);
+    const vectors = await fetch(base + "/api/knowledge-map/vectors", { headers: { Cookie: cookie } });
+    const vectorBody = await vectors.json() as { items: Array<{ id: string; vector: number[]; sourceHash: string; model: string; formatVersion: string }> };
+    assert.deepEqual(vectorBody.items.map(({ id, vector }) => ({ id, vector })), [{ id: article.id, vector: [0.6, 0.8] }]);
+    const mapResponse = await fetch(base + "/api/knowledge-map", { headers: { Cookie: cookie } });
+    const mapNode = ((await mapResponse.json()) as { items: Array<{ id: string; semanticState: string; semanticSourceHash: string | null; semanticModel: string | null; semanticFormatVersion: string | null }> }).items[0];
+    assert.deepEqual(mapNode && {
+      id: mapNode.id, semanticState: mapNode.semanticState, sourceHash: mapNode.semanticSourceHash,
+      model: mapNode.semanticModel, formatVersion: mapNode.semanticFormatVersion,
+    }, {
+      id: article.id, semanticState: "ready", sourceHash: vectorBody.items[0]?.sourceHash,
+      model: "BAAI/bge-m3", formatVersion: "semantic-text-v1",
+    });
+    const filteredVectors = await fetch(base + "/api/knowledge-map/vectors?ids=" + encodeURIComponent(JSON.stringify([article.id])), { headers: { Cookie: cookie } });
+    assert.deepEqual((await filteredVectors.json() as { items: Array<{ id: string }> }).items.map(({ id }) => id), [article.id]);
+    assert.equal((await fetch(base + "/api/knowledge-map/vectors?ids=invalid", { headers: { Cookie: cookie } })).status, 400);
+    const storedKey = db.sql.prepare("SELECT COUNT(*) AS count FROM app_settings WHERE value LIKE ?").get("%" + secret + "%") as { count: number };
+    assert.equal(storedKey.count, 0);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await app.close();
+    globalThis.fetch = originalFetch;
     rmSync(root, { recursive: true, force: true });
   }
 });

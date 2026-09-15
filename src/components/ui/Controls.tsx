@@ -120,13 +120,14 @@ export interface SelectProps extends Omit<SelectHTMLAttributes<HTMLSelectElement
 }
 
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select(
-  { "aria-label": ariaLabel, "aria-labelledby": ariaLabelledBy, autoFocus, children, className = "", density = "regular", disabled, multiple, value, defaultValue, wrapperClassName = "", ...props },
+  { "aria-label": ariaLabel, "aria-labelledby": ariaLabelledBy, "aria-describedby": ariaDescribedBy, autoFocus, children, className = "", density = "regular", disabled, multiple, value, defaultValue, wrapperClassName = "", ...props },
   ref,
 ) {
   const nativeRef = useRef<HTMLSelectElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const listId = useId();
+  const valueId = `${listId}-value`;
   const [open, setOpen] = useState(false);
   const [uncontrolledValue, setUncontrolledValue] = useState(() => String(defaultValue ?? ""));
   const [activeIndex, setActiveIndex] = useState(0);
@@ -184,7 +185,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
   }, [open]);
 
   if (multiple) {
-    return <span className={`ui-select-wrap ui-select-wrap--${density} ui-select-wrap--multiple ${wrapperClassName}`.trim()}><select ref={ref} className={`ui-select ${className}`.trim()} multiple value={value} defaultValue={defaultValue} disabled={disabled} autoFocus={autoFocus} {...props}>{children}</select></span>;
+    return <span className={`ui-select-wrap ui-select-wrap--${density} ui-select-wrap--multiple ${wrapperClassName}`.trim()}><select ref={ref} className={`ui-select ${className}`.trim()} multiple value={value} defaultValue={defaultValue} disabled={disabled} autoFocus={autoFocus} aria-describedby={ariaDescribedBy} {...props}>{children}</select></span>;
   }
 
   const move = (direction: 1 | -1) => {
@@ -232,15 +233,15 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
         aria-haspopup="listbox"
         aria-label={ariaLabel}
         aria-labelledby={ariaLabelledBy}
-        aria-valuetext={options[selectedIndex]?.label}
+        aria-describedby={[ariaDescribedBy, valueId].filter(Boolean).join(" ")}
         className={`ui-select ${className}`.trim()}
         disabled={disabled}
         onClick={() => { setActiveIndex(selectedIndex); setOpen((current) => !current); }}
         onKeyDown={onKeyDown}
       >
-        <span>{options[selectedIndex]?.label}</span>
+        <span id={valueId}>{options[selectedIndex]?.label}</span>
       </button>
-      <select ref={nativeRef} className="ui-select-native" aria-hidden="true" tabIndex={-1} value={value} defaultValue={defaultValue} disabled={disabled} {...props}>{children}</select>
+      <select ref={nativeRef} className="ui-select-native" aria-hidden="true" tabIndex={-1} value={value} defaultValue={defaultValue} disabled={disabled} aria-describedby={ariaDescribedBy} {...props}>{children}</select>
       {open && createPortal(
         <div ref={listRef} id={listId} role="listbox" aria-label={ariaLabel ?? (ariaLabelledBy ? undefined : "选项")} aria-labelledby={ariaLabelledBy} className="ui-select-menu" style={position}>
           {options.map((option, index) => <div key={`${option.value}-${index}`} id={`${listId}-${index}`} role="option" aria-disabled={option.disabled || undefined} aria-selected={option.value === selectedValue} className={index === activeIndex ? "is-active" : ""} onMouseEnter={() => { if (!option.disabled) setActiveIndex(index); }} onPointerDown={(event) => { event.preventDefault(); choose(index); }}><span aria-hidden="true">{option.value === selectedValue ? "✓" : ""}</span>{option.label}</div>)}

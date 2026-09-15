@@ -1044,7 +1044,9 @@ test("LLM target validation separates remote public HTTPS from explicit loopback
   ]), /blocked/u);
 });
 
-test("LLM resolver timeout, nested pauses, and permanent stop cannot strand a task", async () => {
+test("LLM resolver timeout, nested pauses, and permanent stop cannot strand a task", { timeout: 10_000 }, async (context) => {
+  let keepAlive: NodeJS.Timeout | null = null;
+  context.signal.addEventListener("abort", () => { if (keepAlive) clearInterval(keepAlive); }, { once: true });
   const root = mkdtempSync(join(tmpdir(), "zhiye-llm-control-"));
   const db = openDatabase(join(root, "data"));
   const created = db.createOrGetDocument("https://example.com/control").document;
@@ -1074,6 +1076,7 @@ test("LLM resolver timeout, nested pauses, and permanent stop cannot strand a ta
     model: "fake",
     trusted: true as const,
   };
+  keepAlive = setInterval(() => undefined, 1_000);
   try {
     const timed = createDerivedTasks({ database: () => db, resolveTarget: neverResolve, requestTimeoutMs: 10 });
     await assert.rejects(timed.testConnection(probeInput, new AbortController().signal), /timed out/u);
@@ -1127,6 +1130,7 @@ test("LLM resolver timeout, nested pauses, and permanent stop cannot strand a ta
     paused.resume();
     assert.throws(() => paused.start(created.id, input), /temporarily unavailable/u);
   } finally {
+    if (keepAlive) clearInterval(keepAlive);
     db.close();
     rmSync(root, { recursive: true, force: true });
   }

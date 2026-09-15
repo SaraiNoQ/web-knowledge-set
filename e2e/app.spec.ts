@@ -347,6 +347,172 @@ test("creates a top-level blank article from the directory menu", async ({ page 
   await expect(page.getByRole("region", { name: "根目录内容" }).getByRole("button", { name: "未命名文章", exact: true })).toHaveAttribute("aria-current", "true");
 });
 
+test("knowledge map selects a node and returns from the existing reader to the same map", async ({ page }) => {
+  await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
+  if (await deferSetup.isVisible()) await deferSetup.click();
+  await page.getByRole("button", { name: "新建", exact: true }).click();
+  await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文章" }).click();
+  await expect(page.getByLabel("文档标题")).toHaveValue("未命名文章");
+  await page.keyboard.press("Escape");
+  await expect(page.getByLabel("网页地址")).toBeVisible();
+  await page.getByRole("button", { name: "知识地图" }).click();
+  await expect(page.getByRole("heading", { name: "知识地图", exact: true })).toBeVisible();
+  const graphCanvas = page.locator(".map-canvas-inner canvas");
+  await expect(graphCanvas).toBeVisible();
+  await expect.poll(() => graphCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.width > 0 && canvas.height > 0)).toBe(true);
+  await page.getByText(/^节点列表/u).click();
+  await page.locator(".map-accessible-list").getByRole("button", { name: "未命名文章" }).last().click();
+  await page.getByRole("button", { name: "打开阅读" }).click();
+  await expect(page.getByLabel("文档标题")).toHaveValue("未命名文章");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("heading", { name: "知识地图", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "关闭详情" }).click();
+  await expect(page.getByRole("button", { name: "单篇关联" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "全库" })).toHaveAttribute("aria-pressed", "true");
+});
+
+test("knowledge map fills the window height at the bottom of the page", async ({ page }) => {
+  await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
+  if (await deferSetup.isVisible()) await deferSetup.click();
+  await page.getByRole("button", { name: "知识地图" }).click();
+  await expect(page.getByRole("heading", { name: "知识地图", exact: true })).toBeVisible();
+
+  // The map is one viewport tall and the app chrome above it stays in the page
+  // flow, so scrolling past the chrome leaves the map filling the window - the
+  // canvas region must reach the bottom too, not just the host box.
+  for (const width of [1440, 1000, 800, 560]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect.poll(async () => page.locator(".knowledge-map-host").evaluate((element) =>
+      Math.abs(Math.round(element.clientHeight - window.innerHeight)))).toBeLessThanOrEqual(2);
+    const atBottom = await page.evaluate(() => {
+      window.scrollTo(0, 100_000);
+      const bottomOf = (selector: string) => {
+        const node = document.querySelector(selector) as HTMLElement | null;
+        return node ? Math.round(node.getBoundingClientRect().bottom) : null;
+      };
+      const host = document.querySelector(".knowledge-map-host") as HTMLElement;
+      return {
+        top: Math.round(host.getBoundingClientRect().top),
+        hostBottom: bottomOf(".knowledge-map-host"),
+        mapBottom: bottomOf(".knowledge-map"),
+        canvasBottom: bottomOf(".knowledge-map-canvas"),
+        inner: window.innerHeight,
+        scrolled: Math.round(window.scrollY),
+        overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      };
+    });
+    expect(atBottom.scrolled).toBeGreaterThan(0);
+    expect(atBottom.overflowX).toBeLessThanOrEqual(0);
+    expect(Math.abs(atBottom.top)).toBeLessThanOrEqual(2);
+    for (const bottom of [atBottom.hostBottom, atBottom.mapBottom, atBottom.canvasBottom]) {
+      expect(bottom).not.toBeNull();
+      expect(Math.abs((bottom as number) - atBottom.inner)).toBeLessThanOrEqual(2);
+    }
+    await page.evaluate(() => window.scrollTo(0, 0));
+  }
+});
+
+test("knowledge map shows model-ranked semantic neighbors and applies the threshold", async ({ page }) => {
+  const contentVersion = { value: 1 };
+  const modelVersion = { value: "BAAI/bge-m3" };
+  let mapRequests = 0;
+  let vectorRequests = 0;
+  const nodes = [
+    { id: "semantic-article", kind: "article", title: "语义主题甲", folderId: null, folderName: null, status: "ready", favorite: false, archivedAt: null, updatedAt: "2026-01-01T00:00:00.000Z", pageCount: null, semanticState: "ready" },
+    { id: "semantic-paper", kind: "paper", title: "语义主题乙", folderId: null, folderName: null, status: "ready", favorite: false, archivedAt: null, updatedAt: "2026-01-02T00:00:00.000Z", pageCount: 4, semanticState: "ready" },
+    { id: "semantic-unrelated", kind: "article", title: "另一主题", folderId: null, folderName: null, status: "ready", favorite: false, archivedAt: null, updatedAt: "2026-01-03T00:00:00.000Z", pageCount: null, semanticState: "ready" },
+  ];
+  const vectorsByVersion = [
+    [
+      { id: "semantic-article", model: "BAAI/bge-m3", formatVersion: "semantic-text-v1", sourceHash: "a".repeat(64), vector: [1, 0, 0] },
+      { id: "semantic-paper", model: "BAAI/bge-m3", formatVersion: "semantic-text-v1", sourceHash: "b".repeat(64), vector: [0.8, 0.6, 0] },
+      { id: "semantic-unrelated", model: "BAAI/bge-m3", formatVersion: "semantic-text-v1", sourceHash: "c".repeat(64), vector: [0, 0, 1] },
+    ],
+    [
+      { id: "semantic-article", model: "BAAI/bge-m3", formatVersion: "semantic-text-v1", sourceHash: "d".repeat(64), vector: [1, 0, 0] },
+      { id: "semantic-paper", model: "BAAI/bge-m3", formatVersion: "semantic-text-v1", sourceHash: "e".repeat(64), vector: [0, 0, 1] },
+      { id: "semantic-unrelated", model: "BAAI/bge-m3", formatVersion: "semantic-text-v1", sourceHash: "f".repeat(64), vector: [0, 1, 0] },
+    ],
+  ];
+  await page.route("**/api/knowledge-map?*", (route) => {
+    mapRequests += 1;
+    const sourceHashes = vectorsByVersion[contentVersion.value - 1]!;
+    return route.fulfill({ json: {
+      items: nodes.map((node, index) => ({ ...node, semanticSourceHash: sourceHashes[index]!.sourceHash, semanticModel: modelVersion.value, semanticFormatVersion: "semantic-text-v1" })),
+      folders: [], total: nodes.length, nextCursor: null,
+    } });
+  });
+  await page.route("**/api/knowledge-map/vectors?*", (route) => {
+    vectorRequests += 1;
+    const vectors = vectorsByVersion[contentVersion.value - 1]!.map((entry) => ({ ...entry, model: modelVersion.value }));
+    return route.fulfill({ json: { items: vectors, total: vectors.length, nextCursor: null } });
+  });
+  await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
+  if (await deferSetup.isVisible()) await deferSetup.click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "知识地图" }).click();
+  await page.locator(".map-accessible-list summary").click();
+  const articleNode = page.locator(".map-accessible-list").getByRole("button", { name: "语义主题甲" });
+  await articleNode.focus();
+  await page.keyboard.press("Enter");
+  const detail = page.getByRole("complementary", { name: "资料详情" });
+  await expect(detail.getByRole("heading", { name: "语义主题甲" })).toBeVisible();
+  await expect.poll(() => detail.evaluate((element) => getComputedStyle(element).position)).toBe("fixed");
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect.poll(() => detail.evaluate((element) => getComputedStyle(element).position)).not.toBe("fixed");
+  await expect(detail).toContainText("语义主题乙");
+  await expect(detail).toContainText("模型分数 0.80");
+  await expect(page.locator(".knowledge-map")).toContainText("连线不表示引用或事实关系");
+  await page.getByRole("slider", { name: "语义推荐阈值" }).press("End");
+  await expect(page.getByRole("slider", { name: "语义推荐阈值" })).toHaveValue("0.9");
+  await expect(detail.getByRole("heading", { name: "语义主题甲" })).toBeVisible();
+  await expect(detail.locator(".map-detail-related").first()).not.toContainText("语义主题乙");
+
+  await page.getByRole("slider", { name: "语义推荐阈值" }).press("Home");
+  await expect(detail).toContainText("语义主题乙");
+  await detail.locator(".map-detail-related").first().getByRole("button", { name: /语义主题乙/u }).click();
+  await expect(detail.getByRole("heading", { name: "语义主题乙" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "单篇关联" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "全库" }).click();
+  await expect(page.getByRole("button", { name: "全库" })).toHaveAttribute("aria-pressed", "true");
+  contentVersion.value = 2;
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("zhiye:extension-saved", { detail: "semantic-refresh" })));
+  await expect.poll(() => vectorRequests).toBe(2);
+  await expect(page.locator(".map-semantic-status")).toHaveCount(0);
+  await expect(detail.locator(".map-detail-related").first()).not.toContainText("语义主题甲");
+
+  expect(vectorRequests).toBe(2);
+  const previousMapRequests = mapRequests;
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("zhiye:extension-saved", { detail: "semantic-progress" })));
+  await expect.poll(() => mapRequests).toBeGreaterThan(previousMapRequests);
+  await expect(page.locator(".map-semantic-status")).toHaveCount(0);
+  expect(vectorRequests).toBe(2);
+
+  const beforeModelChange = mapRequests;
+  modelVersion.value = "test-other-model";
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("zhiye:extension-saved", { detail: "semantic-model-change" })));
+  await expect.poll(() => mapRequests).toBeGreaterThan(beforeModelChange);
+  await expect.poll(() => vectorRequests).toBe(3);
+  await expect(page.locator(".map-semantic-status")).toHaveCount(0);
+});
+
+test("semantic indexing remains opt-in until a credential and model probe are available", async ({ page }) => {
+  await page.goto("/");
+  const deferSetup = page.getByRole("button", { name: "稍后设置" });
+  await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
+  if (await deferSetup.isVisible()) await deferSetup.click();
+  await page.getByRole("button", { name: "AI 设置", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "语义关联" })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "允许自动建立语义关联" })).not.toBeChecked();
+  await expect(page.getByRole("button", { name: "测试向量连接" })).toBeDisabled();
+});
+
 test("renders a stored cloud image URI through the same-origin asset route", async ({ page }) => {
   const hash = "a".repeat(64);
   await page.route(`**/api/assets/${hash}`, (route) => route.fulfill({
@@ -506,7 +672,8 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await page.getByLabel("AI 远程模型").fill("remote-e2e-model");
   await page.getByLabel("远程模型 API 密钥").fill("e2e-memory-only-key");
   const keyRequest = page.waitForRequest((request) => request.method() === "PUT" && new URL(request.url()).pathname === "/api/settings/llm/key");
-  await page.getByRole("button", { name: "保存密钥" }).click();
+  // The AI dialog also nests the semantic panel, which has its own 保存密钥 button.
+  await page.locator(".ai-keychain").getByRole("button", { name: "保存密钥" }).click();
   expect((await keyRequest).postDataJSON()).toEqual({
     apiKey: "e2e-memory-only-key",
     endpointUrl: "https://api.openai.com/v1/chat/completions",
@@ -537,7 +704,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(page.getByLabel("AI 远程端点地址")).toBeVisible();
   await page.getByLabel("AI 远程端点地址").fill("http://insecure.example.test/v1/chat/completions");
   await page.getByLabel("远程模型 API 密钥").fill("must-not-bind-to-insecure-endpoint");
-  await page.getByRole("button", { name: "保存密钥" }).click();
+  await page.locator(".ai-keychain").getByRole("button", { name: "保存密钥" }).click();
   await expect(page.getByRole("alert")).toContainText("端点地址无效");
   await expect(page.getByText("当前平台未加载密钥", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "删除密钥" }).click();
@@ -1430,7 +1597,7 @@ test("desktop AI settings explains local key failures without cloud wording", as
   await page.getByRole("button", { name: "远程 HTTPS", exact: true }).click();
   await page.getByLabel("AI 远程模型").fill("desktop-e2e-model");
   await page.getByLabel("远程模型 API 密钥").fill("desktop-e2e-key");
-  await page.getByRole("button", { name: "保存密钥", exact: true }).click();
+  await page.locator(".ai-keychain").getByRole("button", { name: "保存密钥", exact: true }).click();
   await expect(page.getByText("密钥已立即生效", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "测试连接", exact: true }).click();
   await expect(page.getByText("AI 端点指向不允许的网络地址", { exact: false })).toBeVisible();

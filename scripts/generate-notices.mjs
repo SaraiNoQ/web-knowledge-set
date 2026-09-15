@@ -121,6 +121,7 @@ const rust = cargo.packages
   .sort((a, b) => `${a.name}@${a.version}`.localeCompare(`${b.name}@${b.version}`, "en"));
 
 const donor = {
+  "@napi-rs/canvas-linux-x64-gnu@1.0.9": ["@napi-rs/canvas@1.0.9"],
   "alloc-stdlib@0.2.4": ["alloc-no-stdlib@2.0.4"],
   "defmt-parser@1.0.0": ["defmt@1.1.1"],
   "selectors@0.36.1": ["cssparser@0.36.0"],
@@ -131,10 +132,14 @@ const override = new Map([
   [["rehype-katex@7.0.1", "remark-math@6.0.0"], "remark-math-LICENSE-MIT.txt"],
   [["sigchld@0.2.4"], "sigchld-LICENSE-MIT.txt"],
   [["selectors@0.36.1"], "selectors-NOTICE-MPL-2.0.txt"],
+  [["bezier-js@6.1.4"], "bezier-js-LICENSE-MIT.txt"],
+  [["react-force-graph-2d@1.29.1"], "react-force-graph-LICENSE-MIT.txt"],
   [["unic-char-property@0.9.0", "unic-char-range@0.9.0", "unic-common@0.9.0", "unic-ucd-ident@0.9.0", "unic-ucd-version@0.9.0"], "rust-unic-NOTICE.txt"],
 ].flatMap(([packages, file]) => packages.map((name) => [name, file])));
 const overrideHashes = {
   "objc2-LICENSE.md": "d2acb74dfbf5e6a9f80a7431925da31f4ea29e59d4b6dedec5cb39acc48e435a",
+  "bezier-js-LICENSE-MIT.txt": "963ed616e71c23078e47b37f243096b4cda4c748d96e542f248ddaf064e19990",
+  "react-force-graph-LICENSE-MIT.txt": "1906ba789f47eb3bb5f8525c5fb3fd0acf2a2fce3f70863798876e6a3c9b4c4c",
   "remark-math-LICENSE-MIT.txt": "b4c9077a6fe03b40387623026f4de8c05ad819f1f86e7e0ad3230976bbf3fd90",
   "rust-unic-NOTICE.txt": "ad68113eef6907387d6095debdd4b1a12a38bbc3533b65e434d501a996f6336d",
   "selectors-NOTICE-MPL-2.0.txt": "c80bb752cdf998c673781daf9830e1e96f641ae6b43c886daa68de63c59b945f",
