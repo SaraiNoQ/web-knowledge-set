@@ -56,6 +56,69 @@ test("extension content script preserves ChatGPT rendered math in Chromium", asy
   expect(markdown).not.toContain("visible.png");
 });
 
+test("extension clips the X article body instead of its post or cover", async ({ page }) => {
+  await page.route("https://x.com/**", (route) => {
+    if (route.request().url().includes("missing") || route.request().url().includes("card")) return route.fulfill({
+      contentType: "text/html; charset=utf-8",
+      body: `<!doctype html><html><body><article data-testid="tweet">${route.request().url().includes("card")
+        ? '<img src="https://pbs.twimg.com/media/cover.jpg" alt="Article cover image">'
+        : '<a href="/i/article/123?src=card"><img src="https://pbs.twimg.com/media/cover.jpg" alt="Article cover image"></a>'}</article></body></html>`,
+    });
+    return route.fulfill({
+      contentType: "text/html; charset=utf-8",
+      body: `<!doctype html><html><head><title>Post on X</title><meta property="og:image" content="https://pbs.twimg.com/media/cover.jpg"></head><body>
+      <article data-testid="tweet"><p>帖子摘要，不是长文正文。</p><img src="https://pbs.twimg.com/media/cover.jpg" alt="Article cover image"></article>
+      <div itemscope itemtype="https://schema.org/Article" itemid="https://x.com/other/article/999">
+        <h1>推荐文章</h1><div class="x-article-body"><p>推荐文章不属于当前帖子，不应被剪藏。</p></div>
+      </div>
+      <div itemscope itemtype="https://schema.org/Article" itemid="https://x.com/writer/article/123">
+        <meta itemprop="datePublished" content="2026-09-23T02:06:27.000Z">
+        <div><img itemprop="image" src="https://pbs.twimg.com/media/cover.jpg" alt="Article cover image">
+          <h1 itemprop="headline">AI 时代的审美提高手册（下）</h1>
+          <a itemprop="author publisher" href="/writer"><span itemprop="name">文章作者</span></a>
+          <div class="x-article-body"><style>.contents { display: contents }</style><div class="contents">
+            ${route.request().url().includes("loading") ? "" : `<p>抽象的审美，究竟应该怎么培养？这篇长文先讨论如何接触好的作品，再讲怎样通过比较形成自己的判断。</p>
+            <h3>先知道什么是好的</h3><p>认真观察作品的细节，并阅读<a href="https://example.com/source">原始资料</a>，才能慢慢说明自己为什么喜欢。</p>
+            <article data-testid="tweet"><p>正文中引用的 X 帖子。</p></article>
+            <figure><img src="https://pbs.twimg.com/media/inside.jpg" alt="文章配图"></figure><p>最后回到自己的实践，把观察所得用在新的表达里。</p>`}
+          </div></div>
+        </div>
+      </div>
+      <article data-testid="tweet"><p>回复内容不应混入长文。</p></article>
+    </body></html>`,
+    });
+  });
+  for (const path of ["/writer/status/123", "/i/article/123"]) {
+    await page.goto(`https://x.com${path}`);
+    await page.addScriptTag({ content: await readFile("dist/extensions/zhiye-clipper-chrome/content.js", "utf8") });
+    const result = await page.evaluate(async () => await (window as typeof window & { __ZHIYE_CLIP_RESULT__: Promise<{ title: string; author: string; publishedAt: string; markdown: string }> }).__ZHIYE_CLIP_RESULT__);
+    expect(result.title).toBe("AI 时代的审美提高手册（下）");
+    expect(result.author).toBe("文章作者");
+    expect(result.publishedAt).toBe("2026-09-23");
+    expect(result.markdown).toContain("抽象的审美，究竟应该怎么培养");
+    expect(result.markdown).toContain("### 先知道什么是好的");
+    expect(result.markdown).toContain("[原始资料](https://example.com/source)");
+    expect(result.markdown).toContain("https://pbs.twimg.com/media/cover.jpg");
+    expect(result.markdown.split("https://pbs.twimg.com/media/cover.jpg")).toHaveLength(2);
+    expect(result.markdown).toContain("https://pbs.twimg.com/media/inside.jpg");
+    expect(result.markdown).not.toContain("帖子摘要");
+    expect(result.markdown).not.toContain("推荐文章");
+    expect(result.markdown).not.toContain("回复内容");
+  }
+  await page.goto("https://x.com/i/article/123?loading");
+  await page.addScriptTag({ content: await readFile("dist/extensions/zhiye-clipper-chrome/content.js", "utf8") });
+  const error = await page.evaluate(async () => (window as typeof window & { __ZHIYE_CLIP_RESULT__: Promise<unknown> }).__ZHIYE_CLIP_RESULT__.catch((reason: Error) => reason.message));
+  expect(error).toContain("正文尚未加载");
+  await page.goto("https://x.com/writer/status/123?missing");
+  await page.addScriptTag({ content: await readFile("dist/extensions/zhiye-clipper-chrome/content.js", "utf8") });
+  const missingError = await page.evaluate(async () => (window as typeof window & { __ZHIYE_CLIP_RESULT__: Promise<unknown> }).__ZHIYE_CLIP_RESULT__.catch((reason: Error) => reason.message));
+  expect(missingError).toContain("正文尚未加载");
+  await page.goto("https://x.com/writer/status/123?card");
+  await page.addScriptTag({ content: await readFile("dist/extensions/zhiye-clipper-chrome/content.js", "utf8") });
+  const cardError = await page.evaluate(async () => (window as typeof window & { __ZHIYE_CLIP_RESULT__: Promise<unknown> }).__ZHIYE_CLIP_RESULT__.catch((reason: Error) => reason.message));
+  expect(cardError).toContain("正文尚未加载");
+});
+
 test("extension content script drops blank lazy-load placeholders and keeps real images", async ({ page }) => {
   const coverUrl = "https://picx.zhimg.com/v2-76e720da28a568c43c906dcc240d19ed_b.jpg";
   const hiddenCoverUrl = "https://pic4.zhimg.com/v2-aabda40c0c21d3f4a9b5a132e553b775_b.jpg";

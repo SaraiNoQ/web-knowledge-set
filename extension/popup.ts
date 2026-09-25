@@ -105,6 +105,7 @@ pairingForm.addEventListener("submit", async (event) => {
 });
 
 extractButton.addEventListener("click", async () => {
+  clipForm.hidden = true;
   message("正在读取当前页面…");
   try {
     const [tab] = await webext.tabs.query({ active: true, currentWindow: true });

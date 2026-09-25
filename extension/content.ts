@@ -29,6 +29,27 @@ function paintsNothing(source: string) {
 
 async function extract(): Promise<ZhiyeClipResult> {
   const page = document.cloneNode(true) as Document;
+  const xArticleId = /(?:^|\.)(?:x\.com|twitter\.com)$/u.test(location.hostname)
+    ? /\/(?:status|article)\/(\d+)(?:\/|$)/u.exec(location.pathname)?.[1]
+    : null;
+  const xArticle = xArticleId
+    ? [...page.querySelectorAll('[itemtype="https://schema.org/Article"]')].find((article) => (
+      article.getAttribute("itemid")?.endsWith(`/article/${xArticleId}`)
+    ))
+    : null;
+  if (xArticleId && !xArticle && (
+    location.pathname.includes("/article/") || [...page.querySelectorAll<HTMLAnchorElement>('a[href*="/article/"]')].some((link) => (
+      link.pathname.endsWith(`/article/${xArticleId}`)
+    )) || page.querySelector('article[data-testid="tweet"]')?.querySelector('img[alt="Article cover image"]')
+  )) throw new Error("X 文章正文尚未加载，请等待页面显示正文后重试。");
+  if (xArticle) {
+    const body = xArticle.querySelector(".x-article-body");
+    if (!body || ![...body.querySelectorAll("p, li, blockquote")].some((element) => element.textContent?.trim())) {
+      throw new Error("X 文章正文尚未加载，请等待页面显示正文后重试。");
+    }
+    page.body.replaceChildren(xArticle);
+    for (const tweet of page.querySelectorAll('article[data-testid="tweet"]')) tweet.removeAttribute("data-testid");
+  }
   for (const element of page.querySelectorAll("script, style, noscript, iframe, object, embed, form, input, textarea, select, [contenteditable]")) {
     const presentationOnly = element.getAttribute("contenteditable")?.toLowerCase() === "false"
       && !element.matches("script, style, noscript, iframe, object, embed, form, input, textarea, select");
@@ -82,17 +103,22 @@ async function extract(): Promise<ZhiyeClipResult> {
       else element.remove();
     }
   }
-  const result = new Defuddle(page, { url: location.href, markdown: true, useAsync: false }).parse();
+  const result = new Defuddle(page, {
+    url: location.href, markdown: true, useAsync: false,
+    ...(xArticle ? { contentSelector: ".x-article-body" } : {}),
+  }).parse();
   const extracted = text(result.contentMarkdown) ?? text(result.content);
   const markdown = extracted && restoreProtectedMath(extracted, protectedMath);
   if (!markdown) throw new Error("页面没有可剪藏的正文，请使用织页的手动摘录。");
-  const published = text(result.published);
+  const cover = text(xArticle?.querySelector('img[itemprop="image"]')?.getAttribute("src"));
+  const published = text(xArticle?.querySelector('[itemprop="datePublished"]')?.getAttribute("content")) ?? text(result.published);
   return {
-    title: text(result.title) ?? text(page.title) ?? location.hostname,
+    title: text(xArticle?.querySelector("h1")?.textContent) ?? text(result.title) ?? text(page.title) ?? location.hostname,
     sourceUrl: location.href,
-    author: text(result.author),
+    author: text(xArticle?.querySelector('[itemprop~="author"] [itemprop="name"]')?.textContent) ?? text(result.author),
     publishedAt: published && /^\d{4}-\d{2}-\d{2}/u.test(published) ? published.slice(0, 10) : null,
-    markdown,
+    markdown: cover && /^https?:\/\/[^\s<>]+$/u.test(cover) && !markdown.includes(cover)
+      ? `![文章封面](<${cover}>)\n\n${markdown}` : markdown,
   };
 }
 
