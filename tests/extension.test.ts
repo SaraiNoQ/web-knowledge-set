@@ -21,7 +21,7 @@ test("extension download links match both manifest versions", async () => {
   assert.deepEqual(manifests[1].browser_specific_settings?.gecko_android, { strict_min_version: "142.0" });
   const help = await readFile(new URL("../src/components/BrowserExtension.tsx", import.meta.url), "utf8");
   for (const [browser, label] of [["chrome", "Chrome"], ["firefox", "Firefox"]]) {
-    assert.ok(help.includes(`href="/extensions/zhiye-clipper-${browser}.zip?v=${manifests[0].version}"`));
+    assert.ok(help.includes(`href="/extensions/zhiye-clipper-${browser}.${browser === "firefox" ? "xpi" : "zip"}?v=${manifests[0].version}"`));
     assert.ok(help.includes(`>下载 ${label} 扩展 ${manifests[0].version}</a>`));
   }
   assert.ok((await readFile(new URL("../docs/SUPPORT.md", import.meta.url), "utf8")).includes(`当前 \`${manifests[0].version}\``));

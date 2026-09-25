@@ -49,9 +49,9 @@ export function BrowserExtension({ onPairingCountChange }: { onPairingCountChang
     <p>在已登录网页中提取当前可见正文。扩展不申请 Cookie、历史或全部网页权限，只在点击时读取当前标签页。</p>
     <div className="extension-downloads">
       <a href="/extensions/zhiye-clipper-chrome.zip?v=0.3.7" download>下载 Chrome 扩展 0.3.7</a>
-      <a href="/extensions/zhiye-clipper-firefox.zip?v=0.3.7" download>下载 Firefox 扩展 0.3.7</a>
+      <a href="/extensions/zhiye-clipper-firefox.xpi?v=0.3.7" download>下载 Firefox 扩展 0.3.7</a>
     </div>
-    <p>升级时请先覆盖旧解压目录并点“重新加载”。Chrome 在扩展管理页加载目录；Firefox 在 about:debugging 临时加载 manifest.json。</p>
+    <p>Chrome 升级时覆盖旧解压目录并在扩展管理页点“重新加载”；Firefox 下载签名 XPI 后从扩展管理页安装。</p>
     <div className="extension-actions">
       <button type="button" className="primary-button" onClick={() => void generate()} disabled={busy}>{busy ? "生成中…" : "生成 5 分钟配对码"}</button>
       <button type="button" className="guide-button" onClick={() => void load().catch((cause) => setError((cause as Error).message))} disabled={busy}>刷新已配对浏览器</button>

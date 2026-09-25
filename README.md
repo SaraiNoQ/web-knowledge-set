@@ -69,7 +69,7 @@ KB_DATA_DIR=/你的/知识库目录 pnpm start
 
 ### 浏览器扩展
 
-Chrome 解压安装或 Firefox 临时加载 `pnpm build` 生成的 `dist/extensions/` 产物。当前版本 `0.3.7`，**尚未上架扩展商店**。
+Chrome 解压安装 `pnpm build` 生成的 ZIP；Firefox 从云端织页帮助页下载 AMO unlisted 签名的 XPI 安装。当前版本 `0.3.7`，**尚未上架扩展商店**。
 
 ## 隐私与边界
 

@@ -29,11 +29,13 @@ pnpm firefox:amo
 ## 签名记录
 
 - 固定 ID `clipper@zhiye.sarainoq.cn`；自签名产物按 `<加载项编号>-<版本>.xpi` 命名，文件名里的 `3058733` 是 AMO 加载项编号，实际版本以包内 `manifest.json` 为准。每次以 `web-ext 10.6.0` 对编译目录 `dist/extensions/zhiye-clipper-firefox`（而非源代码 ZIP）执行 **unlisted** 自签名。
+- `0.3.7` · 扩展源码提交 `e139299` · `web-ext 10.6.0 sign --channel=unlisted` 返回 `3058733-0.3.7.xpi`，SHA-256 `4ed2d8c7e36c794a4b802d58d41d81471c4e29dcb1104349b2ec6dfa99575bd3`；包内 manifest 为 `0.3.7`，固定 ID 与权限不变。该摘要来自 AMO 返回的签名产物，`scripts/stage-firefox-xpi.mjs` 已核对整包摘要和当前构建的五个扩展文件，并暂存为 `dist/extensions/zhiye-clipper-firefox.xpi`。线上分发地址待部署：`https://zhiye.sarainoq.cn/extensions/zhiye-clipper-firefox.xpi?v=0.3.7`；不在仓库记录签名凭据或 XPI。
 - `0.3.6` · 源码提交 `f69a673` · 门禁：`check`、`test`（204 通过、1 跳过）、`build`、`cloud:check`（42 通过）、`cloud:bundle`、`firefox:amo` 全部通过；`web-ext 10.6.0 lint` 为 0 errors、0 notices，仅剩 3 条已审查的 Defuddle 0.19.2 `UNSAFE_VAR_ASSIGNMENT` 警告（`content.js`）。产物 `3058733-0.3.6.xpi`，SHA-256 `dcad3ad35b37d414fc49e75d14f729327362d0b6b889f9946c92e47e692d1bab`。复核：包内 `manifest.json` 为 `0.3.6`、固定 ID 与 `strict_min_version` 不变，打包后的 `content.js` 含懒加载占位符判定，`META-INF/` 含 5 项 cose/rsa 签名文件；同一目录内 `0.3.5` 产物的 SHA-256 与上一条记录一致。本版首次带上 `3d5e591` 的懒加载占位图修复。`zhiye-web` 已重新部署，帮助页下载链接与线上扩展包均为 `0.3.6`（Version ID `c5525d9d-1093-4d34-94a7-35cfca6b92cf`）。
 - `0.3.5` · 源码提交 `f85345d` · 门禁：`check`、`test`（153 通过、1 跳过）、`build`、`cloud:check`（28 通过）、`cloud:bundle`、`firefox:amo` 全部通过；`web-ext 10.6.0 lint` 为 0 errors、0 notices，仅剩 3 条已审查的 Defuddle 0.19.2 `UNSAFE_VAR_ASSIGNMENT` 警告。产物 `3058733-0.3.5.xpi`，SHA-256 `7db319267ab54c7c1a8a6451219fc382a06d3172cb1398fd20675ae7603a8c88`。复核：包内 `manifest.json` 为 `0.3.5`，`popup.html` 含 `ai-panel`，打包后的 `popup.js` 含 `AI 标题未生成` 分支、仅在有密钥时写入存储的最努力持久化，以及提交时读取输入框的密钥，`META-INF/` 含 cose/rsa 签名文件。
 - `0.3.4` · 源码提交 `8cf7246` · 门禁：`pnpm check`、`pnpm test`（148 通过、1 跳过）、`pnpm build`、`pnpm firefox:amo` 通过。产物 `3058733-0.3.4.xpi`，SHA-256 `1f24cba7d36502ab10f6e078b8a138a97f65c7a0d876965299c91d9cc089aff9`。
 - 签名产物必须存放于 `dist/` **之外**（例如 `/root/amo-signed/`）：`pnpm build` 会清空 `dist/`，放在里面的 `.xpi` 会在下一次构建时丢失。已签名的版本不可重签（AMO 拒绝重复版本），只能从 API 重新取回：`GET /api/v5/addons/addon/clipper@zhiye.sarainoq.cn/versions/<版本>/`（unlisted 需 JWT，下载 `file.url` 也要带同一个 JWT）。
 - 该 XPI 属自签名产物，不进 Git，仓库也不记录任何 AMO 凭据；安装包由所有者自行分发。
+- 线上帮助页下载签名 XPI 前，记录成功的 AMO unlisted 签名运行及其返回 XPI 的 SHA-256；在最终 `pnpm build` 和 `pnpm firefox:amo` 后运行 `node scripts/stage-firefox-xpi.mjs <AMO 签名 XPI 路径> <已记录的 SHA-256>`。脚本先核对整包摘要，再核对 manifest、签名条目及五个扩展文件与当前构建逐字节一致，复制到 `dist/extensions/zhiye-clipper-firefox.xpi`；重新构建后必须重新暂存，绝不把未签名 ZIP 改后缀发布。
 - 待补：（可选）在 AMO Developer Hub 以 “On this site” 提交审核 `zhiye-clipper-firefox.zip` + `zhiye-clipper-firefox-source.zip`，通过后再把产品文档改为正式安装链接。
 
 ## 发布门禁

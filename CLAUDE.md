@@ -66,6 +66,7 @@
       unset AMO_API_KEY AMO_API_SECRET
 
   The signed `.xpi` is written below `dist/extensions/amo-signed/`. Never put AMO API keys, API secrets, pairing codes, Access credentials, or signed artifacts in Git. If a secret is pasted into chat, a commit, or a command log, revoke and rotate it before continuing. `docs/FIREFOX_AMO.md` is the source of truth for AMO metadata and review requirements.
+- To serve a signed Firefox download online, record the SHA-256 of the XPI returned by a successful AMO unlisted signing run, then after the final server `build` and `firefox:amo` gates run `node scripts/stage-firefox-xpi.mjs /path/to/AMO-signed.xpi <recorded-sha256>`; it checks that exact digest, the current manifest, signature entries, and built extension contents before copying to `dist/extensions/zhiye-clipper-firefox.xpi`. Rebuild only if you stage the XPI again before `cloud:bundle` and deployment. Never publish an unsigned ZIP renamed as `.xpi`.
 
 # Cloudflare production deployment
 
