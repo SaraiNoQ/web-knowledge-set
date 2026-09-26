@@ -25,6 +25,7 @@ for (const browser of ["chrome", "firefox"]) {
   ]) {
     await build({
       configFile: false,
+      publicDir: false,
       build: {
         emptyOutDir: false,
         minify: true,
