@@ -80,7 +80,7 @@ snapshots and offline images.
 ### Browser extension
 
 Install the ZIP produced by `pnpm build` unpacked in Chrome, or install the AMO unlisted signed XPI from the cloud app's help page in Firefox. Current
-version `0.3.7`, **not published to any extension store**.
+source version `0.3.8` (XPI availability follows the [signing record](docs/FIREFOX_AMO.md)), **not published to any extension store**.
 
 ## Privacy and boundaries
 

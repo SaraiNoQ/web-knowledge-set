@@ -32,11 +32,24 @@ async function extract(): Promise<ZhiyeClipResult> {
   const xArticleId = /(?:^|\.)(?:x\.com|twitter\.com)$/u.test(location.hostname)
     ? /\/(?:status|article)\/(\d+)(?:\/|$)/u.exec(location.pathname)?.[1]
     : null;
-  const xArticle = xArticleId
+  let xArticle = xArticleId
     ? [...page.querySelectorAll('[itemtype="https://schema.org/Article"]')].find((article) => (
       article.getAttribute("itemid")?.endsWith(`/article/${xArticleId}`)
     ))
     : null;
+  if (xArticleId && !xArticle) {
+    // X also renders longform without schema metadata. Match its own title and
+    // current post/cover links so a quoted or recommended article cannot win.
+    const candidates = [...page.querySelectorAll(".x-article-body")].flatMap((body) => {
+      const root = body.parentElement;
+      return root?.querySelector(":scope > h1") ? [root] : [];
+    });
+    xArticle = candidates.find((root) => [...root.querySelectorAll<HTMLAnchorElement>("a[href]")].some((link) => (
+      (link.pathname.endsWith(`/status/${xArticleId}`) && !link.closest(".x-article-body"))
+      || (link.pathname.includes(`/article/${xArticleId}/media/`) && link.querySelector("img"))
+    ))) ?? (location.pathname.includes("/article/") && candidates.length === 1
+      && !candidates[0]!.querySelector('a[href*="/article/"]') ? candidates[0] : null);
+  }
   if (xArticleId && !xArticle && (
     location.pathname.includes("/article/") || [...page.querySelectorAll<HTMLAnchorElement>('a[href*="/article/"]')].some((link) => (
       link.pathname.endsWith(`/article/${xArticleId}`)
@@ -105,12 +118,13 @@ async function extract(): Promise<ZhiyeClipResult> {
   }
   const result = new Defuddle(page, {
     url: location.href, markdown: true, useAsync: false,
-    ...(xArticle ? { contentSelector: ".x-article-body" } : {}),
+    ...(xArticle ? { contentSelector: ".x-article-body", removeLowScoring: false, removeContentPatterns: false } : {}),
   }).parse();
   const extracted = text(result.contentMarkdown) ?? text(result.content);
   const markdown = extracted && restoreProtectedMath(extracted, protectedMath);
   if (!markdown) throw new Error("页面没有可剪藏的正文，请使用织页的手动摘录。");
-  const cover = text(xArticle?.querySelector('img[itemprop="image"]')?.getAttribute("src"));
+  const cover = text((xArticle?.querySelector('img[itemprop="image"]')
+    ?? xArticle?.querySelector(":scope > img, :scope > a > img"))?.getAttribute("src"));
   const published = text(xArticle?.querySelector('[itemprop="datePublished"]')?.getAttribute("content")) ?? text(result.published);
   return {
     title: text(xArticle?.querySelector("h1")?.textContent) ?? text(result.title) ?? text(page.title) ?? location.hostname,
