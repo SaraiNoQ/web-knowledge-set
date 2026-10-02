@@ -119,6 +119,54 @@ test("extension clips the X article body instead of its post or cover", async ({
   expect(cardError).toContain("正文尚未加载");
 });
 
+test("extension clips X longform without schema metadata and keeps code blocks", async ({ page }) => {
+  await page.route("https://x.com/**", (route) => {
+    const direct = route.request().url().includes("/i/article/");
+    const textOnly = route.request().url().includes("text-only");
+    return route.fulfill({
+      contentType: "text/html; charset=utf-8",
+      body: `<!doctype html><html><head><title>Hanako on X</title></head><body>
+      ${textOnly ? "" : '<div><h1>推荐文章</h1><div class="x-article-body"><p>推荐正文不应被选中。</p><a href="/other/article/999/media/1"><img src="https://pbs.twimg.com/media/other.jpg"></a></div></div>'}
+      <div class="flex flex-col gap-3">
+        <img src="https://pbs.twimg.com/media/cover.jpg" alt="文章封面图片">
+        <h1>Jev Engineering: How to Stop Paying a Frontier Model to Make Yes-or-No Decisions (full course)</h1>
+        ${direct ? "" : '<div><a href="/hanakoxbt/status/2101709924828934222">回复</a><button>喜欢</button></div>'}
+        <div class="x-article-body"><style>.contents { display: contents }</style>
+          <div class="contents"><p>Open the trace of any agent you have shipped and count the calls.</p><h3>01. Split - find the decisions, not the text</h3>
+            <p>The answer space is known before you ask. Keep generation, execution and decision separate.</p></div>
+          <div class="x-article-code"><div>python<button>复制代码</button></div><pre class="shiki"><code><span class="line">if confidence &gt;= 0.88:</span>
+<span class="line">    decision = "ship"</span></code></pre></div>
+          ${textOnly ? "" : '<figure><a href="/hanakoxbt/article/2101709924828934222/media/1"><img src="https://pbs.twimg.com/media/inside.jpg" alt="文章配图"></a></figure>'}
+          <article data-testid="tweet"><p>正文中的引用帖。</p><button>喜欢</button></article>
+          <div class="contents"><ul><li>collect real examples</li><li>pin the model version</li></ul><p>Start with one decision. Let it earn one branch.</p></div>
+        </div>
+      </div>
+      <article data-testid="tweet"><div data-testid="tweetText">回复不得混入。</div></article>
+    </body></html>`,
+    });
+  });
+  for (const path of ["/hanakoxbt/status/2101709924828934222", "/i/article/2101709924828934222", "/i/article/2101709924828934222?text-only"]) {
+    await page.goto(`https://x.com${path}`);
+    await page.addScriptTag({ content: await readFile("dist/extensions/zhiye-clipper-chrome/content.js", "utf8") });
+    const result = await page.evaluate(async () => await (window as typeof window & { __ZHIYE_CLIP_RESULT__: Promise<{ title: string; markdown: string }> }).__ZHIYE_CLIP_RESULT__);
+    expect(result.title).toContain("Jev Engineering");
+    expect(result.markdown).toContain("Open the trace");
+    expect(result.markdown).toMatch(/### 01\\?\. Split/u);
+    expect(result.markdown).toMatch(/```[^\n]*\nif confidence >= 0\.88:\n {4}decision = "ship"/u);
+    expect(result.markdown).toContain("pin the model version");
+    expect(result.markdown).toContain("Start with one decision");
+    expect(result.markdown).toContain("https://pbs.twimg.com/media/cover.jpg");
+    if (!path.includes("text-only")) expect(result.markdown).toContain("https://pbs.twimg.com/media/inside.jpg");
+    expect(result.markdown).not.toContain("推荐正文");
+    expect(result.markdown).not.toContain("回复不得混入");
+    expect(result.markdown).not.toContain("复制代码");
+  }
+  await page.goto("https://x.com/i/article/888");
+  await page.addScriptTag({ content: await readFile("dist/extensions/zhiye-clipper-chrome/content.js", "utf8") });
+  const error = await page.evaluate(async () => (window as typeof window & { __ZHIYE_CLIP_RESULT__: Promise<unknown> }).__ZHIYE_CLIP_RESULT__.catch((reason: Error) => reason.message));
+  expect(error).toContain("正文尚未加载");
+});
+
 test("extension content script drops blank lazy-load placeholders and keeps real images", async ({ page }) => {
   const coverUrl = "https://picx.zhimg.com/v2-76e720da28a568c43c906dcc240d19ed_b.jpg";
   const hiddenCoverUrl = "https://pic4.zhimg.com/v2-aabda40c0c21d3f4a9b5a132e553b775_b.jpg";
