@@ -7,9 +7,9 @@ const title = "Jev Engineering: How to Stop Paying a Frontier Model to Make Yes-
 
 // The logged-in reader uses the selectors supported by Defuddle's existing
 // XArticleExtractor, rather than the public .x-article-body layout.
-function reader(id: string, empty = false) {
+function reader(id: string, empty = false, readView = true) {
   return `<article data-testid="tweet"><a href="/hanakoxbt/status/${id}"><time datetime="2026-09-21T00:27:00Z">Sep 21</time></a>
-    <div data-testid="twitterArticleReadView">
+    <div ${readView ? 'data-testid="twitterArticleReadView"' : ""}>
       <div data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/cover.jpg?format=jpg&amp;name=medium" alt="Article cover image"></div>
       <div data-testid="twitter-article-title">${id === statusId ? title : "RECOMMENDED_ARTICLE"}</div>
       <div data-testid="twitterArticleRichTextView"><div class="public-DraftEditor-content" contenteditable="false">
@@ -34,12 +34,15 @@ test("extension clips the X native read view without losing read-only rich text"
     contentType: "text/html; charset=utf-8",
     body: `<!doctype html><html><head><title>Hanako on X</title></head><body><main data-testid="primaryColumn">
       <aside>${reader("999")}</aside>
-      ${reader(statusId)}
+      ${reader(statusId, false, !route.request().url().includes("body-only"))
+        .replace('<article data-testid="tweet">', route.request().url().includes("schema")
+          ? `<article data-testid="tweet" itemtype="https://schema.org/Article" itemid="https://x.com/hanakoxbt/article/${statusId}">` : '<article data-testid="tweet">')
+        .replace('alt="Article cover image"', route.request().url().includes("schema") ? 'itemprop="image" alt="Article cover image"' : 'alt="Article cover image"')}
       <article data-testid="tweet"><p>REPLY_OUTSIDE_ARTICLE</p></article>
     </main></body></html>`,
   }));
   await page.route("https://pbs.twimg.com/**", (route) => route.abort());
-  for (const path of [`/hanakoxbt/status/${statusId}`, `/hanakoxbt/article/${articleId}`]) {
+  for (const path of [`/hanakoxbt/status/${statusId}`, `/hanakoxbt/article/${articleId}`, `/hanakoxbt/status/${statusId}?body-only`, `/hanakoxbt/article/${articleId}?body-only`, `/hanakoxbt/status/${statusId}?schema`]) {
     await page.goto(`https://x.com${path}`);
     await page.addScriptTag({ content: script });
     const result = await page.evaluate(async () => await (window as typeof window & {
@@ -53,6 +56,7 @@ test("extension clips the X native read view without losing read-only rich text"
     expect(result.markdown).toContain("pin the model version");
     expect(result.markdown).toContain("Start with one decision");
     expect(result.markdown).toContain("https://pbs.twimg.com/media/cover.jpg");
+    expect(result.markdown.split("https://pbs.twimg.com/media/cover.jpg")).toHaveLength(2);
     expect(result.markdown).toContain("https://pbs.twimg.com/media/inside.jpg");
     expect(result.markdown.split("Open the trace")).toHaveLength(2);
     expect(result.markdown).not.toMatch(/RECOMMENDED_TEXT|REPLY_OUTSIDE_ARTICLE|EDITABLE_SECRET|FORM_SECRET|Copy code|Summarize with Grok/u);
@@ -64,18 +68,21 @@ test("extension clips a standalone X native reader and rejects an unrelated post
     contentType: "text/html; charset=utf-8",
     body: `<!doctype html><html><body><main data-testid="primaryColumn">${route.request().url().includes("unrelated")
       ? reader("999")
-      : reader(statusId).replace(/<article data-testid="tweet"><a[^>]+><time[^>]+>[^<]+<\/time><\/a>/u, "").replace(/<\/article>$/u, "")}</main></body></html>`,
+      : reader(statusId, false, !route.request().url().includes("body-only")).replace(/<article data-testid="tweet"><a[^>]+><time[^>]+>[^<]+<\/time><\/a>/u, "").replace(/<\/article>$/u, "")}</main></body></html>`,
   }));
   await page.route("https://pbs.twimg.com/**", (route) => route.abort());
   const script = await readFile(`dist/extensions/zhiye-clipper-${browserName === "firefox" ? "firefox" : "chrome"}/content.js`, "utf8");
-  await page.goto(`https://x.com/hanakoxbt/status/${statusId}`);
-  await page.addScriptTag({ content: script });
-  const result = await page.evaluate(async () => await (window as typeof window & {
-    __ZHIYE_CLIP_RESULT__: Promise<{ title: string; markdown: string }>;
-  }).__ZHIYE_CLIP_RESULT__);
-  expect(result.title).toBe(title);
-  expect(result.markdown).toContain("Open the trace");
-  expect(result.markdown).toContain("Start with one decision");
+  for (const suffix of ["", "?body-only"]) {
+    await page.goto(`https://x.com/hanakoxbt/status/${statusId}${suffix}`);
+    await page.addScriptTag({ content: script });
+    const result = await page.evaluate(async () => await (window as typeof window & {
+      __ZHIYE_CLIP_RESULT__: Promise<{ title: string; markdown: string }>;
+    }).__ZHIYE_CLIP_RESULT__);
+    expect(result.title).toBe(title);
+    expect(result.markdown).toContain("Open the trace");
+    expect(result.markdown).toContain("Start with one decision");
+    expect(result.markdown).toContain("https://pbs.twimg.com/media/cover.jpg");
+  }
   await page.goto(`https://x.com/hanakoxbt/status/${statusId}?unrelated`);
   await page.addScriptTag({ content: script });
   const error = await page.evaluate(async () => (window as typeof window & {

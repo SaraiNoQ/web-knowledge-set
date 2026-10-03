@@ -39,7 +39,11 @@ async function extract(): Promise<ZhiyeClipResult> {
     ))
     : null;
   if (xArticleId && !xArticle) {
-    const readers = [...page.querySelectorAll('[data-testid="twitterArticleReadView"]')]
+    const readers = [...page.querySelectorAll('[data-testid="twitterArticleRichTextView"]')].flatMap((body) => {
+      const root = body.closest('[data-testid="twitterArticleReadView"]')
+        ?? body.closest('article[data-testid="tweet"], [data-testid="cellInnerDiv"]') ?? body.parentElement;
+      return root ? [root] : [];
+    })
       .filter((root) => !root.closest('aside, [hidden], [aria-hidden="true"]'));
     xArticle = readers.find((root) => {
       const scope = root.closest('article[data-testid="tweet"], [data-testid="cellInnerDiv"]') ?? root;
@@ -68,7 +72,7 @@ async function extract(): Promise<ZhiyeClipResult> {
       && !candidates[0]!.querySelector('a[href*="/article/"]') ? candidates[0] : null);
   }
   if (xArticleId && !xArticle && (
-    location.pathname.includes("/article/") || page.querySelector('[data-testid="twitterArticleReadView"]')
+    location.pathname.includes("/article/") || page.querySelector('[data-testid="twitterArticleReadView"], [data-testid="twitterArticleRichTextView"]')
     || [...page.querySelectorAll<HTMLAnchorElement>('a[href*="/article/"]')].some((link) => (
       link.pathname.endsWith(`/article/${xArticleId}`)
     )) || page.querySelector('article[data-testid="tweet"]')?.querySelector('img[alt="Article cover image"]')
@@ -150,7 +154,13 @@ async function extract(): Promise<ZhiyeClipResult> {
   const markdown = extracted && restoreProtectedMath(extracted, protectedMath);
   if (!markdown) throw new Error("页面没有可剪藏的正文，请使用织页的手动摘录。");
   const cover = text((xArticle?.querySelector('img[itemprop="image"]')
-    ?? xArticle?.querySelector(":scope > img, :scope > a > img"))?.getAttribute("src"));
+    ?? xArticle?.querySelector(":scope > img, :scope > a > img")
+    ?? [...(xArticle?.querySelectorAll('[data-testid="tweetPhoto"] img') ?? [])].find((image) => !image.closest(X_ARTICLE_BODY)))?.getAttribute("src"));
+  // The native extractor upgrades the same twimg asset from medium to large.
+  const hasCover = cover && (markdown.includes(cover) || (
+    xBody?.matches('[data-testid="twitterArticleRichTextView"]') && /^https:\/\/pbs\.twimg\.com\/media\//u.test(cover)
+    && markdown.includes(cover.split("?")[0]!)
+  ));
   const published = text(xArticle?.querySelector('[itemprop="datePublished"]')?.getAttribute("content")) ?? text(result.published);
   return {
     title: text(xArticle?.querySelector('[data-testid="twitter-article-title"]')?.textContent)
@@ -158,7 +168,7 @@ async function extract(): Promise<ZhiyeClipResult> {
     sourceUrl: location.href,
     author: text(xArticle?.querySelector('[itemprop~="author"] [itemprop="name"]')?.textContent) ?? text(result.author),
     publishedAt: published && /^\d{4}-\d{2}-\d{2}/u.test(published) ? published.slice(0, 10) : null,
-    markdown: cover && /^https?:\/\/[^\s<>]+$/u.test(cover) && !markdown.includes(cover)
+    markdown: cover && /^https?:\/\/[^\s<>]+$/u.test(cover) && !hasCover
       ? `![文章封面](<${cover}>)\n\n${markdown}` : markdown,
   };
 }

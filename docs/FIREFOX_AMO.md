@@ -6,6 +6,8 @@
 
 `0.3.9` 原因与回归：0.3.8 的容器判定只接受 `.x-article-body`，会在 Defuddle 已有的 `XArticleExtractor` 运行之前拒绝原生 `twitterArticleReadView` / `twitterArticleRichTextView`。仅放行容器仍不够：后续公式/控件清理会删除 `contenteditable="false"` 的 Draft.js 阅读正文。服务器 Firefox 与 Chromium 均复现原“正文尚未加载”错误；单独修正识别后，Firefox 复现提取结果仅剩封面图片。修复仅在选定 X 正文克隆内保留只读内容，继续删除可编辑输入、表单和按钮；在清理之后验证真实正文，再复用 Defuddle 原生解析器。回归覆盖帖子/文章 ID 不同、独立阅读视图、推荐与回复隔离以及只有表单/控件的空正文。
 
+原生解析器的 `canExtract()` 只要求 `twitterArticleRichTextView`；已补充没有 `twitterArticleReadView` 外壳时从当前帖子或正文父容器定位的分支。此分支同样已在 Firefox 复现外壳缺失导致的原报错。封面与正文按范围保存，兼容原生解析器把同一 twimg 封面从 `name=medium` 升级为 `name=large`，避免混合 schema/原生结构重复添加封面。
+
 `0.3.9` 构建门禁：服务器 Node 24.19.0 / pnpm 11.7.0 冻结安装、`check`、`test`、`build`、`cloud:check`（42 通过）、`firefox:amo`、`cloud:bundle` 全部通过；单元门禁保留 Linux root 环境下既有 Chromium 沙箱用例跳过。11 项浏览器检查通过（3 项 Firefox 原生阅读器、7 项 Chromium 提取及 1 项认证边界），包括旧版 X、ChatGPT 公式与懒加载图片回归；`web-ext 10.6.0 lint` 为 0 errors、0 notices，仅有 3 条已审查的 Defuddle 依赖警告。独立代理审查完整差异后无可操作问题；签名 XPI 与生产部署仍待单独完成。
 
 证据边界：本次内置浏览器可读 Hanako 示例的公开 `.x-article-body` 页面；原生阅读器回归结构来自已锁定的 Defuddle 0.19.2 解析器契约。用户 Firefox 的电脑控制权限未开放，尚不能声称已在该用户的登录态页面完成实际剪藏。
