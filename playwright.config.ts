@@ -35,5 +35,10 @@ export default defineConfig({
       testMatch: "**/extension-popup.spec.ts",
       use: { browserName: "firefox" },
     },
+    {
+      name: "firefox-extract",
+      testMatch: "**/extension-x-article.spec.ts",
+      use: { browserName: "firefox" },
+    },
   ],
 });
