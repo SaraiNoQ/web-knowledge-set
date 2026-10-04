@@ -459,8 +459,8 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
   return (
     <section className="knowledge-map" aria-label="知识地图">
       <header className="knowledge-map-head">
-        <div><span className="eyebrow">03 · ATLAS</span><h2>知识地图</h2><p>实线表示文件夹归属；虚线是模型语义推荐。</p></div>
-        <div className="knowledge-map-head-actions"><span className="map-total">{total.toLocaleString("zh-CN")} 篇</span><LibraryViewSwitch map active={active} onChange={(map) => { if (!map) onBack(); }} /></div>
+        <div className="knowledge-map-heading"><span className="eyebrow">03 · ATLAS</span><div className="knowledge-map-title-row"><h2>知识地图</h2><LibraryViewSwitch map active={active} onChange={(map) => { if (!map) onBack(); }} /></div><p>实线表示文件夹归属；虚线是模型语义推荐。</p></div>
+        <div className="knowledge-map-head-actions"><span className="map-total">{total.toLocaleString("zh-CN")} 篇</span></div>
       </header>
       <div className="knowledge-map-layout">
         <aside className="knowledge-map-filters" aria-label="地图筛选">

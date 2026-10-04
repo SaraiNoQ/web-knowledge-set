@@ -551,6 +551,7 @@ export default function App() {
   const enterImmersiveRef = useRef<HTMLButtonElement>(null);
   const exitImmersiveRef = useRef<HTMLButtonElement>(null);
   const [graphMode, setGraphMode] = useState(false);
+  const [paperDirty, setPaperDirty] = useState(false);
   const libraryViewListRef = useRef<HTMLButtonElement>(null);
   const [graphMounted, setGraphMounted] = useState(false);
   const graphReturnRef = useRef(false);
@@ -813,7 +814,7 @@ export default function App() {
   const metadataDirty = Boolean(sourceMetadata && currentDoc && !sourceMetadataEqual(sourceMetadata, currentDoc));
   const metadataDirtyRef = useRef(metadataDirty);
   metadataDirtyRef.current = metadataDirty;
-  const hasUnsavedChanges = dirty || metadataDirty;
+  const hasUnsavedChanges = dirty || metadataDirty || paperDirty;
   const confirmDiscardChanges = async (message: string) => {
     if (!hasUnsavedChanges) return true;
     if (discardConfirmationRef.current) return false;
@@ -2599,6 +2600,14 @@ export default function App() {
     return true;
   };
 
+  const switchLibraryMode = async (map: boolean) => {
+    if (map === graphMode || closing || !await closeDocument()) return;
+    graphReturnRef.current = false;
+    if (map) setGraphMounted(true);
+    setGraphMode(map);
+    if (!map) window.requestAnimationFrame(() => libraryViewListRef.current?.focus());
+  };
+
   const returnToLibrary = async () => {
     if (!await closeDocument()) return;
     setAiSettingsOpen(false);
@@ -3637,7 +3646,7 @@ export default function App() {
           </div>
           <div className="panel-heading">
             <h2>{inTrash ? "回收站" : "知识织片"}</h2>
-            {!inTrash && <LibraryViewSwitch listRef={libraryViewListRef} map={graphMode} active={!graphMode} onChange={(map) => { if (map) setGraphMounted(true); setGraphMode(map); }} />}
+            {!inTrash && <LibraryViewSwitch listRef={libraryViewListRef} map={graphMode} active={!graphMode} onChange={(map) => void switchLibraryMode(map)} />}
           </div>
 
           <nav className="library-tabs" aria-label="资料库视图">
@@ -3727,7 +3736,7 @@ export default function App() {
         </aside>
 
         <section id="reader-panel" ref={readerPanelRef} className="reader-panel" aria-label="文档工作台" tabIndex={-1}>
-          {graphMounted && <div className={`knowledge-map-host ${graphMode && !selectedId ? "is-active" : "is-dormant"}`} aria-hidden={!graphMode || Boolean(selectedId)}><Suspense fallback={<div className="map-load-fallback" role="status">正在准备知识地图…</div>}><KnowledgeMap active={graphMode && !selectedId} cloud={cloudMode} libraryView={libraryView === "trash" ? "all" : libraryView} query={query} onQueryChange={setQuery} onBack={() => { setGraphMode(false); window.requestAnimationFrame(() => libraryViewListRef.current?.focus()); }} onOpenDocument={(id) => void openGraphDocument(id)} refreshKey={listRefresh + semanticRefresh} /></Suspense></div>}
+          {graphMounted && <div className={`knowledge-map-host ${graphMode && !selectedId ? "is-active" : "is-dormant"}`} aria-hidden={!graphMode || Boolean(selectedId)}><Suspense fallback={<div className="map-load-fallback" role="status">正在准备知识地图…</div>}><KnowledgeMap active={graphMode && !selectedId} cloud={cloudMode} libraryView={libraryView === "trash" ? "all" : libraryView} query={query} onQueryChange={setQuery} onBack={() => void switchLibraryMode(false)} onOpenDocument={(id) => void openGraphDocument(id)} refreshKey={listRefresh + semanticRefresh} /></Suspense></div>}
           {graphMode && !selectedId ? null : !selectedId ? (
             <div className="welcome-state">
               <div className="weave-mark" aria-hidden="true"><i /><i /><i /><i /></div>
@@ -3740,7 +3749,7 @@ export default function App() {
           ) : detailError && (!currentDoc || (currentDoc.kind === "paper" && !currentPaper)) ? (
             <StatePanel kind="error" title="无法打开这篇知识">{detailError}</StatePanel>
           ) : currentPaper && currentDoc ? (
-            <PaperReader paperId={currentPaper.id} autoStart={paperAutoStart === currentPaper.id} onClose={closeDocument} onRevisionChange={updateCurrentPaperRevision} />
+            <PaperReader paperId={currentPaper.id} autoStart={paperAutoStart === currentPaper.id} onClose={closeDocument} onRevisionChange={updateCurrentPaperRevision} onDirtyChange={setPaperDirty} />
           ) : currentDoc && draft && webArticleMode ? (
             <>
               <button type="button" className="mobile-back" onClick={closeDocument}><Icon size={16}><path d="m15 18-6-6 6-6" /></Icon>返回知识库</button>

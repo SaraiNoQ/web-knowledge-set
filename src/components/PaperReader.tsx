@@ -169,7 +169,7 @@ function PaperCanvas({ paperId, pageNumber, zoom, onZoom }: { paperId: string; p
   );
 }
 
-export function PaperReader({ paperId, autoStart, onClose, onRevisionChange }: { paperId: string; autoStart?: boolean; onClose: () => void; onRevisionChange: (paperId: string, revision: number) => void }) {
+export function PaperReader({ paperId, autoStart, onClose, onRevisionChange, onDirtyChange }: { paperId: string; autoStart?: boolean; onClose: () => void; onRevisionChange: (paperId: string, revision: number) => void; onDirtyChange?: (dirty: boolean) => void }) {
   const [paper, setPaper] = useState<PaperDocument | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [draftBlocks, setDraftBlocks] = useState<PaperBlock[]>([]);
@@ -307,6 +307,10 @@ export function PaperReader({ paperId, autoStart, onClose, onRevisionChange }: {
   }, [paper?.status, paper?.id, drive]);
 
   const page = useMemo<PaperPage | null>(() => paper?.pages.find((item) => item.pageNumber === pageNumber) ?? null, [paper, pageNumber]);
+
+  const translationDirty = editing && Boolean(page) && draftBlocks.some((block, index) => block.translation !== page?.translationBlocks[index]?.translation);
+  useEffect(() => { onDirtyChange?.(translationDirty); }, [onDirtyChange, translationDirty]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   useEffect(() => {
     if (!page || editing) return;

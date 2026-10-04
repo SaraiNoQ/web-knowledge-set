@@ -258,6 +258,17 @@ test("paper translation drafts and reader state survive immersive switching", as
     }
     await page.getByRole("button", { name: "退出沉浸模式" }).click();
     await expect(page.locator("textarea")).toHaveValue("沉浸模式中的未保存译文。");
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.locator(".library-panel").getByRole("button", { name: "知识地图" }).click();
+    const discard = page.getByRole("alertdialog", { name: "存在未保存修改" });
+    await expect(discard).toBeVisible();
+    await discard.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(page.locator("textarea")).toHaveValue("沉浸模式中的未保存译文。");
+    await page.locator(".library-panel").getByRole("button", { name: "知识地图" }).click();
+    await discard.getByRole("button", { name: "继续并放弃" }).click();
+    await expect(page.locator(".knowledge-map-host.is-active")).toBeVisible();
+    await page.getByRole("button", { name: "返回列表" }).click();
+    await expect(page.getByRole("complementary", { name: "知识列表" })).toBeVisible();
   } finally {
     const document = await request.get(`/api/documents/${paper.id}`);
     const { revision } = await document.json();
