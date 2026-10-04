@@ -43,6 +43,7 @@ import { DataSafety } from "./components/DataSafety";
 import { Diagnostics } from "./components/Diagnostics";
 import { DerivedKnowledge, type DerivedMode } from "./components/DerivedKnowledge";
 import { MarkdownEditor } from "./components/MarkdownEditor";
+import { LibraryViewSwitch } from "./components/LibraryViewSwitch";
 import { Onboarding } from "./components/Onboarding";
 import { PaperReader } from "./components/PaperReader";
 import { DocumentDirectoryRow, LibraryDirectory, type MoveDocumentTarget } from "./components/LibraryDirectory";
@@ -550,6 +551,7 @@ export default function App() {
   const enterImmersiveRef = useRef<HTMLButtonElement>(null);
   const exitImmersiveRef = useRef<HTMLButtonElement>(null);
   const [graphMode, setGraphMode] = useState(false);
+  const libraryViewListRef = useRef<HTMLButtonElement>(null);
   const [graphMounted, setGraphMounted] = useState(false);
   const graphReturnRef = useRef(false);
   const [showBackToTitle, setShowBackToTitle] = useState(false);
@@ -3629,14 +3631,14 @@ export default function App() {
             <IconButton label="新建文章" onClick={() => void createArticle()}><Icon size={18}><path d="M12 5v14M5 12h14" /></Icon></IconButton>
             <IconButton label="打开回收站" aria-pressed={libraryView === "trash"} onClick={() => void applyLibraryView("trash")}><Icon size={17}><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13M10 10v7M14 10v7" /></Icon></IconButton>
           </nav>
-          <div className="panel-heading">
-            <div><span className="eyebrow">02 · {inTrash ? "TRASH" : "LIBRARY"}</span><h2>{inTrash ? "回收站" : "知识织片"}</h2></div>
+          <div className="library-meta">
+            <span className="eyebrow">02 · {inTrash ? "TRASH" : "LIBRARY"}</span>
             <span className="total-count">{total}<small>篇</small></span>
           </div>
-          {!inTrash && <div className="library-view-toggle" role="group" aria-label="资料库显示方式">
-            <button type="button" aria-pressed={!graphMode} onClick={() => setGraphMode(false)}>列表</button>
-            <button type="button" aria-pressed={graphMode} onClick={() => { setGraphMounted(true); setGraphMode(true); }}>知识地图</button>
-          </div>}
+          <div className="panel-heading">
+            <h2>{inTrash ? "回收站" : "知识织片"}</h2>
+            {!inTrash && <LibraryViewSwitch listRef={libraryViewListRef} map={graphMode} active={!graphMode} onChange={(map) => { if (map) setGraphMounted(true); setGraphMode(map); }} />}
+          </div>
 
           <nav className="library-tabs" aria-label="资料库视图">
             {([
@@ -3725,7 +3727,7 @@ export default function App() {
         </aside>
 
         <section id="reader-panel" ref={readerPanelRef} className="reader-panel" aria-label="文档工作台" tabIndex={-1}>
-          {graphMounted && <div className={`knowledge-map-host ${graphMode && !selectedId ? "is-active" : "is-dormant"}`} aria-hidden={!graphMode || Boolean(selectedId)}><Suspense fallback={<div className="map-load-fallback" role="status">正在准备知识地图…</div>}><KnowledgeMap active={graphMode && !selectedId} cloud={cloudMode} libraryView={libraryView === "trash" ? "all" : libraryView} query={query} onQueryChange={setQuery} onBack={() => setGraphMode(false)} onOpenDocument={(id) => void openGraphDocument(id)} refreshKey={listRefresh + semanticRefresh} /></Suspense></div>}
+          {graphMounted && <div className={`knowledge-map-host ${graphMode && !selectedId ? "is-active" : "is-dormant"}`} aria-hidden={!graphMode || Boolean(selectedId)}><Suspense fallback={<div className="map-load-fallback" role="status">正在准备知识地图…</div>}><KnowledgeMap active={graphMode && !selectedId} cloud={cloudMode} libraryView={libraryView === "trash" ? "all" : libraryView} query={query} onQueryChange={setQuery} onBack={() => { setGraphMode(false); window.requestAnimationFrame(() => libraryViewListRef.current?.focus()); }} onOpenDocument={(id) => void openGraphDocument(id)} refreshKey={listRefresh + semanticRefresh} /></Suspense></div>}
           {graphMode && !selectedId ? null : !selectedId ? (
             <div className="welcome-state">
               <div className="weave-mark" aria-hidden="true"><i /><i /><i /><i /></div>
