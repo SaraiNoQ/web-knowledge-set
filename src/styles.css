@@ -498,8 +498,8 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 
 .library-toggle:hover { color: var(--vermilion); border-color: var(--vermilion); }
 .library-meta { display: flex; align-items: center; gap: 12px; min-height: 30px; padding-right: 34px; margin-bottom: 6px; }
-.library-meta .eyebrow { align-self: flex-start; margin: 0; }
-.library-meta .total-count { align-self: flex-start; font: 500 var(--font-caption)/1 var(--font-sans); }
+.library-meta .eyebrow { margin: 0; }
+.library-meta .total-count { font: 500 var(--font-caption)/1 var(--font-sans); }
 .library-panel .panel-heading { align-items: center; gap: 12px; }
 .collapsed-actions { display: none; }
 

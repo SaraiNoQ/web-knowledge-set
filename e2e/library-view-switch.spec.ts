@@ -19,16 +19,19 @@ test("library header and map switch stay compact and usable at desktop and small
       const library = page.getByRole("complementary", { name: "知识列表" });
       const switcher = library.getByRole("group", { name: "资料库显示方式" });
       await expect(switcher).toBeVisible();
-      await expect.poll(() => library.evaluate((element) =>
-        element.querySelector(".eyebrow")!.getBoundingClientRect().top - element.getBoundingClientRect().top)).toBe(width > 820 ? 11 : 9);
+      await expect.poll(() => library.evaluate((element) => parseFloat(getComputedStyle(element).paddingTop))).toBe(width > 820 ? 11 : 9);
       const layout = await library.evaluate((element) => {
         const panel = element.getBoundingClientRect();
         const label = element.querySelector(".eyebrow")!.getBoundingClientRect();
+        const meta = element.querySelector(".library-meta")!.getBoundingClientRect();
+        const count = element.querySelector(".total-count")!.getBoundingClientRect();
         const title = element.querySelector("h2")!.getBoundingClientRect();
         const switcher = element.querySelector(".library-view-toggle")!.getBoundingClientRect();
-        return { gap: label.top - panel.top, titleRight: title.right, switchLeft: switcher.left, switchRight: switcher.right, panelRight: panel.right };
+        return { gap: parseFloat(getComputedStyle(element).paddingTop), labelCenter: label.top + label.height / 2, metaCenter: meta.top + meta.height / 2, countCenter: count.top + count.height / 2, titleRight: title.right, switchLeft: switcher.left, switchRight: switcher.right, panelRight: panel.right };
       });
       expect(layout.gap).toBe(width > 820 ? 11 : 9);
+      expect(Math.abs(layout.labelCenter - layout.metaCenter)).toBeLessThanOrEqual(1);
+      expect(Math.abs(layout.countCenter - layout.metaCenter)).toBeLessThanOrEqual(1);
       expect(layout.titleRight).toBeLessThan(layout.switchLeft);
       expect(layout.switchRight).toBeLessThanOrEqual(layout.panelRight);
       await expect(switcher).toHaveCSS("height", "34px");
