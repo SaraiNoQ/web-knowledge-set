@@ -2,6 +2,18 @@
 
 ## 产物
 
+当前修复源码版本为 `0.3.9`，增加 X 原生阅读器与 Draft.js 只读富文本兼容；服务器已有与当前构建一致的签名 XPI，云端分发待本次部署完成。`0.3.8` 已由所有者完成签名并下载，但不含本次修复，旧签名 XPI 不可替代当前构建。
+
+`0.3.9` 原因与回归：0.3.8 的容器判定只接受 `.x-article-body`，会在 Defuddle 已有的 `XArticleExtractor` 运行之前拒绝原生 `twitterArticleReadView` / `twitterArticleRichTextView`。仅放行容器仍不够：后续公式/控件清理会删除 `contenteditable="false"` 的 Draft.js 阅读正文。服务器 Firefox 与 Chromium 均复现原“正文尚未加载”错误；单独修正识别后，Firefox 复现提取结果仅剩封面图片。修复仅在选定 X 正文克隆内保留只读内容，继续删除可编辑输入、表单和按钮；在清理之后验证真实正文，再复用 Defuddle 原生解析器。回归覆盖帖子/文章 ID 不同、独立阅读视图、推荐与回复隔离以及只有表单/控件的空正文。
+
+原生解析器的 `canExtract()` 只要求 `twitterArticleRichTextView`；已补充没有 `twitterArticleReadView` 外壳时从当前帖子或正文父容器定位的分支。此分支同样已在 Firefox 复现外壳缺失导致的原报错。封面与正文按范围保存，兼容原生解析器把同一 twimg 封面从 `name=medium` 升级为 `name=large`，避免混合 schema/原生结构重复添加封面。
+
+`0.3.9` 原实现构建门禁：服务器 Node 24.19.0 / pnpm 11.7.0 冻结安装、`check`、`test`、`build`、`cloud:check`（42 通过）、`firefox:amo`、`cloud:bundle` 全部通过；单元门禁保留 Linux root 环境下既有 Chromium 沙箱用例跳过。11 项浏览器检查通过（3 项 Firefox 原生阅读器、7 项 Chromium 提取及 1 项认证边界），包括旧版 X、ChatGPT 公式与懒加载图片回归；`web-ext 10.6.0 lint` 为 0 errors、0 notices，仅有 3 条已审查的 Defuddle 依赖警告。独立代理审查完整差异后无可操作问题。
+
+证据边界：本次内置浏览器可读 Hanako 示例的公开 `.x-article-body` 页面；原生阅读器回归结构来自已锁定的 Defuddle 0.19.2 解析器契约。用户 Firefox 的电脑控制权限未开放，尚不能声称已在该用户的登录态页面完成实际剪藏。
+
+`0.3.8` 构建门禁：服务器 Node 24.19.0 冻结安装、`check`、`test`（204 通过、1 跳过）、`build`、`cloud:check`、`cloud:bundle`、`firefox:amo` 与 5 项提取浏览器测试通过，独立审查无可操作问题。新用例按 Hanako 示例实际 DOM 覆盖无 schema 的帖子页、直达页、纯文本及 ID 不匹配，旧逻辑已复现相同空正文错误；原页面 DOM 在内置浏览器中可读，服务器浏览器加载该真实页面未出现正文并超时，因此不把服务器真实链接提取记为成功。
+
 在锁定的 Node.js 24.19.0 与 pnpm 11.7.0 环境中运行：
 
 ```sh
@@ -28,7 +40,10 @@ pnpm firefox:amo
 
 ## 签名记录
 
+- `0.3.9` · 扩展源码 `bc1e2ba` · 2026-10-04 核验服务器既有 `/root/amo-signed/3058733-0.3.9.xpi`，SHA-256 `7fbe7aec14ec030fa46c7abe77b3442aa402dfbdd83643a5b64d04eee2e24b54`。在整合沉浸模式与 favicon、完成最终 `build` 和 `firefox:amo` 后，`scripts/stage-firefox-xpi.mjs` 已严格通过整包摘要、当前 manifest、Mozilla 签名条目及五个扩展文件的逐字节一致校验；签名文件未进入 Git。本条记录现有产物核验，不表示重新签名；生产分发状态以 Cloudflare 部署记录为准。
+
 - 固定 ID `clipper@zhiye.sarainoq.cn`；自签名产物按 `<加载项编号>-<版本>.xpi` 命名，文件名里的 `3058733` 是 AMO 加载项编号，实际版本以包内 `manifest.json` 为准。每次以 `web-ext 10.6.0` 对编译目录 `dist/extensions/zhiye-clipper-firefox`（而非源代码 ZIP）执行 **unlisted** 自签名。
+- `0.3.8` · 扩展源码提交 `bde9c388dd96ceafaf8c7c5f78346d6f43c834a3` · 所有者的 `web-ext sign --channel=unlisted` 返回 `/root/amo-signed/3058733-0.3.8.xpi`，已下载到用户本机；服务器对该 AMO 产物计算 SHA-256 为 `0197d786d96e249b3d658d18c84226d581e1ae56450be23831b5bea588801b6c`，包内 manifest 为 `0.3.8`，固定 ID 与权限不变。该版本补充公开页面无 schema 结构，未包含 0.3.9 的原生阅读器修复；本记录不表示其已部署到 Cloudflare。
 - `0.3.7` · 扩展源码提交 `e139299` · `web-ext 10.6.0 sign --channel=unlisted` 返回 `3058733-0.3.7.xpi`，SHA-256 `4ed2d8c7e36c794a4b802d58d41d81471c4e29dcb1104349b2ec6dfa99575bd3`；包内 manifest 为 `0.3.7`，固定 ID 与权限不变。该摘要来自 AMO 返回的签名产物，`scripts/stage-firefox-xpi.mjs` 核对整包摘要和当前构建的五个扩展文件后暂存为 `dist/extensions/zhiye-clipper-firefox.xpi`。线上分发地址：`https://zhiye.sarainoq.cn/extensions/zhiye-clipper-firefox.xpi?v=0.3.7`（Web Version ID `990ca7ef-f5aa-4436-a283-0945b5d3e7cb`）；未登录时 Access 返回 302，登录态下载待复验。不在仓库记录签名凭据或 XPI。
 - `0.3.6` · 源码提交 `f69a673` · 门禁：`check`、`test`（204 通过、1 跳过）、`build`、`cloud:check`（42 通过）、`cloud:bundle`、`firefox:amo` 全部通过；`web-ext 10.6.0 lint` 为 0 errors、0 notices，仅剩 3 条已审查的 Defuddle 0.19.2 `UNSAFE_VAR_ASSIGNMENT` 警告（`content.js`）。产物 `3058733-0.3.6.xpi`，SHA-256 `dcad3ad35b37d414fc49e75d14f729327362d0b6b889f9946c92e47e692d1bab`。复核：包内 `manifest.json` 为 `0.3.6`、固定 ID 与 `strict_min_version` 不变，打包后的 `content.js` 含懒加载占位符判定，`META-INF/` 含 5 项 cose/rsa 签名文件；同一目录内 `0.3.5` 产物的 SHA-256 与上一条记录一致。本版首次带上 `3d5e591` 的懒加载占位图修复。`zhiye-web` 已重新部署，帮助页下载链接与线上扩展包均为 `0.3.6`（Version ID `c5525d9d-1093-4d34-94a7-35cfca6b92cf`）。
 - `0.3.5` · 源码提交 `f85345d` · 门禁：`check`、`test`（153 通过、1 跳过）、`build`、`cloud:check`（28 通过）、`cloud:bundle`、`firefox:amo` 全部通过；`web-ext 10.6.0 lint` 为 0 errors、0 notices，仅剩 3 条已审查的 Defuddle 0.19.2 `UNSAFE_VAR_ASSIGNMENT` 警告。产物 `3058733-0.3.5.xpi`，SHA-256 `7db319267ab54c7c1a8a6451219fc382a06d3172cb1398fd20675ae7603a8c88`。复核：包内 `manifest.json` 为 `0.3.5`，`popup.html` 含 `ai-panel`，打包后的 `popup.js` 含 `AI 标题未生成` 分支、仅在有密钥时写入存储的最努力持久化，以及提交时读取输入框的密钥，`META-INF/` 含 cose/rsa 签名文件。
