@@ -26,6 +26,7 @@ test("uses the themed scrollbar in Firefox", async ({ page }) => {
   await page.getByLabel("网页地址").fill(`https://example.com/firefox-scrollbar-${Date.now()}`);
   await page.getByRole("button", { name: "收取网页" }).click();
   await expect(page.getByLabel("文档标题")).toBeVisible({ timeout: 8_000 });
+  await expect(page.locator(".cm-scroller")).toBeVisible({ timeout: 8_000 });
   const realContainers = await page.evaluate(() => [".library-panel", ".cm-scroller"].map((selector) => ({
     selector,
     colors: getComputedStyle(document.querySelector(selector)!).scrollbarColor,

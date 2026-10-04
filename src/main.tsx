@@ -5,6 +5,7 @@ import { UiProvider } from "./components/ui/Feedback";
 import "katex/dist/katex.min.css";
 import "./styles.css";
 import "./paper-reader-wireframe.css";
+import "./workspace-shell.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

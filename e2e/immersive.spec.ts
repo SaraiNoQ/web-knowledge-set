@@ -87,8 +87,8 @@ test("switching preserves the editor instance, dirty content, selection and scro
   await page.getByRole("button", { name: "退出沉浸模式" }).focus();
   await page.evaluate(() => window.scrollTo(0, 700));
   const toolbar = await page.locator(".editor-toolbar").boundingBox();
-  expect(toolbar!.y).toBeGreaterThanOrEqual(44);
-  expect(await page.locator(".editor-toolbar").evaluate((element) => getComputedStyle(element).top)).toBe("44px");
+  expect(toolbar!.y).toBeGreaterThanOrEqual(88);
+  expect(await page.locator(".editor-toolbar").evaluate((element) => getComputedStyle(element).top)).toBe("88px");
   await page.getByRole("button", { name: "退出沉浸模式" }).click();
   await expect(page.locator(".cm-editor")).toHaveAttribute("data-preserved", "yes");
   await expect(editor).toContainText("尚未保存。");
@@ -190,7 +190,7 @@ test("unavailable cloud storage still allows entering and exiting", async ({ pag
 
 test("immersive knowledge map keeps its canvas mounted and fits below the control bar", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "知识地图" }).click();
+  await page.getByRole("button", { name: "知识地图", exact: true }).click();
   const canvas = page.locator(".map-canvas-inner canvas");
   await expect(canvas).toBeVisible();
   await canvas.evaluate((element) => element.setAttribute("data-preserved", "yes"));
@@ -259,12 +259,12 @@ test("paper translation drafts and reader state survive immersive switching", as
     await page.getByRole("button", { name: "退出沉浸模式" }).click();
     await expect(page.locator("textarea")).toHaveValue("沉浸模式中的未保存译文。");
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.locator(".library-panel").getByRole("button", { name: "知识地图" }).click();
+    await page.locator(".library-panel").getByRole("button", { name: "知识地图", exact: true }).click();
     const discard = page.getByRole("alertdialog", { name: "存在未保存修改" });
     await expect(discard).toBeVisible();
     await discard.getByRole("button", { name: "取消", exact: true }).click();
     await expect(page.locator("textarea")).toHaveValue("沉浸模式中的未保存译文。");
-    await page.locator(".library-panel").getByRole("button", { name: "知识地图" }).click();
+    await page.locator(".library-panel").getByRole("button", { name: "知识地图", exact: true }).click();
     await discard.getByRole("button", { name: "继续并放弃" }).click();
     await expect(page.locator(".knowledge-map-host.is-active")).toBeVisible();
     await page.getByRole("button", { name: "返回列表" }).click();

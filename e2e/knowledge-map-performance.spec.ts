@@ -59,7 +59,7 @@ test("knowledge map stays responsive with 1000 documents and 1024-dimension vect
     return (JSON.parse(url.searchParams.get("ids") ?? "[]") as string[]).includes("perf-0999");
   });
   const metadataStart = await page.evaluate(() => performance.now());
-  await page.getByRole("button", { name: "知识地图" }).click();
+  await page.getByRole("button", { name: "知识地图", exact: true }).click();
   await Promise.all([firstMetadataPage, lastMetadataPage]);
   const metadataMs = await page.evaluate((start) => performance.now() - start, metadataStart);
   expect(metadataMs, `1000-node metadata took ${metadataMs.toFixed(1)}ms`).toBeLessThan(2_000);

@@ -12,6 +12,7 @@ test("keeps the editor scroll position while read-only state changes", async ({ 
 
   const editor = page.getByLabel("Markdown 编辑器");
   await editor.fill(`# 长文\n\n${"保持当前滚动位置。\n\n".repeat(600)}`);
+  await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect(page.locator(".save-indicator")).toHaveText("已保存", { timeout: 8_000 });
   const scroller = page.locator(".markdown-editor .cm-scroller");
   await scroller.evaluate((element) => { element.scrollTop = element.scrollHeight; });

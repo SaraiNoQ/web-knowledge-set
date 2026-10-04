@@ -48,6 +48,8 @@ import { Onboarding } from "./components/Onboarding";
 import { PaperReader } from "./components/PaperReader";
 import { DocumentDirectoryRow, LibraryDirectory, type MoveDocumentTarget } from "./components/LibraryDirectory";
 const KnowledgeMap = lazy(() => import("./components/KnowledgeMap"));
+import { DocumentTabs, type OpenDocumentTab } from "./components/DocumentTabs";
+import { WorkspaceIcon } from "./components/ui/WorkspaceIcon";
 import { IconButton, Select } from "./components/ui/Controls";
 import { useDialogs, useToast } from "./components/ui/Feedback";
 import { Modal } from "./components/ui/Modal";
@@ -544,6 +546,7 @@ export default function App() {
   const [discardPromptOpen, setDiscardPromptOpen] = useState(false);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [openDocuments, setOpenDocuments] = useState<OpenDocumentTab[]>([]);
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const [immersiveMode, setImmersiveMode] = useState(false);
   const [appearanceLoaded, setAppearanceLoaded] = useState(false);
@@ -964,6 +967,9 @@ export default function App() {
     currentDocRef.current = document;
     sourceMetadataRef.current = metadata;
     setCurrentDoc(document);
+    if (document) setOpenDocuments((tabs) => tabs.some((tab) => tab.id === document.id)
+      ? tabs.map((tab) => tab.id === document.id ? { id: document.id, title: document.title } : tab)
+      : [...tabs, { id: document.id, title: document.title }]);
     setSourceMetadata(metadata);
   }, []);
 
@@ -2583,7 +2589,8 @@ export default function App() {
     setCloudEditing((value) => !value);
   };
 
-  const dismissSelectedDocument = () => {
+  const dismissSelectedDocument = (removeTab = true) => {
+    if (removeTab) setOpenDocuments((tabs) => tabs.filter((tab) => tab.id !== selectedIdRef.current));
     setSelectedId(null);
     if (graphReturnRef.current) {
       graphReturnRef.current = false;
@@ -2596,7 +2603,7 @@ export default function App() {
     if (!await confirmDiscardChanges("当前修改尚未保存，确定离开吗？")) return false;
     if (closeAttemptRef.current || organizationInFlight.current || lifecycleAction || restoringRevision !== null) return false;
     invalidateNavigation();
-    dismissSelectedDocument();
+    dismissSelectedDocument(false);
     return true;
   };
 
@@ -2608,11 +2615,26 @@ export default function App() {
     if (!map) window.requestAnimationFrame(() => libraryViewListRef.current?.focus());
   };
 
+  const closeDocumentTab = async (id: string) => {
+    if (closing || organizationInFlight.current || lifecycleAction || restoringRevision !== null) return;
+    if (id !== selectedIdRef.current) {
+      setOpenDocuments((tabs) => tabs.filter((tab) => tab.id !== id));
+      return;
+    }
+    const index = openDocuments.findIndex((tab) => tab.id === id);
+    const neighbor = openDocuments[index + 1] ?? openDocuments[index - 1];
+    if (neighbor) {
+      if (!await selectDocument(neighbor.id)) return;
+      setOpenDocuments((tabs) => tabs.filter((tab) => tab.id !== id));
+    } else if (await closeDocument()) setOpenDocuments((tabs) => tabs.filter((tab) => tab.id !== id));
+  };
+
   const returnToLibrary = async () => {
-    if (!await closeDocument()) return;
+    if (!await closeDocument()) return false;
     setAiSettingsOpen(false);
     setDiagnosticsOpen(false);
     setSafetyOpen(false);
+    return true;
   };
 
   const applyLibraryView = async (view: LibraryView) => {
@@ -3038,6 +3060,7 @@ export default function App() {
         title: "永久删除知识", confirmLabel: "永久删除", tone: "danger",
       })) return;
       await api.permanentlyDeleteDocument(document.id, document.revision, stored?.draftRevision ?? null);
+      setOpenDocuments((tabs) => tabs.filter((tab) => tab.id !== document.id));
       selectedDocumentRevisionsRef.current.delete(document.id);
       setSelectedIds((previous) => { const next = new Set(previous); next.delete(document.id); return next; });
       if (listContextRef.current === requestContext) {
@@ -3408,14 +3431,25 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell${immersiveActive ? " is-immersive" : ""}`}>
+    <div className={`app-shell editor-shell${immersiveActive ? " is-immersive" : ""}`}>
       <a className="skip-link" href="#library-panel">跳到资料库</a>
+      <nav className="workspace-rail" aria-label="工作台导航">
+        <button type="button" className="rail-brand" aria-label="织页资料库" disabled={closing} onClick={() => void returnToLibrary()}>织</button>
+        <IconButton label="文档资料库" aria-pressed={!graphMode && libraryView === "all" && !aiSettingsOpen && !safetyOpen} disabled={closing} onClick={() => { void returnToLibrary().then((left) => { if (left) void applyLibraryView("all"); }); }}><WorkspaceIcon name="document" /></IconButton>
+        <IconButton label="搜索文档" disabled={closing} onClick={() => { void returnToLibrary().then((left) => { if (!left) return; setLibraryCollapsed(false); window.requestAnimationFrame(() => searchInputRef.current?.focus()); }); }}><WorkspaceIcon name="search" /></IconButton>
+        <IconButton label="查看知识地图" aria-pressed={graphMode} disabled={closing} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); void switchLibraryMode(true); }}><WorkspaceIcon name="map" /></IconButton>
+        <IconButton label="查看收藏" aria-pressed={libraryView === "favorites"} disabled={closing} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); void applyLibraryView("favorites"); }}><WorkspaceIcon name="star" /></IconButton>
+        <IconButton label="导入文档" disabled={closing} onClick={() => setBulkImportOpen(true)}><WorkspaceIcon name="import" /></IconButton>
+        <div className="rail-spacer" />
+        <IconButton label="帮助与关于" disabled={closing} onClick={() => setShortcutHelp(true)}><WorkspaceIcon name="help" /></IconButton>
+        <IconButton label="管理数据安全" aria-pressed={safetyOpen} disabled={closing} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }}><WorkspaceIcon name="shield" /></IconButton>
+        <IconButton label="配置 AI" aria-pressed={aiSettingsOpen} disabled={closing} onClick={() => { setSafetyOpen(false); setDiagnosticsOpen(false); setAiSettingsOpen(true); }}><WorkspaceIcon name="settings" /></IconButton>
+      </nav>
       <header className="masthead">
         <button type="button" className="brand" aria-label="返回知识库主界面" onClick={() => void returnToLibrary()} disabled={closing}>
-          <span className="brand-seal">织</span>
-          <span><strong>织页</strong><small>ZHIYE · {cloudMode ? "CLOUD" : "LOCAL"} KNOWLEDGE</small></span>
+          <span><strong>织页</strong><small>{cloudMode ? "云端知识库" : "本地知识库"}</small></span>
         </button>
-        <p className="masthead-note">把散落的网页，<br />织成可阅读的知识。</p>
+        <p className="masthead-note">文档工作台</p>
         <div className="masthead-actions">{!aiSettingsOpen && !safetyOpen && !diagnosticsOpen && <button ref={enterImmersiveRef} type="button" className="guide-button immersive-toggle" aria-pressed={false} aria-disabled={appearanceSaving || closing} onClick={() => void toggleImmersive()}>进入沉浸模式</button>}{!cloudMode && onboarding !== "unavailable" && <button type="button" className="guide-button" onClick={() => setGuideOpen(true)} disabled={closing}>使用指南</button>}<button type="button" className="guide-button" onClick={() => { setPaperImportOpen(true); setPaperImportError(""); }} disabled={closing}>导入论文</button><button type="button" className="shortcut-help-button" aria-keyshortcuts="?" onClick={() => setShortcutHelp(true)} disabled={closing}>帮助</button>{"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}<button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
           <i />{safetyRecovery ? "恢复模式" : "数据安全"}
         </button></div>
@@ -3640,12 +3674,8 @@ export default function App() {
             <IconButton label="新建文章" onClick={() => void createArticle()}><Icon size={18}><path d="M12 5v14M5 12h14" /></Icon></IconButton>
             <IconButton label="打开回收站" aria-pressed={libraryView === "trash"} onClick={() => void applyLibraryView("trash")}><Icon size={17}><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13M10 10v7M14 10v7" /></Icon></IconButton>
           </nav>
-          <div className="library-meta">
-            <span className="eyebrow">02 · {inTrash ? "TRASH" : "LIBRARY"}</span>
-            <span className="total-count">{total}<small>篇</small></span>
-          </div>
           <div className="panel-heading">
-            <h2>{inTrash ? "回收站" : "知识织片"}</h2>
+            <div className="library-title-group"><h2>{inTrash ? "回收站" : "知识织片"}</h2><span className="total-count">{total}<small>篇</small></span></div>
             {!inTrash && <LibraryViewSwitch listRef={libraryViewListRef} map={graphMode} active={!graphMode} onChange={(map) => void switchLibraryMode(map)} />}
           </div>
 
@@ -3736,6 +3766,13 @@ export default function App() {
         </aside>
 
         <section id="reader-panel" ref={readerPanelRef} className="reader-panel" aria-label="文档工作台" tabIndex={-1}>
+          <DocumentTabs documents={openDocuments} selectedId={selectedId} dirty={hasUnsavedChanges} disabled={closing || Boolean(lifecycleAction) || restoringRevision !== null} onSelect={async (id) => { const opened = await selectDocument(id); if (opened) { graphReturnRef.current = false; setGraphMode(false); } return opened; }} onClose={closeDocumentTab} onCreate={() => void createArticle()} />
+          {selectedId && <div className="workspace-location">
+            <IconButton label="返回文档目录" disabled={closing} onClick={() => void closeDocument()}><Icon size={18}><path d="M20 12H4m6-6-6 6 6 6" /></Icon></IconButton>
+            <span>{folders.find((folder) => folder.id === currentDoc?.folderId)?.name ?? "知识织片"}</span><WorkspaceIcon name="chevron" size={13} /><strong>{currentDoc?.title || "正在打开…"}</strong>
+            <IconButton label={libraryCollapsed ? "显示文档侧栏" : "隐藏文档侧栏"} aria-pressed={!libraryCollapsed} onClick={() => setLibraryCollapsed((value) => !value)}><WorkspaceIcon name="panel" size={18} /></IconButton>
+          </div>}
+
           {graphMounted && <div className={`knowledge-map-host ${graphMode && !selectedId ? "is-active" : "is-dormant"}`} aria-hidden={!graphMode || Boolean(selectedId)}><Suspense fallback={<div className="map-load-fallback" role="status">正在准备知识地图…</div>}><KnowledgeMap active={graphMode && !selectedId} cloud={cloudMode} libraryView={libraryView === "trash" ? "all" : libraryView} query={query} onQueryChange={setQuery} onBack={() => void switchLibraryMode(false)} onOpenDocument={(id) => void openGraphDocument(id)} refreshKey={listRefresh + semanticRefresh} /></Suspense></div>}
           {graphMode && !selectedId ? null : !selectedId ? (
             <div className="welcome-state">
@@ -3761,7 +3798,7 @@ export default function App() {
                 </div>
                 {cloudEditing ? <label className="title-field"><span className="sr-only">文档标题</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} disabled={saveState === "saving"} /></label> : <h2>{currentDoc.title || "未命名网页"}</h2>}
                 <div className="document-actions">
-                  <button type="button" className={`favorite-button ${currentDoc.favorite ? "is-active" : ""}`} aria-pressed={currentDoc.favorite} onClick={() => void toggleFavorite()} disabled={organizationLocked || metadataDirty}>{currentDoc.favorite ? "★ 取消收藏" : "☆ 设为收藏"}</button>
+                  <button type="button" className={`favorite-button ${currentDoc.favorite ? "is-active" : ""}`} aria-pressed={currentDoc.favorite} onClick={() => void toggleFavorite()} disabled={organizationLocked || metadataDirty}><WorkspaceIcon name="star" size={17} />{currentDoc.favorite ? "取消收藏" : "设为收藏"}</button>
                   <button type="button" className="primary-button" onClick={() => void toggleCloudEditing()} disabled={currentDoc.status !== "ready" || saveState === "saving"}>{cloudEditing ? "返回阅读" : "编辑这篇知识"}</button>
                   <button type="button" className="history-button" onClick={toggleDerived} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen} aria-controls="derived-knowledge">AI 派生</button>
                   <button type="button" className="history-button translation-button" onClick={openTranslation} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen && derivedPreferredType === "translation"} aria-controls="derived-knowledge">翻译</button>
@@ -3827,7 +3864,7 @@ export default function App() {
                   </form>
                 )}
                 <div className="document-actions">
-                  <button type="button" className={`favorite-button ${currentDoc.favorite ? "is-active" : ""}`} aria-pressed={currentDoc.favorite} onClick={() => void toggleFavorite()} disabled={organizationLocked || metadataDirty}>{currentDoc.favorite ? "★ 取消收藏" : "☆ 设为收藏"}</button>
+                  <button type="button" className={`favorite-button ${currentDoc.favorite ? "is-active" : ""}`} aria-pressed={currentDoc.favorite} onClick={() => void toggleFavorite()} disabled={organizationLocked || metadataDirty}><WorkspaceIcon name="star" size={17} />{currentDoc.favorite ? "取消收藏" : "设为收藏"}</button>
                   <button type="button" className="history-button" onClick={() => void toggleArchive()} disabled={organizationLocked || metadataDirty}>{currentDoc.archivedAt ? "取消归档" : "归档"}</button>
                   <button type="button" className="history-button" onClick={toggleCollectionManager} disabled={closing} aria-expanded={collectionsOpen} aria-controls="collection-manager">管理分类</button>
                   <button type="button" className="history-button" onClick={toggleQuality} disabled={closing || currentDoc.status !== "ready"} aria-expanded={qualityOpen} aria-controls="capture-quality">质量检查</button>
