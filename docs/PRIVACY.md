@@ -6,6 +6,8 @@
 
 SQLite 数据库保存文档正文、标题、来源地址和元数据、一级文件夹归属、标签、集合、采集状态与历史、编辑修订、应用设置以及 AI 派生结果。数据目录还保存压缩的原始 HTML 快照、受支持的离线图片、论文原始 PDF 与渲染出的页图，以及短期导入暂存文件。
 
+沉浸模式只保存一个显示偏好布尔值：本地 Web 与桌面应用保存在当前知识库的 SQLite 设置表，随本地完整留档保存；Cloudflare Web 保存在当前浏览器站点的 `localStorage` 项 `zhiye:immersive-mode`，不会上传至云端数据库或跨设备同步。清除该站点的浏览器存储会重置云端显示偏好。
+
 默认位置：
 
 - macOS 桌面端：`~/Library/Application Support/io.github.sarainoq.zhiye`

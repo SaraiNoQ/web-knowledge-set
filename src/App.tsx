@@ -544,6 +544,11 @@ export default function App() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
+  const [immersiveMode, setImmersiveMode] = useState(false);
+  const [appearanceLoaded, setAppearanceLoaded] = useState(false);
+  const [appearanceSaving, setAppearanceSaving] = useState(false);
+  const enterImmersiveRef = useRef<HTMLButtonElement>(null);
+  const exitImmersiveRef = useRef<HTMLButtonElement>(null);
   const [graphMode, setGraphMode] = useState(false);
   const [graphMounted, setGraphMounted] = useState(false);
   const graphReturnRef = useRef(false);
@@ -736,6 +741,34 @@ export default function App() {
   const cloudMode = runtimeMode === "cloud" && !desktopRuntime;
   const webArticleMode = cloudMode || desktopRuntime;
   const selectionEnabled = !cloudMode && !desktopRuntime;
+  const immersiveActive = immersiveMode && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen && !guideOpen;
+  useEffect(() => {
+    if (runtimeMode === null) return;
+    const controller = new AbortController();
+    void api.getAppearance(cloudMode, controller.signal).then((settings) => {
+      if (!controller.signal.aborted) setImmersiveMode(settings.immersiveMode);
+    }).catch(() => {
+      // A display preference must never prevent opening the knowledge base.
+    }).finally(() => {
+      if (!controller.signal.aborted) setAppearanceLoaded(true);
+    });
+    return () => controller.abort();
+  }, [runtimeMode, cloudMode]);
+
+  const toggleImmersive = async () => {
+    if (appearanceSaving || closing) return;
+    const next = !immersiveMode;
+    setImmersiveMode(next);
+    setAppearanceSaving(true);
+    window.requestAnimationFrame(() => (next ? exitImmersiveRef : enterImmersiveRef).current?.focus());
+    try {
+      await api.saveAppearance({ immersiveMode: next }, cloudMode);
+    } catch {
+      toast.error("显示模式已切换，但未能记住选择。请稍后重新切换以保存。");
+    } finally {
+      setAppearanceSaving(false);
+    }
+  };
   const longPreviewAllowed = !longArticle || longPreviewDocumentId === currentDoc?.id;
   useEffect(() => {
     if (!cloudMode) return;
@@ -3356,7 +3389,7 @@ export default function App() {
   }
 
   const workspaceClassName = ["workspace", selectedId ? "has-selection" : "", libraryCollapsed ? "library-collapsed" : "", graphMode ? "is-map-mode" : ""].filter(Boolean).join(" ");
-  if (onboarding === null || runtimeMode === null) {
+  if (onboarding === null || runtimeMode === null || !appearanceLoaded) {
     return <main className="onboarding-loading" aria-live="polite"><span className="brand-seal">知</span><p>正在打开知识库…</p></main>;
   }
   if (onboarding !== "unavailable" && !onboarding.completed) {
@@ -3364,7 +3397,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${immersiveActive ? " is-immersive" : ""}`}>
       <a className="skip-link" href="#library-panel">跳到资料库</a>
       <header className="masthead">
         <button type="button" className="brand" aria-label="返回知识库主界面" onClick={() => void returnToLibrary()} disabled={closing}>
@@ -3372,10 +3405,15 @@ export default function App() {
           <span><strong>织页</strong><small>ZHIYE · {cloudMode ? "CLOUD" : "LOCAL"} KNOWLEDGE</small></span>
         </button>
         <p className="masthead-note">把散落的网页，<br />织成可阅读的知识。</p>
-        <div className="masthead-actions">{!cloudMode && onboarding !== "unavailable" && <button type="button" className="guide-button" onClick={() => setGuideOpen(true)} disabled={closing}>使用指南</button>}<button type="button" className="guide-button" onClick={() => { setPaperImportOpen(true); setPaperImportError(""); }} disabled={closing}>导入论文</button><button type="button" className="shortcut-help-button" aria-keyshortcuts="?" onClick={() => setShortcutHelp(true)} disabled={closing}>帮助</button>{"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}<button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
+        <div className="masthead-actions">{!aiSettingsOpen && !safetyOpen && !diagnosticsOpen && <button ref={enterImmersiveRef} type="button" className="guide-button immersive-toggle" aria-pressed={false} aria-disabled={appearanceSaving || closing} onClick={() => void toggleImmersive()}>进入沉浸模式</button>}{!cloudMode && onboarding !== "unavailable" && <button type="button" className="guide-button" onClick={() => setGuideOpen(true)} disabled={closing}>使用指南</button>}<button type="button" className="guide-button" onClick={() => { setPaperImportOpen(true); setPaperImportError(""); }} disabled={closing}>导入论文</button><button type="button" className="shortcut-help-button" aria-keyshortcuts="?" onClick={() => setShortcutHelp(true)} disabled={closing}>帮助</button>{"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}<button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
           <i />{safetyRecovery ? "恢复模式" : "数据安全"}
         </button></div>
       </header>
+
+      <div className="immersive-bar" hidden={!immersiveActive} role="region" aria-label="沉浸模式控制">
+        <span>文档管理</span>
+        <button ref={exitImmersiveRef} type="button" className="immersive-toggle" aria-pressed={true} aria-disabled={appearanceSaving || closing} onClick={() => void toggleImmersive()}>退出沉浸模式</button>
+      </div>
 
       {offline && <div className="offline-banner" role="status">{cloudMode ? "云端服务当前不可达，请恢复网络后继续。" : "系统报告当前离线；本地阅读、编辑与搜索仍可使用，网页抓取和远程 AI 可能失败。"}</div>}
 

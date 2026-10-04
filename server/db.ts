@@ -4,6 +4,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type {
+  AppearanceSettings,
   AssetMimeType,
   AssetSettings,
   AssetStatus,
@@ -1663,6 +1664,20 @@ export class KnowledgeDatabase {
       items: rows.map((row) => ({ id: row.id, sourceHash: row.sourceHash, model: row.model, formatVersion: row.formatVersion, vector: JSON.parse(row.vectorJson) as number[] })),
       total, nextCursor: next < total ? String(next) : null,
     };
+  }
+
+  getAppearance(): AppearanceSettings {
+    const row = this.sql.prepare("SELECT value FROM app_settings WHERE key = 'appearance'")
+      .get() as { value: string } | undefined;
+    return { immersiveMode: row ? JSON.parse(row.value).immersiveMode === true : false };
+  }
+
+  setAppearance(settings: AppearanceSettings): AppearanceSettings {
+    this.sql.prepare(
+      `INSERT INTO app_settings(key, value, revision, updated_at) VALUES ('appearance', ?, 1, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, revision = app_settings.revision + 1, updated_at = excluded.updated_at`,
+    ).run(JSON.stringify(settings), now());
+    return this.getAppearance();
   }
 
   getRecentFilters(): { filters: RecentFilter[]; revision: number } {

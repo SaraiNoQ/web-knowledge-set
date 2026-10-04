@@ -454,6 +454,10 @@ export interface RecentFiltersState {
   revision: number;
 }
 
+export interface AppearanceSettings {
+  immersiveMode: boolean;
+}
+
 export type ImportKind = "urls" | "bookmarks" | "markdown" | "bundle";
 
 export type ImportStrategy = "skip" | "copy" | "update";

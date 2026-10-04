@@ -124,7 +124,35 @@ a { color: inherit; }
   border-bottom: 1px solid var(--line-strong);
 }
 
-.masthead-actions { justify-self: end; display: flex; align-items: center; gap: 8px; }
+.masthead-actions { justify-self: end; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
+.immersive-bar { position: sticky; top: 0; z-index: 15; display: flex; align-items: center; justify-content: space-between; height: 44px; padding: 0 clamp(20px, 3vw, 48px); color: var(--ink-soft); background: var(--paper); border-bottom: 1px solid var(--line-strong); font-size: var(--font-ui); }
+.immersive-bar[hidden] { display: none; }
+.immersive-bar button { align-self: stretch; padding: 0 12px; color: var(--vermilion-dark); background: transparent; border: 0; }
+.immersive-toggle[aria-disabled="true"] { cursor: not-allowed; opacity: .55; }
+.immersive-toggle:hover:not([aria-disabled="true"]) { color: var(--vermilion); }
+.immersive-toggle:focus-visible { outline: 2px solid var(--vermilion); outline-offset: -2px; }
+.app-shell.is-immersive ~ .ui-toast-region { top: 62px; }
+.app-shell.is-immersive { --immersive-bar-height: 44px; }
+.is-immersive > .masthead, .is-immersive .capture-band { display: none; }
+.is-immersive .workspace { min-height: calc(100vh - var(--immersive-bar-height)); min-height: calc(100dvh - var(--immersive-bar-height)); }
+.is-immersive .editor-toolbar { top: var(--immersive-bar-height); }
+.is-immersive .document-head { scroll-margin-top: var(--immersive-bar-height); }
+.is-immersive .welcome-state { min-height: calc(100dvh - var(--immersive-bar-height)); }
+.is-immersive .knowledge-map-host.is-active { height: calc(100vh - var(--immersive-bar-height)); height: calc(100dvh - var(--immersive-bar-height)); }
+.is-immersive .workspace.is-map-mode .reader-panel { min-height: calc(100dvh - var(--immersive-bar-height)); }
+@media (min-width: 761px) {
+  .is-immersive .paper-reader-body { height: calc(100vh - var(--immersive-bar-height)); height: calc(100dvh - var(--immersive-bar-height)); }
+}
+@media (min-width: 821px) {
+  .is-immersive .library-panel { top: var(--immersive-bar-height); height: calc(100vh - var(--immersive-bar-height)); height: calc(100dvh - var(--immersive-bar-height)); }
+}
+@media (max-width: 820px) {
+  .masthead-actions { max-width: 100%; }
+}
+@media (max-width: 560px) {
+  .app-shell .masthead { grid-template-columns: 1fr; gap: 12px; }
+  .masthead-actions { justify-self: stretch; justify-content: flex-start; gap: 8px 14px; }
+}
 .shortcut-help-button, .guide-button { padding: 8px 0; color: var(--ink-soft); background: transparent; border: 0; border-bottom: 1px solid var(--line-strong); font-size: var(--font-ui); white-space: nowrap; }
 
 .shortcut-backdrop { width: 100%; max-width: none; height: 100%; max-height: none; padding: 20px; background: transparent; border: 0; }

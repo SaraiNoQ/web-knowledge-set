@@ -1622,6 +1622,22 @@ export function createApp(options: AppOptions) {
         return;
       }
 
+      if (pathname === "/api/settings/appearance" && (request.method === "GET" || request.method === "PUT")) {
+        if (requestUrl.searchParams.size) {
+          throw new HttpError(400, "INVALID_APPEARANCE", "Appearance settings do not accept query parameters");
+        }
+        if (request.method === "GET") {
+          sendJson(response, 200, requireDatabase().getAppearance());
+        } else {
+          const body = await mutationBody(request);
+          if (typeof body.immersiveMode !== "boolean" || Object.keys(body).some((key) => key !== "immersiveMode")) {
+            throw new HttpError(400, "INVALID_APPEARANCE", "immersiveMode must be a boolean");
+          }
+          sendJson(response, 200, requireDatabase().setAppearance({ immersiveMode: body.immersiveMode }));
+        }
+        return;
+      }
+
       if (pathname === "/api/settings/recent-filters" && request.method === "GET") {
         if (requestUrl.searchParams.size) {
           throw new HttpError(400, "INVALID_RECENT_FILTERS", "Recent filters do not accept query parameters");

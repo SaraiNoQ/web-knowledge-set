@@ -1,4 +1,5 @@
 import type {
+  AppearanceSettings,
   ApiError,
   BackupRecord,
   BackupSettings,
@@ -488,6 +489,19 @@ export const api = {
       body: JSON.stringify({}),
       signal,
     });
+  },
+
+  async getAppearance(cloud: boolean, signal?: AbortSignal): Promise<AppearanceSettings> {
+    if (cloud) return { immersiveMode: globalThis.localStorage.getItem("zhiye:immersive-mode") === "true" };
+    return request<AppearanceSettings>("/api/settings/appearance", { signal });
+  },
+
+  async saveAppearance(settings: AppearanceSettings, cloud: boolean): Promise<AppearanceSettings> {
+    if (cloud) {
+      globalThis.localStorage.setItem("zhiye:immersive-mode", String(settings.immersiveMode));
+      return settings;
+    }
+    return request<AppearanceSettings>("/api/settings/appearance", { method: "PUT", body: JSON.stringify(settings) });
   },
 
   getRecentFilters(signal?: AbortSignal) {
