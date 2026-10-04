@@ -124,4 +124,4 @@
 - 沉浸提交 `f967a8b` 从当时 main `045c12c` 建立；该主线没有包含已上线的 favicon 修复，也没有原工作分支的 0.3.9 扩展修复。此次整合 `bc1e2ba` 的已审查扩展分支及 `6bf46a2` 的 favicon/扩展资产隔离，保留沉浸实现；不合入无关桌面版本更新。
 - 指定服务器固定 Node `24.19.0` / pnpm `11.7.0`：冻结安装、类型检查、单元/集成测试（205 通过、1 项按设计跳过）、生产构建、Cloudflare 检查（42 通过）、Firefox AMO lint（0.3.9）与双 Worker dry-run 通过。沉浸、论文、favicon、X 原生正文的 Chromium/Firefox 发布回归 20/20 通过。
 - 既有 0.3.9 签名 XPI 摘要为 `7fbe7aec14ec030fa46c7abe77b3442aa402dfbdd83643a5b64d04eee2e24b54`，最终构建后已通过暂存脚本的摘要、manifest、Mozilla 签名条目及构建内容逐字节校验。签名文件不进入 Git。
-- 生产 D1 只读检查显示无待执行迁移；生产配置、D1/R2/Queue/Browser Run 绑定未改动。独立审查通过，无可执行发现；正式部署待完成，部署结果记录在 `docs/CLOUDFLARE.md`。
+- 生产 D1 只读检查显示无待执行迁移；生产配置、D1/R2/Queue/Browser Run 绑定未改动。独立审查通过，无可执行发现；已合并原 favicon 分支历史并将 `94ddccd` 推送 main，两个 Worker 正式部署成功，版本及上线后访问边界证据记录在 `docs/CLOUDFLARE.md`。受 Access 登录和 Firefox 电脑控制权限限制，登录态 Web 读写、资源下载与真实扩展配对/剪藏尚未复验。

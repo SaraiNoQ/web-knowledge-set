@@ -2,7 +2,7 @@
 
 ## 产物
 
-当前修复源码版本为 `0.3.9`，增加 X 原生阅读器与 Draft.js 只读富文本兼容；服务器已有与当前构建一致的签名 XPI，云端分发待本次部署完成。`0.3.8` 已由所有者完成签名并下载，但不含本次修复，旧签名 XPI 不可替代当前构建。
+当前修复源码版本为 `0.3.9`，增加 X 原生阅读器与 Draft.js 只读富文本兼容；与当前构建一致的签名 XPI 已包含在 2026-10-04 的 Cloudflare 部署中，分发地址为 `https://zhiye.sarainoq.cn/extensions/zhiye-clipper-firefox.xpi?v=0.3.9`，登录态实际下载待复验。`0.3.8` 已由所有者完成签名并下载，但不含本次修复，旧签名 XPI 不可替代当前构建。
 
 `0.3.9` 原因与回归：0.3.8 的容器判定只接受 `.x-article-body`，会在 Defuddle 已有的 `XArticleExtractor` 运行之前拒绝原生 `twitterArticleReadView` / `twitterArticleRichTextView`。仅放行容器仍不够：后续公式/控件清理会删除 `contenteditable="false"` 的 Draft.js 阅读正文。服务器 Firefox 与 Chromium 均复现原“正文尚未加载”错误；单独修正识别后，Firefox 复现提取结果仅剩封面图片。修复仅在选定 X 正文克隆内保留只读内容，继续删除可编辑输入、表单和按钮；在清理之后验证真实正文，再复用 Defuddle 原生解析器。回归覆盖帖子/文章 ID 不同、独立阅读视图、推荐与回复隔离以及只有表单/控件的空正文。
 
