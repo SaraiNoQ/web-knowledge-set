@@ -74,8 +74,8 @@
 .editor-shell.is-immersive .editor-toolbar { top: calc(var(--immersive-bar-height) + 44px); }
 .editor-shell.is-immersive .workspace { min-height: calc(100dvh - var(--immersive-bar-height)); }
 @media (min-width: 821px) {
-  .editor-shell .workspace.library-collapsed { grid-template-columns: 44px minmax(0,1fr); }
-  .editor-shell .library-panel.is-collapsed { padding: 10px 6px; }
+  .editor-shell .workspace.library-collapsed { grid-template-columns: minmax(0,1fr); }
+  .editor-shell .library-panel.is-collapsed { display: none; }
   .editor-shell .library-panel.is-collapsed .collapsed-actions { display: none; }
 }
 @media (max-width: 1100px) {
@@ -100,7 +100,7 @@
   .document-tab { width: 180px; }
   .document-tab .ui-icon-button { width: 32px; min-height: 40px; }
   .workspace-location { padding: 4px 10px; }
-  .workspace-location > .ui-icon-button:last-child { display: none; }
+
   .editor-shell .document-head { padding: 20px 16px; }
   .editor-shell .directory-title.document-row { font-size: 13px; }
 }
@@ -123,3 +123,18 @@
 }
 .editor-shell .library-title-group { gap: 8px; }
 .editor-shell .panel-heading .total-count { font: 12px/1 var(--font-sans); }
+
+/* The rail owns reopening the directory and immersive mode. */
+.editor-shell.is-immersive { --immersive-bar-height: 0px; }
+.editor-shell .library-panel.is-collapsed { display: none; }
+.breadcrumb-title, .breadcrumb-title-input { flex: 1; min-width: 0; font: inherit; color: var(--ink); }
+.breadcrumb-title { padding: 4px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; background: transparent; border: 0; }
+.breadcrumb-title-input { width: 0; padding: 4px 6px; background: var(--paper-light); border: 1px solid var(--vermilion); border-radius: 3px; }
+.editor-shell .compact-document-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 12px 24px; }
+.compact-document-head .document-kicker { flex: 1 1 auto; flex-wrap: wrap; }
+.editor-shell .compact-document-head .document-actions { margin: 0 0 0 auto; flex-wrap: wrap; align-items: center; }
+.compact-document-head .title-field { flex-basis: 100%; order: 2; }
+@media (max-width: 820px) {
+  .editor-shell .compact-document-head { padding: 12px 16px; }
+  .editor-shell .compact-document-head .document-actions { justify-content: flex-start; margin-left: 0; }
+}

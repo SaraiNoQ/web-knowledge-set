@@ -56,7 +56,7 @@ test("library header and map switch stay compact and usable at desktop and small
       if (immersive) await page.getByRole("button", { name: "退出沉浸模式" }).click();
     }
   }
-  await page.getByRole("button", { name: "回收站", exact: true }).click();
+  await page.getByRole("button", { name: "查看回收站", exact: true }).click();
   await expect(page.getByRole("heading", { name: "回收站", exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "资料库显示方式" })).toHaveCount(0);
 });
@@ -69,7 +69,7 @@ for (const cloud of [false, true]) {
     await page.goto("/");
     await page.getByRole("button", { name: "新建", exact: true }).click();
     await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文章" }).click();
-    if (cloud) await expect(page.getByRole("heading", { name: "未命名文章", exact: true })).toBeVisible();
+    if (cloud) await expect(page.locator(".workspace-location").getByText("未命名文章", { exact: true })).toBeVisible();
     else await expect(page.getByLabel("文档标题")).toHaveValue("未命名文章");
     const mapButton = page.locator(".library-panel").getByRole("button", { name: "知识地图" });
     await mapButton.click();

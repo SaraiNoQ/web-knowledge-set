@@ -42,6 +42,8 @@ Cloudflare Web 的正式文档和抓取任务均支持 revision 保护的回收�
 
 ## 部署记录
 
+- 2026-10-05 · 文档工作台首版 `c3bf7e218f88cc0d17065004473ea60bb3cd720b`：服务器构建、单元/集成、云端与界面回归及双 Worker 打包通过，无待执行 D1 迁移。Web 版本 `168725fd-7910-4cd2-aeb9-7f0552486329`，Clip 版本 `ccded041-3451-4fe4-8a1d-8cdb6a8b7fba` 均部署成功。生产浏览器检查因自动审批用量上限未执行，未宣称登录态读写/配对/资产验收通过。
+
 - 2026-10-05 · `71afec661de0f9a4b5723eb2e29d4171a598a260`（已推送 `codex/view-switch-reader-fix`）· 资料库“02 · LIBRARY”与篇数沿用信息行 flex 垂直居中，对齐侧栏收起按钮。指定服务器固定工具链类型检查、构建、串行单元/集成 205 项（1 项按设计跳过）、云端 42 项、相关 Chromium 5/5 及独立审查通过；生产前重新校验并暂存现有 Firefox 0.3.9 签名包、通过双 Worker dry-run。无待执行迁移，现有绑定未变。两个生产域名触发器部署成功：Web Version ID `268a8d49-d87a-4ed7-837a-2268c2301935`；Clip Version ID `db135aa2-5429-4e2d-bf69-b93d0b7c8402`。上线后未登录 Web `/`、`/health` 为 Access 302；实际剪藏接口无 Origin 403、合法扩展 Origin 无令牌 401。登录态读写、资源下载及真实扩展配对/剪藏本轮未验证。
 
 - 2026-10-05 · `491f4eacef84cd07e016e59798e323c1ea121e37`（已推送 `codex/view-switch-reader-fix`）· 修复阅读中切换地图时目录消失而地图休眠的问题：先经过关闭文档与未保存确认，再清除选择并更新视图；论文译文纳入同一保护。切换控件 52px → 34px，地图入口移至标题旁。部署源已经独立审查，固定服务器工具链冻结安装、类型检查、构建、串行单元/集成 205 通过（1 项按设计跳过）、云端测试 42 项与相关 Chromium 20/20 通过。生产前重新通过 Firefox AMO 校验、现有 0.3.9 签名 XPI 严格暂存及双 Worker dry-run，签名摘要沿用 `FIREFOX_AMO.md` 记录。无新增迁移，远端显示 `No migrations to apply`，资源绑定未变。两个生产域名触发器部署成功：Web Version ID `bf38643a-260f-4ced-8c8e-510298abbf7b`；Clip Version ID `6c2c8058-eccb-4115-a091-df555bfad2cb`。上线后未登录 Web `/`、`/health` 为 Access 302；实际 `/api/browser-extension/clips` 无 Origin 403、合法扩展 Origin 无令牌 401。登录态 Web 读写、资源下载及真实扩展配对/剪藏本轮未验证。

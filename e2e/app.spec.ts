@@ -359,24 +359,20 @@ test("returns home from the logo and toggles the knowledge sidebar", async ({ pa
   await expect(collapse).toHaveAttribute("aria-expanded", "true");
   await collapse.click();
   await expect(page.locator(".workspace")).toHaveClass(/library-collapsed/u);
-  await expect.poll(() => page.locator(".library-panel").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await expect(page.locator(".library-panel")).toBeHidden();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  for (const label of ["搜索文档", "文档资料库", "查看收藏", "导入文档", "配置 AI"]) {
-    await expect(page.getByRole("button", { name: label })).toBeVisible();
+  const rail = page.getByRole("navigation", { name: "工作台导航" });
+  for (const label of ["搜索文档", "文档资料库", "查看收藏", "查看回收站", "查看论文", "导入文档", "配置 AI"]) {
+    await expect(rail.getByRole("button", { name: label, exact: true })).toBeVisible();
   }
-  const expand = page.getByRole("button", { name: "展开知识织片" });
-  await expect(expand).toHaveAttribute("aria-expanded", "false");
+  const expand = rail.getByRole("button", { name: "文档资料库", exact: true });
+  await expect(expand).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator(".library-tabs")).toHaveCount(0);
   await page.setViewportSize({ width: 800, height: 900 });
-  await expect(page.getByRole("navigation", { name: "资料库视图" })).toBeVisible();
-  await expect.poll(() => page.locator(".library-tabs").evaluate((element) => getComputedStyle(element).display)).toBe("grid");
-  // The view tabs are one row of four, and the paper view is one of them.
-  const libraryTabs = page.getByRole("navigation", { name: "资料库视图" }).getByRole("button");
-  await expect(libraryTabs).toHaveText(["全部", "收藏", "回收站", "论文"]);
-  await expect.poll(() => page.locator(".library-tabs button").evaluateAll(
-    (buttons) => new Set(buttons.map((button) => Math.round(button.getBoundingClientRect().top))).size,
-  )).toBe(1);
-  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(page.locator(".library-panel")).toBeHidden();
   await expand.click();
+  await expect(page.locator(".library-panel")).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 900 });
   await expect(page.locator(".workspace")).not.toHaveClass(/library-collapsed/u);
   await expect(page.getByText("更多筛选", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("combobox", { name: "按标签筛选" })).toHaveCount(0);
@@ -430,7 +426,7 @@ test("returns home from the logo and toggles the knowledge sidebar", async ({ pa
   await capturedRow.getByRole("button", { name: "更多操作：远端测试文章" }).click();
   await page.getByRole("dialog", { name: "操作：远端测试文章" }).getByRole("button", { name: "删除（移入回收站）" }).click();
   await page.getByRole("alertdialog", { name: "移入回收站" }).getByRole("button", { name: "移入回收站" }).click();
-  await page.getByRole("button", { name: "回收站", exact: true }).click();
+  await page.getByRole("button", { name: "查看回收站", exact: true }).click();
   const trashedRow = page.locator(".document-list .directory-document-row")
     .filter({ has: page.locator('a[href="https://example.com/logo-return"]') });
   await trashedRow.getByRole("button", { name: "永久删除：远端测试文章" }).click();
@@ -480,7 +476,7 @@ test("creates a folder and moves one knowledge item with the accessible dialog",
   await moreActions.click();
   await page.getByRole("dialog", { name: "操作：远端测试文章" }).getByRole("button", { name: "删除（移入回收站）" }).click();
   await page.getByRole("alertdialog", { name: "移入回收站" }).getByRole("button", { name: "移入回收站" }).click();
-  await expect(page.getByRole("button", { name: "回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "查看回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".document-list .directory-document-row").filter({ has: page.locator(`a[href="${captureUrl}"]`) })).toBeVisible();
 });
 
@@ -1420,7 +1416,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   const trashDialog = page.getByRole("alertdialog", { name: "移入回收站" });
   await expect(trashDialog).toContainText("之后可以恢复");
   await trashDialog.getByRole("button", { name: "移入回收站" }).click();
-  await expect(page.getByRole("button", { name: "回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "查看回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("文档标题")).toBeDisabled();
   let releaseTrashRestore!: () => void;
   let trashRestoreStarted = false;
@@ -1436,7 +1432,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect.poll(() => trashRestoreStarted).toBe(true);
   await expect(page.getByLabel("网页地址")).toBeDisabled();
   releaseTrashRestore();
-  await expect(page.getByRole("button", { name: "全部", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "文档资料库", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("文档标题")).toBeEnabled();
   await page.unroute("**/api/documents/*/restore");
 
@@ -1477,10 +1473,10 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect(duplicateBanner.getByRole("button", { name: "打开已有" })).toBeVisible();
   await duplicateBanner.getByRole("button", { name: "打开已有" }).click();
   await expect(page.getByLabel("文档标题")).toHaveValue("人工整理标题");
-  await page.getByRole("button", { name: "回收站", exact: true }).click();
-  await expect(page.getByRole("button", { name: "回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "查看回收站", exact: true }).click();
+  await expect(page.getByRole("button", { name: "查看回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
 
-  await page.getByRole("button", { name: "全部", exact: true }).click();
+  await page.getByRole("button", { name: "文档资料库", exact: true }).click();
   await page.locator("#library-panel").getByRole("button", { name: "远端测试文章", exact: true }).click();
   await expect(duplicateBanner).toHaveCount(0);
 
@@ -1584,8 +1580,8 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await page.unroute("**/api/collections");
 
   await page.getByRole("button", { name: "关闭分类管理" }).click();
-  const libraryViews = page.getByRole("navigation", { name: "资料库视图" });
-  await libraryViews.getByRole("button", { name: "收藏", exact: true }).click();
+  const libraryViews = page.getByRole("navigation", { name: "工作台导航" });
+  await libraryViews.getByRole("button", { name: "查看收藏", exact: true }).click();
   const keyboardRow = page.locator("#library-panel").getByRole("button", { name: "人工整理标题", exact: true });
   await expect(keyboardRow).toBeVisible();
   await page.keyboard.press("?");
@@ -1707,7 +1703,7 @@ test("desktop data safety shows the current knowledge-base path", async ({ page 
   await page.getByRole("button", { name: "返回资料库", exact: true }).click();
   await page.getByRole("button", { name: "新建", exact: true }).click();
   await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文章" }).click();
-  await expect(page.getByRole("heading", { name: "未命名文章", exact: true })).toBeVisible();
+  await expect(page.locator(".workspace-location").getByText("未命名文章", { exact: true })).toBeVisible();
   const reader = page.getByRole("region", { name: "文档工作台" });
   await expect(reader.getByRole("button", { name: "编辑这篇知识", exact: true })).toBeVisible();
   await expect(reader.getByLabel("来源信息")).toHaveCount(0);
@@ -1797,7 +1793,7 @@ test("routes desktop capture and file intents through existing imports", async (
   if (await deferSetup.isVisible()) await deferSetup.click();
   await expect(page.locator(".portable-toolbar")).toHaveCount(0);
   await expect(page.locator(".library-directory .row-select")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "远端测试文章", exact: true })).toBeVisible({ timeout: 8_000 });
+  await expect(page.locator(".workspace-location").getByText("远端测试文章", { exact: true })).toBeVisible({ timeout: 8_000 });
   const reader = page.getByRole("region", { name: "文档工作台" });
   await expect(reader.getByRole("button", { name: "编辑这篇知识", exact: true })).toBeVisible();
   await expect(reader.getByLabel("来源信息")).toHaveCount(0);
@@ -2080,7 +2076,7 @@ test("permanently deletes a trashed article from its directory row", async ({ pa
   await page.getByRole("button", { name: "移入回收站" }).click();
   await page.getByRole("alertdialog", { name: "移入回收站" }).getByRole("button", { name: "移入回收站" }).click();
 
-  await page.getByRole("button", { name: "全部", exact: true }).click();
+  await page.getByRole("button", { name: "文档资料库", exact: true }).click();
   await page.getByRole("button", { name: "新建", exact: true }).click();
   await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文章" }).click();
   await page.getByLabel("文档标题").fill("待永久删除文章");
@@ -2088,7 +2084,7 @@ test("permanently deletes a trashed article from its directory row", async ({ pa
   await expect(page.getByText("已保存", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "移入回收站" }).click();
   await page.getByRole("alertdialog", { name: "移入回收站" }).getByRole("button", { name: "移入回收站" }).click();
-  await expect(page.getByRole("button", { name: "回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "查看回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
 
   await page.route(`**/api/documents/${firstId}/draft`, (route) => route.fulfill({ json: {
     documentId: firstId, draftRevision: 1, baseRevision: 2, title: "未保存草稿", markdown: "草稿", tags: [], updatedAt: new Date().toISOString(),

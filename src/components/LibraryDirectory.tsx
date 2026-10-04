@@ -36,6 +36,7 @@ export function DocumentDirectoryRow({
   onOpen,
   onMove,
   onTrash,
+  onRename,
   onPermanentDelete,
 }: {
   document: DocumentSummary;
@@ -45,6 +46,7 @@ export function DocumentDirectoryRow({
   onOpen: (id: string) => void;
   onMove: (document: MoveDocumentTarget, folderId: string | null) => Promise<void>;
   onTrash?: (document: DocumentSummary) => Promise<void>;
+  onRename?: (document: DocumentSummary) => Promise<void>;
   onPermanentDelete?: (document: DocumentSummary) => Promise<void>;
 }) {
   const [moveOpen, setMoveOpen] = useState(false);
@@ -72,7 +74,7 @@ export function DocumentDirectoryRow({
     const menu = actionMenu.current;
     if (!trigger || !menu) return;
     menu.style.left = `${Math.max(8, Math.min(window.innerWidth - 198, trigger.right - 190))}px`;
-    menu.style.top = `${window.innerHeight - trigger.bottom > 104 ? trigger.bottom + 5 : Math.max(8, trigger.top - 91)}px`;
+    menu.style.top = `${window.innerHeight - trigger.bottom > 145 ? trigger.bottom + 5 : Math.max(8, trigger.top - 132)}px`;
     window.addEventListener("resize", closeActions);
   };
 
@@ -110,7 +112,7 @@ export function DocumentDirectoryRow({
       <button type="button" className="directory-title document-row" aria-current={selected ? "true" : undefined} onClick={() => onOpen(document.id)}><WorkspaceIcon name="document" size={16} />{document.kind === "paper" && <span className="directory-kind-badge">PAPER</span>}<span className="directory-document-label">{document.title || "未命名网页"}</span></button>
     </HoverCard>
     {/^(?:https?):/u.test(externalUrl) ? <a className="directory-external" href={externalUrl} target="_blank" rel="noreferrer noopener" aria-label={`打开原网页：${document.title || "未命名网页"}`}>↗</a> : <span className="directory-external-space" aria-hidden="true" />}
-    {!document.deletedAt && onTrash && <><IconButton ref={actionButton} label={`更多操作：${document.title || "未命名网页"}`} aria-haspopup="dialog" aria-controls={actionId} popoverTarget={actionId} onClick={positionActions}><WorkspaceIcon name="more" size={16} /></IconButton><div ref={actionMenu} id={actionId} popover="auto" className="directory-action-menu" role="dialog" aria-label={`操作：${document.title || "未命名网页"}`} onToggle={(event) => { const open = event.currentTarget.matches(":popover-open"); if (open) { event.currentTarget.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true }); window.addEventListener("scroll", closeActions, true); } else { window.removeEventListener("resize", closeActions); window.removeEventListener("scroll", closeActions, true); if (event.currentTarget.contains(globalThis.document.activeElement)) actionButton.current?.focus(); } }}><button type="button" onClick={() => { actionMenu.current?.hidePopover(); setTargetFolder(document.folderId ?? ""); setMoveOpen(true); }}>移动到文件夹…</button><button type="button" className="danger" onClick={() => { actionMenu.current?.hidePopover(); void onTrash(document); }}>删除（移入回收站）</button></div></>}
+    {!document.deletedAt && onTrash && <><IconButton ref={actionButton} label={`更多操作：${document.title || "未命名网页"}`} aria-haspopup="dialog" aria-controls={actionId} popoverTarget={actionId} onClick={positionActions}><WorkspaceIcon name="more" size={16} /></IconButton><div ref={actionMenu} id={actionId} popover="auto" className="directory-action-menu" role="dialog" aria-label={`操作：${document.title || "未命名网页"}`} onToggle={(event) => { const open = event.currentTarget.matches(":popover-open"); if (open) { event.currentTarget.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true }); window.addEventListener("scroll", closeActions, true); } else { window.removeEventListener("resize", closeActions); window.removeEventListener("scroll", closeActions, true); if (event.currentTarget.contains(globalThis.document.activeElement)) actionButton.current?.focus(); } }}>{onRename && <button type="button" onClick={() => { actionMenu.current?.hidePopover(); void onRename(document); }}>重命名</button>}<button type="button" onClick={() => { actionMenu.current?.hidePopover(); setTargetFolder(document.folderId ?? ""); setMoveOpen(true); }}>移动到文件夹…</button><button type="button" className="danger" onClick={() => { actionMenu.current?.hidePopover(); void onTrash(document); }}>删除（移入回收站）</button></div></>}
     {document.deletedAt && onPermanentDelete && <IconButton className="directory-permanent-delete" label={`永久删除：${document.title || "未命名网页"}`} disabled={deleting} onClick={() => { setDeleting(true); void onPermanentDelete(document).finally(() => setDeleting(false)); }}><WorkspaceIcon name="close" size={14} /></IconButton>}
     {moveOpen && <ModalMove
       folders={folders}
@@ -156,6 +158,7 @@ export function LibraryDirectory({
   onOpen,
   onMove,
   onTrash,
+  onRename,
   onCreateArticle,
   onCreatePaper,
   selectedId,
@@ -173,6 +176,7 @@ export function LibraryDirectory({
   onOpen: (id: string) => void;
   onMove: (document: MoveDocumentTarget, folderId: string | null) => Promise<void>;
   onTrash: (document: DocumentSummary) => Promise<void>;
+  onRename: (document: DocumentSummary) => Promise<void>;
   onCreateArticle: () => Promise<void>;
   onCreatePaper: () => void;
   selectedId?: string | null;
@@ -311,7 +315,7 @@ export function LibraryDirectory({
           selected={selectedId === document.id}
           onOpen={onOpen}
           onMove={onMove}
-          onTrash={onTrash}
+          onTrash={onTrash} onRename={onRename}
           checkbox={onSelect ? <label className="row-select"><span className="sr-only">选择 {document.title || "未命名网页"}</span><input type="checkbox" disabled={selectionDisabled || root.loading || root.context !== filterKey} checked={selectedIds?.has(document.id) ?? false} onChange={(event) => onSelect(document, event.target.checked)} /></label> : undefined}
         />)}
         {root && root.total > root.pageSize && <nav className="folder-pagination" aria-label="根目录分页"><button type="button" disabled={root.loading || root.page <= 1} onClick={() => void loadBranch("unfiled", root.page - 1)}>上一页</button><span>{root.page} / {Math.ceil(root.total / root.pageSize)}</span><button type="button" disabled={root.loading || root.page * root.pageSize >= root.total} onClick={() => void loadBranch("unfiled", root.page + 1)}>下一页</button></nav>}
@@ -333,7 +337,7 @@ export function LibraryDirectory({
               selected={selectedId === document.id}
               onOpen={onOpen}
               onMove={onMove}
-              onTrash={onTrash}
+              onTrash={onTrash} onRename={onRename}
               checkbox={onSelect ? <label className="row-select"><span className="sr-only">选择 {document.title || "未命名网页"}</span><input type="checkbox" disabled={selectionDisabled || branch.loading || branch.context !== filterKey} checked={selectedIds?.has(document.id) ?? false} onChange={(event) => onSelect(document, event.target.checked)} /></label> : undefined}
             />)}
             {branch && branch.total > branch.pageSize && <nav className="folder-pagination" aria-label={`${folder.name}分页`}><button type="button" disabled={branch.loading || branch.page <= 1} onClick={() => void loadBranch(key, branch.page - 1)}>上一页</button><span>{branch.page} / {Math.ceil(branch.total / branch.pageSize)}</span><button type="button" disabled={branch.loading || branch.page * branch.pageSize >= branch.total} onClick={() => void loadBranch(key, branch.page + 1)}>下一页</button></nav>}

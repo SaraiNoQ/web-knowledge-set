@@ -169,7 +169,7 @@ function PaperCanvas({ paperId, pageNumber, zoom, onZoom }: { paperId: string; p
   );
 }
 
-export function PaperReader({ paperId, autoStart, onClose, onRevisionChange, onDirtyChange }: { paperId: string; autoStart?: boolean; onClose: () => void; onRevisionChange: (paperId: string, revision: number) => void; onDirtyChange?: (dirty: boolean) => void }) {
+export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChange, onDirtyChange }: { paperId: string; title?: string; autoStart?: boolean; onClose: () => void; onRevisionChange: (paperId: string, revision: number) => void; onDirtyChange?: (dirty: boolean) => void }) {
   const [paper, setPaper] = useState<PaperDocument | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [draftBlocks, setDraftBlocks] = useState<PaperBlock[]>([]);
@@ -343,7 +343,7 @@ export function PaperReader({ paperId, autoStart, onClose, onRevisionChange, onD
     <section className="paper-reader" aria-label="论文对照阅读器">
       <header className="paper-reader-header">
         <button type="button" className="paper-reader-back" onClick={onClose}>← 返回资料库</button>
-        <div><span className="eyebrow">PAPER READER · {paper.status.toUpperCase()}</span><h1>{paper.title || "未命名论文"}</h1><p>{paper.author || "作者待提取"} · {paper.sourceUrl}</p></div>
+        <div><span className="eyebrow">PAPER READER · {paper.status.toUpperCase()}</span><h1>{title || paper.title || "未命名论文"}</h1><p>{paper.author || "作者待提取"} · {paper.sourceUrl}</p></div>
         <div className="paper-reader-actions"><span className="paper-reader-type">PAPER</span>{readOnly && <span className="paper-reader-type">只读</span>}{editing ? <><Button density="compact" onClick={() => { setEditing(false); if (page) setDraftBlocks(page.translationBlocks); }}>取消</Button><Button density="compact" variant="primary" onClick={() => void save()} disabled={saving}>{saving ? "保存中…" : "保存本页"}</Button></> : <Button density="compact" variant="primary" onClick={() => setEditing(true)} disabled={!page || processing || readOnly}>编辑译文</Button>}</div>
       </header>
 

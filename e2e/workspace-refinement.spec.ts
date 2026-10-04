@@ -1,0 +1,118 @@
+import { expect, test } from "@playwright/test";
+
+test.beforeEach(async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.route("**/health", (route) => route.fulfill({ json: { ok: true, mode: "cloud-core" } }));
+  await page.route("**/api/settings/onboarding", (route) => route.fulfill({ json: { completed: true, revision: 1 } }));
+});
+
+test("rail categories replace tabs and collapsed directory leaves no strip", async ({ page }) => {
+  await page.goto("/");
+  const rail = page.getByRole("navigation", { name: "工作台导航" });
+  const documents = rail.getByRole("button", { name: "文档资料库", exact: true });
+  await expect(documents).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".library-tabs")).toHaveCount(0);
+  for (const name of ["查看收藏", "查看回收站", "查看论文"]) {
+    const entry = rail.getByRole("button", { name, exact: true });
+    await entry.click();
+    await expect(entry).toHaveAttribute("aria-pressed", "true");
+    await expect(documents).toHaveAttribute("aria-pressed", "false");
+  }
+  await documents.click();
+  await page.getByRole("button", { name: "收起知识织片", exact: true }).click();
+  await expect(page.locator(".library-panel")).toBeHidden();
+  await expect(documents).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByRole("button", { name: "展开知识织片", exact: true })).toHaveCount(0);
+  const reader = await page.locator(".reader-panel").boundingBox();
+  const railBounds = await rail.boundingBox();
+  expect(reader!.x - railBounds!.x - railBounds!.width).toBeLessThanOrEqual(2);
+  await documents.click();
+  await expect(page.locator(".library-panel")).toBeVisible();
+  await expect(documents).toHaveAttribute("aria-pressed", "true");
+});
+
+test("compact reader exposes safe title editing from breadcrumb and directory", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "新建文章标签", exact: true }).click();
+  const title = page.getByRole("button", { name: "重命名文章", exact: true });
+  await expect(title).toHaveText("未命名文章");
+  await expect(page.locator(".document-head h2")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^(显示|隐藏)文档侧栏$/ })).toHaveCount(0);
+  const kicker = await page.locator(".document-kicker").boundingBox();
+  const actions = await page.locator(".document-actions").boundingBox();
+  expect(Math.abs(kicker!.y + kicker!.height / 2 - actions!.y - actions!.height / 2)).toBeLessThanOrEqual(2);
+  await title.dblclick();
+  const input = page.getByRole("textbox", { name: "文章标题", exact: true });
+  await input.fill("取消后不应保存");
+  await input.press("Escape");
+  await expect(title).toHaveText("未命名文章");
+  await title.dblclick();
+  await input.fill("面包屑改名测试");
+  await input.press("Enter");
+  await expect(title).toHaveText("面包屑改名测试");
+  const tabs = page.getByRole("navigation", { name: "已打开的文章" });
+  await expect(tabs.getByRole("button", { name: "面包屑改名测试", exact: true })).toBeVisible();
+  const row = page.locator(".directory-document-row.is-selected");
+  await row.getByRole("button", { name: "更多操作：面包屑改名测试" }).click();
+  await page.getByRole("dialog", { name: "操作：面包屑改名测试" }).getByRole("button", { name: "重命名", exact: true }).click();
+  const rename = page.getByRole("dialog", { name: "重命名文章", exact: true });
+  await rename.getByLabel("文章标题", { exact: true }).fill("目录改名测试");
+  await rename.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(title).toHaveText("目录改名测试");
+  await expect(tabs.getByRole("button", { name: "目录改名测试", exact: true })).toBeVisible();
+  await page.reload();
+  await page.locator(".directory-document-row").getByRole("button", { name: "目录改名测试", exact: true }).click();
+  await expect(title).toHaveText("目录改名测试");
+});
+
+
+test("immersive control stays in the rail and removes the old top bar", async ({ page }) => {
+  await page.goto("/");
+  const rail = page.getByRole("navigation", { name: "工作台导航" });
+  await rail.getByRole("button", { name: "进入沉浸模式", exact: true }).click();
+  await expect(page.locator(".immersive-bar")).toHaveCount(0);
+  await expect(page.locator(".masthead")).toBeHidden();
+  const exit = rail.getByRole("button", { name: "退出沉浸模式", exact: true });
+  await expect(exit).toBeFocused();
+  const exitBounds = await exit.boundingBox();
+  const settingsBounds = await rail.getByRole("button", { name: "配置 AI", exact: true }).boundingBox();
+  expect(exitBounds!.y + exitBounds!.height).toBeLessThanOrEqual(settingsBounds!.y);
+  expect((await page.locator(".workspace").boundingBox())!.y).toBe(0);
+  await exit.click();
+  await expect(page.locator(".masthead")).toBeVisible();
+});
+
+for (const cloud of [false, true]) {
+  test(`theme toggles persist without losing editor content in ${cloud ? "cloud" : "local"} mode`, async ({ page }) => {
+    if (!cloud) await page.unroute("**/health");
+    await page.goto("/");
+    const rail = page.getByRole("navigation", { name: "工作台导航" });
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    const initialBackground = await page.locator("body").evaluate((element) => getComputedStyle(element).backgroundColor);
+    await page.getByRole("button", { name: "新建文章标签", exact: true }).click();
+    if (cloud) await page.getByRole("button", { name: "编辑这篇知识", exact: true }).click();
+    const editor = page.getByRole("textbox", { name: "Markdown 编辑器" });
+    await editor.fill("主题切换保留未保存正文。");
+    await rail.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await expect(editor).toHaveText("主题切换保留未保存正文。");
+    await expect.poll(() => page.locator("body").evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe(initialBackground);
+    const colors = await editor.evaluate((element) => {
+      const text = getComputedStyle(element).color.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+      const background = getComputedStyle(element.closest(".cm-editor")!).backgroundColor.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+      const luminance = (rgb: number[]) => rgb.map((value) => value / 255).map((value) => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4).reduce((sum, value, index) => sum + value * [.2126, .7152, .0722][index], 0);
+      const a = luminance(text), b = luminance(background);
+      return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+    });
+    expect(colors).toBeGreaterThanOrEqual(4.5);
+    await page.getByRole("button", { name: "保存", exact: true }).click();
+    await expect(page.getByText("已保存", { exact: true })).toBeVisible();
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await rail.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  });
+}
