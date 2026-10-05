@@ -362,7 +362,7 @@ test("returns home from the logo and toggles the knowledge sidebar", async ({ pa
   await expect(page.locator(".library-panel")).toBeHidden();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   const rail = page.getByRole("navigation", { name: "工作台导航" });
-  for (const label of ["搜索文档", "文档资料库", "导入文档", "配置 AI"]) {
+  for (const label of ["快捷搜索与新建文章", "文档资料库", "查看知识地图", "导入文档", "配置 AI"]) {
     await expect(rail.getByRole("button", { name: label, exact: true })).toBeVisible();
   }
   const expand = rail.getByRole("button", { name: "文档资料库", exact: true });
@@ -464,6 +464,7 @@ test("creates a top-level blank article from the directory menu", async ({ page 
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
   await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
   if (await deferSetup.isVisible()) await deferSetup.click();
+  await expect(page.locator(".library-view-toggle")).toHaveCount(0);
   await page.getByRole("button", { name: "新建", exact: true }).click();
   await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文章" }).click();
   await expect(page.getByLabel("文档标题")).toHaveValue("未命名文章");
@@ -482,8 +483,10 @@ test("knowledge map selects a node and returns from the existing reader to the s
   await expect(page.getByLabel("文档标题")).toHaveValue("未命名文章");
   await page.keyboard.press("Escape");
   await expect(page.getByLabel("网页地址")).toBeVisible();
-  await page.getByRole("button", { name: "知识地图", exact: true }).click();
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "查看知识地图", exact: true }).click();
   await expect(page.getByRole("heading", { name: "知识地图", exact: true })).toBeVisible();
+  await expect(page.getByText("03 · ATLAS", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".library-view-toggle")).toHaveCount(0);
   const graphCanvas = page.locator(".map-canvas-inner canvas");
   await expect(graphCanvas).toBeVisible();
   await expect.poll(() => graphCanvas.evaluate((canvas: HTMLCanvasElement) => canvas.width > 0 && canvas.height > 0)).toBe(true);
@@ -496,6 +499,9 @@ test("knowledge map selects a node and returns from the existing reader to the s
   await page.getByRole("button", { name: "关闭详情" }).click();
   await expect(page.getByRole("button", { name: "单篇关联" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "全库" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "文档资料库", exact: true }).click();
+  await expect(page.getByRole("navigation", { name: "目录分类" })).toBeVisible();
+  await expect(page.locator(".knowledge-map-host")).toHaveClass(/is-dormant/u);
 });
 
 test("knowledge map fills the window height at the bottom of the page", async ({ page }) => {
@@ -503,7 +509,7 @@ test("knowledge map fills the window height at the bottom of the page", async ({
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
   await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
   if (await deferSetup.isVisible()) await deferSetup.click();
-  await page.getByRole("button", { name: "知识地图", exact: true }).click();
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "查看知识地图", exact: true }).click();
   await expect(page.getByRole("heading", { name: "知识地图", exact: true })).toBeVisible();
 
   // The map is one viewport tall and the app chrome above it stays in the page
@@ -581,7 +587,7 @@ test("knowledge map shows model-ranked semantic neighbors and applies the thresh
   await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
   if (await deferSetup.isVisible()) await deferSetup.click();
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "知识地图", exact: true }).click();
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "查看知识地图", exact: true }).click();
   await page.locator(".map-accessible-list summary").click();
   const articleNode = page.locator(".map-accessible-list").getByRole("button", { name: "语义主题甲" });
   await articleNode.focus();

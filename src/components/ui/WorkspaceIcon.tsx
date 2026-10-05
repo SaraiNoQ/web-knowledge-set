@@ -8,6 +8,7 @@ const shapes = {
   document: <><path d="M6 3h8l4 4v14H6zM14 3v5h4" /></>,
   folder: <path d="M3 7V5h7l2 2h9v13H3z" />,
   search: <><circle cx="10.5" cy="10.5" r="7" /><path d="m16 16 5 5" /></>,
+  quickSearch: <><circle cx="9.5" cy="10" r="6.5" /><path d="m14.5 15 4.2 4.2M18.5 3.5l.7 2.1 2.1.7-2.1.7-.7 2.1-.7-2.1-2.1-.7 2.1-.7z" /></>,
   star: <path d="m12 3 2.8 5.8 6.4.9-4.6 4.5 1.1 6.4L12 17.6l-5.7 3 1.1-6.4-4.6-4.5 6.4-.9z" />,
   map: <><circle cx="12" cy="5" r="3" /><circle cx="5" cy="19" r="3" /><circle cx="19" cy="19" r="3" /><path d="m10.5 7.5-4 9m7-9 4 9M8 19h8" /></>,
   import: <><path d="M5 4h14l3 14v3H2v-3zM12 6v10m-4-4 4 4 4-4" /></>,

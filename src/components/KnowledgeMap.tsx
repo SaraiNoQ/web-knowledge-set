@@ -5,7 +5,6 @@ import type { SemanticGraphResult } from "../../shared/semantic-graph";
 import { SEMANTIC_GRAPH_MAX_NODES, semanticVectorKey } from "../../shared/semantic-graph";
 import type { KnowledgeMapNode, LibraryItemKind, SemanticVectorEntry } from "../../shared/types";
 import { api } from "../api";
-import { LibraryViewSwitch } from "./LibraryViewSwitch";
 
 interface Props {
   active: boolean;
@@ -14,7 +13,6 @@ interface Props {
   refreshKey: number;
   query: string;
   onQueryChange: (value: string) => void;
-  onBack: () => void;
   onOpenDocument: (id: string) => void;
 }
 
@@ -87,7 +85,7 @@ function appendedVectors(previous: SemanticVectorEntry[], current: SemanticVecto
   return current.filter(({ id }) => !previousIds.has(id));
 }
 
-export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange, onBack, onOpenDocument, refreshKey }: Props) {
+export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange, onOpenDocument, refreshKey }: Props) {
   const [darkTheme, setDarkTheme] = useState(() => document.documentElement.dataset.theme === "dark");
   useEffect(() => {
     const updateTheme = () => setDarkTheme(document.documentElement.dataset.theme === "dark");
@@ -468,7 +466,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
   return (
     <section className="knowledge-map" aria-label="知识地图">
       <header className="knowledge-map-head">
-        <div className="knowledge-map-heading"><span className="eyebrow">03 · ATLAS</span><div className="knowledge-map-title-row"><h2>知识地图</h2><LibraryViewSwitch map active={active} onChange={(map) => { if (!map) onBack(); }} /></div><p>实线表示文件夹归属；虚线是模型语义推荐。</p></div>
+        <div className="knowledge-map-heading"><h2>知识地图</h2><p>实线表示文件夹归属；虚线是模型语义推荐。</p></div>
         <div className="knowledge-map-head-actions"><span className="map-total">{total.toLocaleString("zh-CN")} 篇</span></div>
       </header>
       <div className="knowledge-map-layout">

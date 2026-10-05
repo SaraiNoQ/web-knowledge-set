@@ -45,7 +45,7 @@ import { Diagnostics } from "./components/Diagnostics";
 import { DerivedKnowledge, type DerivedMode } from "./components/DerivedKnowledge";
 import { MarkdownEditor } from "./components/MarkdownEditor";
 import { LibrarySearch } from "./components/LibrarySearch";
-import { LibraryViewSwitch } from "./components/LibraryViewSwitch";
+import { QuickActions } from "./components/QuickActions";
 import { Onboarding } from "./components/Onboarding";
 import { PaperReader } from "./components/PaperReader";
 import { DocumentDirectoryRow, LibraryDirectory, type MoveDocumentTarget } from "./components/LibraryDirectory";
@@ -542,6 +542,7 @@ export default function App() {
   const [listRefresh, setListRefresh] = useState(0);
   const [semanticRefresh, setSemanticRefresh] = useState(0);
   const [shortcutHelp, setShortcutHelp] = useState(false);
+  const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const [inTrash, setInTrash] = useState(false);
   const [listLoading, setListLoading] = useState(true);
@@ -561,7 +562,6 @@ export default function App() {
   const [titleEdit, setTitleEdit] = useState<{ id: string; revision: number; title: string } | null>(null);
   const [graphMode, setGraphMode] = useState(false);
   const [paperDirty, setPaperDirty] = useState(false);
-  const libraryViewListRef = useRef<HTMLButtonElement>(null);
   const [graphMounted, setGraphMounted] = useState(false);
   const graphReturnRef = useRef(false);
   const [showBackToTitle, setShowBackToTitle] = useState(false);
@@ -1929,20 +1929,22 @@ export default function App() {
     await captureUrl(importUrl);
   };
 
-  const createArticle = async () => {
-    if (importing || createArticleBusyRef.current || closeAttemptRef.current || lifecycleAction || restoringRevision !== null) return;
+  const createArticle = async (title?: string): Promise<boolean> => {
+    if (importing || createArticleBusyRef.current || closeAttemptRef.current || lifecycleAction || restoringRevision !== null) return false;
     createArticleBusyRef.current = true;
     try {
-      if (!await confirmDiscardChanges("当前修改尚未保存，仍要新建文章吗？")) return;
+      if (!await confirmDiscardChanges("当前修改尚未保存，仍要新建文章吗？")) return false;
       const guard = beginNavigation();
       setImporting(true);
       try {
-        const result = await api.createArticle();
-        if (!await revealDocument(result.document, guard)) return;
+        const result = await api.createArticle(title?.trim() || undefined);
+        if (!await revealDocument(result.document, guard)) return false;
         setMode("edit");
         toast.success("已在顶层创建文章。");
+        return true;
       } catch (error) {
         if (canApplyNavigation(guard)) toast.error((error as Error).message);
+        return false;
       } finally {
         setImporting(false);
       }
@@ -2653,12 +2655,11 @@ export default function App() {
     return true;
   };
 
-  const switchLibraryMode = async (map: boolean) => {
-    if (map === graphMode || closing || !await closeDocument()) return;
+  const openKnowledgeMap = async () => {
+    if (graphMode || closing || !await closeDocument()) return;
     graphReturnRef.current = false;
-    if (map) setGraphMounted(true);
-    setGraphMode(map);
-    if (!map) window.requestAnimationFrame(() => libraryViewListRef.current?.focus());
+    setGraphMounted(true);
+    setGraphMode(true);
   };
 
   const closeDocumentTab = async (id: string) => {
@@ -2711,7 +2712,15 @@ export default function App() {
   };
 
   const toggleDirectory = async () => {
-    if (graphMode || aiSettingsOpen || safetyOpen || diagnosticsOpen) { await applyLibraryView("all"); return; }
+    if (graphMode) {
+      const returnToGraph = graphReturnRef.current;
+      graphReturnRef.current = false;
+      if (!await closeDocument()) { graphReturnRef.current = returnToGraph; return; }
+      setGraphMode(false);
+      setLibraryCollapsed(false);
+      return;
+    }
+    if (aiSettingsOpen || safetyOpen || diagnosticsOpen) { await applyLibraryView("all"); return; }
     if (window.matchMedia("(max-width: 820px)").matches && selectedIdRef.current) {
       if (!await closeDocument()) return;
       setLibraryCollapsed(false);
@@ -2729,6 +2738,8 @@ export default function App() {
     setSidebarSearch(true);
     window.requestAnimationFrame(() => sidebarSearchRef.current?.focus());
   };
+
+  const openQuickActions = () => setQuickActionsOpen(true);
 
   const runBatchAction = async () => {
     if (
@@ -2877,12 +2888,12 @@ export default function App() {
       const editing = Boolean(target?.closest("input, textarea, select, [role='combobox'], [contenteditable='true']"));
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        void openSidebarSearch();
+        openQuickActions();
         return;
       }
       if (!editing && event.key === "/") {
         event.preventDefault();
-        void openSidebarSearch();
+        openQuickActions();
       } else if (!editing && event.key === "?") {
         event.preventDefault();
         setShortcutHelp(true);
@@ -2903,7 +2914,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handleShortcuts);
     return () => window.removeEventListener("keydown", handleShortcuts);
-  }, [bulkImportOpen, captureHistoryOpen, closeDocument, collectionsOpen, derivedOpen, guideOpen, historyOpen, qualityOpen, shortcutHelp, openSidebarSearch]);
+  }, [bulkImportOpen, captureHistoryOpen, closeDocument, collectionsOpen, derivedOpen, guideOpen, historyOpen, qualityOpen, shortcutHelp, openQuickActions]);
 
   const retryCapture = async () => {
     if (!currentDoc) return;
@@ -3507,8 +3518,8 @@ export default function App() {
       <nav className="workspace-rail" aria-label="工作台导航">
         <button type="button" className="rail-brand" aria-label="织页资料库" disabled={closing} onClick={() => void returnToLibrary()}>织</button>
         <IconButton label="文档资料库" ref={libraryRailRef} aria-expanded={!libraryCollapsed} aria-controls="library-panel" aria-pressed={!libraryCollapsed && !sidebarSearch && !graphMode && libraryView === "all" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing} onClick={() => void toggleDirectory()}><WorkspaceIcon name="document" /></IconButton>
-        <IconButton label="搜索文档" aria-pressed={sidebarSearch && !libraryCollapsed} disabled={closing} onClick={() => void openSidebarSearch()}><WorkspaceIcon name="search" /></IconButton>
-        <IconButton label="查看知识地图" aria-pressed={graphMode} disabled={closing} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); void switchLibraryMode(true); }}><WorkspaceIcon name="map" /></IconButton>
+        <IconButton label="快捷搜索与新建文章" aria-haspopup="dialog" aria-expanded={quickActionsOpen} disabled={closing} onClick={openQuickActions}><WorkspaceIcon name="quickSearch" /></IconButton>
+        <IconButton label="查看知识地图" aria-pressed={graphMode} disabled={closing} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); void openKnowledgeMap(); }}><WorkspaceIcon name="map" /></IconButton>
         <IconButton label="导入文档" disabled={closing} onClick={() => setBulkImportOpen(true)}><WorkspaceIcon name="import" /></IconButton>
         <div className="rail-spacer" />
         <IconButton label="帮助与关于" disabled={closing} onClick={() => setShortcutHelp(true)}><WorkspaceIcon name="help" /></IconButton>
@@ -3557,7 +3568,7 @@ export default function App() {
           {safetyRecovery ? <p className="notice warning">恢复资料后才能生成扩展配对码。</p> : <BrowserExtension onPairingCountChange={setBrowserPairingCount} />}
           <section className="help-shortcuts" aria-labelledby="shortcut-title">
             <h3 id="shortcut-title">快捷键</h3>
-            <dl className="shortcut-list"><div><dt><kbd>⌘</kbd><kbd>K</kbd></dt><dd>聚焦搜索</dd></div><div><dt><kbd>/</kbd></dt><dd>聚焦搜索</dd></div><div><dt><kbd>J</kbd> / <kbd>K</kbd></dt><dd>在列表中移动</dd></div>{!cloudMode && <div><dt><kbd>X</kbd></dt><dd>选中或取消当前行</dd></div>}<div><dt><kbd>↵</kbd></dt><dd>打开当前行</dd></div>{!cloudMode && <div><dt><kbd>⌘</kbd><kbd>S</kbd></dt><dd>立即保存</dd></div>}<div><dt><kbd>Esc</kbd></dt><dd>关闭面板或返回列表</dd></div><div><dt><kbd>?</kbd></dt><dd>显示本帮助</dd></div></dl>
+            <dl className="shortcut-list"><div><dt><kbd>⌘</kbd><kbd>K</kbd></dt><dd>打开快捷搜索</dd></div><div><dt><kbd>/</kbd></dt><dd>打开快捷搜索</dd></div><div><dt><kbd>J</kbd> / <kbd>K</kbd></dt><dd>在列表中移动</dd></div>{!cloudMode && <div><dt><kbd>X</kbd></dt><dd>选中或取消当前行</dd></div>}<div><dt><kbd>↵</kbd></dt><dd>打开当前行</dd></div>{!cloudMode && <div><dt><kbd>⌘</kbd><kbd>S</kbd></dt><dd>立即保存</dd></div>}<div><dt><kbd>Esc</kbd></dt><dd>关闭面板或返回列表</dd></div><div><dt><kbd>?</kbd></dt><dd>显示本帮助</dd></div></dl>
           </section>
           <nav className="help-links" aria-label="项目帮助链接">
             <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/LICENSE" target="_blank" rel="noreferrer noopener">MIT 许可</a>
@@ -3567,6 +3578,8 @@ export default function App() {
           </nav>
         </section>
       </Modal>}
+
+      <QuickActions open={quickActionsOpen} onClose={() => setQuickActionsOpen(false)} onOpenDocument={async (id) => id === selectedId || await selectDocument(id)} onCreateArticle={createArticle} />
 
       {paperImportOpen && <Modal open panel={false} className="shortcut-backdrop" title="导入论文" onClose={() => { if (!paperImportBusy) setPaperImportOpen(false); }}>
         <section className="shortcut-card paper-import-card">
@@ -3741,7 +3754,6 @@ export default function App() {
           <div className="sidebar-directory-body" hidden={sidebarSearch}>
           <div className="panel-heading">
             <div className="library-title-group"><h2>{inTrash ? "回收站" : "目录"}</h2><span className="total-count">{total}<small>篇</small></span></div>
-            {!inTrash && <LibraryViewSwitch listRef={libraryViewListRef} map={graphMode} active={!graphMode} onChange={(map) => void switchLibraryMode(map)} />}
           </div>
 
           {!inTrash ? <><LibraryDirectory
@@ -3756,7 +3768,7 @@ export default function App() {
             onMove={moveDocumentToFolder}
             onTrash={trashDirectoryDocument}
             onRename={promptRenameDocument}
-            onCreateArticle={createArticle}
+            onCreateArticle={() => createArticle().then(() => undefined)}
             onCreatePaper={() => { setPaperImportOpen(true); setPaperImportError(""); }}
             selectedId={selectedId}
             activeFolderId={currentDoc?.id === selectedId ? currentDoc.folderId : items.find((item) => item.id === selectedId)?.folderId}
@@ -3823,7 +3835,7 @@ export default function App() {
 
           </div>}
 
-          {graphMounted && <div className={`knowledge-map-host ${graphMode && !selectedId ? "is-active" : "is-dormant"}`} aria-hidden={!graphMode || Boolean(selectedId)}><Suspense fallback={<div className="map-load-fallback" role="status">正在准备知识地图…</div>}><KnowledgeMap active={graphMode && !selectedId} cloud={cloudMode} libraryView={libraryView === "trash" ? "all" : libraryView} query={query} onQueryChange={setQuery} onBack={() => void switchLibraryMode(false)} onOpenDocument={(id) => void openGraphDocument(id)} refreshKey={listRefresh + semanticRefresh} /></Suspense></div>}
+          {graphMounted && <div className={`knowledge-map-host ${graphMode && !selectedId ? "is-active" : "is-dormant"}`} aria-hidden={!graphMode || Boolean(selectedId)}><Suspense fallback={<div className="map-load-fallback" role="status">正在准备知识地图…</div>}><KnowledgeMap active={graphMode && !selectedId} cloud={cloudMode} libraryView={libraryView === "trash" ? "all" : libraryView} query={query} onQueryChange={setQuery} onOpenDocument={(id) => void openGraphDocument(id)} refreshKey={listRefresh + semanticRefresh} /></Suspense></div>}
           {graphMode && !selectedId ? null : !selectedId ? (
             <div className="welcome-state">
               <div className="weave-mark" aria-hidden="true"><i /><i /><i /><i /></div>
