@@ -108,7 +108,7 @@ test("local preference survives refresh and settings remain accessible", async (
   await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "退出沉浸模式" })).toBeVisible();
   await page.getByRole("button", { name: "退出沉浸模式" }).click();
-  await page.getByRole("button", { name: "AI 设置", exact: true }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
   await expect(page.locator(".masthead")).toBeVisible();
   await expect(page.locator(".immersive-bar")).toBeHidden();
 });

@@ -9,6 +9,7 @@ import { useDialogs } from "./ui/Feedback";
 import { SemanticSettingsPanel } from "./SemanticSettings";
 
 interface AiSettingsProps {
+  embedded?: boolean;
   cloud?: boolean;
   semanticRefresh?: number;
   onClose: () => void;
@@ -36,7 +37,7 @@ function endpointValue(value: string) {
   }
 }
 
-export function AiSettings({ cloud = false, semanticRefresh = 0, onClose }: AiSettingsProps) {
+export function AiSettings({ cloud = false, semanticRefresh = 0, embedded = false, onClose }: AiSettingsProps) {
   const dialogs = useDialogs();
   const [settings, setSettings] = useState<LlmSettings | null>(null);
   const [target, setTarget] = useState<LlmSettings["target"]>("remote");
@@ -283,10 +284,10 @@ export function AiSettings({ cloud = false, semanticRefresh = 0, onClose }: AiSe
   };
 
   return (
-    <main className="ai-settings" aria-labelledby="ai-settings-title">
+    <section className="ai-settings" aria-labelledby="ai-settings-title">
       <header>
-        <div><span className="eyebrow">OPTIONAL DERIVATION</span><h1 id="ai-settings-title">AI 派生设置</h1><p>默认不发送任何内容。每篇文档都需先核对准确的发送范围，再明确确认。</p></div>
-        <button type="button" onClick={onClose}>返回资料库</button>
+        <div>{embedded ? <h2 id="ai-settings-title">AI 派生设置</h2> : <h1 id="ai-settings-title">AI 派生设置</h1>}<p>默认不发送任何内容。每篇文档都需先核对准确的发送范围，再明确确认。</p></div>
+        {!embedded && <button type="button" onClick={onClose}>返回资料库</button>}
       </header>
 
       {loading ? <div className="ai-settings-state" role="status">正在读取 AI 设置…</div> : !settings ? <div className="ai-settings-state is-error" role="alert">{error || "无法读取 AI 设置。"}</div> : (
@@ -362,6 +363,6 @@ export function AiSettings({ cloud = false, semanticRefresh = 0, onClose }: AiSe
         </div>
       )}
       <SemanticSettingsPanel cloud={cloud} refreshKey={semanticRefresh} />
-    </main>
+    </section>
   );
 }

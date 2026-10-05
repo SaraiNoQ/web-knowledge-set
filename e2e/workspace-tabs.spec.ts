@@ -245,8 +245,8 @@ test("long folder breadcrumbs fit small screens and the rail scrolls on landscap
   await page.setViewportSize({ width: 844, height: 390 });
   const rail = page.getByRole("navigation", { name: "工作台导航" });
   await expect.poll(() => rail.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
-  await rail.getByRole("button", { name: "配置 AI", exact: true }).scrollIntoViewIfNeeded();
-  const button = await rail.getByRole("button", { name: "配置 AI", exact: true }).boundingBox();
+  await rail.getByRole("button", { name: "打开设置", exact: true }).scrollIntoViewIfNeeded();
+  const button = await rail.getByRole("button", { name: "打开设置", exact: true }).boundingBox();
   expect(button!.y).toBeGreaterThanOrEqual(0);
   expect(button!.y + button!.height).toBeLessThanOrEqual(390);
   await request.delete(`/api/folders/${folder.id}`, { headers });

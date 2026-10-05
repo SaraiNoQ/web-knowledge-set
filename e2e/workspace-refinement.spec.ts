@@ -13,6 +13,8 @@ test("category tabs replace duplicate rail entries and collapsed directory leave
   const documents = rail.getByRole("button", { name: "文档资料库", exact: true });
   await expect(documents).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".library-tabs")).toHaveCount(0);
+  const toggleWidth = await page.locator(".sidebar-category-toggle").evaluate((el) => el.getBoundingClientRect().width / (el.parentElement!.clientWidth - parseFloat(getComputedStyle(el.parentElement!).paddingLeft) - parseFloat(getComputedStyle(el.parentElement!).paddingRight)));
+  expect(toggleWidth).toBeCloseTo(.75, 2);
   const categories = page.getByRole("navigation", { name: "目录分类" });
   for (const name of ["查看收藏", "查看回收站", "查看论文"]) {
     await expect(rail.getByRole("button", { name, exact: true })).toHaveCount(0);
@@ -84,7 +86,7 @@ test("immersive control stays in the rail and removes the old top bar", async ({
   const exit = rail.getByRole("button", { name: "退出沉浸模式", exact: true });
   await expect(exit).toBeFocused();
   const exitBounds = await exit.boundingBox();
-  const settingsBounds = await rail.getByRole("button", { name: "配置 AI", exact: true }).boundingBox();
+  const settingsBounds = await rail.getByRole("button", { name: "打开设置", exact: true }).boundingBox();
   expect(exitBounds!.y + exitBounds!.height).toBeLessThanOrEqual(settingsBounds!.y);
   expect((await page.locator(".workspace").boundingBox())!.y).toBe(0);
   await exit.click();
@@ -156,7 +158,7 @@ test("editor fills the remaining viewport and can reveal the complete last line"
   await expect(page.locator(".document-head .title-field")).toHaveCount(0);
   const editor = page.getByRole("textbox", { name: "Markdown 编辑器" });
   await editor.fill(Array.from({ length: 100 }, (_, index) => `段落 ${index}：正文回归。`).join("\n\n") + "\n\n最后一行完整可见");
-  await page.getByRole("button", { name: "配置 AI", exact: true }).click();
+  await page.getByRole("button", { name: "打开设置", exact: true }).click();
   await page.getByRole("button", { name: "返回资料库", exact: true }).click();
   await expect.poll(() => page.locator(".editor-grid").evaluate((element) => Math.abs(element.getBoundingClientRect().bottom - innerHeight))).toBeLessThanOrEqual(2);
   for (const immersive of [false, true]) {

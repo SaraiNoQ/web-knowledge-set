@@ -362,7 +362,7 @@ test("returns home from the logo and toggles the knowledge sidebar", async ({ pa
   await expect(page.locator(".library-panel")).toBeHidden();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   const rail = page.getByRole("navigation", { name: "工作台导航" });
-  for (const label of ["快捷搜索与新建文章", "文档资料库", "查看知识地图", "导入文档", "配置 AI"]) {
+  for (const label of ["快捷搜索与新建文章", "文档资料库", "查看知识地图", "导入文档", "打开设置"]) {
     await expect(rail.getByRole("button", { name: label, exact: true })).toBeVisible();
   }
   const expand = rail.getByRole("button", { name: "文档资料库", exact: true });
@@ -638,7 +638,7 @@ test("semantic indexing remains opt-in until a credential and model probe are av
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
   await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
   if (await deferSetup.isVisible()) await deferSetup.click();
-  await page.getByRole("button", { name: "AI 设置", exact: true }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
   await expect(page.getByRole("heading", { name: "语义关联" })).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "允许自动建立语义关联" })).not.toBeChecked();
   await expect(page.getByRole("button", { name: "测试向量连接" })).toBeDisabled();
@@ -795,7 +795,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await page.getByRole("button", { name: "收取网页" }).click();
   await expect(page.getByLabel("文档标题")).toHaveValue("AI 生命周期文章", { timeout: 8_000 });
 
-  await page.getByRole("button", { name: "AI 设置", exact: true }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
   const remoteProvider = page.getByRole("combobox", { name: "AI 远程平台" });
   await remoteProvider.click();
   await expect(page.getByRole("option")).toHaveCount(10);
@@ -813,9 +813,9 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(page.getByText("当前进程已加载当前平台密钥", { exact: false })).toBeVisible();
   await page.reload();
   const deferAfterReload = page.getByRole("button", { name: "稍后设置" });
-  await deferAfterReload.or(page.getByRole("button", { name: "AI 设置", exact: true })).first().waitFor();
+  await deferAfterReload.or(page.getByRole("button", { name: "设置", exact: true })).first().waitFor();
   if (await deferAfterReload.isVisible()) await deferAfterReload.click();
-  await page.getByRole("button", { name: "AI 设置", exact: true }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
   await expect(page.getByText("当前进程已加载当前平台密钥", { exact: false })).toBeVisible();
   await expect(page.getByRole("button", { name: "删除密钥" })).toBeVisible();
   await page.getByLabel("AI 远程模型").fill("remote-e2e-model");
@@ -974,7 +974,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(panel.getByRole("heading", { name: "译文：超长原文" })).toBeVisible();
   await expect(page.getByLabel("Markdown 编辑器")).toHaveText(originalMarkdown || "");
 
-  await page.getByRole("button", { name: "AI 设置", exact: true }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("button", { name: "关闭 AI 并删除全部结果" }).click();
   await page.getByRole("alertdialog", { name: "关闭 AI 并删除结果" }).getByRole("button", { name: "关闭并删除" }).click();
   await expect(page.getByText(/AI 已关闭，并删除 5 条派生结果/u)).toBeVisible();
@@ -1726,7 +1726,7 @@ test("desktop AI settings explains local key failures without cloud wording", as
   await page.goto("/");
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
   if (await deferSetup.isVisible()) await deferSetup.click();
-  await page.getByRole("button", { name: "AI 设置", exact: true }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("button", { name: "远程 HTTPS", exact: true }).click();
   await page.getByLabel("AI 远程模型").fill("desktop-e2e-model");
   await page.getByLabel("远程模型 API 密钥").fill("desktop-e2e-key");

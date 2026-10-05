@@ -38,7 +38,8 @@ import type {
 } from "../shared/types";
 import { api, ApiRequestError } from "./api";
 import type { DocumentPatch } from "./api";
-import { AiSettings } from "./components/AiSettings";
+import { WorkspaceSettings } from "./components/WorkspaceSettings";
+import { loadReadingMargin } from "./reading-preferences";
 import { AppUpdater } from "./components/AppUpdater";
 import { BrowserExtension } from "./components/BrowserExtension";
 import { DataSafety } from "./components/DataSafety";
@@ -640,6 +641,7 @@ export default function App() {
   const [browserPairingCount, setBrowserPairingCount] = useState<number | null>(null);
   const [cloudEditing, setCloudEditing] = useState(false);
   const [safetyRecovery, setSafetyRecovery] = useState(false);
+  const [readingMargin, setReadingMargin] = useState(loadReadingMargin);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [derivedOpen, setDerivedOpen] = useState(false);
   const [derivedPreferredType, setDerivedPreferredType] = useState<DerivedMode>("summary");
@@ -3520,7 +3522,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell editor-shell${immersiveActive ? " is-immersive" : ""}`}>
+    <div className={`app-shell editor-shell${immersiveActive ? " is-immersive" : ""}`} style={{ "--reading-margin": readingMargin } as import("react").CSSProperties}>
       <a className="skip-link" href="#library-panel">跳到资料库</a>
       <nav className="workspace-rail" aria-label="工作台导航">
         <button type="button" className="rail-brand" aria-label="织页资料库" disabled={closing} onClick={() => void returnToLibrary()}>织</button>
@@ -3533,14 +3535,14 @@ export default function App() {
         <IconButton label="管理数据安全" aria-pressed={safetyOpen} disabled={closing} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }}><WorkspaceIcon name="shield" /></IconButton>
         <ThemeToggle />
         <IconButton ref={immersiveToggleRef} label={immersiveMode ? "退出沉浸模式" : "进入沉浸模式"} aria-pressed={immersiveMode} aria-disabled={appearanceSaving || closing} onClick={() => void toggleImmersive()}><WorkspaceIcon name="immersive" /></IconButton>
-        <IconButton label="配置 AI" aria-pressed={aiSettingsOpen} disabled={closing} onClick={() => { setSafetyOpen(false); setDiagnosticsOpen(false); setAiSettingsOpen(true); }}><WorkspaceIcon name="settings" /></IconButton>
+        <IconButton label="打开设置" aria-pressed={aiSettingsOpen} disabled={closing} onClick={() => { setSafetyOpen(false); setDiagnosticsOpen(false); setAiSettingsOpen(true); }}><WorkspaceIcon name="settings" /></IconButton>
       </nav>
       <header className="masthead">
         <button type="button" className="brand" aria-label="返回知识库主界面" onClick={() => void returnToLibrary()} disabled={closing}>
           <span><strong>织页</strong><small>{cloudMode ? "云端知识库" : "本地知识库"}</small></span>
         </button>
         <p className="masthead-note">文档工作台</p>
-        <div className="masthead-actions">{!cloudMode && onboarding !== "unavailable" && <button type="button" className="guide-button" onClick={() => setGuideOpen(true)} disabled={closing}>使用指南</button>}<button type="button" className="guide-button" onClick={() => { setPaperImportOpen(true); setPaperImportError(""); }} disabled={closing}>导入论文</button><button type="button" className="shortcut-help-button" aria-keyshortcuts="?" onClick={() => setShortcutHelp(true)} disabled={closing}>帮助</button>{"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}<button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>AI 设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
+        <div className="masthead-actions">{!cloudMode && onboarding !== "unavailable" && <button type="button" className="guide-button" onClick={() => setGuideOpen(true)} disabled={closing}>使用指南</button>}<button type="button" className="guide-button" onClick={() => { setPaperImportOpen(true); setPaperImportError(""); }} disabled={closing}>导入论文</button><button type="button" className="shortcut-help-button" aria-keyshortcuts="?" onClick={() => setShortcutHelp(true)} disabled={closing}>帮助</button>{"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}<button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
           <i />{safetyRecovery ? "恢复模式" : "数据安全"}
         </button></div>
       </header>
@@ -3682,7 +3684,7 @@ export default function App() {
       {diagnosticsOpen ? (
         <Diagnostics onClose={() => { setDiagnosticsOpen(false); setSafetyOpen(true); }} />
       ) : aiSettingsOpen ? (
-        <AiSettings cloud={cloudMode} semanticRefresh={semanticRefresh} onClose={() => setAiSettingsOpen(false)} />
+        <WorkspaceSettings readingMargin={readingMargin} onReadingMarginChange={setReadingMargin} cloud={cloudMode} semanticRefresh={semanticRefresh} onClose={() => setAiSettingsOpen(false)} />
       ) : safetyOpen ? (
         <DataSafety
           cloud={cloudMode}
