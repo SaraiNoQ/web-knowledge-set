@@ -1,5 +1,8 @@
 import {
   createElement,
+  createContext,
+  useContext,
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -38,6 +41,7 @@ import type {
 } from "../shared/types";
 import { api, ApiRequestError } from "./api";
 import type { DocumentPatch } from "./api";
+import { CachedImage } from "./components/ImageViewer";
 import { WorkspaceSettings } from "./components/WorkspaceSettings";
 import { loadReadingMargin } from "./reading-preferences";
 import { AppUpdater } from "./components/AppUpdater";
@@ -314,9 +318,7 @@ function OfflineImage({ asset, alt }: { asset?: DocumentAsset; alt?: string }) {
     return <ImagePlaceholder alt={alt}>{failed ? "本地图片无法读取，不会回退到原站。" : "离线图片记录不完整。"}</ImagePlaceholder>;
   }
   return (
-    <span className="offline-image">
-      <img src={api.assetUrl(asset.assetHash)} alt={alt || ""} loading="lazy" onError={() => setFailed(true)} />
-    </span>
+    <CachedImage key={asset.assetHash} src={api.assetUrl(asset.assetHash)} alt={alt} onError={() => setFailed(true)} />
   );
 }
 
@@ -326,15 +328,23 @@ function CloudAssetImage({ asset, hash, alt }: { asset?: DocumentAsset; hash: st
   if (asset) return <OfflineImage asset={asset} alt={alt} />;
   if (failed) return <ImagePlaceholder alt={alt}>图片暂不可用。</ImagePlaceholder>;
   return (
-    <span className="offline-image">
-      <img src={api.assetUrl(hash)} alt={alt || ""} loading="lazy" onError={() => setFailed(true)} />
-    </span>
+    <CachedImage key={hash} src={api.assetUrl(hash)} alt={alt} onError={() => setFailed(true)} />
   );
+}
+
+const PreviewAssets = createContext<{ sourceUrl: string; bySource: Map<string, DocumentAsset>; byHash: Map<string, DocumentAsset> } | null>(null);
+
+function PreviewImage({ src, alt }: { src?: string; alt?: string }) {
+  const context = useContext(PreviewAssets)!;
+  const assetHash = assetHashFromUri(src);
+  if (assetHash) return <CloudAssetImage asset={context.byHash.get(assetHash)} hash={assetHash} alt={alt} />;
+  const source = assetSource(src, context.sourceUrl);
+  return source ? <OfflineImage asset={context.bySource.get(source)} alt={alt} /> : <ImagePlaceholder alt={alt}>图片地址不可用。</ImagePlaceholder>;
 }
 
 const headingComponents = Object.fromEntries(["h1", "h2", "h3", "h4", "h5", "h6"].map((tag) => [tag, ({ node, children, ...props }: { node?: { position?: { start: { offset?: number } } }; children?: ReactNode }) => createElement(tag, { ...props, "data-heading-offset": node?.position?.start.offset }, children)])) as Components;
 
-function MarkdownPreview({ markdown, sourceUrl, assets = [] }: { markdown: string; sourceUrl: string; assets?: DocumentAsset[] }) {
+const MarkdownPreview = memo(function MarkdownPreview({ markdown, sourceUrl, assets = [] }: { markdown: string; sourceUrl: string; assets?: DocumentAsset[] }) {
   const assetsBySource = useMemo(() => {
     const result = new Map<string, DocumentAsset>();
     for (const asset of assets) {
@@ -352,35 +362,22 @@ function MarkdownPreview({ markdown, sourceUrl, assets = [] }: { markdown: strin
     return result;
   }, [assets]);
 
-  return (
-    <article className="markdown-preview">
-      <ReactMarkdown
-        urlTransform={markdownUrlTransform}
-        rehypePlugins={[rehypeKatex]}
-        remarkPlugins={[remarkGfm, remarkMath]}
-        components={{
-          ...headingComponents,
-          a: ({ node: _node, href, children, ...props }) => {
-            const safeHref = resolveLink(href, sourceUrl);
-            if (!safeHref) return <span>{children}</span>;
-            const external = !safeHref.startsWith("#");
-            return <a {...props} href={safeHref} target={external ? "_blank" : undefined} rel={external ? "noreferrer noopener" : undefined}>{children}</a>;
-          },
-          img: ({ node: _node, src, alt }) => {
-            const assetHash = assetHashFromUri(src);
-            if (assetHash) return <CloudAssetImage asset={assetsByHash.get(assetHash)} hash={assetHash} alt={alt} />;
-            const source = assetSource(src, sourceUrl);
-            return source
-              ? <OfflineImage asset={assetsBySource.get(source)} alt={alt} />
-              : <ImagePlaceholder alt={alt}>图片地址不可用。</ImagePlaceholder>;
-          },
-        }}
-      >
-        {markdown}
-      </ReactMarkdown>
-    </article>
-  );
-}
+  const context = useMemo(() => ({ sourceUrl, bySource: assetsBySource, byHash: assetsByHash }), [sourceUrl, assetsBySource, assetsByHash]);
+  const components = useMemo<Components>(() => ({
+    ...headingComponents,
+    a: ({ node, href, children, ...props }) => {
+      if (node?.children.some((child) => child.type === "element" && child.tagName === "img")) return <span>{children}</span>;
+      const safeHref = resolveLink(href, sourceUrl);
+      if (!safeHref) return <span>{children}</span>;
+      const external = !safeHref.startsWith("#");
+      return <a {...props} href={safeHref} target={external ? "_blank" : undefined} rel={external ? "noreferrer noopener" : undefined}>{children}</a>;
+    },
+    img: PreviewImage,
+  }), [sourceUrl]);
+  return <PreviewAssets.Provider value={context}><article className="markdown-preview">
+    <ReactMarkdown urlTransform={markdownUrlTransform} rehypePlugins={[rehypeKatex]} remarkPlugins={[remarkGfm, remarkMath]} components={components}>{markdown}</ReactMarkdown>
+  </article></PreviewAssets.Provider>;
+});
 
 function captureDuration(value: number | null) {
   if (value === null) return "未完成";
