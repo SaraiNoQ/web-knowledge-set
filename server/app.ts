@@ -124,7 +124,7 @@ const derivedResultTypes = new Set<DerivedResultType>(["summary", "outline", "ke
 const importKinds = new Set<ImportKind>(["urls", "bookmarks", "markdown"]);
 const importStrategies = new Set<ImportStrategy>(["skip", "copy", "update"]);
 const documentFilterKeys = new Set([
-  "q", "scope", "kind", "tag", "collectionId", "folderId", "unfiled", "status", "favorite", "archived", "unorganized",
+  "q", "scope", "caseSensitive", "kind", "tag", "collectionId", "folderId", "unfiled", "status", "favorite", "archived", "unorganized",
   "from", "to", "captureMode", "sort", "page", "trash",
 ]);
 const batchActions = new Set<BatchDocumentAction>([
@@ -825,6 +825,7 @@ function documentFilters(requestUrl: URL): DocumentFilters {
   return {
     q,
     scope: scopeValue as DocumentSearchScope | undefined,
+    caseSensitive: strictBoolean(requestUrl.searchParams.get("caseSensitive"), "caseSensitive"),
     kind: kindValue as LibraryItemKind | undefined,
     tag,
     collectionId,

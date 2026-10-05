@@ -19,7 +19,7 @@ test("library header and map switch stay compact and usable at desktop and small
       const library = page.getByRole("complementary", { name: "知识列表" });
       const switcher = library.getByRole("group", { name: "资料库显示方式" });
       await expect(switcher).toBeVisible();
-      await expect.poll(() => library.evaluate((element) => parseFloat(getComputedStyle(element).paddingTop))).toBe(12);
+      await expect.poll(() => library.locator(".sidebar-directory-body").evaluate((element) => parseFloat(getComputedStyle(element).paddingTop))).toBe(12);
       const layout = await library.evaluate((element) => {
         const panel = element.getBoundingClientRect();
 
@@ -27,7 +27,7 @@ test("library header and map switch stay compact and usable at desktop and small
         const count = element.querySelector(".total-count")!.getBoundingClientRect();
         const title = element.querySelector("h2")!.getBoundingClientRect();
         const switcher = element.querySelector(".library-view-toggle")!.getBoundingClientRect();
-        return { gap: parseFloat(getComputedStyle(element).paddingTop), metaCenter: meta.top + meta.height / 2, countCenter: count.top + count.height / 2, titleRight: title.right, switchLeft: switcher.left, switchRight: switcher.right, panelRight: panel.right };
+        return { gap: parseFloat(getComputedStyle(element.querySelector(".sidebar-directory-body")!).paddingTop), metaCenter: meta.top + meta.height / 2, countCenter: count.top + count.height / 2, titleRight: title.right, switchLeft: switcher.left, switchRight: switcher.right, panelRight: panel.right };
       });
       expect(layout.gap).toBe(12);
       expect(Math.abs(layout.countCenter - layout.metaCenter)).toBeLessThanOrEqual(1);

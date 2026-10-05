@@ -258,7 +258,7 @@ test("cloud core serves the existing empty-library startup contract", async () =
     new Request("https://app.example.com/api/documents?q=needle&scope=body&page=1"), environment(),
   );
   assert.equal(scopedSearch.status, 200);
-  assert.ok(preparedSql.some((sql) => sql.includes("markdown LIKE ?") && !sql.includes("title LIKE ?")));
+  assert.ok(preparedSql.some((sql) => sql.includes("markdown LIKE search_term.value") && !sql.includes("title LIKE search_term.value")));
   const invalidRange = await handleRequest(
     new Request("https://app.example.com/api/documents?from=2026-08-20&to=2026-08-10&page=1"), environment(),
   );
@@ -1964,6 +1964,74 @@ function insertCapturedDocument(database: ReturnType<typeof sqliteEnvironment>["
     "2026-09-10T00:00:00.000Z", "2026-09-10T00:00:00.000Z",
   );
 }
+
+test("cloud search applies literal AND terms and case with bounded plain excerpts", async () => {
+  const { env, db } = sqliteEnvironment();
+  insertCapturedDocument(db, "upper", "Agent title", `${"prefix ".repeat(70)}Agent 100% a_b \\path${" context".repeat(300)} TailOnly`);
+  insertCapturedDocument(db, "lower", "Other title", "agent 100x aXb path");
+  insertCapturedDocument(db, "trash", "Agent trashed", "Agent");
+  db.sqlite.prepare("UPDATE cloud_documents SET deleted_at = ? WHERE id = 'trash'").run("2026-10-05T00:00:00Z");
+  db.sqlite.prepare("UPDATE cloud_documents SET author = 'Manual Author' WHERE id = 'upper'").run();
+  const search = async (params: Record<string, string>) => {
+    const response = await handleRequest(new Request(`https://app.example.com/api/library?${new URLSearchParams(params)}`), env);
+    assert.equal(response.status, 200);
+    return response.json() as Promise<{ total: number; items: Array<{ id: string; searchMatches?: string[] }> }>;
+  };
+  assert.equal((await search({ q: "agent", scope: "body" })).total, 2);
+  assert.equal((await search({ q: "Agent", scope: "body", caseSensitive: "true" })).total, 1);
+  assert.equal((await search({ q: "agent", scope: "title", caseSensitive: "true" })).total, 0);
+  for (const q of ["100%", "a_b", "\\path", "Agent a_b", "TailOnly"]) {
+    const result = await search({ q, scope: "body" });
+    assert.deepEqual(result.items.map(({ id }) => id), ["upper"]);
+    assert.ok((result.items[0]?.searchMatches?.length ?? 0) > 0);
+    assert.ok(result.items[0]?.searchMatches?.every((excerpt) => excerpt.length <= 242));
+    assert.ok((result.items[0]?.searchMatches?.length ?? 0) <= 5);
+    assert.equal("markdown" in result.items[0]!, false);
+  }
+  assert.equal((await search({ q: "Manual", scope: "source" })).items[0]?.id, "upper");
+  assert.equal((await search({ q: "trashed", scope: "title" })).total, 0);
+  assert.equal((await search({ q: "trashed", scope: "title", trash: "only" })).total, 1);
+  assert.equal((await search({})).items[0]?.searchMatches, undefined);
+  assert.equal((await search({ q: Array.from({ length: 80 }, (_, index) => `w${index}`).join(" ") })).total, 0);
+  const invalid = await handleRequest(new Request("https://app.example.com/api/library?q=agent&caseSensitive=invalid"), env);
+  assert.equal(invalid.status, 400);
+});
+
+test("cloud paper search returns current block text and the paper source, excluding JSON metadata", async () => {
+  const { env, db } = sqliteEnvironment();
+  const pdf = Buffer.from("%PDF-1.7\npaper search\n");
+  const upload = await handleRequest(new Request("https://app.example.com/api/papers/upload", {
+    method: "POST", headers: { "Content-Type": "application/pdf", "Content-Length": String(pdf.length), "X-Filename": "paper.pdf", "X-Zhiye-Data-Epoch": "cloud-test" }, body: pdf,
+  }), env);
+  assert.equal(upload.status, 201);
+  const { paper } = await upload.json() as { paper: { id: string; sourceHash: string } };
+  const now = "2026-10-05T00:00:00Z";
+  for (const id of ["old-paper-search", "current-paper-search"]) {
+    db.sqlite.prepare(`INSERT INTO cloud_paper_extractions(id, paper_id, status, source_hash, page_count, completed_pages, created_at, finished_at)
+      VALUES (?, ?, 'succeeded', ?, 8, 8, ?, ?)`).run(id, paper.id, paper.sourceHash, now, now);
+  }
+  db.sqlite.prepare("UPDATE cloud_papers SET status = 'ready', extraction_id = 'current-paper-search', source_url = 'https://paper-only.example/research.pdf' WHERE id = ?").run(paper.id);
+  const insert = db.sqlite.prepare(`INSERT INTO cloud_paper_pages(paper_id, extraction_id, page_number, original_json, translation_json, revision, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 1, ?, ?)`);
+  const block = { id: "internal-block-id", type: "paragraph", original: "Original PaperOnly context", translation: "译文独有 context", assetIds: [] };
+  insert.run(paper.id, "old-paper-search", 1, JSON.stringify([{ ...block, original: "ObsoleteOnly" }]), "[]", now, now);
+  for (let page = 1; page <= 8; page++) {
+    insert.run(paper.id, "current-paper-search", page, JSON.stringify([{ ...block, original: `${block.original} page ${page}` }]), JSON.stringify([{ ...block, translation: `${block.translation} page ${page}` }]), now, now);
+  }
+  const search = async (q: string, scope = "body") => {
+    const response = await handleRequest(new Request(`https://app.example.com/api/library?${new URLSearchParams({ q, scope, caseSensitive: "true" })}`), env);
+    assert.equal(response.status, 200);
+    return response.json() as Promise<{ total: number; items: Array<{ id: string; searchMatches?: string[] }> }>;
+  };
+  for (const q of ["PaperOnly", "译文独有"]) {
+    const result = await search(q);
+    assert.deepEqual(result.items.map(({ id }) => id), [paper.id]);
+    assert.equal(result.items[0]?.searchMatches?.length, 5);
+    assert.ok(result.items[0]?.searchMatches?.every((excerpt) => excerpt.includes(q) && !excerpt.includes("assetIds")));
+  }
+  for (const q of ["internal-block-id", "assetIds", "paragraph", "ObsoleteOnly"]) assert.equal((await search(q)).total, 0);
+  assert.ok((await search("paper-only.example", "source")).items[0]?.searchMatches?.includes("https://paper-only.example/research.pdf"));
+});
 
 function setCloudAiEnabled(database: ReturnType<typeof sqliteEnvironment>["db"], enabled: boolean) {
   database.sqlite.prepare("UPDATE app_settings SET value = ?, revision = revision + 1 WHERE key = 'llm_settings'").run(JSON.stringify({

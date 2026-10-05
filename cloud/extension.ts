@@ -1,4 +1,5 @@
 import { SEMANTIC_FORMAT_VERSION } from "../shared/semantic";
+import { escapeLike, paperPageTextSql, paperTextMatch, searchExcerptSql, searchMatches, searchTerms } from "../shared/search";
 
 export interface D1Result<T = unknown> {
   results: T[];
@@ -579,22 +580,28 @@ export async function listDocuments(db: D1Database, url: URL, window?: { limit: 
   } else if (folder.unfiled === false) {
     conditions.push("folder_id IS NOT NULL");
   }
+  const caseSensitiveValue = url.searchParams.get("caseSensitive");
+  if (caseSensitiveValue !== null && caseSensitiveValue !== "true" && caseSensitiveValue !== "false") {
+    throw new CloudHttpError(400, "INVALID_FILTER", "caseSensitive must be true or false");
+  }
+  const caseSensitive = caseSensitiveValue === "true";
+  const scope = url.searchParams.get("scope") || "all";
+  if (!["all", "title", "body", "source"].includes(scope)) throw new CloudHttpError(400, "INVALID_SCOPE", "Unknown search scope");
   if (query) {
-    const scope = url.searchParams.get("scope") || "all";
-    const pattern = `%${query}%`;
-    if (scope === "title") {
-      conditions.push("title LIKE ?");
-      values.push(pattern);
-    } else if (scope === "source") {
-      conditions.push("(source_url LIKE ? OR (kind = 'paper' AND EXISTS (SELECT 1 FROM cloud_papers p WHERE p.id = cloud_documents.id AND p.source_url LIKE ?)))");
-      values.push(pattern, pattern);
-    } else if (scope === "body") {
-      conditions.push("(markdown LIKE ? OR (kind = 'paper' AND EXISTS (SELECT 1 FROM cloud_paper_pages pp WHERE pp.paper_id = cloud_documents.id AND (pp.original_json LIKE ? OR pp.translation_json LIKE ?))))");
-      values.push(pattern, pattern, pattern);
-    } else if (scope === "all") {
-      conditions.push("(title LIKE ? OR markdown LIKE ? OR source_url LIKE ? OR (kind = 'paper' AND EXISTS (SELECT 1 FROM cloud_paper_pages pp WHERE pp.paper_id = cloud_documents.id AND (pp.original_json LIKE ? OR pp.translation_json LIKE ?))))");
-      values.push(pattern, pattern, pattern, pattern, pattern);
-    } else throw new CloudHttpError(400, "INVALID_SCOPE", "Unknown search scope");
+    const sourceFields = ["source_url", "COALESCE(final_url, '')", "COALESCE(canonical_url, '')", "COALESCE(author, '')", "source_note"];
+    const fields = scope === "title" ? ["title"] : scope === "body" ? ["markdown"] :
+      scope === "source" ? sourceFields : ["title", "markdown", ...sourceFields];
+    values.push(JSON.stringify(searchTerms(query).map((term) => caseSensitive ? term : `%${escapeLike(term)}%`)));
+    const match = (field: string) => caseSensitive
+      ? `instr(${field}, search_term.value) > 0` : `${field} LIKE search_term.value ESCAPE '\\'`;
+    const alternatives = fields.map(match);
+    if (scope === "all" || scope === "source") {
+      alternatives.push(`(kind = 'paper' AND EXISTS (SELECT 1 FROM cloud_papers p WHERE p.id = cloud_documents.id AND ${match("p.source_url")}))`);
+    }
+    if (scope === "all" || scope === "body") {
+      alternatives.push(`(kind = 'paper' AND EXISTS (SELECT 1 FROM cloud_paper_pages pp JOIN cloud_papers p ON p.id = pp.paper_id AND p.extraction_id = pp.extraction_id WHERE pp.paper_id = cloud_documents.id AND (${paperTextMatch(match)})))`);
+    }
+    conditions.push(`NOT EXISTS (SELECT 1 FROM json_each(?) search_term WHERE NOT (${alternatives.join(" OR ")}))`);
   }
   const favorite = url.searchParams.get("favorite");
   if (favorite !== null) {
@@ -623,10 +630,29 @@ export async function listDocuments(db: D1Database, url: URL, window?: { limit: 
     .bind(...values).first<{ count: number }>();
   const sort = url.searchParams.get("sort") === "title" ? "lower(title) COLLATE BINARY ASC, id ASC" :
     url.searchParams.get("sort") === "created" ? "created_at DESC, id ASC" : "updated_at DESC, id ASC";
+  const contextTerms = JSON.stringify(searchTerms(query));
   const rows = await db.prepare(
-    `SELECT ${summaryColumns} FROM cloud_documents ${where} ORDER BY ${sort} LIMIT ? OFFSET ?`,
-  ).bind(...values, window?.limit ?? 30, window?.offset ?? (page - 1) * 30).all<DocumentSummaryRow>();
-  return { items: rows.results.map(summary), page, pageSize: 30, total: count?.count ?? 0 };
+    `SELECT ${summaryColumns}${query ? `, ${searchExcerptSql("markdown", caseSensitive)} AS markdown, ${searchExcerptSql("source_note", caseSensitive)} AS sourceNote, COALESCE((SELECT p.source_url FROM cloud_papers p WHERE p.id = cloud_documents.id), '') AS paperSourceUrl` : ""} FROM cloud_documents ${where} ORDER BY ${sort} LIMIT ? OFFSET ?`,
+  ).bind(...(query ? [contextTerms, contextTerms] : []), ...values, window?.limit ?? 30, window?.offset ?? (page - 1) * 30).all<DocumentSummaryRow & { markdown?: string; sourceNote?: string; paperSourceUrl?: string }>();
+  const items = await Promise.all(rows.results.map(async (row) => {
+    const item = summary(row);
+    if (!query) return item;
+    const sources = [row.paperSourceUrl || "", row.sourceUrl, row.finalUrl || "", row.canonicalUrl || "", row.author || "", row.sourceNote || ""];
+    const texts = scope === "title" ? [row.title] : scope === "body" ? [row.markdown || ""] :
+      scope === "source" ? sources : [row.markdown || "", row.title, ...sources];
+    if (row.kind === "paper" && (scope === "all" || scope === "body")) {
+      const match = (field: string) => caseSensitive
+        ? `instr(${field}, search_term.value) > 0` : `${field} LIKE search_term.value ESCAPE '\\'`;
+      const terms = searchTerms(query).map((term) => caseSensitive ? term : `%${escapeLike(term)}%`);
+      const pages = await db.prepare(`SELECT ${searchExcerptSql(paperPageTextSql("original"), caseSensitive)} AS originalText, ${searchExcerptSql(paperPageTextSql("translation"), caseSensitive)} AS translationText FROM cloud_paper_pages pp
+        JOIN cloud_papers p ON p.id = pp.paper_id AND p.extraction_id = pp.extraction_id
+        WHERE pp.paper_id = ? AND EXISTS (SELECT 1 FROM json_each(?) search_term WHERE (${paperTextMatch(match)}))
+        ORDER BY pp.page_number LIMIT 5`).bind(contextTerms, contextTerms, row.id, JSON.stringify(terms)).all<{ originalText: string; translationText: string }>();
+      texts.unshift(...pages.results.flatMap((page) => [page.originalText, page.translationText]));
+    }
+    return { ...item, searchMatches: searchMatches(texts, query, caseSensitive) };
+  }));
+  return { items, page, pageSize: 30, total: count?.count ?? 0 };
 }
 
 export async function getDocument(db: D1Database, id: string) {

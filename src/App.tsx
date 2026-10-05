@@ -44,6 +44,7 @@ import { DataSafety } from "./components/DataSafety";
 import { Diagnostics } from "./components/Diagnostics";
 import { DerivedKnowledge, type DerivedMode } from "./components/DerivedKnowledge";
 import { MarkdownEditor } from "./components/MarkdownEditor";
+import { LibrarySearch } from "./components/LibrarySearch";
 import { LibraryViewSwitch } from "./components/LibraryViewSwitch";
 import { Onboarding } from "./components/Onboarding";
 import { PaperReader } from "./components/PaperReader";
@@ -550,6 +551,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [openDocuments, setOpenDocuments] = useState<OpenDocumentTab[]>([]);
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
+  const [sidebarSearch, setSidebarSearch] = useState(false);
   const [immersiveMode, setImmersiveMode] = useState(false);
   const [appearanceLoaded, setAppearanceLoaded] = useState(false);
   const [appearanceSaving, setAppearanceSaving] = useState(false);
@@ -681,6 +683,7 @@ export default function App() {
   const readerPanelRef = useRef<HTMLElement>(null);
   const documentHeadRef = useRef<HTMLElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const sidebarSearchRef = useRef<HTMLInputElement>(null);
   const libraryListRef = useRef<HTMLDivElement>(null);
   selectedIdRef.current = selectedId;
   draftRef.current = draft;
@@ -2689,6 +2692,7 @@ export default function App() {
     graphReturnRef.current = false;
     setGraphMode(false);
     setLibraryView(view);
+    setSidebarSearch(false);
     setLibraryCollapsed(false);
     setAiSettingsOpen(false);
     setSafetyOpen(false);
@@ -2705,6 +2709,26 @@ export default function App() {
     setFavoriteFilter(view === "favorites" ? true : undefined);
     setImportNotice("");
     return true;
+  };
+
+  const toggleDirectory = async () => {
+    if (graphMode || aiSettingsOpen || safetyOpen || diagnosticsOpen) { await applyLibraryView("all"); return; }
+    if (window.matchMedia("(max-width: 820px)").matches && selectedIdRef.current) {
+      if (!await closeDocument()) return;
+      setLibraryCollapsed(false);
+    } else setLibraryCollapsed((value) => !value);
+  };
+
+  const openSidebarSearch = async () => {
+    if (sidebarSearch && !graphMode && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen) {
+      if (window.matchMedia("(max-width: 820px)").matches && selectedIdRef.current && !await closeDocument()) return;
+      setLibraryCollapsed(false);
+      window.requestAnimationFrame(() => sidebarSearchRef.current?.focus());
+      return;
+    }
+    if (!await applyLibraryView("all")) return;
+    setSidebarSearch(true);
+    window.requestAnimationFrame(() => sidebarSearchRef.current?.focus());
   };
 
   const runBatchAction = async () => {
@@ -2854,12 +2878,12 @@ export default function App() {
       const editing = Boolean(target?.closest("input, textarea, select, [role='combobox'], [contenteditable='true']"));
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        searchInputRef.current?.focus();
+        void openSidebarSearch();
         return;
       }
       if (!editing && event.key === "/") {
         event.preventDefault();
-        searchInputRef.current?.focus();
+        void openSidebarSearch();
       } else if (!editing && event.key === "?") {
         event.preventDefault();
         setShortcutHelp(true);
@@ -2880,7 +2904,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handleShortcuts);
     return () => window.removeEventListener("keydown", handleShortcuts);
-  }, [bulkImportOpen, captureHistoryOpen, closeDocument, collectionsOpen, derivedOpen, guideOpen, historyOpen, qualityOpen, shortcutHelp]);
+  }, [bulkImportOpen, captureHistoryOpen, closeDocument, collectionsOpen, derivedOpen, guideOpen, historyOpen, qualityOpen, shortcutHelp, openSidebarSearch]);
 
   const retryCapture = async () => {
     if (!currentDoc) return;
@@ -3483,8 +3507,8 @@ export default function App() {
       <a className="skip-link" href="#library-panel">跳到资料库</a>
       <nav className="workspace-rail" aria-label="工作台导航">
         <button type="button" className="rail-brand" aria-label="织页资料库" disabled={closing} onClick={() => void returnToLibrary()}>织</button>
-        <IconButton label="文档资料库" ref={libraryRailRef} aria-expanded={!libraryCollapsed} aria-controls="library-panel" aria-pressed={!libraryCollapsed && !graphMode && libraryView === "all" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing} onClick={() => { if (!graphMode && libraryView === "all" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen) setLibraryCollapsed((value) => !value); else void applyLibraryView("all"); }}><WorkspaceIcon name="document" /></IconButton>
-        <IconButton label="搜索文档" disabled={closing} onClick={() => { void returnToLibrary().then((left) => { if (!left) return; setLibraryCollapsed(false); window.requestAnimationFrame(() => searchInputRef.current?.focus()); }); }}><WorkspaceIcon name="search" /></IconButton>
+        <IconButton label="文档资料库" ref={libraryRailRef} aria-expanded={!libraryCollapsed} aria-controls="library-panel" aria-pressed={!libraryCollapsed && !sidebarSearch && !graphMode && libraryView === "all" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing} onClick={() => void toggleDirectory()}><WorkspaceIcon name="document" /></IconButton>
+        <IconButton label="搜索文档" aria-pressed={sidebarSearch && !libraryCollapsed} disabled={closing} onClick={() => void openSidebarSearch()}><WorkspaceIcon name="search" /></IconButton>
         <IconButton label="查看知识地图" aria-pressed={graphMode} disabled={closing} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); void switchLibraryMode(true); }}><WorkspaceIcon name="map" /></IconButton>
         <IconButton label="查看收藏" aria-pressed={!libraryCollapsed && !graphMode && libraryView === "favorites" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing || listLoading || batchBusy} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); void applyLibraryView("favorites"); }}><WorkspaceIcon name="star" /></IconButton>
         <IconButton label="查看回收站" aria-pressed={!libraryCollapsed && !graphMode && libraryView === "trash" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing || listLoading || batchBusy} onClick={() => void applyLibraryView("trash")}><WorkspaceIcon name="trash" /></IconButton>
@@ -3711,6 +3735,13 @@ export default function App() {
 
       <main className={workspaceClassName}>
         <aside id="library-panel" className={`library-panel ${libraryCollapsed ? "is-collapsed" : ""}`} aria-label="知识列表">
+          <nav className="sidebar-tabbar" aria-label="目录分类">
+            <div className="sidebar-category-toggle" role="group" aria-label="目录视图切换" style={{ "--category-index": sidebarSearch ? 4 : ({ all: 0, favorites: 1, paper: 2, trash: 3 } as const)[libraryView] } as import("react").CSSProperties}>
+              {([["all", "列表"], ["favorites", "收藏"], ["paper", "论文"], ["trash", "回收站"], ["search", "搜索"]] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={value === "search" ? sidebarSearch : !sidebarSearch && libraryView === value} disabled={closing || batchBusy} onClick={() => { if (value === "search") void openSidebarSearch(); else void applyLibraryView(value); }} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return; event.preventDefault(); const buttons = Array.from(event.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>("button")); const index = buttons.indexOf(event.currentTarget); buttons[event.key === "Home" ? 0 : event.key === "End" ? 4 : (index + (event.key === "ArrowRight" ? 1 : 4)) % 5]?.focus(); }}>{label}</button>)}
+            </div>
+          </nav>
+          <div className="sidebar-search-host" hidden={!sidebarSearch}><LibrarySearch folders={folders} refreshKey={listRefresh} inputRef={sidebarSearchRef} onOpen={selectDocument} active={sidebarSearch && !libraryCollapsed} /></div>
+          <div className="sidebar-directory-body" hidden={sidebarSearch}>
           <div className="panel-heading">
             <div className="library-title-group"><h2>{inTrash ? "回收站" : "目录"}</h2><span className="total-count">{total}<small>篇</small></span></div>
             {!inTrash && <LibraryViewSwitch listRef={libraryViewListRef} map={graphMode} active={!graphMode} onChange={(map) => void switchLibraryMode(map)} />}
@@ -3793,6 +3824,7 @@ export default function App() {
           {batchNotice && <p className="batch-message" role="status">{batchNotice}</p>}
           {batchError && <p className="batch-message error-text" role="alert">{batchError}</p>}
 
+          </div>
         </aside>
 
         <section id="reader-panel" ref={readerPanelRef} className="reader-panel" aria-label="文档工作台" tabIndex={-1}>

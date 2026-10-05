@@ -223,6 +223,7 @@ export interface DocumentSummary {
   deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  searchMatches?: string[];
 }
 
 export interface KnowledgeDocument extends DocumentSummary {
@@ -416,6 +417,7 @@ export type DocumentSort = "updated" | "created" | "title";
 export interface DocumentFilters {
   q?: string;
   scope?: DocumentSearchScope;
+  caseSensitive?: boolean;
   kind?: LibraryItemKind;
   tag?: string;
   collectionId?: string;

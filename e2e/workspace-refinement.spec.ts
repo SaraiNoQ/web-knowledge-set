@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/settings/onboarding", (route) => route.fulfill({ json: { completed: true, revision: 1 } }));
 });
 
-test("rail categories replace tabs and collapsed directory leaves no strip", async ({ page }) => {
+test("rail categories mirror the sidebar tabs and collapsed directory leaves no strip", async ({ page }) => {
   await page.goto("/");
   const rail = page.getByRole("navigation", { name: "工作台导航" });
   const documents = rail.getByRole("button", { name: "文档资料库", exact: true });
@@ -19,7 +19,8 @@ test("rail categories replace tabs and collapsed directory leaves no strip", asy
     await expect(entry).toHaveAttribute("aria-pressed", "true");
     await expect(documents).toHaveAttribute("aria-pressed", "false");
   }
-  await documents.click();
+  await page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "列表", exact: true }).click();
+  await expect(documents).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "文档资料库", exact: true }).click();
   await expect(page.locator(".library-panel")).toBeHidden();
   await expect(documents).toHaveAttribute("aria-pressed", "false");
@@ -155,15 +156,24 @@ test("editor fills the remaining viewport and can reveal the complete last line"
       for (let collapsed = 0; collapsed < 2; collapsed += 1) {
         if (collapsed) await page.getByRole("button", { name: "文档资料库", exact: true }).click();
         await expect.poll(() => page.locator(".editor-grid").evaluate((element) => Math.abs(element.getBoundingClientRect().bottom - innerHeight))).toBeLessThanOrEqual(2);
-        const scroller = page.locator(".cm-scroller");
-        await scroller.evaluate((element) => { element.scrollTop = element.scrollHeight; });
-        await page.locator(".preview-pane").evaluate((element) => { element.scrollTop = element.scrollHeight; });
+        // Width changes reflow CodeMirror and the preview asynchronously. Scroll
+        // their final layout, then require the complete last line in both panes.
+        await expect.poll(async () => {
+          await page.locator(".cm-scroller").evaluate((element) => { element.scrollTop = element.scrollHeight; });
+          await page.locator(".preview-pane").evaluate((element) => { element.scrollTop = element.scrollHeight; });
+          await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+          const overflow: number[] = [];
+          for (const [container, last] of [[".editor-pane", ".cm-line:last-child"], [".preview-pane", ".markdown-preview > :last-child"]]) {
+            const line = page.locator(last);
+            if ((await line.textContent())?.trim() !== "最后一行完整可见") return Number.POSITIVE_INFINITY;
+            const bounds = await line.boundingBox();
+            const pane = await page.locator(container).boundingBox();
+            if (!bounds || !pane) return Number.POSITIVE_INFINITY;
+            overflow.push(bounds.y + bounds.height - pane.y - pane.height, pane.y - bounds.y);
+          }
+          return Math.max(...overflow);
+        }).toBeLessThanOrEqual(1);
         await expect(page.locator(".cm-line").filter({ hasText: "最后一行完整可见" })).toBeVisible();
-        for (const [container, last] of [[".editor-pane", ".cm-line:last-child"], [".preview-pane", ".markdown-preview > :last-child"]]) {
-          const bounds = await page.locator(last).boundingBox();
-          const pane = await page.locator(container).boundingBox();
-          expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(pane!.y + pane!.height + 1);
-        }
         if (collapsed) await page.getByRole("button", { name: "文档资料库", exact: true }).click();
       }
     }

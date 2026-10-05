@@ -24,7 +24,7 @@ import {
   migrateDatabase,
   openDatabase,
 } from "../server/db.js";
-import type { BackupRecord, RecentFilter } from "../shared/types.js";
+import type { BackupRecord, PaperBlock, RecentFilter } from "../shared/types.js";
 import { SEMANTIC_FORMAT_VERSION, SEMANTIC_RETRY_DELAYS_MS } from "../shared/semantic.js";
 import { parseImportRequest } from "../server/import.js";
 import { acquireDataLock } from "../server/lock.js";
@@ -389,6 +389,64 @@ test("blank articles are ready and start in the top level", () => {
     assert.equal(article.markdown, "");
     assert.equal(article.folderId, null);
     assert.match(article.sourceUrl, /^zhiye:\/\/article\//u);
+  } finally { fixture.close(); }
+});
+
+test("search filters preserve literal text, case, trash boundaries and bounded excerpts", () => {
+  const fixture = database();
+  try {
+    const article = fixture.db.createArticle("Agent title");
+    const markdown = `${"prefix ".repeat(70)}Agent 100% a_b \\path${" context".repeat(300)} TailOnly`;
+    assert.equal(fixture.db.updateDocument(article.id, article.revision, { markdown, author: "Manual Author" }).kind, "updated");
+    const other = fixture.db.createArticle("Other title");
+    fixture.db.updateDocument(other.id, other.revision, { markdown: "agent 100x aXb path" });
+    const trash = fixture.db.createArticle("Agent trashed");
+    fixture.db.sql.prepare("UPDATE documents SET deleted_at = ? WHERE id = ?").run("2026-10-05T00:00:00Z", trash.id);
+    assert.equal(fixture.db.listDocuments({ q: "agent", scope: "body" }).total, 2);
+    assert.equal(fixture.db.listDocuments({ q: "Agent", scope: "body", caseSensitive: true }).total, 1);
+    assert.equal(fixture.db.listDocuments({ q: "agent", scope: "title", caseSensitive: true }).total, 0);
+    for (const q of ["100%", "a_b", "\\path", "Agent a_b", "TailOnly"]) {
+      const result = fixture.db.listDocuments({ q, scope: "body" });
+      assert.deepEqual(result.items.map(({ id }) => id), [article.id]);
+      assert.ok((result.items[0]?.searchMatches?.length ?? 0) > 0);
+      assert.ok(result.items[0]?.searchMatches?.every((excerpt) => excerpt.length <= 242));
+      assert.ok((result.items[0]?.searchMatches?.length ?? 0) <= 5);
+      assert.equal("markdown" in result.items[0]!, false);
+    }
+    assert.equal(fixture.db.listDocuments({ q: "Manual", scope: "source" }).items[0]?.id, article.id);
+    assert.equal(fixture.db.listDocuments({ q: "trashed", scope: "title" }).total, 0);
+    assert.equal(fixture.db.listDocuments({ q: "trashed", scope: "title", trash: "only" }).total, 1);
+    assert.equal(fixture.db.listDocuments().items[0]?.searchMatches, undefined);
+    assert.equal(fixture.db.listDocuments({ q: Array.from({ length: 80 }, (_, index) => `w${index}`).join(" ") }).total, 0);
+  } finally { fixture.close(); }
+});
+
+test("paper search returns current page text and source excerpts, excluding internal JSON fields", () => {
+  const fixture = database();
+  try {
+    const content = Buffer.from("%PDF-1.7\nsearch fixture\n");
+    const created = fixture.db.createPaper({ sourceKind: "url", sourceUrl: "https://paper-only.example/research.pdf", originalFileName: "paper.pdf", hash: createHash("sha256").update(content).digest("hex"), content });
+    assert.ok(created.created);
+    const block: PaperBlock = { id: "internal-block-id", type: "paragraph", original: "Original PaperOnly context", translation: "译文独有 context", assetIds: [] };
+    const old = fixture.db.createPaperExtraction(created.paper.id, "pdf", null);
+    assert.equal(old.kind, "created");
+    if (old.kind !== "created") return;
+    fixture.db.completePaperExtraction(old.task.id, [{ pageNumber: 1, originalBlocks: [{ ...block, original: "ObsoleteOnly" }], translationBlocks: [] }]);
+    const current = fixture.db.createPaperExtraction(created.paper.id, "pdf", null);
+    assert.equal(current.kind, "created");
+    if (current.kind !== "created") return;
+    fixture.db.completePaperExtraction(current.task.id, Array.from({ length: 8 }, (_, index) => ({ pageNumber: index + 1, originalBlocks: [{ ...block, original: `${block.original} page ${index + 1}` }], translationBlocks: [{ ...block, translation: `${block.translation} page ${index + 1}` }] })));
+    for (const q of ["PaperOnly", "译文独有"]) {
+      const result = fixture.db.listDocuments({ q, scope: "body", caseSensitive: true });
+      assert.deepEqual(result.items.map(({ id }) => id), [created.paper.id]);
+      assert.equal(result.items[0]?.searchMatches?.length, 5);
+      assert.ok(result.items[0]?.searchMatches?.every((excerpt) => excerpt.includes(q) && !excerpt.includes("assetIds")));
+    }
+    for (const q of ["internal-block-id", "assetIds", "paragraph", "ObsoleteOnly"]) {
+      assert.equal(fixture.db.listDocuments({ q, scope: "body" }).total, 0);
+    }
+    const source = fixture.db.listDocuments({ q: "paper-only.example", scope: "source" });
+    assert.ok(source.items[0]?.searchMatches?.includes("https://paper-only.example/research.pdf"));
   } finally { fixture.close(); }
 });
 
