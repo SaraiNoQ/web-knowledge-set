@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { AxeBuilder } from "@axe-core/playwright";
 
 test.beforeEach(async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -199,6 +200,62 @@ test("quick actions keep their paper surface inside narrow dark viewports", asyn
     expect(panel!.x + panel!.width).toBeLessThanOrEqual(width);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   }
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+});
+
+test("quick actions stay compact and accessible across themes, content, and search states", async ({ page }) => {
+  let finishSearch!: () => void;
+  const searchReady = new Promise<void>((resolve) => { finishSearch = resolve; });
+  await page.route("**/api/documents?**", async (route) => {
+    const query = new URL(route.request().url()).searchParams.get("q");
+    if (!query) return route.continue();
+    if (query === "失败状态") return route.fulfill({ status: 503, json: { error: { code: "INTERNAL_ERROR", message: "搜索暂不可用，请稍后重试。" } } });
+    await searchReady;
+    return route.fulfill({ json: { items: Array.from({ length: 7 }, (_, index) => result(`visual-${index}`, `${index + 1} · 长标题与中英文混排 ${"检索体验 / Reading notes ".repeat(12)}`, ["用于检查命中片段的行高、层级与截断。".repeat(8)])), total: 9, page: 1, pageSize: 50 } });
+  });
+  await page.goto("/");
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "快捷搜索与新建", exact: true });
+  const panel = dialog.locator(".quick-actions-panel");
+  const input = dialog.getByRole("combobox", { name: "搜索资料或输入文章标题", exact: true });
+  const empty = await panel.boundingBox();
+  expect(empty!.width).toBeLessThanOrEqual(640);
+  expect(empty!.height).toBeLessThan(210);
+  await panel.screenshot({ path: "test-results/quick-actions-light.png" });
+  await input.fill("长标题检索");
+  await expect(dialog.getByRole("status", { name: "正在搜索资料" })).toBeVisible();
+  finishSearch();
+  await expect(dialog.getByRole("option")).toHaveCount(7);
+  await input.press("ArrowDown");
+  await expect(dialog.getByRole("option").nth(1)).toHaveAttribute("aria-selected", "true");
+  await panel.screenshot({ path: "test-results/quick-actions-results.png" });
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((value) => { document.documentElement.dataset.theme = value; }, theme);
+    for (const width of [1440, 800, 390, 320]) {
+      await page.setViewportSize({ width, height: 700 });
+      const bounds = await panel.boundingBox();
+      expect(bounds!.x).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+      expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(700);
+      expect(await panel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      await expect(dialog.locator(".quick-actions-footer")).toBeInViewport();
+      await input.press("End");
+      for (let index = 0; index < 7; index++) {
+        await input.press("ArrowDown");
+        await expect(dialog.locator('[role="option"][aria-selected="true"]')).toBeInViewport();
+      }
+    }
+    expect((await new AxeBuilder({ page }).include(".quick-actions-panel").analyze()).violations).toEqual([]);
+    await panel.screenshot({ path: `test-results/quick-actions-${theme}-mobile.png` });
+  }
+  await input.fill("失败状态");
+  await expect(dialog.getByRole("alert")).toBeVisible();
+  await expect(input).toBeFocused();
+  await input.fill("");
+  await expect(dialog.getByRole("option", { name: /新建空白文章/ })).toBeVisible();
+  await input.press("Tab");
+  await expect(dialog.getByRole("button", { name: "关闭快捷面板" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
 });

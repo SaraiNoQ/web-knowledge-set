@@ -16,6 +16,7 @@ interface Props {
 export function QuickActions({ open, onClose, onOpenDocument, onCreateArticle }: Props) {
   const id = useId();
   const input = useRef<HTMLInputElement>(null);
+  const results = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<DocumentSummary[]>([]);
   const [total, setTotal] = useState(0);
@@ -25,6 +26,10 @@ export function QuickActions({ open, onClose, onOpenDocument, onCreateArticle }:
   const [error, setError] = useState("");
   const term = query.trim();
   const canCreate = !loading && !error && items.length === 0;
+
+  useEffect(() => {
+    if (open) results.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [open, activeIndex, items]);
 
   useEffect(() => {
     if (!open) return;
@@ -130,7 +135,7 @@ export function QuickActions({ open, onClose, onOpenDocument, onCreateArticle }:
   return <Modal open={open} title="快捷搜索与新建" onClose={onClose} panel={false} className="quick-actions-backdrop">
     <section className="quick-actions-panel" aria-label="快捷搜索与新建文章">
       <header className="quick-actions-header">
-        <WorkspaceIcon name="quickSearch" size={23} />
+        <WorkspaceIcon name="quickSearch" size={21} />
         <input
           ref={input}
           role="combobox"
@@ -159,7 +164,7 @@ export function QuickActions({ open, onClose, onOpenDocument, onCreateArticle }:
         <button type="button" aria-label="关闭快捷面板" onClick={onClose}><WorkspaceIcon name="close" size={19} /></button>
       </header>
 
-      <div className="quick-actions-results" aria-busy={loading}>
+      <div ref={results} className="quick-actions-results" aria-busy={loading}>
         {loading && <div className="quick-actions-skeleton" role="status" aria-label="正在搜索资料"><i /><i /><i /></div>}
         {!loading && error && <p className="quick-actions-message" role="alert">{error}</p>}
         {!loading && !error && items.length > 0 && <div id={`${id}-results`} role="listbox" aria-label="资料搜索结果">{items.map((item, index) => <button
@@ -195,7 +200,7 @@ export function QuickActions({ open, onClose, onOpenDocument, onCreateArticle }:
         >
           <span className="quick-actions-create-mark"><WorkspaceIcon name="plus" size={18} /></span>
           <span><strong>{term ? `新建文章“${term}”` : "新建空白文章"}</strong><small>{term ? "按回车创建并开始编辑" : "输入标题后按 ⇧ Enter 创建"}</small></span>
-          {term && <kbd>↵</kbd>}
+          <kbd>↵</kbd>
         </button></div>}
       </div>
 
