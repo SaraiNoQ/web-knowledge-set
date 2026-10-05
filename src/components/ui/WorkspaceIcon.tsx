@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 const shapes = {
+  list: <path d="M9 6h12M9 12h12M9 18h12M3 6h.01M3 12h.01M3 18h.01" />,
   trash: <path d="M4 7h16M9 7V3h6v4M6 7l1 14h10l1-14M10 11v6M14 11v6" />,
   paper: <><path d="M4 3h16v18H4zM8 7h8M8 11h8M8 15h3M8 18h3M14 15h2v3h-2z" /></>,
   immersive: <path d="M9 3H3v6M15 3h6v6M3 15v6h6M21 15v6h-6" />,

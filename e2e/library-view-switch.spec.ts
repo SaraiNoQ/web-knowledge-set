@@ -56,7 +56,7 @@ test("library header and map switch stay compact and usable at desktop and small
       if (immersive) await page.getByRole("button", { name: "退出沉浸模式" }).click();
     }
   }
-  await page.getByRole("button", { name: "查看回收站", exact: true }).click();
+  await page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "回收站", exact: true }).click();
   await expect(page.getByRole("heading", { name: "回收站", exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "资料库显示方式" })).toHaveCount(0);
 });

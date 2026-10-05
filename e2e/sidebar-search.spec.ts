@@ -19,6 +19,12 @@ async function seed(request: APIRequestContext, title: string, markdown: string,
   return patched.json();
 }
 
+async function chooseSearchOption(page: Page, name: string, option: string) {
+  await page.locator(".library-search").getByRole("combobox", { name, exact: true }).click();
+  await expect(page.getByRole("listbox", { name, exact: true })).toBeVisible();
+  await page.getByRole("option", { name: option, exact: true }).click();
+}
+
 async function search(page: Page, query: string) {
   await page.getByLabel("目录分类", { exact: true }).getByRole("button", { name: "搜索", exact: true }).click();
   await page.getByRole("searchbox", { name: "搜索文档", exact: true }).fill(query);
@@ -109,13 +115,13 @@ test("search settings use actual fields and Aa distinguishes case", async ({ pag
   await page.getByRole("searchbox", { name: "搜索文档", exact: true }).fill("SearchCASE");
   await expect(panel.locator(".library-search-result-title")).toHaveText(document.title);
   await panel.getByRole("button", { name: "搜索设置", exact: true }).click();
-  await panel.getByRole("combobox", { name: "搜索范围", exact: true }).selectOption("body");
-  await panel.getByRole("combobox", { name: "搜索文档类型", exact: true }).selectOption("article");
+  await chooseSearchOption(page, "搜索范围", "正文");
+  await chooseSearchOption(page, "搜索文档类型", "文章");
   await panel.getByRole("checkbox", { name: "仅搜索收藏", exact: true }).check();
   await expect(panel.locator(".library-search-result-title")).toHaveText(document.title);
   await page.getByRole("searchbox", { name: "搜索文档", exact: true }).fill("标题");
   await expect(panel.getByText("没有找到匹配文档。试试其他关键词或调整搜索设置。", { exact: true })).toBeVisible();
-  await panel.getByRole("combobox", { name: "搜索范围", exact: true }).selectOption("title");
+  await chooseSearchOption(page, "搜索范围", "标题");
   await expect(panel.locator(".library-search-result-title")).toHaveText(document.title);
 });
 
@@ -133,7 +139,7 @@ test("search supports paging, sorting, collapsing and more context", async ({ pa
   await expect(panel.locator(".library-search-snippets button")).toHaveCount(2);
   await panel.getByRole("button", { name: "下一页", exact: true }).click();
   await expect(panel.locator(".library-search-result-title")).toHaveText("PagingMatch 文档 2");
-  await panel.getByRole("combobox", { name: "搜索结果排序", exact: true }).selectOption("title");
+  await chooseSearchOption(page, "搜索结果排序", "标题 (A–Z)");
   await expect(panel.locator(".library-search-result-title")).toHaveText("PagingMatch 文档 1");
   await expect.poll(() => requests.at(-1)?.searchParams.get("sort")).toBe("title");
   await panel.getByRole("button", { name: "搜索设置", exact: true }).click();
@@ -220,4 +226,53 @@ test("mobile rail search reopens saved results and guards unsaved reader edits",
   await expect(page.getByRole("searchbox", { name: "搜索文档", exact: true })).toHaveValue("MobileReturnToken");
   await expect(resultTitle).toHaveText(document.title);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test("directory scroll leaves the category bar fixed and has no duplicate search filters", async ({ page }) => {
+  await page.route("**/api/documents?**", (route) => route.fulfill({ json: {
+    items: Array.from({ length: 60 }, (_, index) => result(`scroll-${index}`, `滚动验收文档 ${index + 1}`)),
+    total: 60, page: 1, pageSize: 100,
+  } }));
+  await page.goto("/");
+  const library = page.getByRole("complementary", { name: "知识列表" });
+  const categories = page.getByRole("navigation", { name: "目录分类" });
+  await expect(library.getByRole("searchbox")).toHaveCount(0);
+  await expect(library.getByRole("combobox", { name: "搜索范围", exact: true })).toHaveCount(0);
+  await expect(library.getByText("搜索范围", { exact: true })).toHaveCount(0);
+  await expect(library.getByRole("button", { name: "滚动验收文档 60", exact: true })).toBeAttached();
+  const region = library.locator(".sidebar-scroll-region");
+  await region.hover();
+  // Hover can scroll the containing page into view; compare only the wheel's
+  // effect after that positioning has completed.
+  const barBefore = (await categories.boundingBox())!;
+  const regionBefore = (await region.boundingBox())!;
+  expect(regionBefore.y).toBeGreaterThanOrEqual(barBefore.y + barBefore.height);
+  await page.mouse.wheel(0, 2000);
+  await expect.poll(() => region.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(() => library.evaluate((element) => element.scrollTop)).toBe(0);
+  const barAfter = (await categories.boundingBox())!;
+  expect(barAfter.y).toBe(barBefore.y);
+  expect(barAfter.height).toBe(barBefore.height);
+  await region.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect(library.getByRole("button", { name: "滚动验收文档 60", exact: true })).toBeInViewport();
+});
+
+test("search input and custom field menus reuse the existing compact controls", async ({ page, request }) => {
+  const document = await seed(request, "控件样式验收", "CustomSelectToken 正文");
+  await page.goto("/");
+  const panel = await search(page, "CustomSelectToken");
+  await expect(panel.locator(".library-search-input")).toHaveCSS("border-radius", "4px");
+  await panel.getByRole("button", { name: "搜索设置", exact: true }).click();
+  const scope = panel.getByRole("combobox", { name: "搜索范围", exact: true });
+  await scope.click();
+  const menu = page.getByRole("listbox", { name: "搜索范围", exact: true });
+  await expect(menu).toHaveClass(/ui-select-menu/u);
+  await page.getByRole("option", { name: "正文", exact: true }).click();
+  await expect(menu).toHaveCount(0);
+  await expect(scope).toContainText("正文");
+  await expect(panel.locator(".library-search-result-title")).toHaveText(document.title);
+  await chooseSearchOption(page, "搜索范围", "标题");
+  await expect(panel.getByText("没有找到匹配文档。试试其他关键词或调整搜索设置。", { exact: true })).toBeVisible();
+  await chooseSearchOption(page, "搜索范围", "正文");
+  await expect(panel.locator(".library-search-result-title")).toHaveText(document.title);
 });

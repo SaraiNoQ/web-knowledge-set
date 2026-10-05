@@ -682,7 +682,6 @@ export default function App() {
   const navigationGenerationRef = useRef(0);
   const readerPanelRef = useRef<HTMLElement>(null);
   const documentHeadRef = useRef<HTMLElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
   const sidebarSearchRef = useRef<HTMLInputElement>(null);
   const libraryListRef = useRef<HTMLDivElement>(null);
   selectedIdRef.current = selectedId;
@@ -3510,9 +3509,6 @@ export default function App() {
         <IconButton label="文档资料库" ref={libraryRailRef} aria-expanded={!libraryCollapsed} aria-controls="library-panel" aria-pressed={!libraryCollapsed && !sidebarSearch && !graphMode && libraryView === "all" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing} onClick={() => void toggleDirectory()}><WorkspaceIcon name="document" /></IconButton>
         <IconButton label="搜索文档" aria-pressed={sidebarSearch && !libraryCollapsed} disabled={closing} onClick={() => void openSidebarSearch()}><WorkspaceIcon name="search" /></IconButton>
         <IconButton label="查看知识地图" aria-pressed={graphMode} disabled={closing} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); void switchLibraryMode(true); }}><WorkspaceIcon name="map" /></IconButton>
-        <IconButton label="查看收藏" aria-pressed={!libraryCollapsed && !graphMode && libraryView === "favorites" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing || listLoading || batchBusy} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); void applyLibraryView("favorites"); }}><WorkspaceIcon name="star" /></IconButton>
-        <IconButton label="查看回收站" aria-pressed={!libraryCollapsed && !graphMode && libraryView === "trash" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing || listLoading || batchBusy} onClick={() => void applyLibraryView("trash")}><WorkspaceIcon name="trash" /></IconButton>
-        <IconButton label="查看论文" aria-pressed={!libraryCollapsed && !graphMode && libraryView === "paper" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing || listLoading || batchBusy} onClick={() => void applyLibraryView("paper")}><WorkspaceIcon name="paper" /></IconButton>
         <IconButton label="导入文档" disabled={closing} onClick={() => setBulkImportOpen(true)}><WorkspaceIcon name="import" /></IconButton>
         <div className="rail-spacer" />
         <IconButton label="帮助与关于" disabled={closing} onClick={() => setShortcutHelp(true)}><WorkspaceIcon name="help" /></IconButton>
@@ -3737,25 +3733,16 @@ export default function App() {
         <aside id="library-panel" className={`library-panel ${libraryCollapsed ? "is-collapsed" : ""}`} aria-label="知识列表">
           <nav className="sidebar-tabbar" aria-label="目录分类">
             <div className="sidebar-category-toggle" role="group" aria-label="目录视图切换" style={{ "--category-index": sidebarSearch ? 4 : ({ all: 0, favorites: 1, paper: 2, trash: 3 } as const)[libraryView] } as import("react").CSSProperties}>
-              {([["all", "列表"], ["favorites", "收藏"], ["paper", "论文"], ["trash", "回收站"], ["search", "搜索"]] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={value === "search" ? sidebarSearch : !sidebarSearch && libraryView === value} disabled={closing || batchBusy} onClick={() => { if (value === "search") void openSidebarSearch(); else void applyLibraryView(value); }} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return; event.preventDefault(); const buttons = Array.from(event.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>("button")); const index = buttons.indexOf(event.currentTarget); buttons[event.key === "Home" ? 0 : event.key === "End" ? 4 : (index + (event.key === "ArrowRight" ? 1 : 4)) % 5]?.focus(); }}>{label}</button>)}
+              {([["all", "列表"], ["favorites", "收藏"], ["paper", "论文"], ["trash", "回收站"], ["search", "搜索"]] as const).map(([value, label]) => <button key={value} type="button" aria-label={label} title={label} aria-pressed={value === "search" ? sidebarSearch : !sidebarSearch && libraryView === value} disabled={closing || batchBusy} onClick={() => { if (value === "search") void openSidebarSearch(); else void applyLibraryView(value); }} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return; event.preventDefault(); const buttons = Array.from(event.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>("button")); const index = buttons.indexOf(event.currentTarget); buttons[event.key === "Home" ? 0 : event.key === "End" ? 4 : (index + (event.key === "ArrowRight" ? 1 : 4)) % 5]?.focus(); }}><WorkspaceIcon name={({ all: "list", favorites: "star", paper: "paper", trash: "trash", search: "search" } as const)[value]} size={18} /></button>)}
             </div>
           </nav>
+          <div className="sidebar-scroll-region">
           <div className="sidebar-search-host" hidden={!sidebarSearch}><LibrarySearch folders={folders} refreshKey={listRefresh} inputRef={sidebarSearchRef} onOpen={selectDocument} active={sidebarSearch && !libraryCollapsed} /></div>
           <div className="sidebar-directory-body" hidden={sidebarSearch}>
           <div className="panel-heading">
             <div className="library-title-group"><h2>{inTrash ? "回收站" : "目录"}</h2><span className="total-count">{total}<small>篇</small></span></div>
             {!inTrash && <LibraryViewSwitch listRef={libraryViewListRef} map={graphMode} active={!graphMode} onChange={(map) => void switchLibraryMode(map)} />}
           </div>
-
-          <fieldset className="filters" disabled={listLoading || batchBusy}>
-            <label className="search-field">
-              <span className="sr-only">搜索知识</span>
-              <Icon size={17}><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></Icon>
-              <input ref={searchInputRef} aria-keyshortcuts="Meta+K Control+K /" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="搜索标题与正文" />
-              {query && <button type="button" className="clear-search" onClick={() => setQuery("")} aria-label="清空搜索">×</button>}
-            </label>
-            <label className="scope-field"><span>搜索范围</span><Select density="compact" value={searchScope} onChange={(event) => { setSearchScope(event.target.value as SearchScope); setPage(1); }}><option value="all">全部字段</option><option value="title">仅标题</option><option value="body">仅正文</option><option value="source">仅来源</option></Select></label>
-          </fieldset>
 
           {!inTrash ? <><LibraryDirectory
             folders={folders}
@@ -3824,6 +3811,7 @@ export default function App() {
           {batchNotice && <p className="batch-message" role="status">{batchNotice}</p>}
           {batchError && <p className="batch-message error-text" role="alert">{batchError}</p>}
 
+          </div>
           </div>
         </aside>
 

@@ -7,17 +7,23 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/settings/onboarding", (route) => route.fulfill({ json: { completed: true, revision: 1 } }));
 });
 
-test("rail categories mirror the sidebar tabs and collapsed directory leaves no strip", async ({ page }) => {
+test("category tabs replace duplicate rail entries and collapsed directory leaves no strip", async ({ page }) => {
   await page.goto("/");
   const rail = page.getByRole("navigation", { name: "工作台导航" });
   const documents = rail.getByRole("button", { name: "文档资料库", exact: true });
   await expect(documents).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".library-tabs")).toHaveCount(0);
+  const categories = page.getByRole("navigation", { name: "目录分类" });
   for (const name of ["查看收藏", "查看回收站", "查看论文"]) {
-    const entry = rail.getByRole("button", { name, exact: true });
+    await expect(rail.getByRole("button", { name, exact: true })).toHaveCount(0);
+  }
+  for (const name of ["列表", "收藏", "论文", "回收站", "搜索"]) {
+    const entry = categories.getByRole("button", { name, exact: true });
+    await expect(entry.locator("svg")).toHaveCount(1);
+    await expect(entry).toHaveAttribute("title", name);
+    await expect(entry).toHaveText("");
     await entry.click();
     await expect(entry).toHaveAttribute("aria-pressed", "true");
-    await expect(documents).toHaveAttribute("aria-pressed", "false");
   }
   await page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "列表", exact: true }).click();
   await expect(documents).toHaveAttribute("aria-pressed", "true");
