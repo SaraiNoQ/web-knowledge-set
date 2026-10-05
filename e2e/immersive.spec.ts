@@ -87,8 +87,8 @@ test("switching preserves the editor instance, dirty content, selection and scro
   await page.getByRole("button", { name: "退出沉浸模式" }).focus();
   await page.evaluate(() => window.scrollTo(0, 700));
   const toolbar = await page.locator(".editor-toolbar").boundingBox();
-  expect(toolbar!.y).toBeGreaterThanOrEqual(44);
-  expect(await page.locator(".editor-toolbar").evaluate((element) => getComputedStyle(element).top)).toBe("44px");
+  expect(toolbar!.y).toBeGreaterThanOrEqual(33);
+  expect(await page.locator(".editor-toolbar").evaluate((element) => getComputedStyle(element).top)).toBe("33px");
   await page.getByRole("button", { name: "退出沉浸模式" }).click();
   await expect(page.locator(".cm-editor")).toHaveAttribute("data-preserved", "yes");
   await expect(editor).toContainText("尚未保存。");

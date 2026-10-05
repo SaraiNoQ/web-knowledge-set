@@ -41,7 +41,8 @@ test("category tabs replace duplicate rail entries and collapsed directory leave
 
 test("compact reader exposes safe title editing from breadcrumb and directory", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "新建文章标签", exact: true }).click();
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
+  await page.getByRole("dialog", { name: "快捷搜索与新建", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
   const title = page.getByRole("button", { name: "重命名文章", exact: true });
   await expect(title).toHaveText("未命名文章");
   await expect(page.locator(".document-head h2")).toHaveCount(0);
@@ -97,7 +98,8 @@ for (const cloud of [false, true]) {
     const rail = page.getByRole("navigation", { name: "工作台导航" });
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
     const initialBackground = await page.locator("body").evaluate((element) => getComputedStyle(element).backgroundColor);
-    await page.getByRole("button", { name: "新建文章标签", exact: true }).click();
+    await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
+  await page.getByRole("dialog", { name: "快捷搜索与新建", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
     if (cloud) await page.getByRole("button", { name: "编辑这篇知识", exact: true }).click();
     const editor = page.getByRole("textbox", { name: "Markdown 编辑器" });
     await editor.fill("主题切换保留未保存正文。");
@@ -128,7 +130,8 @@ test("breadcrumb uses a capped content width and keeps the complete saved title"
   await page.goto("/");
   await expect(page.locator(".panel-heading h2")).toHaveText("目录");
   await expect(page.locator(".library-toggle")).toHaveCount(0);
-  await page.getByRole("button", { name: "新建文章标签", exact: true }).click();
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
+  await page.getByRole("dialog", { name: "快捷搜索与新建", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
   const title = page.getByRole("button", { name: "重命名文章", exact: true });
   await title.dblclick();
   const input = page.getByRole("textbox", { name: "文章标题", exact: true });
@@ -147,7 +150,8 @@ test("breadcrumb uses a capped content width and keeps the complete saved title"
 
 test("editor fills the remaining viewport and can reveal the complete last line", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "新建文章标签", exact: true }).click();
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
+  await page.getByRole("dialog", { name: "快捷搜索与新建", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
   await page.getByRole("button", { name: "编辑这篇知识", exact: true }).click();
   await expect(page.locator(".document-head .title-field")).toHaveCount(0);
   const editor = page.getByRole("textbox", { name: "Markdown 编辑器" });

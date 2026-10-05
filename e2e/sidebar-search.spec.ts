@@ -46,7 +46,7 @@ test("directory categories align with article tabs and reuse existing views", as
     if (immersive) await page.getByRole("button", { name: "进入沉浸模式", exact: true }).click();
     const header = await categories.boundingBox();
     const articleTabs = await page.locator(".document-tabbar").boundingBox();
-    expect(header!.height).toBe(44);
+    expect(header!.height).toBe(33);
     expect(header!.y).toBe(articleTabs!.y);
     expect(header!.height).toBe(articleTabs!.height);
     if (immersive) await page.getByRole("button", { name: "退出沉浸模式", exact: true }).click();
@@ -110,6 +110,7 @@ test("quick actions search, open results, create named articles, and protect dra
 
   await railSearch.click();
   const currentInput = dialog.getByRole("combobox", { name: "搜索资料或输入文章标题", exact: true });
+  await expect(dialog.getByRole("option", { name: /新建空白文章/ })).toBeVisible();
   await currentInput.fill(searchTerm);
   await expect(dialog.getByRole("option", { name: new RegExp(document.title) })).toBeVisible();
   await currentInput.fill(`${searchTerm} `);

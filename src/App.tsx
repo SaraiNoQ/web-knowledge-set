@@ -1,4 +1,5 @@
 import {
+  createElement,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -8,7 +9,7 @@ import {
 } from "react";
 import { lazy, Suspense } from "react";
 import type { ChangeEvent, FormEvent, KeyboardEvent, ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -43,7 +44,8 @@ import { BrowserExtension } from "./components/BrowserExtension";
 import { DataSafety } from "./components/DataSafety";
 import { Diagnostics } from "./components/Diagnostics";
 import { DerivedKnowledge, type DerivedMode } from "./components/DerivedKnowledge";
-import { MarkdownEditor } from "./components/MarkdownEditor";
+import { DocumentOutline } from "./components/DocumentOutline";
+import { MarkdownEditor, type MarkdownEditorHandle } from "./components/MarkdownEditor";
 import { LibrarySearch } from "./components/LibrarySearch";
 import { QuickActions } from "./components/QuickActions";
 import { Onboarding } from "./components/Onboarding";
@@ -329,6 +331,8 @@ function CloudAssetImage({ asset, hash, alt }: { asset?: DocumentAsset; hash: st
   );
 }
 
+const headingComponents = Object.fromEntries(["h1", "h2", "h3", "h4", "h5", "h6"].map((tag) => [tag, ({ node, children, ...props }: { node?: { position?: { start: { offset?: number } } }; children?: ReactNode }) => createElement(tag, { ...props, "data-heading-offset": node?.position?.start.offset }, children)])) as Components;
+
 function MarkdownPreview({ markdown, sourceUrl, assets = [] }: { markdown: string; sourceUrl: string; assets?: DocumentAsset[] }) {
   const assetsBySource = useMemo(() => {
     const result = new Map<string, DocumentAsset>();
@@ -354,6 +358,7 @@ function MarkdownPreview({ markdown, sourceUrl, assets = [] }: { markdown: strin
         rehypePlugins={[rehypeKatex]}
         remarkPlugins={[remarkGfm, remarkMath]}
         components={{
+          ...headingComponents,
           a: ({ node: _node, href, children, ...props }) => {
             const safeHref = resolveLink(href, sourceUrl);
             if (!safeHref) return <span>{children}</span>;
@@ -550,6 +555,8 @@ export default function App() {
   const [discardPromptOpen, setDiscardPromptOpen] = useState(false);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const markdownEditorRef = useRef<MarkdownEditorHandle>(null);
   const [openDocuments, setOpenDocuments] = useState<OpenDocumentTab[]>([]);
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const [sidebarSearch, setSidebarSearch] = useState(false);
@@ -3828,7 +3835,8 @@ export default function App() {
         </aside>
 
         <section id="reader-panel" ref={readerPanelRef} className="reader-panel" aria-label="文档工作台" tabIndex={-1}>
-          <DocumentTabs documents={openDocuments} selectedId={selectedId} dirty={hasUnsavedChanges} disabled={closing || Boolean(lifecycleAction) || restoringRevision !== null} onSelect={async (id) => { const opened = await selectDocument(id); if (opened) { graphReturnRef.current = false; setGraphMode(false); } return opened; }} onClose={closeDocumentTab} onCreate={() => void createArticle()} />
+          <DocumentTabs documents={openDocuments} selectedId={selectedId} dirty={hasUnsavedChanges} disabled={closing || organizationSaving || batchBusy || captureApplying || Boolean(collectionAction) || Boolean(tagAction) || Boolean(lifecycleAction) || restoringRevision !== null} onSelect={async (id) => { const opened = await selectDocument(id); if (opened) { graphReturnRef.current = false; setGraphMode(false); } return opened; }} onClose={closeDocumentTab} toolsOpen={toolsOpen} onToggleTools={() => setToolsOpen((value) => !value)} />
+          <div className={`reader-layout${toolsOpen ? " has-tools" : ""}`}><div className="reader-main">
           {selectedId && <div className="workspace-location">
             <IconButton label="返回文档目录" disabled={closing} onClick={() => void closeDocument()}><Icon size={18}><path d="M20 12H4m6-6-6 6 6 6" /></Icon></IconButton>
             <span>{folders.find((folder) => folder.id === currentDoc?.folderId)?.name ?? "目录"}</span><WorkspaceIcon name="chevron" size={13} />{titleEdit?.id === currentDoc?.id && titleEdit ? <input autoFocus className="breadcrumb-title-input" aria-label="文章标题" maxLength={1000} size={Math.max(1, Math.min(20, Array.from(titleEdit.title).length))} value={titleEdit.title} onChange={(event) => setTitleEdit({ ...titleEdit, title: event.target.value })} onBlur={() => setTitleEdit(null)} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); setTitleEdit(null); } if (event.key === "Enter") { event.preventDefault(); const edit = titleEdit; setTitleEdit(null); void renameDocument(edit, edit.title); } }} /> : <button type="button" className="breadcrumb-title" aria-label="重命名文章" title={currentDoc?.title || "双击重命名文章"} disabled={!currentDoc || organizationLocked || metadataDirty || paperDirty} onDoubleClick={() => { if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "F2") { event.preventDefault(); if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); } }}>{Array.from(currentDoc?.title || "正在打开…").slice(0, 20).join("")}{Array.from(currentDoc?.title || "").length > 20 ? "…" : ""}</button>}
@@ -3877,7 +3885,7 @@ export default function App() {
                 {saveState === "error" && <div className="inline-error" role="alert">{saveError}</div>}
                 {conflict && <div className="conflict-banner" role="alert"><div><strong>这篇知识已在别处更新</strong><span>你的文字仍保留在编辑器中。请复制需要保留的内容，然后载入最新版。</span></div><button type="button" onClick={() => { installCurrentDocument(conflict); updateListItem(conflict); setDraft(draftOf(conflict)); setConflict(null); setSaveState("idle"); }}>载入最新版</button></div>}
                 <div ref={editorGridRef} className={`editor-grid mode-${mode}`}>
-                  {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><div className="pane-label">MARKDOWN</div><MarkdownEditor value={draft.markdown} onChange={(markdown) => setDraft((value) => value ? { ...value, markdown } : value)} readOnly={saveState === "saving" || organizationSaving} /></section>}
+                  {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><div className="pane-label">MARKDOWN</div><MarkdownEditor ref={markdownEditorRef} value={draft.markdown} onChange={(markdown) => setDraft((value) => value ? { ...value, markdown } : value)} readOnly={saveState === "saving" || organizationSaving} /></section>}
                   {mode !== "edit" && <section className="preview-pane" aria-label="Markdown 预览"><div className="pane-label">PREVIEW</div>{draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : []} /> : <StatePanel kind="empty" title="这里还没有文字" />}</section>}
                 </div>
               </div> : <section className="preview-pane cloud-reader" aria-label="Markdown 预览">
@@ -4074,13 +4082,23 @@ export default function App() {
                   )}
 
                   <div ref={editorGridRef} className={`editor-grid mode-${mode}`}>
-                    {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><div className="pane-label">MARKDOWN</div><MarkdownEditor value={draft.markdown} onChange={(markdown) => { if (!closeAttemptRef.current) setDraft((value) => value ? { ...value, markdown } : value); }} readOnly={editorLocked} /></section>}
+                    {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><div className="pane-label">MARKDOWN</div><MarkdownEditor ref={markdownEditorRef} value={draft.markdown} onChange={(markdown) => { if (!closeAttemptRef.current) setDraft((value) => value ? { ...value, markdown } : value); }} readOnly={editorLocked} /></section>}
                     {mode !== "edit" && longPreviewAllowed && <section className="preview-pane" aria-label="Markdown 预览"><div className="pane-label">PREVIEW</div>{draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} /> : <StatePanel kind="empty" title="这里还没有文字">在编辑区写下 Markdown，预览会同步出现。</StatePanel>}</section>}
                   </div>
                 </div></>
               )}
             </>
           ) : null}
+          </div>{toolsOpen && <DocumentOutline key={currentDoc?.id ?? "empty"} markdown={currentDoc?.kind === "article" ? (webArticleMode && !cloudEditing ? currentDoc.markdown : draft?.markdown ?? currentDoc.markdown) : ""} onClose={() => { setToolsOpen(false); window.requestAnimationFrame(() => readerPanelRef.current?.querySelector<HTMLButtonElement>(".document-tabbar > .ui-icon-button")?.focus()); }} onNavigate={(offset) => {
+            const heading = readerPanelRef.current?.querySelector<HTMLElement>(`[data-heading-offset="${offset}"]`);
+            if (heading) {
+              const toolbar = readerPanelRef.current?.querySelector<HTMLElement>(".editor-toolbar");
+              const barHeight = readerPanelRef.current?.querySelector<HTMLElement>(".document-tabbar")?.getBoundingClientRect().height ?? 0;
+              heading.style.scrollMarginTop = `${barHeight + (toolbar?.getBoundingClientRect().height ?? 0) + 12}px`;
+              heading.scrollIntoView({ block: "start" });
+            }
+            else markdownEditorRef.current?.jumpTo(offset);
+          }} />}</div>
           {showBackToTitle && <button type="button" className="back-to-title" aria-label="返回文章标题" onClick={() => documentHeadRef.current?.scrollIntoView({ block: "start" })}><Icon size={20}><path d="m6 10 6-6 6 6M12 4v16" /></Icon></button>}
         </section>
       </main>

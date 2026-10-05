@@ -18,6 +18,7 @@ const shapes = {
   close: <path d="m6 6 12 12M6 18 18 6" />,
   plus: <path d="M12 4v16M4 12h16" />,
   chevron: <path d="m9 5 7 7-7 7" />,
+  panelRight: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M16 4v16" /></>,
   panel: <><rect x="3" y="4" width="18" height="16" rx="1" /><path d="M9 4v16" /></>,
   edit: <path d="m15 4 5 5M4 20l5-1L21 7l-5-5L4 14z" />,
   more: <><circle cx="5" cy="12" r=".8" /><circle cx="12" cy="12" r=".8" /><circle cx="19" cy="12" r=".8" /></>,
