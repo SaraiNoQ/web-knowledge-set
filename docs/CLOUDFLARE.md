@@ -42,6 +42,8 @@ Cloudflare Web 的正式文档和抓取任务均支持 revision 保护的回收�
 
 ## 部署记录
 
+- 2026-10-05 · 快捷搜索面板视觉优化 `394bb07f530c9fd5734ded21b76ec933c3a0403b`（已推送 `codex/quick-actions-ui`），用户明确授权生产部署。固定 Node `24.19.0` / pnpm `11.7.0` 冻结安装、类型检查、单元/集成（209 通过、1 跳过）、生产构建、云端检查（44/44）、搜索/沉浸 Chromium E2E（26/26）、Firefox AMO 校验、既有 0.3.9 签名 XPI 暂存及双 Worker dry-run 全部通过；实现 diff 已独立审查通过。签名包 SHA-256 `7fbe7aec14ec030fa46c7abe77b3442aa402dfbdd83643a5b64d04eee2e24b54`，不在 Git 保存产物或凭据。生产 D1 无待执行迁移，两个生产配置及资源绑定未改动。Web 版本 `30ed120b-3011-482e-8ede-28bd6e7b706e`、Clip 版本 `92c9de22-64f0-4e5b-a077-2eec130f088f` 均发布成功；Web 部署列表确认当前 100% 流量，Clip 本次版本详情确认 `fetch`、D1 和 IMAGES 绑定。Clip 历史部署列表读取旧版本时遇到 Cloudflare `10000` 鉴权错误，改为读取本次版本成功，未重复部署。上线后 `/`、`/api/documents`、`/health`、签名 XPI 下载均保持 Access 302，重复 `/health` 仍为 302；剪藏无 Origin 返回 403 `EXTENSION_ORIGIN_REJECTED`、有扩展 Origin 无令牌返回 401 `EXTENSION_UNAUTHORIZED`，空配对返回 400 `INVALID_PAIRING_REQUEST`。Firefox 电脑控制未获批准，登录态读写、图片资产实际交付、真实扩展配对/剪藏及登录态 XPI 下载未复验；不宣称这些流程已线上验收。
+
 - 2026-10-05 · 侧栏控件风格收紧 `fd4bb62cac44d996dddf17e3e678029e761a13d2`（已推送 `codex/editor-workbench`）：类型检查、相关数据库/云端单元及集成 79 项、生产构建、侧栏/搜索/阅读关键回归及独立审查通过；完整验收边界见 `docs/RELEASE_EVIDENCE.md`。Firefox AMO 校验、既有签名包暂存与双 Worker 打包通过。Web 版本 `41ef8c19-82e9-460b-996d-caa20887410c`，Clip 版本 `25c7eba0-bac4-40d0-83f6-61a4c757ba6f` 均发布成功。无后端/D1 schema/生产绑定变更，按用户要求不做真实生产浏览器人工验收。
 
 - 2026-10-05 · 目录分类与上下文搜索 `2f0a13f9329848b602b2653a8739e5c150d4e43f`（已推送 `codex/editor-workbench`）：类型检查、生产构建、云端 44 项、相关分类/搜索/阅读自动化回归、独立审查及双 Worker 打包通过，单元与既有生命周期间歇超时的复验记录见 `docs/RELEASE_EVIDENCE.md`。Firefox 0.3.9 AMO 校验与既有签名包暂存通过。Web 版本 `8afa6157-29c0-4720-912c-12b2d2b7cb8e`，Clip 版本 `19b3fc92-7475-4dcc-89bd-94cc7d39b7e1` 均部署成功。无 D1 schema 或生产绑定变更；按用户要求不做真实生产浏览器人工验收，登录态读写、扩展配对剪藏和资源在线验收由用户进行。
