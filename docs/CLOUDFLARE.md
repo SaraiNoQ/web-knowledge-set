@@ -42,6 +42,8 @@ Cloudflare Web 的正式文档和抓取任务均支持 revision 保护的回收�
 
 ## 部署记录
 
+- 2026-10-05 · 侧栏控件风格收紧 `fd4bb62cac44d996dddf17e3e678029e761a13d2`（已推送 `codex/editor-workbench`）：类型检查、相关数据库/云端单元及集成 79 项、生产构建、侧栏/搜索/阅读关键回归及独立审查通过；完整验收边界见 `docs/RELEASE_EVIDENCE.md`。Firefox AMO 校验、既有签名包暂存与双 Worker 打包通过。Web 版本 `41ef8c19-82e9-460b-996d-caa20887410c`，Clip 版本 `25c7eba0-bac4-40d0-83f6-61a4c757ba6f` 均发布成功。无后端/D1 schema/生产绑定变更，按用户要求不做真实生产浏览器人工验收。
+
 - 2026-10-05 · 目录分类与上下文搜索 `2f0a13f9329848b602b2653a8739e5c150d4e43f`（已推送 `codex/editor-workbench`）：类型检查、生产构建、云端 44 项、相关分类/搜索/阅读自动化回归、独立审查及双 Worker 打包通过，单元与既有生命周期间歇超时的复验记录见 `docs/RELEASE_EVIDENCE.md`。Firefox 0.3.9 AMO 校验与既有签名包暂存通过。Web 版本 `8afa6157-29c0-4720-912c-12b2d2b7cb8e`，Clip 版本 `19b3fc92-7475-4dcc-89bd-94cc7d39b7e1` 均部署成功。无 D1 schema 或生产绑定变更；按用户要求不做真实生产浏览器人工验收，登录态读写、扩展配对剪藏和资源在线验收由用户进行。
 
 - 2026-10-05 · 目录与编辑区布局修复 `11aebda37ca505e4ec8d810fbefcc386cc6280da`（已推送 `codex/editor-workbench`）：服务器类型、构建、单元/集成（205 通过、1 跳过）、云端 42 项、相关沉浸回归及最终工作台 8 项（含认证）、Firefox AMO lint、签名包暂存与双 Worker dry-run 通过。Web 版本 `61664669-0fa7-4c48-988d-3c4b74bbe203`，Clip 版本 `545da26a-4946-4172-ba13-14bba0f88697` 均部署成功。无 D1 schema/生产绑定修改；按用户要求未做真实生产浏览器人工验收，登录态读写/扩展配对剪藏/图片资产在线验收由用户进行。
