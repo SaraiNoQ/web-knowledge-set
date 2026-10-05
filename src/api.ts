@@ -663,6 +663,7 @@ export const api = {
     const query = new URLSearchParams();
     if (filters.q?.trim()) query.set("q", filters.q.trim());
     if (filters.scope) query.set("scope", filters.scope);
+    if (filters.caseSensitive !== undefined) query.set("caseSensitive", String(filters.caseSensitive));
     if (filters.kind) query.set("kind", filters.kind);
     if (filters.tag) query.set("tag", filters.tag);
     if (filters.collectionId) query.set("collectionId", filters.collectionId);
@@ -685,6 +686,7 @@ export const api = {
     const query = new URLSearchParams();
     if (filters.q?.trim()) query.set("q", filters.q.trim());
     if (filters.scope) query.set("scope", filters.scope);
+    if (filters.caseSensitive !== undefined) query.set("caseSensitive", String(filters.caseSensitive));
     if (filters.kind) query.set("kind", filters.kind);
     if (filters.folderId) query.set("folderId", filters.folderId);
     if (filters.unfiled !== undefined) query.set("unfiled", String(filters.unfiled));

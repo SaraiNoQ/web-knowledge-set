@@ -96,7 +96,7 @@ test("has no serious or critical accessibility violations in primary workflows",
     await expectNoHighImpactViolations(page, "批量导入");
     await page.getByRole("button", { name: "关闭批量导入" }).click();
 
-    await page.getByRole("button", { name: "AI 设置", exact: true }).click();
+    await page.getByRole("button", { name: "设置", exact: true }).click();
     await expect(page.getByRole("heading", { name: "AI 派生设置" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "语义关联" })).toBeVisible();
     await expect(page.getByRole("checkbox", { name: "允许自动建立语义关联" })).not.toBeChecked();
@@ -104,10 +104,10 @@ test("has no serious or critical accessibility violations in primary workflows",
     await page.getByRole("button", { name: "返回资料库" }).click();
     await page.keyboard.press("Escape");
 
-    await page.getByRole("button", { name: "知识地图" }).click();
+    await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "查看知识地图", exact: true }).click();
     await expect(page.getByRole("heading", { name: "知识地图", exact: true })).toBeVisible();
     await expectNoHighImpactViolations(page, "知识地图");
-    await page.getByRole("button", { name: "返回列表" }).click();
+    await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "文档资料库", exact: true }).click();
 
     await page.getByRole("button", { name: "数据安全", exact: true }).click();
     await expect(page.getByRole("heading", { name: "数据安全" })).toBeVisible();

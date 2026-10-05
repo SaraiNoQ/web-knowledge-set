@@ -53,7 +53,7 @@ test("imports a paper and opens the bilingual page reader", async ({ page }) => 
   const trashResponse = page.waitForResponse((response) => response.request().method() === "DELETE" && /^\/api\/documents\/[^/]+$/u.test(new URL(response.url()).pathname));
   await page.getByRole("alertdialog", { name: "移入回收站" }).getByRole("button", { name: "移入回收站" }).click();
   expect((await trashResponse).status()).toBe(200);
-  await expect(page.getByRole("button", { name: "回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("button", { name: "永久删除：E2E 论文" })).toBeVisible();
   await page.getByRole("button", { name: "永久删除：E2E 论文" }).click();
   await page.getByRole("alertdialog", { name: "永久删除知识" }).getByRole("button", { name: "永久删除" }).click();
@@ -209,10 +209,10 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
     const url = new URL(request.url());
     return url.pathname === "/api/documents" && url.searchParams.get("kind") === "paper";
   });
-  await page.getByRole("navigation", { name: "资料库视图" }).getByRole("button", { name: "论文", exact: true }).click();
+  await page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "论文", exact: true }).click();
   await paperListing;
   await expect(page.locator(".directory-title", { hasText: "E2E 论文" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "资料库视图" }).getByRole("button", { name: "论文", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "论文", exact: true })).toHaveAttribute("aria-pressed", "true");
   // Reopen it so the cleanup below still trashes the document the reader holds.
   await page.locator(".directory-title", { hasText: "E2E 论文" }).click();
   await expect(page.getByRole("heading", { name: "E2E 论文" })).toBeVisible({ timeout: 15_000 });

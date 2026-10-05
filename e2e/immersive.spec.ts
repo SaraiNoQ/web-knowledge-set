@@ -34,23 +34,23 @@ test("immersive layout fills the viewport and restores chrome at desktop and sma
     await expect(page.getByRole("button", { name: "退出沉浸模式" })).toBeFocused();
     await expect(page.locator(".masthead")).toBeHidden();
     await expect(page.locator(".capture-band")).toBeHidden();
-    await expect(page.getByRole("navigation", { name: "资料库视图" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "工作台导航" })).toBeVisible();
     const layout = await page.evaluate(() => ({
-      bar: document.querySelector(".immersive-bar")!.getBoundingClientRect().height,
+      bar: document.querySelector(".immersive-bar"),
       workspace: document.querySelector(".workspace")!.getBoundingClientRect().top,
       height: document.querySelector(".workspace")!.getBoundingClientRect().height,
       viewport: innerHeight,
       overflow: document.documentElement.scrollWidth > innerWidth,
     }));
-    expect(layout.bar).toBe(44);
-    expect(layout.workspace).toBe(44);
-    expect(layout.height).toBeGreaterThanOrEqual(layout.viewport - 44);
+    expect(layout.bar).toBeNull();
+    expect(layout.workspace).toBe(0);
+    expect(layout.height).toBeGreaterThanOrEqual(layout.viewport);
     expect(layout.overflow).toBe(false);
     if (width > 820) {
-      await page.getByRole("button", { name: "收起知识织片" }).click();
+      await page.getByRole("button", { name: "文档资料库" }).click();
       await expect(page.locator(".workspace")).toHaveClass(/library-collapsed/u);
       await expect(page.getByRole("button", { name: "退出沉浸模式" })).toBeVisible();
-      await page.getByRole("button", { name: "展开知识织片" }).click();
+      await page.getByRole("button", { name: "文档资料库" }).click();
     }
     await page.screenshot({ path: info.outputPath(`immersive-${width}.png`) });
     await page.keyboard.press("Escape");
@@ -87,8 +87,8 @@ test("switching preserves the editor instance, dirty content, selection and scro
   await page.getByRole("button", { name: "退出沉浸模式" }).focus();
   await page.evaluate(() => window.scrollTo(0, 700));
   const toolbar = await page.locator(".editor-toolbar").boundingBox();
-  expect(toolbar!.y).toBeGreaterThanOrEqual(44);
-  expect(await page.locator(".editor-toolbar").evaluate((element) => getComputedStyle(element).top)).toBe("44px");
+  expect(toolbar!.y).toBeGreaterThanOrEqual(33);
+  expect(await page.locator(".editor-toolbar").evaluate((element) => getComputedStyle(element).top)).toBe("33px");
   await page.getByRole("button", { name: "退出沉浸模式" }).click();
   await expect(page.locator(".cm-editor")).toHaveAttribute("data-preserved", "yes");
   await expect(editor).toContainText("尚未保存。");
@@ -108,7 +108,7 @@ test("local preference survives refresh and settings remain accessible", async (
   await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "退出沉浸模式" })).toBeVisible();
   await page.getByRole("button", { name: "退出沉浸模式" }).click();
-  await page.getByRole("button", { name: "AI 设置", exact: true }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
   await expect(page.locator(".masthead")).toBeVisible();
   await expect(page.locator(".immersive-bar")).toBeHidden();
 });
@@ -188,9 +188,9 @@ test("unavailable cloud storage still allows entering and exiting", async ({ pag
   await expect(page.locator(".masthead")).toBeVisible();
 });
 
-test("immersive knowledge map keeps its canvas mounted and fits below the control bar", async ({ page }) => {
+test("immersive knowledge map keeps its canvas mounted and fills the viewport", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "知识地图" }).click();
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "查看知识地图", exact: true }).click();
   const canvas = page.locator(".map-canvas-inner canvas");
   await expect(canvas).toBeVisible();
   await canvas.evaluate((element) => element.setAttribute("data-preserved", "yes"));
@@ -198,13 +198,13 @@ test("immersive knowledge map keeps its canvas mounted and fits below the contro
   for (const width of [1440, 800, 320]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(canvas).toHaveAttribute("data-preserved", "yes");
-    await expect.poll(() => page.locator(".knowledge-map-host.is-active").evaluate((element) => element.clientHeight)).toBe(856);
+    await expect.poll(() => page.locator(".knowledge-map-host.is-active").evaluate((element) => element.clientHeight)).toBe(900);
     const bounds = await page.evaluate(() => {
       window.scrollTo(0, 100_000);
       const rect = document.querySelector(".knowledge-map-host.is-active")!.getBoundingClientRect();
       return { top: rect.top, bottom: rect.bottom, overflow: document.documentElement.scrollWidth > innerWidth };
     });
-    expect(Math.round(bounds.top)).toBe(44);
+    expect(Math.round(bounds.top)).toBe(0);
     expect(Math.round(bounds.bottom)).toBe(900);
     expect(bounds.overflow).toBe(false);
     await expect(page.getByRole("button", { name: "退出沉浸模式" })).toBeVisible();
@@ -229,13 +229,17 @@ test("paper translation drafts and reader state survive immersive switching", as
   const { paper } = await (await upload).json();
   try {
     await expect(page.getByText("一篇 E2E 论文。", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "重命名文章", exact: true }).dblclick();
+    await page.getByRole("textbox", { name: "文章标题", exact: true }).fill("论文标题同步测试");
+    await page.getByRole("textbox", { name: "文章标题", exact: true }).press("Enter");
+    await expect(page.locator(".paper-reader-header h1")).toHaveText("论文标题同步测试");
     await page.getByRole("button", { name: "编辑译文" }).click();
     await page.locator("textarea").fill("沉浸模式中的未保存译文。");
     await page.locator(".paper-reader").evaluate((element) => element.setAttribute("data-preserved", "yes"));
     await enter(page);
     await expect(page.locator(".paper-reader")).toHaveAttribute("data-preserved", "yes");
     await expect(page.locator("textarea")).toHaveValue("沉浸模式中的未保存译文。");
-    await expect.poll(() => page.locator(".paper-reader-body").evaluate((element) => element.clientHeight - (innerHeight - 44))).toBe(0);
+    await expect.poll(() => page.locator(".paper-reader-body").evaluate((element) => element.clientHeight - (innerHeight))).toBe(0);
     for (const height of [900, 600]) {
       await page.setViewportSize({ width: 320, height });
       await expect.poll(() => page.locator(".paper-reader-pdf-page").evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(420);
@@ -258,6 +262,18 @@ test("paper translation drafts and reader state survive immersive switching", as
     }
     await page.getByRole("button", { name: "退出沉浸模式" }).click();
     await expect(page.locator("textarea")).toHaveValue("沉浸模式中的未保存译文。");
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const mapButton = page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "查看知识地图", exact: true });
+    await mapButton.click();
+    const discard = page.getByRole("alertdialog", { name: "存在未保存修改" });
+    await expect(discard).toBeVisible();
+    await discard.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(page.locator("textarea")).toHaveValue("沉浸模式中的未保存译文。");
+    await mapButton.click();
+    await discard.getByRole("button", { name: "继续并放弃" }).click();
+    await expect(page.locator(".knowledge-map-host.is-active")).toBeVisible();
+    await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "文档资料库", exact: true }).click();
+    await expect(page.getByRole("complementary", { name: "知识列表" })).toBeVisible();
   } finally {
     const document = await request.get(`/api/documents/${paper.id}`);
     const { revision } = await document.json();

@@ -2,6 +2,7 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { chmodSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { escapeLike, paperPageTextSql, paperTextMatch, searchExcerptSql, searchMatches, searchTerms } from "../shared/search.js";
 
 import type {
   AppearanceSettings,
@@ -1260,23 +1261,6 @@ export function migrateDatabase(dataDir: string) {
   } finally {
     sql.close();
   }
-}
-
-function ftsQuery(query: string) {
-  return query
-    .trim()
-    .split(/\s+/u)
-    .filter(Boolean)
-    .map((term) => `"${term.replaceAll('"', '""')}"`)
-    .join(" AND ");
-}
-
-function searchTerms(query: string) {
-  return query.trim().split(/\s+/u).filter(Boolean);
-}
-
-function escapeLike(value: string) {
-  return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
 }
 
 export class KnowledgeDatabase {
@@ -3396,43 +3380,27 @@ export class KnowledgeDatabase {
     const where: string[] = [];
     const params: Array<string | number> = [];
     let from = "FROM documents d";
+    const contextTerms = filters.q?.trim() ? JSON.stringify(searchTerms(filters.q)) : null;
 
     where.push(filters.trash === "only" ? "d.deleted_at IS NOT NULL" : "d.deleted_at IS NULL");
 
     if (filters.q?.trim()) {
-      const queryText = filters.q.trim();
-      const terms = searchTerms(queryText);
       const scope = filters.scope ?? "all";
-      // ponytail: paper JSON stays searchable without rebuilding the shared FTS table; add a unified FTS index when the corpus makes LIKE scans measurable.
-      if (false) {
-        where.push("(d.rowid IN (SELECT rowid FROM documents_fts WHERE documents_fts MATCH ?) OR (d.kind = 'paper' AND EXISTS (SELECT 1 FROM paper_pages pp WHERE pp.paper_id = d.id AND (pp.original_json LIKE ? ESCAPE '\\' OR pp.translation_json LIKE ? ESCAPE '\\'))))");
-        const query = ftsQuery(queryText);
-        const pattern = `%${escapeLike(queryText)}%`;
-        params.push(scope === "all" ? query : `${scope === "body" ? "markdown" : "title"} : (${query})`, pattern, pattern);
-      } else {
-        for (const term of terms) {
-          const pattern = `%${escapeLike(term)}%`;
-          if (scope === "title") {
-            where.push("d.title LIKE ? ESCAPE '\\'");
-            params.push(pattern);
-          } else if (scope === "body") {
-            where.push("(d.markdown LIKE ? ESCAPE '\\' OR (d.kind = 'paper' AND EXISTS (SELECT 1 FROM paper_pages pp WHERE pp.paper_id = d.id AND (pp.original_json LIKE ? ESCAPE '\\' OR pp.translation_json LIKE ? ESCAPE '\\'))))");
-            params.push(pattern, pattern, pattern);
-          } else if (scope === "source") {
-            where.push(
-              `(d.source_url LIKE ? ESCAPE '\\' OR COALESCE(d.final_url, '') LIKE ? ESCAPE '\\' OR
-                COALESCE(d.canonical_url, '') LIKE ? ESCAPE '\\' OR COALESCE(d.author, '') LIKE ? ESCAPE '\\' OR
-                d.source_note LIKE ? ESCAPE '\\' OR (d.kind = 'paper' AND EXISTS (SELECT 1 FROM papers p WHERE p.id = d.id AND p.source_url LIKE ? ESCAPE '\\')))`,
-            );
-            params.push(pattern, pattern, pattern, pattern, pattern, pattern);
-          } else {
-            where.push(
-              "(d.title LIKE ? ESCAPE '\\' OR d.markdown LIKE ? ESCAPE '\\' OR d.source_url LIKE ? ESCAPE '\\' OR (d.kind = 'paper' AND (EXISTS (SELECT 1 FROM papers p WHERE p.id = d.id AND p.source_url LIKE ? ESCAPE '\\') OR EXISTS (SELECT 1 FROM paper_pages pp WHERE pp.paper_id = d.id AND (pp.original_json LIKE ? ESCAPE '\\' OR pp.translation_json LIKE ? ESCAPE '\\')))))",
-            );
-            params.push(pattern, pattern, pattern, pattern, pattern, pattern);
-          }
-        }
+      const sourceFields = ["d.source_url", "COALESCE(d.final_url, '')", "COALESCE(d.canonical_url, '')", "COALESCE(d.author, '')", "d.source_note"];
+      const fields = scope === "title" ? ["d.title"] : scope === "body" ? ["d.markdown"] :
+        scope === "source" ? sourceFields : ["d.title", "d.markdown", ...sourceFields];
+      // ponytail: paper JSON stays searchable without rebuilding the shared FTS table; add a unified FTS index when scans become measurable.
+      params.push(JSON.stringify(searchTerms(filters.q).map((term) => filters.caseSensitive ? term : `%${escapeLike(term)}%`)));
+      const match = (field: string) => filters.caseSensitive
+        ? `instr(${field}, search_term.value) > 0` : `${field} LIKE search_term.value ESCAPE '\\'`;
+      const alternatives = fields.map(match);
+      if (scope === "all" || scope === "source") {
+        alternatives.push(`(d.kind = 'paper' AND EXISTS (SELECT 1 FROM papers p WHERE p.id = d.id AND ${match("p.source_url")}))`);
       }
+      if (scope === "all" || scope === "body") {
+        alternatives.push(`(d.kind = 'paper' AND EXISTS (SELECT 1 FROM paper_pages pp JOIN papers p ON p.id = pp.paper_id AND p.extraction_id = pp.extraction_id WHERE pp.paper_id = d.id AND (${paperTextMatch(match)})))`);
+      }
+      where.push(`NOT EXISTS (SELECT 1 FROM json_each(?) search_term WHERE NOT (${alternatives.join(" OR ")}))`);
     }
     if (filters.tag?.trim()) {
       where.push(
@@ -3504,16 +3472,37 @@ export class KnowledgeDatabase {
     const rows = this.sql
       .prepare(
         `SELECT d.id, d.kind, d.source_url, d.final_url, d.canonical_url, d.title, d.author,
-                NULL AS published_at, '' AS markdown, d.status, d.warning,
+                ${filters.q?.trim() ? "COALESCE((SELECT p.source_url FROM papers p WHERE p.id = d.id), '')" : "''"} AS paper_source_url,
+                NULL AS published_at, ${contextTerms ? searchExcerptSql("d.markdown", Boolean(filters.caseSensitive)) : "''"} AS markdown, d.status, d.warning,
                 d.error_code, d.error_message, NULL AS capture_mode,
-                d.favorite, d.archived_at, '' AS source_note, d.folder_id,
+                d.favorite, d.archived_at, ${contextTerms ? searchExcerptSql("d.source_note", Boolean(filters.caseSensitive)) : "''"} AS source_note, d.folder_id,
                 d.revision, d.deleted_at, d.created_at, d.updated_at
          ${from}${condition} ORDER BY ${order} LIMIT ? OFFSET ?`,
       )
-      .all(...params, PAGE_SIZE, (page - 1) * PAGE_SIZE) as unknown as DocumentRow[];
+      .all(...(contextTerms ? [contextTerms, contextTerms] : []), ...params, PAGE_SIZE, (page - 1) * PAGE_SIZE) as unknown as Array<DocumentRow & { paper_source_url: string }>;
 
     return {
-      items: rows.map((row) => this.toSummary(row)),
+      items: rows.map((row) => {
+        const item = this.toSummary(row);
+        if (filters.q?.trim()) {
+          const scope = filters.scope ?? "all";
+          const sources = [row.paper_source_url, row.source_url, row.final_url || "", row.canonical_url || "", row.author || "", row.source_note];
+          const texts = scope === "title" ? [row.title] : scope === "body" ? [row.markdown] :
+            scope === "source" ? sources : [row.markdown, row.title, ...sources];
+          if (row.kind === "paper" && (scope === "all" || scope === "body")) {
+            const match = (field: string) => filters.caseSensitive
+              ? `instr(${field}, search_term.value) > 0` : `${field} LIKE search_term.value ESCAPE '\\'`;
+            const terms = searchTerms(filters.q).map((term) => filters.caseSensitive ? term : `%${escapeLike(term)}%`);
+            const pages = this.sql.prepare(`SELECT ${searchExcerptSql(paperPageTextSql("original"), Boolean(filters.caseSensitive))} AS originalText, ${searchExcerptSql(paperPageTextSql("translation"), Boolean(filters.caseSensitive))} AS translationText FROM paper_pages pp
+              JOIN papers p ON p.id = pp.paper_id AND p.extraction_id = pp.extraction_id
+              WHERE pp.paper_id = ? AND EXISTS (SELECT 1 FROM json_each(?) search_term WHERE (${paperTextMatch(match)}))
+              ORDER BY pp.page_number LIMIT 5`).all(contextTerms!, contextTerms!, row.id, JSON.stringify(terms)) as unknown as Array<{ originalText: string; translationText: string }>;
+            texts.unshift(...pages.flatMap((page) => [page.originalText, page.translationText]));
+          }
+          item.searchMatches = searchMatches(texts, filters.q, filters.caseSensitive);
+        }
+        return item;
+      }),
       page,
       pageSize: PAGE_SIZE,
       total: Number(totalRow.total),

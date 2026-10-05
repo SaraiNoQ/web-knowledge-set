@@ -1,0 +1,106 @@
+/* Warm charcoal preserves the paper-and-vermilion identity without filtering media. */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  color: #eee8dd;
+  background: #1c1b18;
+  --paper: #25231f;
+  --paper-deep: #1c1b18;
+  --paper-light: #2d2a25;
+  --ink: #eee8dd;
+  --ink-soft: #c5bdae;
+  --ink-faint: #aea595;
+  --line: rgba(238,232,221,.16);
+  --line-strong: rgba(238,232,221,.3);
+  --vermilion: #f08a72;
+  --vermilion-dark: #ffad94;
+  --moss: #b2c39b;
+  --gold: #ddbd7c;
+  --scrollbar-track: #211f1b;
+  --shadow: 0 16px 44px rgba(0,0,0,.28);
+}
+:root[data-theme="dark"] body { background: var(--paper); }
+:root[data-theme="dark"] body::before { display: none; }
+:root[data-theme="dark"] ::selection { color: var(--ink); background: #704a3e; }
+:root[data-theme="dark"] input,
+:root[data-theme="dark"] textarea { caret-color: var(--vermilion); }
+:root[data-theme="dark"] .editor-shell { --ink-faint: #aea595; }
+:root[data-theme="dark"] :is(.paper-wireframe, .paper-reader) {
+  --wire-ink: var(--ink);
+  --wire-muted: var(--ink-soft);
+  --wire-faint: var(--ink-faint);
+  --wire-line: var(--line);
+  --wire-line-strong: var(--line-strong);
+  --wire-fill: var(--paper-light);
+  --wire-fill-deep: var(--paper-deep);
+  --wire-accent: var(--vermilion);
+}
+
+/* Flat, opaque surfaces keep text legible across all panels and portals. */
+:root[data-theme="dark"] :is(
+  .document-head, .reader-panel, .editor-grid, .paper-reader, .paper-wireframe,
+  .knowledge-map, .knowledge-map-detail, .semantic-settings, .diagnostics-page,
+  .ai-settings, .onboarding-page, .paper-reader-stage, .paper-wireframe-reader
+) { background: var(--paper); }
+:root[data-theme="dark"] :is(
+  .library-panel, .source-metadata-form, .collection-manager, .revision-panel,
+  .editor-toolbar, .pane-label, .help-overview, .trash-callout, .ui-modal-footer, .derived-panel,
+  .derived-preview dl > div, .ai-privacy-note, .knowledge-map-filters, .semantic-progress > div,
+  .paper-reader-pages, .paper-wireframe-filmstrip, .paper-wireframe-sidebar,
+  .paper-wireframe-inspector, .paper-wireframe-summary, .paper-wireframe-sync-divider span
+) { background: var(--paper-deep); }
+:root[data-theme="dark"] :is(
+  .search-field, .ui-button--secondary, .ui-input, .ui-textarea, .ui-select,
+  .bulk-text textarea, .bulk-file, .update-release, .portable-toolbar,
+  .source-metadata-form input, .source-metadata-form textarea, .collection-rename input,
+  .collection-manager > ul > li, .revision-panel li, .reextract-preview, .reextract-grid article,
+  .quality-panel, .safety-card, .safety-overview, .safety-location-current, .onboarding-command,
+  .semantic-settings-card, .ai-settings-card, .ai-settings-card input:not([type="checkbox"]),
+  .ai-settings-card .ui-select, .ai-settings-row input, .derived-generator,
+  .derived-preview pre, .derived-custom-prompt textarea, .derived-history > ol > li,
+  .derived-markdown pre, .derived-lightweight pre, .derived-blocked-image,
+  .derived-empty, .derived-state, .ui-toast, .back-to-title, .shortcut-card kbd,
+  .knowledge-map-filters input:not([type="checkbox"]), .knowledge-map-filters select,
+  .map-canvas-toolbar button, .map-state button, .map-loading,
+  .paper-reader-header, .paper-reader-pdf-page, .paper-reader-translation,
+  .paper-reader-block--edit textarea, .paper-wireframe-topbar, .paper-wireframe-page,
+  .paper-wireframe-modal, .paper-wireframe-field input
+) { background: var(--paper-light); }
+:root[data-theme="dark"] :is(.markdown-preview, .paper-reader-block p, .paper-wireframe-copy, .paper-wireframe-equation, .paper-wireframe-note) { color: var(--ink); }
+:root[data-theme="dark"] .markdown-preview code { color: #ffc5a4; background: #3b332b; }
+:root[data-theme="dark"] .markdown-preview pre { color: var(--ink); background: var(--paper-deep); }
+:root[data-theme="dark"] .markdown-preview pre code { color: inherit; background: transparent; }
+:root[data-theme="dark"] .markdown-editor .cm-editor { color: var(--ink); background: var(--paper); }
+:root[data-theme="dark"] .markdown-editor .cm-selectionBackground,
+:root[data-theme="dark"] .markdown-editor .cm-focused .cm-selectionBackground { background: #704a3e; }
+:root[data-theme="dark"] .markdown-editor .cm-tooltip,
+:root[data-theme="dark"] .markdown-editor .cm-panels { color: var(--ink); background: var(--paper-light); border-color: var(--line-strong); }
+
+/* Ink reversals are explicit: pale accent fills need charcoal text. */
+:root[data-theme="dark"] :is(.primary-button, .ui-button--primary, .ui-button--warning, .rail-brand, .brand-seal, .offline-banner, .ui-toast-mark, .paper-wireframe-button--primary),
+:root[data-theme="dark"] :is(.primary-button, .ui-button--primary, .ui-button--warning, .paper-wireframe-button--primary):hover:not(:disabled),
+:root[data-theme="dark"] .ui-button--danger:hover:not(:disabled) { color: #211c17; }
+:root[data-theme="dark"] .ui-button--warning:hover:not(:disabled) { background: #edce90; border-color: #edce90; }
+:root[data-theme="dark"] .paper-wireframe-button--primary:hover:not(:disabled) { background: var(--vermilion-dark); }
+:root[data-theme="dark"] :is(.skip-link, .ui-tooltip, .bulk-toolbar button),
+:root[data-theme="dark"] :is(.mode-switch button, .paper-wireframe-view-switch button, .paper-wireframe-import-tabs button)[aria-pressed="true"],
+:root[data-theme="dark"] .paper-wireframe-import-tabs button[aria-selected="true"] { color: var(--paper-deep); }
+:root[data-theme="dark"] :is(.status-favorite, .favorite-button.is-active, .status-fetching, .status-extracting, .notice, .import-duplicate, .capture-ledger-main .capture-ledger-warning, .quality-panel li strong, .quality-ok strong, .ai-local-trust, .ui-inline-notice--warning) { color: var(--gold); }
+:root[data-theme="dark"] :is(.bulk-result-summary, .organization-notice, .safety-message.is-notice, .backup-status.is-verified, .duplicate-banner strong, .ai-key-state.is-ready, .ai-test-result.is-success, .ui-inline-notice--success) { color: var(--moss); }
+:root[data-theme="dark"] :is(.notice.error, .ai-test-result.is-error, .ui-inline-notice--error) { color: var(--vermilion-dark); }
+:root[data-theme="dark"] .ui-inline-notice:not(.ui-inline-notice--success):not(.ui-inline-notice--warning):not(.ui-inline-notice--error),
+:root[data-theme="dark"] .bulk-counts .is-assets strong,
+:root[data-theme="dark"] .paper-wireframe-page--translation h2 { color: #b6d2df; }
+:root[data-theme="dark"] .conflict-banner { background: #493b2c; }
+:root[data-theme="dark"] :is(.ui-modal, .shortcut-backdrop, .onboarding-dialog)::backdrop { background: rgba(0,0,0,.65); }
+:root[data-theme="dark"] :is(.ui-modal-panel, .shortcut-card, .ui-select-menu, .ui-hover-card, .directory-action-menu[popover], .paper-reader-pdf-page, .paper-reader-translation) { border-color: var(--line-strong); box-shadow: var(--shadow); }
+:root[data-theme="dark"] .quick-actions-panel { box-shadow: 0 24px 68px rgba(0,0,0,.42), 0 5px 14px rgba(0,0,0,.28), inset 0 1px rgba(255,255,255,.05); }
+:root[data-theme="dark"] .map-view-switch button[aria-pressed="true"] { background: var(--paper-light); }
+:root[data-theme="dark"] .knowledge-map-canvas { background-color: var(--paper-deep); background-image: radial-gradient(var(--line) .7px, transparent .7px); }
+:root[data-theme="dark"] .workspace-rail .ui-icon-button:hover,
+:root[data-theme="dark"] .directory-document-row:hover,
+:root[data-theme="dark"] .document-row:hover,
+:root[data-theme="dark"] .document-row.is-selected,
+:root[data-theme="dark"] .folder-node:hover { background: rgba(238,232,221,.07); }
+:root[data-theme="dark"] .workspace-rail .ui-icon-button[aria-pressed="true"],
+:root[data-theme="dark"] .editor-shell .directory-document-row.is-selected { background: rgba(240,138,114,.14); }

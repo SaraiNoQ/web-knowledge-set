@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { Compartment, EditorState } from "@codemirror/state";
@@ -51,9 +51,18 @@ const paperTheme = EditorView.theme({
   ".cm-focused": { outline: "none" },
 });
 
-export function MarkdownEditor({ value, onChange, readOnly = false }: MarkdownEditorProps) {
+export interface MarkdownEditorHandle { jumpTo: (offset: number) => void }
+
+export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(function MarkdownEditor({ value, onChange, readOnly = false }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  useImperativeHandle(ref, () => ({ jumpTo(offset) {
+    const view = viewRef.current;
+    if (!view) return;
+    const position = Math.min(offset, view.state.doc.length);
+    view.dispatch({ selection: { anchor: position }, effects: EditorView.scrollIntoView(position, { y: "start" }) });
+    view.focus();
+  } }), []);
   const onChangeRef = useRef(onChange);
   const readOnlyCompartment = useRef(new Compartment());
 
@@ -111,4 +120,4 @@ export function MarkdownEditor({ value, onChange, readOnly = false }: MarkdownEd
   }, [value]);
 
   return <div className="markdown-editor" ref={hostRef} />;
-}
+});

@@ -13,7 +13,6 @@ interface Props {
   refreshKey: number;
   query: string;
   onQueryChange: (value: string) => void;
-  onBack: () => void;
   onOpenDocument: (id: string) => void;
 }
 
@@ -86,7 +85,16 @@ function appendedVectors(previous: SemanticVectorEntry[], current: SemanticVecto
   return current.filter(({ id }) => !previousIds.has(id));
 }
 
-export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange, onBack, onOpenDocument, refreshKey }: Props) {
+export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange, onOpenDocument, refreshKey }: Props) {
+  const [darkTheme, setDarkTheme] = useState(() => document.documentElement.dataset.theme === "dark");
+  useEffect(() => {
+    const updateTheme = () => setDarkTheme(document.documentElement.dataset.theme === "dark");
+    updateTheme();
+    const observer = new MutationObserver(updateTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
+
   const [items, setItems] = useState<KnowledgeMapNode[]>([]);
   const [folders, setFolders] = useState<Array<{ id: string; name: string }>>([]);
   const [total, setTotal] = useState(0);
@@ -437,10 +445,10 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
     if (node.type === "folder") ctx.rect(node.x - size, node.y - size, size * 2, size * 2);
     else if (node.kind === "paper") ctx.rect(node.x - size * .8, node.y - size * .8, size * 1.6, size * 1.6);
     else ctx.arc(node.x, node.y, size, 0, Math.PI * 2);
-    ctx.fillStyle = node.type === "folder" ? "#f4f0e7" : node.color;
+    ctx.fillStyle = node.type === "folder" ? (darkTheme ? "#2d2a25" : "#f4f0e7") : node.color;
     ctx.fill();
     if (!draggingNode || isSelected || node.id === hoveredId) {
-      ctx.strokeStyle = isSelected ? "#b64b3b" : "rgba(43, 42, 37, .72)";
+      ctx.strokeStyle = isSelected ? (darkTheme ? "#f08a72" : "#b64b3b") : (darkTheme ? "#c5bdae" : "rgba(43, 42, 37, .72)");
       ctx.lineWidth = (isSelected ? 2.4 : 1.1) / Math.max(scale, .35);
       ctx.stroke();
     }
@@ -448,18 +456,18 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
       ctx.font = (isSelected ? "600 " : "450 ") + Math.max(10, 12 / Math.max(scale, .7)) + "px Georgia, serif";
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
-      ctx.fillStyle = node.type === "folder" ? "#55483a" : "#2d2a25";
+      ctx.fillStyle = darkTheme ? "#eee8dd" : node.type === "folder" ? "#55483a" : "#2d2a25";
       ctx.fillText(node.type === "folder" ? shortTitle(node.name) : shortTitle(node.title), node.x + size + 4, node.y);
     }
-  }, [draggingNode, hoveredId, selectedId]);
+  }, [darkTheme, draggingNode, hoveredId, selectedId]);
 
   const openSelected = () => { if (selected) onOpenDocument(selected.id); };
 
   return (
     <section className="knowledge-map" aria-label="知识地图">
       <header className="knowledge-map-head">
-        <div><span className="eyebrow">03 · ATLAS</span><h2>知识地图</h2><p>实线表示文件夹归属；虚线是模型语义推荐。</p></div>
-        <div className="knowledge-map-head-actions"><span className="map-total">{total.toLocaleString("zh-CN")} 篇</span><button type="button" onClick={onBack}>返回列表</button></div>
+        <div className="knowledge-map-heading"><h2>知识地图</h2><p>实线表示文件夹归属；虚线是模型语义推荐。</p></div>
+        <div className="knowledge-map-head-actions"><span className="map-total">{total.toLocaleString("zh-CN")} 篇</span></div>
       </header>
       <div className="knowledge-map-layout">
         <aside className="knowledge-map-filters" aria-label="地图筛选">
@@ -500,7 +508,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
                     ctx.fillStyle = color;
                     ctx.fillRect(node.x - radius, node.y - radius, radius * 2, radius * 2);
                   }}
-                  linkColor={(link: object) => (link as MapLink).type === "semantic" ? "rgba(103, 93, 133, .58)" : "rgba(109, 103, 88, .44)"}
+                  linkColor={(link: object) => (link as MapLink).type === "semantic" ? (darkTheme ? "rgba(187, 162, 213, .7)" : "rgba(103, 93, 133, .58)") : (darkTheme ? "rgba(197, 189, 174, .5)" : "rgba(109, 103, 88, .44)")}
                   linkWidth={(link: object) => (link as MapLink).type === "semantic" ? 1.35 : 1.1}
                   linkLineDash={(link: object) => (link as MapLink).type === "semantic" ? [4, 3] : []}
                   linkVisibility={() => !draggingNode}

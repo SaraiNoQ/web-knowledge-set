@@ -1,3 +1,4 @@
+import { WorkspaceIcon } from "./ui/WorkspaceIcon";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { DragEvent, KeyboardEventHandler, ReactNode, Ref } from "react";
 
@@ -35,6 +36,7 @@ export function DocumentDirectoryRow({
   onOpen,
   onMove,
   onTrash,
+  onRename,
   onPermanentDelete,
 }: {
   document: DocumentSummary;
@@ -44,6 +46,7 @@ export function DocumentDirectoryRow({
   onOpen: (id: string) => void;
   onMove: (document: MoveDocumentTarget, folderId: string | null) => Promise<void>;
   onTrash?: (document: DocumentSummary) => Promise<void>;
+  onRename?: (document: DocumentSummary) => Promise<void>;
   onPermanentDelete?: (document: DocumentSummary) => Promise<void>;
 }) {
   const [moveOpen, setMoveOpen] = useState(false);
@@ -54,6 +57,7 @@ export function DocumentDirectoryRow({
   const actionButton = useRef<HTMLButtonElement>(null);
   const actionMenu = useRef<HTMLDivElement>(null);
   const externalUrl = document.finalUrl || document.sourceUrl;
+  const hasExternalUrl = /^(?:https?):/u.test(externalUrl);
   const folderName = folders.find(({ id }) => id === document.folderId)?.name ?? "根目录";
   const draggable = !document.deletedAt && !matchMedia("(hover: none), (pointer: coarse)").matches;
   const target = { id: document.id, revision: document.revision, folderId: document.folderId };
@@ -71,7 +75,7 @@ export function DocumentDirectoryRow({
     const menu = actionMenu.current;
     if (!trigger || !menu) return;
     menu.style.left = `${Math.max(8, Math.min(window.innerWidth - 198, trigger.right - 190))}px`;
-    menu.style.top = `${window.innerHeight - trigger.bottom > 104 ? trigger.bottom + 5 : Math.max(8, trigger.top - 91)}px`;
+    menu.style.top = `${window.innerHeight - trigger.bottom > 180 ? trigger.bottom + 5 : Math.max(8, trigger.top - 172)}px`;
     window.addEventListener("resize", closeActions);
   };
 
@@ -106,11 +110,11 @@ export function DocumentDirectoryRow({
     {checkbox}
     <span className="sr-only">{STATUS[document.status]}</span>
     <HoverCard content={detail} delay={1_000} disabled={matchMedia("(hover: none), (pointer: coarse)").matches} hoverOnly label="知识详细信息">
-      <button type="button" className="directory-title document-row" aria-current={selected ? "true" : undefined} onClick={() => onOpen(document.id)}>{document.kind === "paper" && <span className="directory-kind-badge">PAPER</span>}{document.title || "未命名网页"}</button>
+      <button type="button" className="directory-title document-row" aria-current={selected ? "true" : undefined} onClick={() => onOpen(document.id)}><WorkspaceIcon name="document" size={16} />{document.kind === "paper" && <span className="directory-kind-badge">PAPER</span>}<span className="directory-document-label">{document.title || "未命名网页"}</span></button>
     </HoverCard>
-    {/^(?:https?):/u.test(externalUrl) ? <a className="directory-external" href={externalUrl} target="_blank" rel="noreferrer noopener" aria-label={`打开原网页：${document.title || "未命名网页"}`}>↗</a> : <span className="directory-external-space" aria-hidden="true" />}
-    {!document.deletedAt && onTrash && <><IconButton ref={actionButton} label={`更多操作：${document.title || "未命名网页"}`} aria-haspopup="dialog" aria-controls={actionId} popoverTarget={actionId} onClick={positionActions}>•••</IconButton><div ref={actionMenu} id={actionId} popover="auto" className="directory-action-menu" role="dialog" aria-label={`操作：${document.title || "未命名网页"}`} onToggle={(event) => { const open = event.currentTarget.matches(":popover-open"); if (open) { event.currentTarget.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true }); window.addEventListener("scroll", closeActions, true); } else { window.removeEventListener("resize", closeActions); window.removeEventListener("scroll", closeActions, true); if (event.currentTarget.contains(globalThis.document.activeElement)) actionButton.current?.focus(); } }}><button type="button" onClick={() => { actionMenu.current?.hidePopover(); setTargetFolder(document.folderId ?? ""); setMoveOpen(true); }}>移动到文件夹…</button><button type="button" className="danger" onClick={() => { actionMenu.current?.hidePopover(); void onTrash(document); }}>删除（移入回收站）</button></div></>}
-    {document.deletedAt && onPermanentDelete && <IconButton className="directory-permanent-delete" label={`永久删除：${document.title || "未命名网页"}`} disabled={deleting} onClick={() => { setDeleting(true); void onPermanentDelete(document).finally(() => setDeleting(false)); }}>×</IconButton>}
+
+    {((!document.deletedAt && onTrash) || hasExternalUrl) && <><IconButton ref={actionButton} label={`更多操作：${document.title || "未命名网页"}`} aria-haspopup="dialog" aria-controls={actionId} popoverTarget={actionId} onClick={positionActions}><WorkspaceIcon name="more" size={16} /></IconButton><div ref={actionMenu} id={actionId} popover="auto" className="directory-action-menu" role="dialog" aria-label={`操作：${document.title || "未命名网页"}`} onToggle={(event) => { const open = event.currentTarget.matches(":popover-open"); if (open) { event.currentTarget.querySelector<HTMLElement>("a, button")?.focus({ preventScroll: true }); window.addEventListener("scroll", closeActions, true); } else { window.removeEventListener("resize", closeActions); window.removeEventListener("scroll", closeActions, true); if (event.currentTarget.contains(globalThis.document.activeElement)) actionButton.current?.focus(); } }}>{hasExternalUrl && <a href={externalUrl} target="_blank" rel="noreferrer noopener" aria-label={`打开原网页：${document.title || "未命名网页"}`} onClick={closeActions}>打开原网页</a>}{!document.deletedAt && onTrash && <>{onRename && <button type="button" onClick={() => { actionMenu.current?.hidePopover(); void onRename(document); }}>重命名</button>}<button type="button" onClick={() => { actionMenu.current?.hidePopover(); setTargetFolder(document.folderId ?? ""); setMoveOpen(true); }}>移动到文件夹…</button><button type="button" className="danger" onClick={() => { actionMenu.current?.hidePopover(); void onTrash(document); }}>删除（移入回收站）</button></>}</div></>}
+    {document.deletedAt && onPermanentDelete && <IconButton className="directory-permanent-delete" label={`永久删除：${document.title || "未命名网页"}`} disabled={deleting} onClick={() => { setDeleting(true); void onPermanentDelete(document).finally(() => setDeleting(false)); }}><WorkspaceIcon name="close" size={14} /></IconButton>}
     {moveOpen && <ModalMove
       folders={folders}
       moving={moving}
@@ -155,6 +159,7 @@ export function LibraryDirectory({
   onOpen,
   onMove,
   onTrash,
+  onRename,
   onCreateArticle,
   onCreatePaper,
   selectedId,
@@ -172,6 +177,7 @@ export function LibraryDirectory({
   onOpen: (id: string) => void;
   onMove: (document: MoveDocumentTarget, folderId: string | null) => Promise<void>;
   onTrash: (document: DocumentSummary) => Promise<void>;
+  onRename: (document: DocumentSummary) => Promise<void>;
   onCreateArticle: () => Promise<void>;
   onCreatePaper: () => void;
   selectedId?: string | null;
@@ -300,7 +306,7 @@ export function LibraryDirectory({
 
   const root = branches.unfiled;
   return <section className="library-directory" aria-labelledby="folder-directory-title">
-    <header><div className="library-directory-heading"><span>FOLDERS</span><h3 id="folder-directory-title">文件夹</h3></div><IconButton ref={createButton} label="新建" aria-haspopup="dialog" aria-controls={createMenuId} popoverTarget={createMenuId} onClick={prepareCreateMenu}>＋</IconButton><div ref={createMenu} id={createMenuId} popover="auto" className="directory-action-menu" role="dialog" aria-label="新建" onToggle={(event) => { const open = event.currentTarget.matches(":popover-open"); if (open) { positionCreateMenu(); event.currentTarget.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true }); window.addEventListener("scroll", closeCreateMenu, true); } else { window.removeEventListener("resize", closeCreateMenu); window.removeEventListener("scroll", closeCreateMenu, true); if (event.currentTarget.contains(globalThis.document.activeElement)) createButton.current?.focus(); } }}><button type="button" onClick={() => { createMenu.current?.hidePopover(); void createFolder(); }}>创建文件夹</button><button type="button" onClick={() => { createMenu.current?.hidePopover(); void onCreateArticle(); }}>创建文章</button><button type="button" onClick={() => { createMenu.current?.hidePopover(); onCreatePaper(); }}>导入论文</button></div></header>
+    <header><div className="library-directory-heading"><h3 id="folder-directory-title">文件夹</h3></div><IconButton ref={createButton} label="新建" aria-haspopup="dialog" aria-controls={createMenuId} popoverTarget={createMenuId} onClick={prepareCreateMenu}><WorkspaceIcon name="plus" size={18} /></IconButton><div ref={createMenu} id={createMenuId} popover="auto" className="directory-action-menu" role="dialog" aria-label="新建" onToggle={(event) => { const open = event.currentTarget.matches(":popover-open"); if (open) { positionCreateMenu(); event.currentTarget.querySelector<HTMLElement>("a, button")?.focus({ preventScroll: true }); window.addEventListener("scroll", closeCreateMenu, true); } else { window.removeEventListener("resize", closeCreateMenu); window.removeEventListener("scroll", closeCreateMenu, true); if (event.currentTarget.contains(globalThis.document.activeElement)) createButton.current?.focus(); } }}><button type="button" onClick={() => { createMenu.current?.hidePopover(); void createFolder(); }}>创建文件夹</button><button type="button" onClick={() => { createMenu.current?.hidePopover(); void onCreateArticle(); }}>创建文章</button><button type="button" onClick={() => { createMenu.current?.hidePopover(); onCreatePaper(); }}>导入论文</button></div></header>
     <div ref={listRef} className="folder-tree" onKeyDown={onListKeyDown}>
       <div className="root-contents" role="region" aria-label="根目录内容" onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => void drop(event, null)}>
         {root?.loading && !root.items.length ? <p role="status">正在读取…</p> : root?.error ? <p role="alert">{root.error}</p> : !root?.items.length ? <p>{hasFilters ? "没有符合筛选条件的顶层知识。" : "暂无未归入文件夹的知识。"}</p> : root.items.map((document) => <DocumentDirectoryRow
@@ -310,7 +316,7 @@ export function LibraryDirectory({
           selected={selectedId === document.id}
           onOpen={onOpen}
           onMove={onMove}
-          onTrash={onTrash}
+          onTrash={onTrash} onRename={onRename}
           checkbox={onSelect ? <label className="row-select"><span className="sr-only">选择 {document.title || "未命名网页"}</span><input type="checkbox" disabled={selectionDisabled || root.loading || root.context !== filterKey} checked={selectedIds?.has(document.id) ?? false} onChange={(event) => onSelect(document, event.target.checked)} /></label> : undefined}
         />)}
         {root && root.total > root.pageSize && <nav className="folder-pagination" aria-label="根目录分页"><button type="button" disabled={root.loading || root.page <= 1} onClick={() => void loadBranch("unfiled", root.page - 1)}>上一页</button><span>{root.page} / {Math.ceil(root.total / root.pageSize)}</span><button type="button" disabled={root.loading || root.page * root.pageSize >= root.total} onClick={() => void loadBranch("unfiled", root.page + 1)}>下一页</button></nav>}
@@ -321,8 +327,8 @@ export function LibraryDirectory({
         const branch = branches[key];
         return <section key={key} className={`folder-branch ${open ? "is-open" : ""}`}>
           <div className="folder-node" onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => void drop(event, key)}>
-            <button type="button" aria-expanded={open} onClick={() => toggle(key)}><span aria-hidden="true">{open ? "▾" : "▸"}</span><b aria-hidden="true">▱</b><strong>{folder.name}</strong><em>{branch?.total ?? (hasFilters ? "—" : folder.documentCount)}</em></button>
-            <div><IconButton label={`重命名 ${folder.name}`} onClick={() => void renameFolder(folder)}>✎</IconButton><IconButton label={`删除 ${folder.name}`} onClick={() => void deleteFolder(folder)}>×</IconButton></div>
+            <button type="button" aria-expanded={open} onClick={() => toggle(key)}><span className={open ? "folder-chevron is-open" : "folder-chevron"}><WorkspaceIcon name="chevron" size={12} /></span><WorkspaceIcon name="folder" size={18} /><strong>{folder.name}</strong><em>{branch?.total ?? (hasFilters ? "—" : folder.documentCount)}</em></button>
+            <div><IconButton label={`重命名 ${folder.name}`} onClick={() => void renameFolder(folder)}><WorkspaceIcon name="edit" size={14} /></IconButton><IconButton label={`删除 ${folder.name}`} onClick={() => void deleteFolder(folder)}><WorkspaceIcon name="close" size={14} /></IconButton></div>
           </div>
           {open && <div className="folder-contents">
             {branch?.loading && !branch.items.length ? <p role="status">正在读取…</p> : branch?.error ? <p role="alert">{branch.error}</p> : !branch?.items.length ? <p>{hasFilters ? "没有符合筛选条件的知识。" : "这个文件夹是空的。"}</p> : branch.items.map((document) => <DocumentDirectoryRow
@@ -332,7 +338,7 @@ export function LibraryDirectory({
               selected={selectedId === document.id}
               onOpen={onOpen}
               onMove={onMove}
-              onTrash={onTrash}
+              onTrash={onTrash} onRename={onRename}
               checkbox={onSelect ? <label className="row-select"><span className="sr-only">选择 {document.title || "未命名网页"}</span><input type="checkbox" disabled={selectionDisabled || branch.loading || branch.context !== filterKey} checked={selectedIds?.has(document.id) ?? false} onChange={(event) => onSelect(document, event.target.checked)} /></label> : undefined}
             />)}
             {branch && branch.total > branch.pageSize && <nav className="folder-pagination" aria-label={`${folder.name}分页`}><button type="button" disabled={branch.loading || branch.page <= 1} onClick={() => void loadBranch(key, branch.page - 1)}>上一页</button><span>{branch.page} / {Math.ceil(branch.total / branch.pageSize)}</span><button type="button" disabled={branch.loading || branch.page * branch.pageSize >= branch.total} onClick={() => void loadBranch(key, branch.page + 1)}>下一页</button></nav>}
