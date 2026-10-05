@@ -20,7 +20,7 @@ test("rail categories replace tabs and collapsed directory leaves no strip", asy
     await expect(documents).toHaveAttribute("aria-pressed", "false");
   }
   await documents.click();
-  await page.getByRole("button", { name: "收起知识织片", exact: true }).click();
+  await page.getByRole("button", { name: "文档资料库", exact: true }).click();
   await expect(page.locator(".library-panel")).toBeHidden();
   await expect(documents).toHaveAttribute("aria-pressed", "false");
   await expect(page.getByRole("button", { name: "展开知识织片", exact: true })).toHaveCount(0);
@@ -116,3 +116,56 @@ for (const cloud of [false, true]) {
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   });
 }
+
+test("breadcrumb uses a capped content width and keeps the complete saved title", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".panel-heading h2")).toHaveText("目录");
+  await expect(page.locator(".library-toggle")).toHaveCount(0);
+  await page.getByRole("button", { name: "新建文章标签", exact: true }).click();
+  const title = page.getByRole("button", { name: "重命名文章", exact: true });
+  await title.dblclick();
+  const input = page.getByRole("textbox", { name: "文章标题", exact: true });
+  await input.fill("短标题");
+  expect((await input.boundingBox())!.width).toBeLessThan(150);
+  const longTitle = "一二三四五六七八九十一二三四五六七八九十超出部分";
+  await input.fill(longTitle);
+  expect((await input.boundingBox())!.width).toBeLessThan(400);
+  await input.press("Enter");
+  await expect(title).toHaveText(Array.from(longTitle).slice(0, 20).join("") + "…");
+  await expect(title).toHaveAttribute("title", longTitle);
+  await title.dblclick();
+  await expect(input).toHaveValue(longTitle);
+  await input.press("Escape");
+});
+
+test("editor fills the remaining viewport and can reveal the complete last line", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "新建文章标签", exact: true }).click();
+  await page.getByRole("button", { name: "编辑这篇知识", exact: true }).click();
+  await expect(page.locator(".document-head .title-field")).toHaveCount(0);
+  const editor = page.getByRole("textbox", { name: "Markdown 编辑器" });
+  await editor.fill(Array.from({ length: 100 }, (_, index) => `段落 ${index}：正文回归。`).join("\n\n") + "\n\n最后一行完整可见");
+  await page.getByRole("button", { name: "配置 AI", exact: true }).click();
+  await page.getByRole("button", { name: "返回资料库", exact: true }).click();
+  await expect.poll(() => page.locator(".editor-grid").evaluate((element) => Math.abs(element.getBoundingClientRect().bottom - innerHeight))).toBeLessThanOrEqual(2);
+  for (const immersive of [false, true]) {
+    if (immersive) await page.getByRole("button", { name: "进入沉浸模式", exact: true }).click();
+    for (const width of [1440, 1000]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (let collapsed = 0; collapsed < 2; collapsed += 1) {
+        if (collapsed) await page.getByRole("button", { name: "文档资料库", exact: true }).click();
+        await expect.poll(() => page.locator(".editor-grid").evaluate((element) => Math.abs(element.getBoundingClientRect().bottom - innerHeight))).toBeLessThanOrEqual(2);
+        const scroller = page.locator(".cm-scroller");
+        await scroller.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+        await page.locator(".preview-pane").evaluate((element) => { element.scrollTop = element.scrollHeight; });
+        await expect(page.locator(".cm-line").filter({ hasText: "最后一行完整可见" })).toBeVisible();
+        for (const [container, last] of [[".editor-pane", ".cm-line:last-child"], [".preview-pane", ".markdown-preview > :last-child"]]) {
+          const bounds = await page.locator(last).boundingBox();
+          const pane = await page.locator(container).boundingBox();
+          expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(pane!.y + pane!.height + 1);
+        }
+        if (collapsed) await page.getByRole("button", { name: "文档资料库", exact: true }).click();
+      }
+    }
+  }
+});

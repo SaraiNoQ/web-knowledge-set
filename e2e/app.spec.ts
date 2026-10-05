@@ -355,7 +355,7 @@ test("returns home from the logo and toggles the knowledge sidebar", async ({ pa
   await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
   if (await deferSetup.isVisible()) await deferSetup.click();
 
-  const collapse = page.getByRole("button", { name: "收起知识织片" });
+  const collapse = page.getByRole("button", { name: "文档资料库" });
   await expect(collapse).toHaveAttribute("aria-expanded", "true");
   await collapse.click();
   await expect(page.locator(".workspace")).toHaveClass(/library-collapsed/u);

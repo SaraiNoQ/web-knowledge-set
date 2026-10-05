@@ -47,7 +47,7 @@ test("immersive layout fills the viewport and restores chrome at desktop and sma
     expect(layout.height).toBeGreaterThanOrEqual(layout.viewport);
     expect(layout.overflow).toBe(false);
     if (width > 820) {
-      await page.getByRole("button", { name: "收起知识织片" }).click();
+      await page.getByRole("button", { name: "文档资料库" }).click();
       await expect(page.locator(".workspace")).toHaveClass(/library-collapsed/u);
       await expect(page.getByRole("button", { name: "退出沉浸模式" })).toBeVisible();
       await page.getByRole("button", { name: "文档资料库" }).click();

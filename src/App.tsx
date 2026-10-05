@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -554,6 +555,7 @@ export default function App() {
   const [appearanceSaving, setAppearanceSaving] = useState(false);
   const immersiveToggleRef = useRef<HTMLButtonElement>(null);
   const libraryRailRef = useRef<HTMLButtonElement>(null);
+  const editorGridRef = useRef<HTMLDivElement>(null);
   const [titleEdit, setTitleEdit] = useState<{ id: string; revision: number; title: string } | null>(null);
   const [graphMode, setGraphMode] = useState(false);
   const [paperDirty, setPaperDirty] = useState(false);
@@ -777,6 +779,18 @@ export default function App() {
       setAppearanceSaving(false);
     }
   };
+  useLayoutEffect(() => {
+    const grid = editorGridRef.current;
+    if (!grid) return;
+    const update = () => grid.style.setProperty("--editor-top", `${Math.max(0, grid.getBoundingClientRect().top)}px`);
+    update();
+    const observer = new ResizeObserver(update);
+    if (grid.parentElement?.parentElement) observer.observe(grid.parentElement.parentElement);
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, { passive: true });
+    return () => { observer.disconnect(); window.removeEventListener("resize", update); window.removeEventListener("scroll", update); };
+  }, [selectedId, Boolean(draft), cloudEditing, immersiveActive, libraryCollapsed, mode, derivedOpen, aiSettingsOpen, safetyOpen, diagnosticsOpen, guideOpen]);
+
   const longPreviewAllowed = !longArticle || longPreviewDocumentId === currentDoc?.id;
   useEffect(() => {
     if (!cloudMode) return;
@@ -3469,7 +3483,7 @@ export default function App() {
       <a className="skip-link" href="#library-panel">跳到资料库</a>
       <nav className="workspace-rail" aria-label="工作台导航">
         <button type="button" className="rail-brand" aria-label="织页资料库" disabled={closing} onClick={() => void returnToLibrary()}>织</button>
-        <IconButton label="文档资料库" ref={libraryRailRef} aria-pressed={!libraryCollapsed && !graphMode && libraryView === "all" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing} onClick={() => { if (libraryCollapsed && libraryView === "all" && !graphMode && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen) setLibraryCollapsed(false); else void applyLibraryView("all"); }}><WorkspaceIcon name="document" /></IconButton>
+        <IconButton label="文档资料库" ref={libraryRailRef} aria-expanded={!libraryCollapsed} aria-controls="library-panel" aria-pressed={!libraryCollapsed && !graphMode && libraryView === "all" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing} onClick={() => { if (!graphMode && libraryView === "all" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen) setLibraryCollapsed((value) => !value); else void applyLibraryView("all"); }}><WorkspaceIcon name="document" /></IconButton>
         <IconButton label="搜索文档" disabled={closing} onClick={() => { void returnToLibrary().then((left) => { if (!left) return; setLibraryCollapsed(false); window.requestAnimationFrame(() => searchInputRef.current?.focus()); }); }}><WorkspaceIcon name="search" /></IconButton>
         <IconButton label="查看知识地图" aria-pressed={graphMode} disabled={closing} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); void switchLibraryMode(true); }}><WorkspaceIcon name="map" /></IconButton>
         <IconButton label="查看收藏" aria-pressed={!libraryCollapsed && !graphMode && libraryView === "favorites" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing || listLoading || batchBusy} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); void applyLibraryView("favorites"); }}><WorkspaceIcon name="star" /></IconButton>
@@ -3697,11 +3711,8 @@ export default function App() {
 
       <main className={workspaceClassName}>
         <aside id="library-panel" className={`library-panel ${libraryCollapsed ? "is-collapsed" : ""}`} aria-label="知识列表">
-          <button type="button" className="library-toggle" aria-expanded={!libraryCollapsed} aria-controls="library-panel" aria-label={libraryCollapsed ? "展开知识织片" : "收起知识织片"} onClick={() => { setLibraryCollapsed(true); libraryRailRef.current?.focus(); }}>
-            <Icon size={17}><path d={libraryCollapsed ? "m9 6 6 6-6 6" : "m15 6-6 6 6 6"} /></Icon>
-          </button>
           <div className="panel-heading">
-            <div className="library-title-group"><h2>{inTrash ? "回收站" : "知识织片"}</h2><span className="total-count">{total}<small>篇</small></span></div>
+            <div className="library-title-group"><h2>{inTrash ? "回收站" : "目录"}</h2><span className="total-count">{total}<small>篇</small></span></div>
             {!inTrash && <LibraryViewSwitch listRef={libraryViewListRef} map={graphMode} active={!graphMode} onChange={(map) => void switchLibraryMode(map)} />}
           </div>
 
@@ -3788,7 +3799,7 @@ export default function App() {
           <DocumentTabs documents={openDocuments} selectedId={selectedId} dirty={hasUnsavedChanges} disabled={closing || Boolean(lifecycleAction) || restoringRevision !== null} onSelect={async (id) => { const opened = await selectDocument(id); if (opened) { graphReturnRef.current = false; setGraphMode(false); } return opened; }} onClose={closeDocumentTab} onCreate={() => void createArticle()} />
           {selectedId && <div className="workspace-location">
             <IconButton label="返回文档目录" disabled={closing} onClick={() => void closeDocument()}><Icon size={18}><path d="M20 12H4m6-6-6 6 6 6" /></Icon></IconButton>
-            <span>{folders.find((folder) => folder.id === currentDoc?.folderId)?.name ?? "知识织片"}</span><WorkspaceIcon name="chevron" size={13} />{titleEdit?.id === currentDoc?.id && titleEdit ? <input autoFocus className="breadcrumb-title-input" aria-label="文章标题" maxLength={1000} value={titleEdit.title} onChange={(event) => setTitleEdit({ ...titleEdit, title: event.target.value })} onBlur={() => setTitleEdit(null)} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); setTitleEdit(null); } if (event.key === "Enter") { event.preventDefault(); const edit = titleEdit; setTitleEdit(null); void renameDocument(edit, edit.title); } }} /> : <button type="button" className="breadcrumb-title" aria-label="重命名文章" title="双击重命名文章" disabled={!currentDoc || organizationLocked || metadataDirty || paperDirty} onDoubleClick={() => { if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "F2") { event.preventDefault(); if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); } }}>{currentDoc?.title || "正在打开…"}</button>}
+            <span>{folders.find((folder) => folder.id === currentDoc?.folderId)?.name ?? "目录"}</span><WorkspaceIcon name="chevron" size={13} />{titleEdit?.id === currentDoc?.id && titleEdit ? <input autoFocus className="breadcrumb-title-input" aria-label="文章标题" maxLength={1000} size={Math.max(1, Math.min(20, Array.from(titleEdit.title).length))} value={titleEdit.title} onChange={(event) => setTitleEdit({ ...titleEdit, title: event.target.value })} onBlur={() => setTitleEdit(null)} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); setTitleEdit(null); } if (event.key === "Enter") { event.preventDefault(); const edit = titleEdit; setTitleEdit(null); void renameDocument(edit, edit.title); } }} /> : <button type="button" className="breadcrumb-title" aria-label="重命名文章" title={currentDoc?.title || "双击重命名文章"} disabled={!currentDoc || organizationLocked || metadataDirty || paperDirty} onDoubleClick={() => { if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "F2") { event.preventDefault(); if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); } }}>{Array.from(currentDoc?.title || "正在打开…").slice(0, 20).join("")}{Array.from(currentDoc?.title || "").length > 20 ? "…" : ""}</button>}
 
           </div>}
 
@@ -3815,7 +3826,7 @@ export default function App() {
                   {/^(?:https?):/u.test(currentDoc.finalUrl || currentDoc.sourceUrl) ? <a href={currentDoc.finalUrl || currentDoc.sourceUrl} target="_blank" rel="noreferrer noopener">{sourceName(currentDoc.finalUrl || currentDoc.sourceUrl)}<Icon size={13}><path d="M14 5h5v5M10 14 19 5M19 14v5H5V5h5" /></Icon></a> : <span>本地文章</span>}
                   <span>{formatDate(currentDoc.updatedAt)}</span>
                 </div>
-                {cloudEditing ? <label className="title-field"><span className="sr-only">文档标题</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} disabled={saveState === "saving" || organizationSaving} /></label> : null}
+
                 <div className="document-actions">
                   <button type="button" className={`favorite-button ${currentDoc.favorite ? "is-active" : ""}`} aria-pressed={currentDoc.favorite} onClick={() => void toggleFavorite()} disabled={organizationLocked || metadataDirty}><WorkspaceIcon name="star" size={17} />{currentDoc.favorite ? "取消收藏" : "设为收藏"}</button>
                   <button type="button" className="primary-button" onClick={() => void toggleCloudEditing()} disabled={currentDoc.status !== "ready" || saveState === "saving"}>{cloudEditing ? "返回阅读" : "编辑这篇知识"}</button>
@@ -3833,7 +3844,7 @@ export default function App() {
                 </div>
                 {saveState === "error" && <div className="inline-error" role="alert">{saveError}</div>}
                 {conflict && <div className="conflict-banner" role="alert"><div><strong>这篇知识已在别处更新</strong><span>你的文字仍保留在编辑器中。请复制需要保留的内容，然后载入最新版。</span></div><button type="button" onClick={() => { installCurrentDocument(conflict); updateListItem(conflict); setDraft(draftOf(conflict)); setConflict(null); setSaveState("idle"); }}>载入最新版</button></div>}
-                <div className={`editor-grid mode-${mode}`}>
+                <div ref={editorGridRef} className={`editor-grid mode-${mode}`}>
                   {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><div className="pane-label">MARKDOWN</div><MarkdownEditor value={draft.markdown} onChange={(markdown) => setDraft((value) => value ? { ...value, markdown } : value)} readOnly={saveState === "saving" || organizationSaving} /></section>}
                   {mode !== "edit" && <section className="preview-pane" aria-label="Markdown 预览"><div className="pane-label">PREVIEW</div>{draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : []} /> : <StatePanel kind="empty" title="这里还没有文字" />}</section>}
                 </div>
@@ -4030,7 +4041,7 @@ export default function App() {
                     </aside>
                   )}
 
-                  <div className={`editor-grid mode-${mode}`}>
+                  <div ref={editorGridRef} className={`editor-grid mode-${mode}`}>
                     {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><div className="pane-label">MARKDOWN</div><MarkdownEditor value={draft.markdown} onChange={(markdown) => { if (!closeAttemptRef.current) setDraft((value) => value ? { ...value, markdown } : value); }} readOnly={editorLocked} /></section>}
                     {mode !== "edit" && longPreviewAllowed && <section className="preview-pane" aria-label="Markdown 预览"><div className="pane-label">PREVIEW</div>{draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} /> : <StatePanel kind="empty" title="这里还没有文字">在编辑区写下 Markdown，预览会同步出现。</StatePanel>}</section>}
                   </div>
