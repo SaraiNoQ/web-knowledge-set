@@ -3562,7 +3562,7 @@ export default function App() {
         <IconButton label="管理数据安全" aria-pressed={safetyOpen} disabled={closing} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }}><WorkspaceIcon name="shield" /></IconButton>
         <ThemeToggle />
         <IconButton ref={immersiveToggleRef} label={immersiveMode ? "退出沉浸模式" : "进入沉浸模式"} aria-pressed={immersiveMode} aria-disabled={appearanceSaving || closing} onClick={() => void toggleImmersive()}><WorkspaceIcon name="immersive" /></IconButton>
-        <IconButton label="打开设置" aria-pressed={aiSettingsOpen} disabled={closing} onClick={() => { setSafetyOpen(false); setDiagnosticsOpen(false); setAiSettingsOpen(true); }}><WorkspaceIcon name="settings" /></IconButton>
+        <IconButton label="打开设置" aria-pressed={aiSettingsOpen} disabled={closing} onClick={() => { setDerivedOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); setAiSettingsOpen(true); }}><WorkspaceIcon name="settings" /></IconButton>
       </nav>
 
       {offline && <div className="offline-banner" role="status">{cloudMode ? "云端服务当前不可达，请恢复网络后继续。" : "系统报告当前离线；本地阅读、编辑与搜索仍可使用，网页抓取和远程 AI 可能失败。"}</div>}

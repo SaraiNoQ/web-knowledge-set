@@ -8,6 +8,7 @@ import "./styles.css";
 import "./paper-reader-wireframe.css";
 import "./workspace-shell.css";
 import "./interaction-motion.css";
+import "./ui-system.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

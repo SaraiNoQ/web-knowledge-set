@@ -917,11 +917,10 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(customPrompt).toBeVisible();
   await customPrompt.fill("找出文章中最值得反驳的假设");
   const customPreviewRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname.endsWith("/derived-preview"));
-  await panel.getByRole("button", { name: "预览发送范围" }).click();
-  expect((await customPreviewRequest).postDataJSON()).toMatchObject({ type: "summary", customPrompt: "找出文章中最值得反驳的假设" });
-  await expect(panel.getByLabel("将发送给模型的准确文本")).toContainText("AI 生命周期文章");
+  await expect(panel.getByLabel("模型发送范围预览")).toHaveCount(0);
   const customTaskRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname.endsWith("/derived-task"));
   await panel.getByRole("button", { name: "发送并生成" }).click();
+  expect((await customPreviewRequest).postDataJSON()).toMatchObject({ type: "summary", customPrompt: "找出文章中最值得反驳的假设" });
   expect((await customTaskRequest).postDataJSON()).toMatchObject({ type: "summary", customPrompt: "找出文章中最值得反驳的假设" });
   await expect(panel.getByText("AI 对话正在生成")).toBeVisible();
   await expect(panel.locator(".derived-history li").filter({ hasText: "AI 对话" })).toBeVisible({ timeout: 5_000 });

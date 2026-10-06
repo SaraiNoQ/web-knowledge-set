@@ -150,6 +150,19 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
     return () => window.cancelAnimationFrame(frame);
   }, [autoFocus]);
   useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
+  const positionMenu = () => {
+    if (!open || !buttonRef.current || !listRef.current) return;
+    const gap = 5;
+    const margin = 8;
+    const trigger = buttonRef.current.getBoundingClientRect();
+    const list = listRef.current.getBoundingClientRect();
+    const width = Math.min(Math.max(trigger.width, list.width), window.innerWidth - margin * 2);
+    const left = Math.min(Math.max(margin, trigger.left), window.innerWidth - width - margin);
+    const below = trigger.bottom + gap;
+    const top = below + list.height <= window.innerHeight - margin ? below : Math.max(margin, trigger.top - list.height - gap);
+    setPosition({ left, top, width });
+  };
+  useLayoutEffect(positionMenu, [open]);
   useEffect(() => {
     if (!open) return;
     const close = (event: PointerEvent) => {
@@ -157,7 +170,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
       if (!buttonRef.current?.contains(target) && !listRef.current?.contains(target)) setOpen(false);
     };
     const closeMenu = () => setOpen(false);
-    const closeOnScroll = (event: Event) => { if (!(event.target instanceof Node) || !listRef.current?.contains(event.target)) closeMenu(); };
+    const closeOnScroll = (event: Event) => { if (!(event.target instanceof Node) || !listRef.current?.contains(event.target)) positionMenu(); };
     const fieldset = buttonRef.current?.closest("fieldset");
     const disabledObserver = fieldset ? new MutationObserver(() => { if (buttonRef.current?.matches(":disabled")) closeMenu(); }) : null;
     if (fieldset) disabledObserver?.observe(fieldset, { attributes: true, attributeFilter: ["disabled"] });
@@ -171,18 +184,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
       disabledObserver?.disconnect();
     };
   }, [open]);
-  useLayoutEffect(() => {
-    if (!open || !buttonRef.current || !listRef.current) return;
-    const gap = 5;
-    const margin = 8;
-    const trigger = buttonRef.current.getBoundingClientRect();
-    const list = listRef.current.getBoundingClientRect();
-    const width = Math.min(Math.max(trigger.width, list.width), window.innerWidth - margin * 2);
-    const left = Math.min(Math.max(margin, trigger.left), window.innerWidth - width - margin);
-    const below = trigger.bottom + gap;
-    const top = below + list.height <= window.innerHeight - margin ? below : Math.max(margin, trigger.top - list.height - gap);
-    setPosition({ left, top, width });
-  }, [open]);
+
 
   if (multiple) {
     return <span className={`ui-select-wrap ui-select-wrap--${density} ui-select-wrap--multiple ${wrapperClassName}`.trim()}><select ref={ref} className={`ui-select ${className}`.trim()} multiple value={value} defaultValue={defaultValue} disabled={disabled} autoFocus={autoFocus} aria-describedby={ariaDescribedBy} {...props}>{children}</select></span>;

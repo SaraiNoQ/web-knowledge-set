@@ -1,0 +1,9 @@
+/* One paper control vocabulary; spatial feedback comes from InteractionMotion. */
+:root { --control-radius: 4px; --panel-radius: 6px; --control-height: 40px; --control-height-compact: 32px; }
+fieldset.ui-segmented { position: relative; isolation: isolate; display: grid; grid-template-columns: repeat(var(--segment-count), minmax(0, 1fr)); grid-auto-flow: row; gap: 0; min-width: 0; margin: 0; padding: 4px; border: 0; border-radius: var(--panel-radius); background: var(--paper-deep); box-shadow: var(--material-inset); }
+.ui-segmented-surface { position: absolute; inset: 4px auto 4px 4px; width: calc((100% - 8px) / var(--segment-count)); background: var(--paper-light); border-radius: var(--control-radius); box-shadow: var(--material-raised); pointer-events: none; }
+fieldset.ui-segmented > button { position: relative; z-index: 1; min-width: 0; min-height: var(--control-height-compact); padding: 6px 8px; color: var(--ink-soft); background: transparent; border: 0; border-radius: var(--control-radius); box-shadow: none; font: 500 12px/1.4 var(--font-sans); letter-spacing: 0; }
+fieldset.ui-segmented > button[aria-pressed="true"] { color: var(--vermilion-dark); background: transparent; }
+fieldset.ui-segmented > button:disabled { opacity: .55; }
+@media (max-width: 580px) { fieldset.ui-segmented > button { padding-inline: 2px; font-size: 10px; } }
+@media (forced-colors: active) { fieldset.ui-segmented > button[aria-pressed="true"] { outline: 2px solid Highlight; } }

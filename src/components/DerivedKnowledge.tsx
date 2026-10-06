@@ -14,7 +14,9 @@ import type {
 } from "../../shared/types";
 import { api } from "../api";
 import { userErrorMessage } from "../error-messages";
-import { Select } from "./ui/Controls";
+import { Button, IconButton, Select } from "./ui/Controls";
+import { SegmentedControl } from "./ui/SegmentedControl";
+import { WorkspaceIcon } from "./ui/WorkspaceIcon";
 import { useDialogs } from "./ui/Feedback";
 
 const TYPE_LABEL: Record<DerivedResultType, string> = {
@@ -102,14 +104,14 @@ export function DerivedKnowledge({ cloud = false, hideTagSuggestions = false, do
   const [task, setTask] = useState<DerivedTask | null>(null);
   const [targetLanguage, setTargetLanguage] = useState<TranslationLanguage>("zh-CN");
   const [customPrompt, setCustomPrompt] = useState("");
-  const [preview, setPreview] = useState<DerivedPreview | null>(null);
-  const [previewBatch, setPreviewBatch] = useState(0);
   const [markdownResults, setMarkdownResults] = useState<Set<string>>(() => new Set());
   const [selectedTags, setSelectedTags] = useState<{ resultId: string; tags: string[] }>({ resultId: "", tags: [] });
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const contextRef = useRef("");
+  contextRef.current = `${document.id}:${document.revision}`;
   const resultsRef = useRef(results);
   const busyRef = useRef(busy);
   resultsRef.current = results;
@@ -117,7 +119,9 @@ export function DerivedKnowledge({ cloud = false, hideTagSuggestions = false, do
   const cloudKeyMissing = Boolean(cloud && settings?.target === "remote" && !settings.apiKeyConfigured);
 
   const loadResults = useCallback(async (resultPage = page, signal?: AbortSignal) => {
+    const context = contextRef.current;
     const response = await api.listDerivedResults(document.id, resultPage, signal);
+    if (signal?.aborted || contextRef.current !== context) return;
     setResults(response.items);
     setTotal(response.total);
     setPage(response.page);
@@ -125,10 +129,10 @@ export function DerivedKnowledge({ cloud = false, hideTagSuggestions = false, do
 
   useEffect(() => {
     const controller = new AbortController();
+    contextRef.current = `${document.id}:${document.revision}`;
     setLoading(true);
-    setPreview(null);
+    setTask(null);
     setCustomPrompt("");
-    setPreviewBatch(0);
     setMarkdownResults(new Set());
     setSelectedTags({ resultId: "", tags: [] });
     setError("");
@@ -141,7 +145,7 @@ export function DerivedKnowledge({ cloud = false, hideTagSuggestions = false, do
     }).finally(() => {
       if (!controller.signal.aborted) setLoading(false);
     });
-    return () => controller.abort();
+    return () => { contextRef.current = ""; controller.abort(); };
   }, [document.id, document.revision]);
 
   useEffect(() => {
@@ -161,11 +165,12 @@ export function DerivedKnowledge({ cloud = false, hideTagSuggestions = false, do
 
   useEffect(() => {
     if (task?.status !== "running") return;
+    const context = contextRef.current;
     const timer = window.setInterval(() => {
       void api.getDerivedTaskById(task.id).then((updated) => {
+        if (contextRef.current !== context) return;
         setTask(updated);
         if (updated.status === "succeeded") {
-          setPreview(null);
           setNotice(`${typeLabel(updated.type, updated.targetLanguage, updated.preview.promptVersion)}已生成，正文与标签均未修改。`);
           void loadResults(1);
         }
@@ -176,58 +181,30 @@ export function DerivedKnowledge({ cloud = false, hideTagSuggestions = false, do
 
   const requestPreview = () => api.previewDerivedResult(document.id, type === "custom" ? "summary" : type, document.revision, type === "translation" ? targetLanguage : undefined, type === "custom" ? customPrompt : undefined);
 
-  const prepare = async () => {
-    if (generationBlockedReason || cloudKeyMissing) return;
-    setBusy(true);
-    setError("");
-    setNotice("");
-    try {
-      const value = await requestPreview();
-      setPreview(value);
-      setPreviewBatch(0);
-    } catch (cause) {
-      setError((cause as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const startPreview = async (value: DerivedPreview) => {
+    const context = contextRef.current;
     const started = await api.startDerivedTask(document.id, value);
+    if (contextRef.current !== context) return;
     setTask(started);
     if (started.status === "succeeded") {
-      setPreview(null);
       setNotice(cloud ? `${typeLabel(started.type, started.targetLanguage, started.preview.promptVersion)}已生成并保存；正文未修改。` : `${typeLabel(started.type, started.targetLanguage, started.preview.promptVersion)}已有相同输入结果，未重复请求模型。`);
       await loadResults(1);
     }
   };
 
-  const start = async () => {
-    if (!preview || busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
-    setError("");
-    setNotice("");
-    try {
-      await startPreview(preview);
-    } catch (cause) {
-      setError((cause as Error).message);
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  };
-
   const generate = async () => {
-    if (busyRef.current || type === "custom" || generationBlockedReason || cloudKeyMissing) return;
+    if (busyRef.current || !settings?.enabled || task?.status === "running" || (type === "custom" && !customPrompt.trim()) || generationBlockedReason || cloudKeyMissing) return;
     busyRef.current = true;
     setBusy(true);
     setError("");
     setNotice("");
+    const context = contextRef.current;
     try {
-      await startPreview(await requestPreview());
+      const value = await requestPreview();
+      if (contextRef.current !== context) return;
+      await startPreview(value);
     } catch (cause) {
-      setError((cause as Error).message);
+      if (contextRef.current === context) setError((cause as Error).message);
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -313,8 +290,6 @@ export function DerivedKnowledge({ cloud = false, hideTagSuggestions = false, do
 
   const pinned = useMemo(() => results.find((result) => result.type === "summary" && result.pinned), [results]);
   const taskLabel = task ? typeLabel(task.type, task.targetLanguage, task.preview.promptVersion) : "";
-  const previewBatchCount = preview?.sentTexts.length ?? 0;
-  const lastPreviewBatch = previewBatchCount > 0 && previewBatch === previewBatchCount - 1;
   const loadResultMarkdown = (resultId: string) => setMarkdownResults((current) => new Set(current).add(resultId));
 
   return (
@@ -322,42 +297,33 @@ export function DerivedKnowledge({ cloud = false, hideTagSuggestions = false, do
       {pinned && !open && <section className={`derived-pinned ${pinned.stale ? "is-stale" : ""}`} aria-label="固定摘要"><div><span>PINNED SUMMARY</span>{pinned.stale && <em>正文更新后已过期</em>}</div><DerivedOutput result={pinned} markdown={markdownResults.has(pinned.id)} onLoadMarkdown={() => loadResultMarkdown(pinned.id)} /></section>}
       {open && (
         <aside id="derived-knowledge" className="derived-panel" aria-label="AI 派生知识">
-          <header><div><span className="eyebrow">DERIVED, NEVER OVERWRITTEN</span><h3>AI 派生知识</h3><p>结果独立保存；不会改写正文，也不会自动添加标签。</p></div><button type="button" onClick={onClose} aria-label="关闭 AI 派生知识">×</button></header>
+          <header><h3>AI 派生知识</h3><IconButton label="关闭 AI 派生知识" onClick={onClose}><WorkspaceIcon name="close" /></IconButton></header>
 
           {loading ? <div className="derived-state" role="status">正在翻阅派生记录…</div> : (
             <>
               <section className="derived-generator" aria-labelledby="derived-generator-title">
-                <div><span>01 · GENERATE</span><h4 id="derived-generator-title">选择一项，获取结果</h4></div>
+                <div><h4 id="derived-generator-title">选择生成内容</h4></div>
                 <div className="derived-options">
-                  <fieldset disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing}>
-                    <legend className="sr-only">派生类型</legend>
-                    {[...(Object.entries(TYPE_LABEL) as Array<[DerivedResultType, string]>).filter(([value]) => value !== "tag-suggestions" || (!cloud && !hideTagSuggestions)), ["custom", CUSTOM_LABEL] as const].map(([value, label]) => <button key={value} type="button" aria-pressed={type === value} onClick={() => { onTypeChange(value); setPreview(null); setPreviewBatch(0); }}>{label}</button>)}
-                  </fieldset>
-                  {type === "translation" && <label className="derived-target-language"><span>翻译为</span><Select aria-label="翻译目标语言" value={targetLanguage} onChange={(event) => { setTargetLanguage(event.target.value as TranslationLanguage); setPreview(null); setPreviewBatch(0); }} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing}>{(Object.entries(TRANSLATION_LANGUAGES) as Array<[TranslationLanguage, string]>).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></label>}
+                  <SegmentedControl label="派生类型" value={type} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing} options={[...(Object.entries(TYPE_LABEL) as Array<[DerivedResultType, string]>).filter(([value]) => value !== "tag-suggestions" || (!cloud && !hideTagSuggestions)).map(([value, label]) => ({ value, label })), { value: "custom", label: CUSTOM_LABEL }]} onChange={onTypeChange} />
+                  {type === "translation" && <label className="derived-target-language"><span>翻译为</span><Select aria-label="翻译目标语言" value={targetLanguage} onChange={(event) => { setTargetLanguage(event.target.value as TranslationLanguage); }} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing}>{(Object.entries(TRANSLATION_LANGUAGES) as Array<[TranslationLanguage, string]>).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></label>}
                 </div>
-                {!settings?.enabled && <p className="derived-boundary">AI 当前关闭。历史结果仍可查看；请先到页首“AI 设置”中启用。</p>}
-                {cloudKeyMissing && <p className="derived-boundary">当前浏览器没有此平台的 AI 密钥。历史结果仍可查看；请先到页首“AI 设置”保存密钥。</p>}
+                {!settings?.enabled && <p className="derived-boundary">AI 当前关闭。历史结果仍可查看；请先到左侧“设置”中启用。</p>}
+                {cloudKeyMissing && <p className="derived-boundary">当前浏览器没有此平台的 AI 密钥。历史结果仍可查看；请先到左侧“设置”保存密钥。</p>}
                 {generationBlockedReason && <p className="derived-boundary">{generationBlockedReason}</p>}
                 {type !== "custom" && <button type="button" className="primary-button" onClick={() => void generate()} disabled={busy || !settings?.enabled || task?.status === "running" || Boolean(generationBlockedReason) || cloudKeyMissing}>{busy ? "获取中…" : "获取"}</button>}
               </section>
 
-              {(preview || type === "custom") && (
-                <section className="derived-preview" aria-label="模型发送范围预览">
-                  <div className="derived-coverage"><span>02 · SEND PREVIEW</span>{preview ? <><strong>{preview.coverage.sentChars.toLocaleString("zh-CN")} / {preview.coverage.sourceChars.toLocaleString("zh-CN")} 字符</strong><em>{preview.coverage.truncated ? "已按稳定段落截断" : "覆盖完整正文"}</em></> : <strong>输入自由指令</strong>}</div>
-                  {type === "custom" && <label className="derived-custom-prompt"><span>你希望 AI 如何分析这篇文章？</span><textarea aria-label="AI 对话 Prompt" maxLength={4_000} rows={5} value={customPrompt} onChange={(event) => { setCustomPrompt(event.target.value); setPreview(null); setPreviewBatch(0); }} placeholder="例如：找出文章的核心论点、可疑假设和值得追问的问题。" disabled={busy || task?.status === "running"} /><small>{customPrompt.length.toLocaleString("zh-CN")} / 4,000</small></label>}
-                  {preview && <><dl><div><dt>目标</dt><dd>{preview.target.url}</dd></div><div><dt>模型</dt><dd>{preview.model}</dd></div><div><dt>类型</dt><dd>{typeLabel(preview.type, preview.targetLanguage, preview.promptVersion)}</dd></div></dl>
-                    <div className="derived-batch-nav" aria-label="发送批次导航"><button type="button" onClick={() => setPreviewBatch((value) => Math.max(0, value - 1))} disabled={previewBatch === 0}>上一批</button><strong>第 {previewBatch + 1} / {previewBatchCount} 批</strong><button type="button" onClick={() => setPreviewBatch((value) => Math.min(previewBatchCount - 1, value + 1))} disabled={lastPreviewBatch}>下一批</button></div>
-                    <pre aria-label="将发送给模型的准确文本">{preview.sentTexts[previewBatch]}</pre></>}
-                  <div><button type="button" onClick={() => { setPreview(null); setPreviewBatch(0); if (type === "custom") { setCustomPrompt(""); onTypeChange("summary"); } }}>取消</button>{type === "custom" && !preview ? <button type="button" className="primary-button" onClick={() => void prepare()} disabled={busy || !customPrompt.trim() || !settings?.enabled || task?.status === "running" || Boolean(generationBlockedReason) || cloudKeyMissing}>{busy ? "准备中…" : "预览发送范围"}</button> : lastPreviewBatch && <button type="button" className="primary-button" onClick={() => void start()} disabled={busy}>{busy ? "提交中…" : "发送并生成"}</button>}</div>
-                </section>
-              )}
+              {type === "custom" && <section className="derived-chat" aria-label="AI 对话">
+                <label className="derived-custom-prompt"><span>你希望 AI 如何分析这篇文章？</span><textarea aria-label="AI 对话 Prompt" maxLength={4_000} rows={5} value={customPrompt} onChange={(event) => setCustomPrompt(event.target.value)} placeholder="例如：找出文章的核心论点、可疑假设和值得追问的问题。" disabled={busy || task?.status === "running"} /><small>{customPrompt.length.toLocaleString("zh-CN")} / 4,000</small></label>
+                <div className="derived-chat-actions"><Button onClick={() => { setCustomPrompt(""); onTypeChange("summary"); }} disabled={busy || task?.status === "running"}>取消</Button><Button variant="primary" onClick={() => void generate()} disabled={busy || !customPrompt.trim() || !settings?.enabled || task?.status === "running" || Boolean(generationBlockedReason) || cloudKeyMissing}>{busy ? "生成中…" : "发送并生成"}</Button></div>
+              </section>}
 
               {task && task.status !== "succeeded" && <section className={`derived-task is-${task.status}`} aria-live="polite"><div><span>TASK</span><strong>{taskLabel}{task.status === "running" ? "正在生成" : task.status === "failed" ? "生成失败" : "已取消"}</strong>{task.status === "running" && <div className="derived-task-progress"><progress aria-label="AI 生成批次进度" max={task.progress.totalBatches} value={task.progress.completedBatches} /><small>批次进度 {task.progress.completedBatches} / {task.progress.totalBatches}</small></div>}{task.error && <small>{task.error.code} · {userErrorMessage(task.error.code)}</small>}{task.status !== "running" && task.progress.totalBatches > 1 && <small className="derived-retry-note">重试将从第一批开始，不会复用已完成批次。</small>}</div>{task.status === "running" ? <button type="button" onClick={() => void cancel()} disabled={busy}>取消任务</button> : <button type="button" onClick={() => void retry()} disabled={busy || !settings?.enabled}>重试</button>}</section>}
 
               {(notice || error) && <p className={`derived-message ${error ? "is-error" : ""}`} role={error ? "alert" : "status"}>{error || notice}</p>}
 
               <section className="derived-history" aria-labelledby="derived-history-title">
-                <div className="derived-history-head"><div><span>02 · LEDGER</span><h4 id="derived-history-title">派生历史</h4></div><strong>{total} 条</strong></div>
+                <div className="derived-history-head"><div><h4 id="derived-history-title">派生历史</h4></div><strong>{total} 条</strong></div>
                 {!results.length ? <p className="derived-empty">还没有派生结果。AI 关闭时，这里也不会产生任何后台请求。</p> : <ol>{results.map((result) => {
                   const tags = result.type === "tag-suggestions" ? stringList(result.output) : [];
                   const checkedTags = selectedTags.resultId === result.id ? selectedTags.tags : [];

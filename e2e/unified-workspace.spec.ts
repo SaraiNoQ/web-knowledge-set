@@ -54,3 +54,36 @@ test("root and expanded folders show every document while the reader scrolls bel
   await expect(page.locator(".document-tabbar")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+test("leaving the reader before a preview completes prevents the send", async ({ page, request }) => {
+  await page.unroute("**/health");
+  const settingsResponse = await request.get("/api/settings/llm");
+  const settings = await settingsResponse.json();
+  const headers = { Origin: "http://127.0.0.1:4174", "X-Zhiye-Data-Epoch": settingsResponse.headers()["x-zhiye-data-epoch"] };
+  expect((await request.put("/api/settings/llm", { headers, data: { revision: settings.revision, enabled: true, target: "local", remote: settings.remote, local: settings.local } })).ok()).toBe(true);
+  const title = `离开后不发送${Date.now()}`;
+  const { document } = await (await request.post("/api/documents", { headers, data: { title } })).json();
+  expect((await request.patch(`/api/documents/${document.id}`, { headers, data: { revision: 1, markdown: "测试正文。" } })).ok()).toBe(true);
+  let release!: () => void;
+  let arrived!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const received = new Promise<void>((resolve) => { arrived = resolve; });
+  const starts: string[] = [];
+  page.on("request", (value) => { if (value.method() === "POST" && value.url().endsWith("/derived-task")) starts.push(value.url()); });
+  await page.route("**/derived-preview", async (route) => { const response = await route.fetch(); arrived(); await held; await route.fulfill({ response }); });
+  await page.goto("/");
+  await page.locator(".root-contents").getByRole("button", { name: title, exact: true }).click();
+  await page.getByRole("button", { name: "AI 派生", exact: true }).click();
+  await page.getByRole("button", { name: "AI 对话", exact: true }).click();
+  await page.getByLabel("AI 对话 Prompt").fill("分析正文");
+  await page.getByRole("button", { name: "发送并生成", exact: true }).click();
+  await received;
+  await page.getByRole("button", { name: "打开设置", exact: true }).click();
+  const finished = page.waitForResponse((response) => response.url().endsWith("/derived-preview"));
+  release();
+  await (await finished).finished();
+  await page.getByRole("button", { name: "返回资料库", exact: true }).click();
+  await page.getByRole("button", { name: "AI 派生", exact: true }).click();
+  await expect(page.locator(".derived-empty")).toBeVisible();
+  expect(starts).toEqual([]);
+});
