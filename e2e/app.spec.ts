@@ -250,13 +250,15 @@ test("keeps the first-run guide deferrable, reopenable, readable, and durable", 
   await expect(page.getByRole("heading", { name: /你的知识/u })).toBeHidden();
   await expect.poll(() => page.locator(".capture-copy p").evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(14);
 
-  await page.getByRole("button", { name: "使用指南" }).click();
+  await page.getByRole("button", { name: "帮助与关于", exact: true }).click();
+  await page.getByRole("button", { name: "重新打开使用指南", exact: true }).click();
   const guide = page.getByRole("dialog", { name: /你的知识/u });
   await expect(guide).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(guide).toBeHidden();
 
-  await page.getByRole("button", { name: "使用指南" }).click();
+  await page.getByRole("button", { name: "帮助与关于", exact: true }).click();
+  await page.getByRole("button", { name: "重新打开使用指南", exact: true }).click();
   await page.getByRole("button", { name: "继续" }).click();
   await expect(page.getByRole("heading", { name: /稳定的位置/u })).toBeVisible();
   await expect(page.getByText("KB_DATA_DIR=/你的/知识库目录 pnpm start")).toBeVisible();
@@ -273,7 +275,7 @@ test("keeps the first-run guide deferrable, reopenable, readable, and durable", 
   await page.reload();
   await expect(page.getByLabel("网页地址")).toBeVisible();
   await expect(page.getByRole("heading", { name: /你的知识/u })).toBeHidden();
-  await expect(page.getByRole("button", { name: "使用指南" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "帮助与关于", exact: true })).toBeVisible();
   await context.setOffline(true);
   await expect(page.getByText("系统报告当前离线", { exact: false })).toBeVisible();
   await expect(page.getByLabel("网页地址")).toBeEnabled();
@@ -362,7 +364,7 @@ test("returns home from the logo and toggles the knowledge sidebar", async ({ pa
   await expect(page.locator(".library-panel")).toBeHidden();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   const rail = page.getByRole("navigation", { name: "工作台导航" });
-  for (const label of ["快捷搜索与新建文章", "文档资料库", "查看知识地图", "导入文档", "打开设置"]) {
+  for (const label of ["快捷搜索与新建文章", "文档资料库", "查看知识地图", "导入", "打开设置"]) {
     await expect(rail.getByRole("button", { name: label, exact: true })).toBeVisible();
   }
   const expand = rail.getByRole("button", { name: "文档资料库", exact: true });
@@ -638,7 +640,7 @@ test("semantic indexing remains opt-in until a credential and model probe are av
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
   await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
   if (await deferSetup.isVisible()) await deferSetup.click();
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "打开设置", exact: true }).click();
   await expect(page.getByRole("heading", { name: "语义关联" })).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "允许自动建立语义关联" })).not.toBeChecked();
   await expect(page.getByRole("button", { name: "测试向量连接" })).toBeDisabled();
@@ -665,12 +667,13 @@ test("renders a stored cloud image URI through the same-origin asset route", asy
 });
 
 test("opens one keyboard-accessible help and about dialog in normal and recovery modes", async ({ page }) => {
+  await page.route("**/api/settings/onboarding", (route) => route.fulfill({ json: { completed: true, revision: 1 } }));
   await page.goto("/");
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
   await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
   if (await deferSetup.isVisible()) await deferSetup.click();
 
-  const helpButton = page.getByRole("button", { name: "帮助", exact: true });
+  const helpButton = page.getByRole("button", { name: "帮助与关于", exact: true });
   await helpButton.focus();
   await helpButton.click();
   const help = page.getByRole("dialog", { name: "帮助与关于" });
@@ -703,7 +706,7 @@ test("opens one keyboard-accessible help and about dialog in normal and recovery
   });
   await page.reload();
   await expect(page.getByRole("heading", { name: "数据安全", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "帮助", exact: true }).click();
+  await page.getByRole("button", { name: "帮助与关于", exact: true }).click();
   await expect(help.getByText("本地 Web · 恢复模式", { exact: true })).toBeVisible();
   await expect(help.getByRole("button", { name: "恢复资料后可打开指南" })).toBeDisabled();
 });
@@ -795,7 +798,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await page.getByRole("button", { name: "收取网页" }).click();
   await expect(page.getByLabel("文档标题")).toHaveValue("AI 生命周期文章", { timeout: 8_000 });
 
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "打开设置", exact: true }).click();
   const remoteProvider = page.getByRole("combobox", { name: "AI 远程平台" });
   await remoteProvider.click();
   await expect(page.getByRole("option")).toHaveCount(10);
@@ -813,9 +816,9 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(page.getByText("当前进程已加载当前平台密钥", { exact: false })).toBeVisible();
   await page.reload();
   const deferAfterReload = page.getByRole("button", { name: "稍后设置" });
-  await deferAfterReload.or(page.getByRole("button", { name: "设置", exact: true })).first().waitFor();
+  await deferAfterReload.or(page.getByRole("button", { name: "打开设置", exact: true })).first().waitFor();
   if (await deferAfterReload.isVisible()) await deferAfterReload.click();
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "打开设置", exact: true }).click();
   await expect(page.getByText("当前进程已加载当前平台密钥", { exact: false })).toBeVisible();
   await expect(page.getByRole("button", { name: "删除密钥" })).toBeVisible();
   await page.getByLabel("AI 远程模型").fill("remote-e2e-model");
@@ -974,7 +977,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(panel.getByRole("heading", { name: "译文：超长原文" })).toBeVisible();
   await expect(page.getByLabel("Markdown 编辑器")).toHaveText(originalMarkdown || "");
 
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "打开设置", exact: true }).click();
   await page.getByRole("button", { name: "关闭 AI 并删除全部结果" }).click();
   await page.getByRole("alertdialog", { name: "关闭 AI 并删除结果" }).getByRole("button", { name: "关闭并删除" }).click();
   await expect(page.getByText(/AI 已关闭，并删除 5 条派生结果/u)).toBeVisible();
@@ -987,7 +990,7 @@ test("deletes a complete backup after confirmation", async ({ page }) => {
   await page.goto("/");
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
   if (await deferSetup.isVisible()) await deferSetup.click();
-  await page.getByRole("button", { name: "数据安全", exact: true }).click();
+  await page.getByRole("button", { name: "管理数据安全", exact: true }).click();
   await expect(page.getByRole("heading", { name: "数据安全", exact: true })).toBeVisible();
   const backupRows = page.locator(".backup-row");
   const before = await backupRows.count();
@@ -1019,7 +1022,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
     expect(completed.ok()).toBe(true);
   }
   await page.goto("/");
-  await page.getByRole("button", { name: "数据安全", exact: true }).click();
+  await page.getByRole("button", { name: "管理数据安全", exact: true }).click();
   await expect(page.getByRole("heading", { name: "数据安全", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "创建留档" }).click();
   await expect(page.getByText("完整留档已创建并校验。")).toBeVisible();
@@ -1069,7 +1072,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   const marker = await markerResponse.json() as { document: { id: string } };
   await expect(page.getByLabel("文档标题")).toHaveValue("远端测试文章", { timeout: 8_000 });
 
-  await page.getByRole("button", { name: "数据安全", exact: true }).click();
+  await page.getByRole("button", { name: "管理数据安全", exact: true }).click();
   const importedRow = backupRows.first();
   await expect(importedRow).toHaveCount(1);
   const restoredResponsePromise = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === `/api/data-safety/backups/${encodeURIComponent(importedBackup.id)}/restore`);
@@ -1551,7 +1554,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
       staleCollectionsSettled = true;
     }
   });
-  await page.getByRole("button", { name: "数据安全", exact: true }).click();
+  await page.getByRole("button", { name: "管理数据安全", exact: true }).click();
   await page.getByRole("button", { name: "返回资料库" }).click();
   await expect.poll(() => staleCollectionsReady).toBe(true);
   const delayedCollectionManager = page.getByRole("complementary", { name: "集合管理" });
@@ -1683,7 +1686,7 @@ test("desktop data safety shows the current knowledge-base path", async ({ page 
   await page.goto("/");
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
   if (await deferSetup.isVisible()) await deferSetup.click();
-  await page.getByRole("button", { name: "数据安全", exact: true }).click();
+  await page.getByRole("button", { name: "管理数据安全", exact: true }).click();
   const location = page.getByLabel(`当前知识库路径：${dataDirectory}`, { exact: true });
   await expect(location).toBeVisible();
   await expect(location).toHaveAttribute("title", dataDirectory);
@@ -1726,7 +1729,7 @@ test("desktop AI settings explains local key failures without cloud wording", as
   await page.goto("/");
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
   if (await deferSetup.isVisible()) await deferSetup.click();
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "打开设置", exact: true }).click();
   await page.getByRole("button", { name: "远程 HTTPS", exact: true }).click();
   await page.getByLabel("AI 远程模型").fill("desktop-e2e-model");
   await page.getByLabel("远程模型 API 密钥").fill("desktop-e2e-key");
@@ -1742,6 +1745,7 @@ test("desktop AI settings explains local key failures without cloud wording", as
 });
 
 test("routes desktop capture and file intents through existing imports", async ({ page }) => {
+  await page.route("**/api/settings/onboarding", (route) => route.fulfill({ json: { completed: true, revision: 1 } }));
   await page.addInitScript(() => {
     const coldIntents = [
       { kind: "capture", url: "https://example.com/desktop-deep-link" },
@@ -1798,7 +1802,7 @@ test("routes desktop capture and file intents through existing imports", async (
   const dialog = page.getByRole("dialog", { name: "批量导入" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("已从桌面接收 1 个文件")).toBeVisible();
-  await expect(dialog.getByText("已选择 1 个文件")).toBeVisible();
+  await expect(dialog.getByText("已添加 1 个文件")).toBeVisible();
   await dialog.getByRole("button", { name: "检查导入内容" }).click();
   await expect(dialog.locator(".bulk-preview-list")).toContainText("desktop-note");
   await dialog.getByRole("button", { name: "确认导入" }).click();
@@ -1849,13 +1853,16 @@ test("desktop updater confirms, verifies a backup, reports progress, and keeps f
       },
     });
   });
+  await page.route("**/api/settings/onboarding", (route) => route.fulfill({ json: { completed: true, revision: 1 } }));
   await page.goto("/?updater=0");
   const deferOnboarding = page.getByRole("button", { name: "稍后设置" });
   if (await deferOnboarding.isVisible()) await deferOnboarding.click();
-  await expect(page.locator(".masthead")).toBeVisible();
+  await expect(page.locator(".masthead")).toHaveCount(0);
+  await page.getByRole("button", { name: "帮助与关于", exact: true }).click();
   await expect(page.getByRole("button", { name: "检查更新" })).toHaveCount(0);
   await page.goto("/");
   if (await deferOnboarding.isVisible()) await deferOnboarding.click();
+  await page.getByRole("button", { name: "帮助与关于", exact: true }).click();
   const updateButton = page.getByRole("button", { name: "检查更新" });
   await expect(updateButton).toBeVisible();
 
@@ -1894,6 +1901,9 @@ test("desktop updater confirms, verifies a backup, reports progress, and keeps f
   await updateButton.click();
   await page.getByRole("button", { name: "创建留档并更新" }).click();
   await expect(page.getByText("正在下载并验证签名… 25%")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "应用更新", exact: true })).toBeVisible();
+  await expect(page.locator(".help-card")).toHaveCount(1);
   await page.evaluate(() => {
     (window as typeof window & { __UPDATER_TEST__: { releaseDownload?: () => void } }).__UPDATER_TEST__.releaseDownload?.();
   });

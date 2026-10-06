@@ -27,8 +27,9 @@ test("imports a paper and opens the bilingual page reader", async ({ page }) => 
   // rather than testing for it once and skipping the click.
   await page.getByRole("button", { name: "稍后设置" }).click({ timeout: 5_000 }).catch(() => undefined);
 
-  await expect(page.getByRole("button", { name: "导入论文", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "导入论文", exact: true }).click();
+  await expect(page.getByRole("button", { name: "导入", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "导入", exact: true }).click();
+  await page.getByRole("button", { name: "论文 PDF", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "导入论文" });
   await expect(dialog).toBeVisible();
   await dialog.getByRole("tab", { name: "上传 PDF" }).click();
@@ -88,7 +89,8 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   await page.getByRole("button", { name: "稍后设置" }).click({ timeout: 5_000 }).catch(() => undefined);
-  await page.getByRole("button", { name: "导入论文", exact: true }).click();
+  await page.getByRole("button", { name: "导入", exact: true }).click();
+  await page.getByRole("button", { name: "论文 PDF", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "导入论文" });
   await dialog.getByRole("tab", { name: "上传 PDF" }).click();
   await dialog.locator('input[type="file"]').setInputFiles({ name: "layout.pdf", mimeType: "application/pdf", buffer: minimalPdf() });

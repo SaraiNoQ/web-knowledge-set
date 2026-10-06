@@ -59,6 +59,7 @@ export function Modal({
       className={`ui-modal ${panel ? "" : className}`.trim()}
       role={role}
       onCancel={(event) => {
+        event.stopPropagation();
         event.preventDefault();
         if (dismissible) onClose();
       }}

@@ -187,7 +187,7 @@ export function QuickActions({ open, onClose, onOpenDocument, onCreateArticle }:
         </button>)}</div>}
         {!loading && !error && items.length > 0 && <>
           {total > items.length && <p className="quick-actions-more">还有 {total - items.length} 篇匹配资料</p>}
-          <p className="quick-actions-more">按 ⇧ Enter 用“{term}”创建新文章</p>
+          <p className="quick-actions-more">按 Shift + Enter 用“{term}”创建新文章</p>
         </>}
         {!loading && !error && canCreate && <div id={`${id}-results`} role="listbox" aria-label="快捷操作"><button
           type="button"
@@ -199,7 +199,7 @@ export function QuickActions({ open, onClose, onOpenDocument, onCreateArticle }:
           onClick={() => void createArticle()}
         >
           <span className="quick-actions-create-mark"><WorkspaceIcon name="plus" size={18} /></span>
-          <span><strong>{term ? `新建文章“${term}”` : "新建空白文章"}</strong><small>{term ? "按回车创建并开始编辑" : "输入标题后按 ⇧ Enter 创建"}</small></span>
+          <span><strong>{term ? `新建文章“${term}”` : "新建空白文章"}</strong><small>{term ? "按回车创建并开始编辑" : "输入标题后按 Shift + Enter 创建"}</small></span>
           <kbd>↵</kbd>
         </button></div>}
       </div>
@@ -207,7 +207,7 @@ export function QuickActions({ open, onClose, onOpenDocument, onCreateArticle }:
       <footer className="quick-actions-footer">
         <span><kbd>↑</kbd><kbd>↓</kbd> 导航</span>
         <span><kbd>↵</kbd> {items.length ? "打开" : canCreate ? "创建" : "打开"}</span>
-        <span><kbd>⇧ ↵</kbd> 创建文章</span>
+        <span><kbd>Shift + Enter</kbd> 创建文章</span>
         <span><kbd>esc</kbd> 退出</span>
       </footer>
     </section>

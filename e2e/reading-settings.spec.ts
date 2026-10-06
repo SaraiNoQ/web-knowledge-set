@@ -27,7 +27,14 @@ test("settings retain AI fields across categories and save the reading margin", 
   await page.getByRole("button", { name: "阅读与显示", exact: true }).click();
   const margin = page.getByRole("spinbutton", { name: "正文两侧总留白百分比" });
   await margin.fill("50");
+  await page.getByRole("combobox", { name: "正文字体", exact: true }).click();
+  await page.getByRole("option", { name: "无衬线字体", exact: true }).click();
+  await page.getByRole("spinbutton", { name: "正文字号", exact: true }).fill("22");
+  await page.getByRole("spinbutton", { name: "正文行间距", exact: true }).fill("1.6");
+  await page.getByRole("spinbutton", { name: "正文字间距", exact: true }).fill("0.08");
+  await expect(page.locator(".reading-text-preview")).toHaveCSS("font-size", "22px");
   await expect(page.locator(".app-shell")).toHaveCSS("--reading-margin", "50");
+  await expect(page.locator(".app-shell")).toHaveCSS("--reading-font-size", "22px");
   await page.getByRole("button", { name: "AI 派生设置", exact: true }).click();
   await expect(model).toHaveValue("unsaved-model");
   await page.getByRole("button", { name: "阅读与显示", exact: true }).click();
@@ -36,6 +43,8 @@ test("settings retain AI fields across categories and save the reading margin", 
   await page.getByRole("button", { name: "返回资料库", exact: true }).click();
   await page.getByRole("button", { name: "预览", exact: true }).click();
   await expect(page.locator(".markdown-preview")).toHaveCSS("max-width", "none");
+  await expect(page.locator(".markdown-preview")).toHaveCSS("font-size", "22px");
+  await expect(page.locator(".markdown-preview")).toHaveCSS("line-height", "35.2px");
   const dimensions = await page.locator(".markdown-preview").evaluate((el) => ({ width: el.getBoundingClientRect().width, padding: parseFloat(getComputedStyle(el).paddingLeft) }));
   expect(dimensions.padding / dimensions.width).toBeCloseTo(.25, 2);
   await page.reload();
@@ -47,7 +56,7 @@ test("settings retain AI fields across categories and save the reading margin", 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: "/tmp/zhiye-reading-settings-mobile.png", fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.getByRole("button", { name: "恢复默认留白", exact: true }).click();
+  await page.getByRole("button", { name: "恢复默认阅读设置", exact: true }).click();
   await expect(margin).toHaveValue("20");
 });
 

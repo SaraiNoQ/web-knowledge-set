@@ -103,13 +103,13 @@ test("local preference survives refresh and settings remain accessible", async (
   await page.keyboard.press("?");
   await page.getByRole("button", { name: "重新打开使用指南" }).click();
   await expect(page.getByRole("dialog", { name: /你的知识/u })).toBeVisible();
-  await expect(page.locator(".masthead")).toBeVisible();
+  await expect(page.locator(".masthead")).toHaveCount(0);
   await expect(page.locator(".immersive-bar")).toBeHidden();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "退出沉浸模式" })).toBeVisible();
   await page.getByRole("button", { name: "退出沉浸模式" }).click();
-  await page.getByRole("button", { name: "设置", exact: true }).click();
-  await expect(page.locator(".masthead")).toBeVisible();
+  await page.getByRole("button", { name: "打开设置", exact: true }).click();
+  await expect(page.locator(".masthead")).toHaveCount(0);
   await expect(page.locator(".immersive-bar")).toBeHidden();
 });
 
@@ -126,7 +126,7 @@ test("recovery mode keeps its full navigation even with a saved immersive prefer
   });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "数据安全" })).toBeVisible();
-  await expect(page.locator(".masthead")).toBeVisible();
+  await expect(page.locator(".masthead")).toHaveCount(0);
   await expect(page.locator(".immersive-bar")).toBeHidden();
 });
 
@@ -185,7 +185,7 @@ test("unavailable cloud storage still allows entering and exiting", async ({ pag
   await enter(page);
   await expect(page.getByText("显示模式已切换，但未能记住选择。请稍后重新切换以保存。")).toBeVisible();
   await page.getByRole("button", { name: "退出沉浸模式" }).click();
-  await expect(page.locator(".masthead")).toBeVisible();
+  await expect(page.locator(".masthead")).toHaveCount(0);
 });
 
 test("immersive knowledge map keeps its canvas mounted and fills the viewport", async ({ page }) => {
@@ -220,7 +220,8 @@ test("paper translation drafts and reader state survive immersive switching", as
   });
   expect(enabled.ok()).toBe(true);
   await page.goto("/");
-  await page.getByRole("button", { name: "导入论文", exact: true }).click();
+  await page.getByRole("button", { name: "导入", exact: true }).click();
+  await page.getByRole("button", { name: "论文 PDF", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "导入论文" });
   await dialog.getByRole("tab", { name: "上传 PDF" }).click();
   await dialog.locator('input[type="file"]').setInputFiles({ name: "immersive.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7\nE2E fixture\n", "ascii") });

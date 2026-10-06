@@ -90,7 +90,7 @@ test("immersive control stays in the rail and removes the old top bar", async ({
   expect(exitBounds!.y + exitBounds!.height).toBeLessThanOrEqual(settingsBounds!.y);
   expect((await page.locator(".workspace").boundingBox())!.y).toBe(0);
   await exit.click();
-  await expect(page.locator(".masthead")).toBeVisible();
+  await expect(page.locator(".masthead")).toHaveCount(0);
 });
 
 for (const cloud of [false, true]) {

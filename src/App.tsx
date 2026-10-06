@@ -43,7 +43,8 @@ import { api, ApiRequestError } from "./api";
 import type { DocumentPatch } from "./api";
 import { CachedImage } from "./components/ImageViewer";
 import { WorkspaceSettings } from "./components/WorkspaceSettings";
-import { loadReadingMargin } from "./reading-preferences";
+import { MarkdownUpload } from "./components/MarkdownUpload";
+import { loadReadingText, loadReadingMargin } from "./reading-preferences";
 import { AppUpdater } from "./components/AppUpdater";
 import { BrowserExtension } from "./components/BrowserExtension";
 import { DataSafety } from "./components/DataSafety";
@@ -545,6 +546,7 @@ export default function App() {
   const [listRefresh, setListRefresh] = useState(0);
   const [semanticRefresh, setSemanticRefresh] = useState(0);
   const [shortcutHelp, setShortcutHelp] = useState(false);
+  const quickJumpRef = useRef(false);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const [inTrash, setInTrash] = useState(false);
@@ -590,6 +592,7 @@ export default function App() {
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [bulkImportKind, setBulkImportKind] = useState<ImportKind>("urls");
   const [bulkImportText, setBulkImportText] = useState("");
+  const [uploadPreparing, setUploadPreparing] = useState(false);
   const [bulkImportFiles, setBulkImportFiles] = useState<File[]>([]);
   const [bulkImportPreview, setBulkImportPreview] = useState<ImportPreview | null>(null);
   const [bulkImportResult, setBulkImportResult] = useState<ImportApplyResult | null>(null);
@@ -638,6 +641,7 @@ export default function App() {
   const [browserPairingCount, setBrowserPairingCount] = useState<number | null>(null);
   const [cloudEditing, setCloudEditing] = useState(false);
   const [safetyRecovery, setSafetyRecovery] = useState(false);
+  const [readingText, setReadingText] = useState(loadReadingText);
   const [readingMargin, setReadingMargin] = useState(loadReadingMargin);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [derivedOpen, setDerivedOpen] = useState(false);
@@ -1104,8 +1108,13 @@ export default function App() {
   ), []);
 
   const focusReader = useCallback(() => {
-    window.requestAnimationFrame(() => readerPanelRef.current?.focus());
+    window.requestAnimationFrame(() => { readerPanelRef.current?.scrollIntoView({ block: "start" }); readerPanelRef.current?.focus({ preventScroll: true }); });
   }, []);
+
+  useEffect(() => {
+    if (quickActionsOpen || !quickJumpRef.current || detailLoading || !currentDoc || currentDoc.id !== selectedId) return;
+    quickJumpRef.current = false; focusReader();
+  }, [quickActionsOpen, detailLoading, currentDoc, selectedId, focusReader]);
 
   const currentDirtyDraft = () => {
     const document = currentDocRef.current;
@@ -2036,17 +2045,18 @@ export default function App() {
     setBulkImportError("");
   };
 
-  const selectBulkFiles = (event: ChangeEvent<HTMLInputElement>) => {
-    const selected = Array.from(event.target.files || []);
+  const chooseBulkFiles = (selected: File[]) => {
     const files = acceptedImportFiles(bulkImportKind, selected);
-    const error = selected.length && !files.length
-      ? unsupportedImportFileMessage(bulkImportKind)
-      : importFileLimitError(bulkImportKind, files);
-    if (error) event.currentTarget.value = "";
-    setBulkImportFiles(error ? [] : files);
-    setBulkImportError(error);
-    setBulkImportNotice("");
+    const error = selected.length && !files.length ? unsupportedImportFileMessage(bulkImportKind) : importFileLimitError(bulkImportKind, files);
+    if (!error) setBulkImportFiles(files);
+    setBulkImportError(error); setBulkImportNotice("");
   };
+  const selectBulkFiles = (event: ChangeEvent<HTMLInputElement>) => chooseBulkFiles(Array.from(event.target.files || []));
+  const switchImportFormat = (kind: ImportKind | "paper") => {
+    if (kind === "paper") { setBulkImportOpen(false); setPaperImportOpen(true); setPaperImportError(""); }
+    else { setPaperImportOpen(false); setBulkImportOpen(true); setBulkImportKind(kind); setBulkImportStrategy("skip"); setBulkImportFiles([]); setBulkImportText(""); setBulkImportError(""); setBulkImportNotice(""); }
+  };
+  const importTabs = (active: ImportKind | "paper", disabled: boolean) => <fieldset className="bulk-kind import-format-tabs" disabled={disabled}><legend className="sr-only">导入格式</legend>{([["urls", "网址列表"], ["bookmarks", "浏览器书签"], ["markdown", "Markdown"], ["bundle", "织页知识包"], ["paper", "论文 PDF"]] as const).map(([kind, label]) => <button key={kind} type="button" aria-pressed={active === kind} disabled={cloudMode && ["urls", "bookmarks", "bundle"].includes(kind)} title={cloudMode && ["urls", "bookmarks", "bundle"].includes(kind) ? "云端暂不支持此格式" : undefined} onClick={() => switchImportFormat(kind)}>{label}</button>)}</fieldset>;
 
   externalIntentHandlerRef.current = async (intents) => {
     const externalError = intents.find((intent): intent is Extract<ExternalIntent, { kind: "error" }> => intent.kind === "error");
@@ -2166,7 +2176,7 @@ export default function App() {
       setBulkImportNotice("校验完成，请确认逐项结果与冲突策略。");
     } catch (error) {
       if ((error as Error).name === "AbortError") setBulkImportNotice("已取消校验。");
-      else setBulkImportError((error as Error).message);
+      else { setBulkImportError((error as Error).message); setBulkImportNotice(""); }
     } finally {
       if (bulkImportAbortRef.current === controller) bulkImportAbortRef.current = null;
       setBulkImportTask(null);
@@ -2176,6 +2186,7 @@ export default function App() {
 
   const importPaper = async () => {
     if (paperImportBusy || (paperImportMode === "url" ? !paperImportUrl.trim() : !paperImportFile)) return;
+    if (!await confirmDiscardChanges("当前修改尚未保存，仍要导入论文吗？")) return;
     setPaperImportBusy(true);
     setPaperImportError("");
     try {
@@ -2183,6 +2194,7 @@ export default function App() {
         ? await api.createPaperFromUrl(paperImportUrl.trim())
         : await api.uploadPaper(paperImportFile!);
       const paper = result.paper || result.duplicate;
+      setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); setGraphMode(false); focusReader();
       setPaperImportOpen(false);
       setPaperImportUrl("");
       setPaperImportFile(null);
@@ -2884,11 +2896,7 @@ export default function App() {
 
   useEffect(() => {
     const handleShortcuts = (event: globalThis.KeyboardEvent) => {
-      if (bulkImportOpen || guideOpen) return;
-      if (shortcutHelp) {
-        if (event.key === "Escape") setShortcutHelp(false);
-        return;
-      }
+      if (bulkImportOpen || guideOpen || shortcutHelp) return;
       const target = event.target as HTMLElement | null;
       if (target?.closest("dialog, [popover]")) return;
       const editing = Boolean(target?.closest("input, textarea, select, [role='combobox'], [contenteditable='true']"));
@@ -3519,14 +3527,14 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell editor-shell${immersiveActive ? " is-immersive" : ""}`} style={{ "--reading-margin": readingMargin } as import("react").CSSProperties}>
+    <div className={`app-shell editor-shell${immersiveActive ? " is-immersive" : ""}`} style={{ "--reading-margin": readingMargin, "--reading-font": `var(--font-${readingText.font})`, "--reading-font-size": `${readingText.fontSize}px`, "--reading-line-height": readingText.lineHeight, "--reading-letter-spacing": `${readingText.letterSpacing}em` } as import("react").CSSProperties}>
       <a className="skip-link" href="#library-panel">跳到资料库</a>
       <nav className="workspace-rail" aria-label="工作台导航">
-        <button type="button" className="rail-brand" aria-label="织页资料库" disabled={closing} onClick={() => void returnToLibrary()}>织</button>
+        <button type="button" className="rail-brand" aria-label="返回知识库主界面" disabled={closing} onClick={() => void returnToLibrary()}>织</button>
         <IconButton label="文档资料库" ref={libraryRailRef} aria-expanded={!libraryCollapsed} aria-controls="library-panel" aria-pressed={!libraryCollapsed && !sidebarSearch && !graphMode && libraryView === "all" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing} onClick={() => void toggleDirectory()}><WorkspaceIcon name="document" /></IconButton>
         <IconButton label="快捷搜索与新建文章" aria-haspopup="dialog" aria-expanded={quickActionsOpen} disabled={closing} onClick={openQuickActions}><WorkspaceIcon name="quickSearch" /></IconButton>
         <IconButton label="查看知识地图" aria-pressed={graphMode} disabled={closing} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); void openKnowledgeMap(); }}><WorkspaceIcon name="map" /></IconButton>
-        <IconButton label="导入文档" disabled={closing} onClick={() => setBulkImportOpen(true)}><WorkspaceIcon name="import" /></IconButton>
+        <IconButton label="导入" disabled={closing} onClick={() => { if (!bulkImportPreview) setBulkImportKind(cloudMode ? "markdown" : "urls"); setBulkImportOpen(true); }}><WorkspaceIcon name="import" /></IconButton>
         <div className="rail-spacer" />
         <IconButton label="帮助与关于" disabled={closing} onClick={() => setShortcutHelp(true)}><WorkspaceIcon name="help" /></IconButton>
         <IconButton label="管理数据安全" aria-pressed={safetyOpen} disabled={closing} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }}><WorkspaceIcon name="shield" /></IconButton>
@@ -3534,15 +3542,6 @@ export default function App() {
         <IconButton ref={immersiveToggleRef} label={immersiveMode ? "退出沉浸模式" : "进入沉浸模式"} aria-pressed={immersiveMode} aria-disabled={appearanceSaving || closing} onClick={() => void toggleImmersive()}><WorkspaceIcon name="immersive" /></IconButton>
         <IconButton label="打开设置" aria-pressed={aiSettingsOpen} disabled={closing} onClick={() => { setSafetyOpen(false); setDiagnosticsOpen(false); setAiSettingsOpen(true); }}><WorkspaceIcon name="settings" /></IconButton>
       </nav>
-      <header className="masthead">
-        <button type="button" className="brand" aria-label="返回知识库主界面" onClick={() => void returnToLibrary()} disabled={closing}>
-          <span><strong>织页</strong><small>{cloudMode ? "云端知识库" : "本地知识库"}</small></span>
-        </button>
-        <p className="masthead-note">文档工作台</p>
-        <div className="masthead-actions">{!cloudMode && onboarding !== "unavailable" && <button type="button" className="guide-button" onClick={() => setGuideOpen(true)} disabled={closing}>使用指南</button>}<button type="button" className="guide-button" onClick={() => { setPaperImportOpen(true); setPaperImportError(""); }} disabled={closing}>导入论文</button><button type="button" className="shortcut-help-button" aria-keyshortcuts="?" onClick={() => setShortcutHelp(true)} disabled={closing}>帮助</button>{"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}<button type="button" className="local-mark ai-settings-link" aria-pressed={aiSettingsOpen} onClick={() => { setDiagnosticsOpen(false); setSafetyOpen(false); setHistoryOpen(false); setCaptureHistoryOpen(false); setQualityOpen(false); setCollectionsOpen(false); setDerivedOpen(false); setAiSettingsOpen(true); }} disabled={closing}>设置</button><button type="button" className="local-mark" aria-pressed={safetyOpen || diagnosticsOpen} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }} disabled={closing}>
-          <i />{safetyRecovery ? "恢复模式" : "数据安全"}
-        </button></div>
-      </header>
 
       {offline && <div className="offline-banner" role="status">{cloudMode ? "云端服务当前不可达，请恢复网络后继续。" : "系统报告当前离线；本地阅读、编辑与搜索仍可使用，网页抓取和远程 AI 可能失败。"}</div>}
 
@@ -3576,6 +3575,7 @@ export default function App() {
             <h3 id="shortcut-title">快捷键</h3>
             <dl className="shortcut-list"><div><dt><kbd>⌘</kbd><kbd>K</kbd></dt><dd>打开快捷搜索</dd></div><div><dt><kbd>/</kbd></dt><dd>打开快捷搜索</dd></div><div><dt><kbd>J</kbd> / <kbd>K</kbd></dt><dd>在列表中移动</dd></div>{!cloudMode && <div><dt><kbd>X</kbd></dt><dd>选中或取消当前行</dd></div>}<div><dt><kbd>↵</kbd></dt><dd>打开当前行</dd></div>{!cloudMode && <div><dt><kbd>⌘</kbd><kbd>S</kbd></dt><dd>立即保存</dd></div>}<div><dt><kbd>Esc</kbd></dt><dd>关闭面板或返回列表</dd></div><div><dt><kbd>?</kbd></dt><dd>显示本帮助</dd></div></dl>
           </section>
+          {"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}
           <nav className="help-links" aria-label="项目帮助链接">
             <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/LICENSE" target="_blank" rel="noreferrer noopener">MIT 许可</a>
             <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/docs/PRIVACY.md" target="_blank" rel="noreferrer noopener">隐私</a>
@@ -3585,11 +3585,16 @@ export default function App() {
         </section>
       </Modal>}
 
-      <QuickActions open={quickActionsOpen} onClose={() => setQuickActionsOpen(false)} onOpenDocument={async (id) => id === selectedId || await selectDocument(id)} onCreateArticle={createArticle} />
+      <QuickActions open={quickActionsOpen} onClose={() => setQuickActionsOpen(false)} onOpenDocument={async (id) => {
+        if (id !== selectedId && !await selectDocument(id)) return false;
+        setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); setGraphMode(false); graphReturnRef.current = false;
+        quickJumpRef.current = true; return true;
+      }} onCreateArticle={async (title) => { const created = await createArticle(title); if (created) { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); quickJumpRef.current = true; } return created; }} />
 
       {paperImportOpen && <Modal open panel={false} className="shortcut-backdrop" title="导入论文" onClose={() => { if (!paperImportBusy) setPaperImportOpen(false); }}>
         <section className="shortcut-card paper-import-card">
-          <header><div><span className="eyebrow">NEW PAPER KNOWLEDGE</span><h2>导入一篇论文</h2><p>原始 PDF 会只读保存，再由已配置的 LLM 生成分页对照。</p></div><button type="button" onClick={() => setPaperImportOpen(false)} disabled={paperImportBusy} aria-label="关闭导入论文">×</button></header>
+          <header><div><h2>导入一篇论文</h2><p>原始 PDF 会只读保存，再由已配置的 LLM 生成分页对照。</p></div><button type="button" onClick={() => setPaperImportOpen(false)} disabled={paperImportBusy} aria-label="关闭导入论文">×</button></header>
+          {importTabs("paper", paperImportBusy)}
           <div className="paper-import-tabs" role="tablist" aria-label="论文来源类型"><button type="button" role="tab" aria-selected={paperImportMode === "url"} onClick={() => setPaperImportMode("url")}>公开链接</button><button type="button" role="tab" aria-selected={paperImportMode === "pdf"} onClick={() => setPaperImportMode("pdf")}>上传 PDF</button></div>
           {paperImportMode === "url" ? <label className="paper-import-field"><span>论文链接</span><input type="url" value={paperImportUrl} onChange={(event) => setPaperImportUrl(event.target.value)} placeholder="https://arxiv.org/abs/..." disabled={paperImportBusy} /><small>支持 arXiv 页面和直接 PDF；IEEE / ACM 等请上传 PDF。</small></label> : <label className="paper-import-upload"><span>选择原始 PDF</span><input type="file" accept="application/pdf,.pdf" onChange={(event) => setPaperImportFile(event.target.files?.[0] || null)} disabled={paperImportBusy} /><strong>{paperImportFile?.name || "尚未选择 PDF"}</strong><small>单文件上限 50 MiB；原始文件不会被 AI 改写。</small></label>}
           <div className="paper-import-boundary"><strong>AI 发送范围</strong><span>整份 PDF，或逐页页图 + 页码结构 + 图表说明</span><small>默认先发整份 PDF；端点不接受时，浏览器用 PDF.js 把每页渲染成 JPEG 后按批发送。原始文件不会被 AI 改写。</small></div>
@@ -3608,36 +3613,26 @@ export default function App() {
         >
           <section className="bulk-import-card">
             <header>
-              <div><span className="eyebrow">BATCH INTAKE</span><h2 id="bulk-import-title">批量导入</h2><p>{bulkImportKind === "bundle" ? "恢复便携知识包；完整留档仍在“数据安全”中管理。" : "先检查，再一次写入资料库。"}</p></div>
+              <div><h2 id="bulk-import-title">批量导入</h2><p>{bulkImportKind === "bundle" ? "恢复便携知识包；完整留档仍在“数据安全”中管理。" : "先检查，再一次写入资料库。"}</p></div>
               {bulkImportTask
                 ? <button className="bulk-cancel-task" type="button" autoFocus onClick={cancelBulkImportTask}>{bulkImportTask === "validating" ? "取消校验" : "取消导入"}</button>
                 : <button type="button" autoFocus onClick={() => void closeBulkImport()} disabled={bulkImportBusy} aria-label="关闭批量导入">×</button>}
             </header>
 
             {!bulkImportPreview ? <>
-              <fieldset className="bulk-kind" disabled={bulkImportBusy}>
-                <legend className="sr-only">导入格式</legend>
-                {([['urls', '网址列表'], ['bookmarks', '浏览器书签'], ['markdown', 'Markdown'], ['bundle', '织页知识包']] as Array<[ImportKind, string]>).map(([kind, label]) => (
-                  <button key={kind} type="button" aria-pressed={bulkImportKind === kind} onClick={() => { setBulkImportKind(kind); setBulkImportFiles([]); setBulkImportText(""); setBulkImportStrategy("skip"); setBulkImportError(""); setBulkImportNotice(""); }}>{label}</button>
-                ))}
-              </fieldset>
+              {importTabs(bulkImportKind, bulkImportBusy || uploadPreparing)}
 
               {bulkImportKind === "urls" ? (
                 <label className="bulk-text"><span>每行一个公开网页地址</span><textarea value={bulkImportText} onChange={(event) => { setBulkImportText(event.target.value); setBulkImportError(""); }} rows={10} placeholder={'https://example.com/article-one\nhttps://example.com/article-two'} disabled={bulkImportBusy} /></label>
               ) : bulkImportKind === "bookmarks" ? (
                 <label className="bulk-file"><span>选择浏览器导出的 bookmarks.html</span><input key={bulkImportKind} type="file" accept=".html,text/html" onChange={selectBulkFiles} disabled={bulkImportBusy} /><small>{bulkImportFiles[0]?.name || "尚未选择文件"}</small></label>
               ) : bulkImportKind === "markdown" ? (
-                <div className="bulk-markdown-files">
-                  <label className="bulk-file"><span>选择多个 .md 文件</span><input key={`${bulkImportKind}-files`} type="file" accept=".md,.markdown,text/markdown,text/plain" multiple onChange={selectBulkFiles} disabled={bulkImportBusy} /></label>
-                  <span>或</span>
-                  <label className="bulk-file"><span>选择整个目录</span><input key={`${bulkImportKind}-directory`} type="file" multiple {...{ webkitdirectory: "", directory: "" }} onChange={selectBulkFiles} disabled={bulkImportBusy} /></label>
-                  <small>{bulkImportFiles.length ? `已选择 ${bulkImportFiles.length} 个文件` : "尚未选择文件"}</small>
-                </div>
+                <MarkdownUpload files={bulkImportFiles} onChange={chooseBulkFiles} disabled={bulkImportBusy} onPreparingChange={setUploadPreparing} />
               ) : (
                 <label className="bulk-file bulk-bundle-file"><span>选择织页导出的 .zip 知识包</span><input key={bulkImportKind} type="file" accept=".zip,application/zip" onChange={selectBulkFiles} disabled={bulkImportBusy} /><small>{bulkImportFiles[0] ? `${bulkImportFiles[0].name} · ${(bulkImportFiles[0].size / 1024 / 1024).toFixed(1)} MiB` : "上限 100 MiB；文件保持二进制传输"}</small></label>
               )}
 
-              <div className="bulk-dialog-actions"><button className="primary-button" type="button" onClick={() => void previewBulkImport()} disabled={bulkImportBusy || !bulkImportReady}>{bulkImportBusy ? <><Spinner />检查中</> : "检查导入内容"}</button></div>
+              <div className="bulk-dialog-actions"><button className="primary-button" type="button" onClick={() => void previewBulkImport()} disabled={bulkImportBusy || uploadPreparing || !bulkImportReady}>{bulkImportBusy ? <><Spinner />检查中</> : "检查导入内容"}</button></div>
             </> : <>
               <div className={`bulk-counts ${bulkImportPreview.kind === "bundle" ? "has-assets" : ""}`} aria-label="导入检查统计">
                 <span><strong>{bulkImportPreview.counts.total}</strong>{bulkImportPreview.kind === "bundle" ? "文档" : "总计"}</span>
@@ -3660,7 +3655,7 @@ export default function App() {
                       : item.warnings.length
                         ? "存在未识别的 Front Matter 字段，原内容已保留。"
                         : item.sourceUrl || "准备就绪";
-                  return <li key={item.id} className={`is-${result?.status || item.status}`}><span className="bulk-item-index">{item.index + 1}</span><div><strong>{item.label}</strong><small>{detail}</small></div><em>{status}</em></li>;
+                  return <li key={item.id} className={`is-${result?.status || item.status}`}><span className="bulk-item-index">{item.index + 1}</span><div><strong>{item.label}</strong><small>{item.error || detail}</small>{bulkImportPreview.kind === "markdown" && bulkImportFiles[item.index] && <small>{bulkImportFiles[item.index].webkitRelativePath || bulkImportFiles[item.index].name} · {(bulkImportFiles[item.index].size / 1024).toFixed(1)} KB</small>}</div><em>{status}</em></li>;
                 })}
               </ol>
               {bulkImportPreview.items.length > 100 && <p className="bulk-list-limit">仅展示前 100 项；其余 {bulkImportPreview.items.length - 100} 项仍会按同一策略处理。</p>}
@@ -3681,7 +3676,7 @@ export default function App() {
       {diagnosticsOpen ? (
         <Diagnostics onClose={() => { setDiagnosticsOpen(false); setSafetyOpen(true); }} />
       ) : aiSettingsOpen ? (
-        <WorkspaceSettings readingMargin={readingMargin} onReadingMarginChange={setReadingMargin} cloud={cloudMode} semanticRefresh={semanticRefresh} onClose={() => setAiSettingsOpen(false)} />
+        <WorkspaceSettings readingText={readingText} onReadingTextChange={setReadingText} readingMargin={readingMargin} onReadingMarginChange={setReadingMargin} cloud={cloudMode} semanticRefresh={semanticRefresh} onClose={() => setAiSettingsOpen(false)} />
       ) : safetyOpen ? (
         <DataSafety
           cloud={cloudMode}
