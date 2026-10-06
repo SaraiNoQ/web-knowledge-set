@@ -85,10 +85,10 @@ test("switching preserves the editor instance, dirty content, selection and scro
   await editor.focus();
   expect(await page.evaluate(() => ({ anchor: getSelection()?.anchorOffset, focus: getSelection()?.focusOffset }))).toEqual(selection);
   await page.getByRole("button", { name: "退出沉浸模式" }).focus();
-  await page.evaluate(() => window.scrollTo(0, 700));
+  await page.locator(".reader-layout").evaluate((element) => element.scrollTo(0, 700));
   const toolbar = await page.locator(".editor-toolbar").boundingBox();
   expect(toolbar!.y).toBeGreaterThanOrEqual(42);
-  expect(await page.locator(".editor-toolbar").evaluate((element) => getComputedStyle(element).top)).toBe("42px");
+  expect(await page.locator(".editor-toolbar").evaluate((element) => getComputedStyle(element).top)).toBe("0px");
   await page.getByRole("button", { name: "退出沉浸模式" }).click();
   await expect(page.locator(".cm-editor")).toHaveAttribute("data-preserved", "yes");
   await expect(editor).toContainText("尚未保存。");
@@ -240,7 +240,7 @@ test("paper translation drafts and reader state survive immersive switching", as
     await enter(page);
     await expect(page.locator(".paper-reader")).toHaveAttribute("data-preserved", "yes");
     await expect(page.locator("textarea")).toHaveValue("沉浸模式中的未保存译文。");
-    await expect.poll(() => page.locator(".paper-reader-body").evaluate((element) => element.clientHeight - (innerHeight))).toBe(0);
+    await expect.poll(() => page.locator(".paper-reader-body").evaluate((element) => element.clientHeight - document.querySelector(".reader-layout")!.clientHeight)).toBe(0);
     for (const height of [900, 600]) {
       await page.setViewportSize({ width: 320, height });
       await expect.poll(() => page.locator(".paper-reader-pdf-page").evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(420);
