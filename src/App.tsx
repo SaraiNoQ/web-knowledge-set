@@ -693,6 +693,17 @@ export default function App() {
   const pendingTitleAttemptsRef = useRef(new Map<string, number>());
   const navigationGenerationRef = useRef(0);
   const readerPanelRef = useRef<HTMLElement>(null);
+  const readerScrollRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const reader = readerScrollRef.current;
+    if (!reader) return;
+    const update = () => reader.style.setProperty("--reader-body-height", `${reader.clientHeight}px`);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(reader);
+    return () => observer.disconnect();
+  }, [runtimeMode, onboarding, selectedId, aiSettingsOpen, safetyOpen, diagnosticsOpen]);
+  useEffect(() => { if (readerScrollRef.current) readerScrollRef.current.scrollTop = 0; }, [selectedId]);
   const documentHeadRef = useRef<HTMLElement>(null);
   const sidebarSearchRef = useRef<HTMLInputElement>(null);
   const libraryListRef = useRef<HTMLDivElement>(null);
@@ -801,8 +812,8 @@ export default function App() {
     const observer = new ResizeObserver(update);
     if (grid.parentElement?.parentElement) observer.observe(grid.parentElement.parentElement);
     window.addEventListener("resize", update);
-    window.addEventListener("scroll", update, { passive: true });
-    return () => { observer.disconnect(); window.removeEventListener("resize", update); window.removeEventListener("scroll", update); };
+    window.addEventListener("scroll", update, { passive: true, capture: true });
+    return () => { observer.disconnect(); window.removeEventListener("resize", update); window.removeEventListener("scroll", update, true); };
   }, [selectedId, Boolean(draft), cloudEditing, immersiveActive, libraryCollapsed, mode, derivedOpen, aiSettingsOpen, safetyOpen, diagnosticsOpen, guideOpen]);
 
   const longPreviewAllowed = !longArticle || longPreviewDocumentId === currentDoc?.id;
@@ -1957,7 +1968,7 @@ export default function App() {
         const result = await api.createArticle(title?.trim() || undefined);
         if (!await revealDocument(result.document, guard)) return false;
         setMode("edit");
-        toast.success("已在顶层创建文章。");
+        toast.success("已在根目录创建文章。");
         return true;
       } catch (error) {
         if (canApplyNavigation(guard)) toast.error((error as Error).message);
@@ -3764,11 +3775,12 @@ export default function App() {
           <div className="sidebar-scroll-region">
           <div className="sidebar-search-host" hidden={!sidebarSearch}><LibrarySearch folders={folders} refreshKey={listRefresh} inputRef={sidebarSearchRef} onOpen={selectDocument} active={sidebarSearch && !libraryCollapsed} /></div>
           <div className="sidebar-directory-body" hidden={sidebarSearch}>
-          <div className="panel-heading">
-            <div className="library-title-group"><h2>{inTrash ? "回收站" : "目录"}</h2><span className="total-count">{total}<small>篇</small></span></div>
-          </div>
+          {inTrash && <div className="panel-heading">
+            <div className="library-title-group"><h2>回收站</h2><span className="total-count">{total}<small>篇</small></span></div>
+          </div>}
 
           {!inTrash ? <><LibraryDirectory
+            total={total}
             folders={folders}
             filters={{
               q: query, scope: searchScope, kind: kindFilter, tag, collectionId: collectionFilter,
@@ -3841,7 +3853,7 @@ export default function App() {
 
         <section id="reader-panel" ref={readerPanelRef} className="reader-panel" aria-label="文档工作台" tabIndex={-1}>
           <DocumentTabs documents={openDocuments} selectedId={selectedId} dirty={hasUnsavedChanges} disabled={closing || organizationSaving || batchBusy || captureApplying || Boolean(collectionAction) || Boolean(tagAction) || Boolean(lifecycleAction) || restoringRevision !== null} onSelect={async (id) => { const opened = await selectDocument(id); if (opened) { graphReturnRef.current = false; setGraphMode(false); } return opened; }} onClose={closeDocumentTab} toolsOpen={toolsOpen} onToggleTools={() => setToolsOpen((value) => !value)} />
-          <div className={`reader-layout${toolsOpen ? " has-tools" : ""}`}><div className="reader-main">
+          <div ref={readerScrollRef} className={`reader-layout${toolsOpen ? " has-tools" : ""}`}><div className="reader-main">
           {selectedId && <div className="workspace-location">
             <IconButton label="返回文档目录" disabled={closing} onClick={() => void closeDocument()}><Icon size={18}><path d="M20 12H4m6-6-6 6 6 6" /></Icon></IconButton>
             <span>{folders.find((folder) => folder.id === currentDoc?.folderId)?.name ?? "目录"}</span><WorkspaceIcon name="chevron" size={13} />{titleEdit?.id === currentDoc?.id && titleEdit ? <input autoFocus className="breadcrumb-title-input" aria-label="文章标题" maxLength={1000} size={Math.max(1, Math.min(20, Array.from(titleEdit.title).length))} value={titleEdit.title} onChange={(event) => setTitleEdit({ ...titleEdit, title: event.target.value })} onBlur={() => setTitleEdit(null)} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); setTitleEdit(null); } if (event.key === "Enter") { event.preventDefault(); const edit = titleEdit; setTitleEdit(null); void renameDocument(edit, edit.title); } }} /> : <button type="button" className="breadcrumb-title" aria-label="重命名文章" title={currentDoc?.title || "双击重命名文章"} disabled={!currentDoc || organizationLocked || metadataDirty || paperDirty} onDoubleClick={() => { if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "F2") { event.preventDefault(); if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); } }}>{Array.from(currentDoc?.title || "正在打开…").slice(0, 20).join("")}{Array.from(currentDoc?.title || "").length > 20 ? "…" : ""}</button>}
@@ -4098,8 +4110,7 @@ export default function App() {
             const heading = readerPanelRef.current?.querySelector<HTMLElement>(`[data-heading-offset="${offset}"]`);
             if (heading) {
               const toolbar = readerPanelRef.current?.querySelector<HTMLElement>(".editor-toolbar");
-              const barHeight = readerPanelRef.current?.querySelector<HTMLElement>(".document-tabbar")?.getBoundingClientRect().height ?? 0;
-              heading.style.scrollMarginTop = `${barHeight + (toolbar?.getBoundingClientRect().height ?? 0) + 12}px`;
+              heading.style.scrollMarginTop = `${(toolbar?.getBoundingClientRect().height ?? 0) + 12}px`;
               heading.scrollIntoView({ block: "start" });
             }
             else markdownEditorRef.current?.jumpTo(offset);

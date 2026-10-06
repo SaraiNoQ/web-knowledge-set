@@ -110,7 +110,7 @@ export function DocumentDirectoryRow({
     {checkbox}
     <span className="sr-only">{STATUS[document.status]}</span>
     <HoverCard content={detail} delay={1_000} disabled={matchMedia("(hover: none), (pointer: coarse)").matches} hoverOnly label="知识详细信息">
-      <button type="button" className="directory-title document-row" aria-current={selected ? "true" : undefined} onClick={() => onOpen(document.id)}><WorkspaceIcon name="document" size={16} />{document.kind === "paper" && <span className="directory-kind-badge">PAPER</span>}<span className="directory-document-label">{document.title || "未命名网页"}</span></button>
+      <button type="button" className="directory-title document-row" aria-description={document.kind === "paper" ? "论文" : "文章"} aria-current={selected ? "true" : undefined} onClick={() => onOpen(document.id)}><WorkspaceIcon name={document.kind === "paper" ? "paper" : "document"} size={16} /><span className="directory-document-label">{document.title || "未命名网页"}</span></button>
     </HoverCard>
 
     {((!document.deletedAt && onTrash) || hasExternalUrl) && <><IconButton ref={actionButton} label={`更多操作：${document.title || "未命名网页"}`} aria-haspopup="dialog" aria-controls={actionId} popoverTarget={actionId} onClick={positionActions}><WorkspaceIcon name="more" size={16} /></IconButton><div ref={actionMenu} id={actionId} popover="auto" className="directory-action-menu" role="dialog" aria-label={`操作：${document.title || "未命名网页"}`} onToggle={(event) => { const open = event.currentTarget.matches(":popover-open"); if (open) { event.currentTarget.querySelector<HTMLElement>("a, button")?.focus({ preventScroll: true }); window.addEventListener("scroll", closeActions, true); } else { window.removeEventListener("resize", closeActions); window.removeEventListener("scroll", closeActions, true); if (event.currentTarget.contains(globalThis.document.activeElement)) actionButton.current?.focus(); } }}>{hasExternalUrl && <a href={externalUrl} target="_blank" rel="noreferrer noopener" aria-label={`打开原网页：${document.title || "未命名网页"}`} onClick={closeActions}>打开原网页</a>}{!document.deletedAt && onTrash && <>{onRename && <button type="button" onClick={() => { actionMenu.current?.hidePopover(); void onRename(document); }}>重命名</button>}<button type="button" onClick={() => { actionMenu.current?.hidePopover(); setTargetFolder(document.folderId ?? ""); setMoveOpen(true); }}>移动到文件夹…</button><button type="button" className="danger" onClick={() => { actionMenu.current?.hidePopover(); void onTrash(document); }}>删除（移入回收站）</button></>}</div></>}
@@ -146,12 +146,11 @@ interface Branch {
   error: string;
   items: DocumentSummary[];
   loading: boolean;
-  page: number;
-  pageSize: number;
   total: number;
 }
 
 export function LibraryDirectory({
+  total,
   folders,
   filters,
   refreshKey,
@@ -170,6 +169,7 @@ export function LibraryDirectory({
   onSelect,
   activeFolderId,
 }: {
+  total: number;
   folders: KnowledgeFolder[];
   filters: Omit<DocumentFilters, "folderId" | "unfiled" | "page" | "trash">;
   refreshKey: number;
@@ -205,31 +205,42 @@ export function LibraryDirectory({
     window.removeEventListener("scroll", closeCreateMenu, true);
   }, [closeCreateMenu]);
 
-  const loadBranch = useCallback(async (key: string, page = 1) => {
+  const loadBranch = useCallback(async (key: string) => {
     controllers.current.get(key)?.abort();
     const controller = new AbortController();
     controllers.current.set(key, controller);
-    setBranches((current) => ({ ...current, [key]: { ...(current[key] ?? { items: [], total: 0, pageSize: 30 }), context: filterKey, page, loading: true, error: "" } }));
+    setBranches((current) => ({ ...current, [key]: { ...(current[key] ?? { items: [], total: 0 }), context: filterKey, loading: true, error: "" } }));
     try {
-      const result = await api.listDocuments({ ...filters, page, ...(key === "unfiled" ? { unfiled: true } : { folderId: key }) }, controller.signal);
-      if (!controller.signal.aborted) setBranches((current) => ({ ...current, [key]: { ...result, context: filterKey, loading: false, error: "" } }));
+      const items: DocumentSummary[] = [];
+      let page = 1;
+      let total = 0;
+      // ponytail: reuse the bounded REST pages; switch to a snapshot cursor if concurrent library growth makes offset scans insufficient.
+      do {
+        const result = await api.listDocuments({ ...filters, page, ...(key === "unfiled" ? { unfiled: true } : { folderId: key }) }, controller.signal);
+        items.push(...result.items);
+        total = result.total;
+        if (!result.items.length || page * result.pageSize >= total) break;
+        page += 1;
+      } while (!controller.signal.aborted);
+      if (!controller.signal.aborted) setBranches((current) => ({ ...current, [key]: { items: [...new Map(items.map((item) => [item.id, item])).values()], total, context: filterKey, loading: false, error: "" } }));
     } catch (error) {
-      if ((error as Error).name !== "AbortError") setBranches((current) => ({ ...current, [key]: { ...(current[key] ?? { items: [], total: 0, page, pageSize: 30 }), context: filterKey, loading: false, error: (error as Error).message } }));
+      if (!controller.signal.aborted) setBranches((current) => ({ ...current, [key]: { ...(current[key] ?? { items: [], total: 0 }), context: filterKey, loading: false, error: (error as Error).message } }));
+    } finally {
+      if (controllers.current.get(key) === controller) controllers.current.delete(key);
     }
   }, [filterKey]);
 
   useEffect(() => {
-    void loadBranch("unfiled", 1);
-    for (const key of expanded) void loadBranch(key, 1);
+    void loadBranch("unfiled");
+    for (const key of expanded) void loadBranch(key);
     return () => { for (const controller of controllers.current.values()) controller.abort(); };
   }, [filterKey, refreshKey]);
 
-  const polling = ["unfiled", ...expanded].filter((key) => branches[key]?.items.some((item) => ["queued", "fetching", "extracting"].includes(item.status)));
-  const pollingKey = polling.map((key) => `${key}:${branches[key]?.page ?? 1}`).join("\0");
+  const pollingKey = ["unfiled", ...expanded].filter((key) => branches[key]?.items.some((item) => ["queued", "fetching", "extracting"].includes(item.status))).join("\0");
   useEffect(() => {
-    if (!polling.length) return;
+    if (!pollingKey) return;
     const timer = window.setInterval(() => {
-      for (const key of polling) void loadBranch(key, branches[key]?.page ?? 1);
+      for (const key of pollingKey.split("\0")) if (!controllers.current.has(key)) void loadBranch(key);
     }, 2_500);
     return () => window.clearInterval(timer);
   }, [pollingKey, loadBranch]);
@@ -253,7 +264,7 @@ export function LibraryDirectory({
       toast.success("已自动收起最早打开的文件夹，最多同时展开 6 个。");
     }
     setExpanded(next);
-    void loadBranch(key, branches[key]?.page ?? 1);
+    void loadBranch(key);
   };
 
   useEffect(() => {
@@ -306,7 +317,7 @@ export function LibraryDirectory({
 
   const root = branches.unfiled;
   return <section className="library-directory" aria-labelledby="folder-directory-title">
-    <header><div className="library-directory-heading"><h3 id="folder-directory-title">文件夹</h3></div><IconButton ref={createButton} label="新建" aria-haspopup="dialog" aria-controls={createMenuId} popoverTarget={createMenuId} onClick={prepareCreateMenu}><WorkspaceIcon name="plus" size={18} /></IconButton><div ref={createMenu} id={createMenuId} popover="auto" className="directory-action-menu" role="dialog" aria-label="新建" onToggle={(event) => { const open = event.currentTarget.matches(":popover-open"); if (open) { positionCreateMenu(); event.currentTarget.querySelector<HTMLElement>("a, button")?.focus({ preventScroll: true }); window.addEventListener("scroll", closeCreateMenu, true); } else { window.removeEventListener("resize", closeCreateMenu); window.removeEventListener("scroll", closeCreateMenu, true); if (event.currentTarget.contains(globalThis.document.activeElement)) createButton.current?.focus(); } }}><button type="button" onClick={() => { createMenu.current?.hidePopover(); void createFolder(); }}>创建文件夹</button><button type="button" onClick={() => { createMenu.current?.hidePopover(); void onCreateArticle(); }}>创建文章</button><button type="button" onClick={() => { createMenu.current?.hidePopover(); onCreatePaper(); }}>导入论文</button></div></header>
+    <header className="panel-heading"><div className="library-title-group"><h2 id="folder-directory-title">目录</h2><span className="total-count">{total}<small>篇</small></span></div><IconButton ref={createButton} label="新建" aria-haspopup="dialog" aria-controls={createMenuId} popoverTarget={createMenuId} onClick={prepareCreateMenu}><WorkspaceIcon name="plus" size={18} /></IconButton><div ref={createMenu} id={createMenuId} popover="auto" className="directory-action-menu" role="dialog" aria-label="新建" onToggle={(event) => { const open = event.currentTarget.matches(":popover-open"); if (open) { positionCreateMenu(); event.currentTarget.querySelector<HTMLElement>("a, button")?.focus({ preventScroll: true }); window.addEventListener("scroll", closeCreateMenu, true); } else { window.removeEventListener("resize", closeCreateMenu); window.removeEventListener("scroll", closeCreateMenu, true); if (event.currentTarget.contains(globalThis.document.activeElement)) createButton.current?.focus(); } }}><button type="button" onClick={() => { createMenu.current?.hidePopover(); void createFolder(); }}>创建文件夹</button><button type="button" onClick={() => { createMenu.current?.hidePopover(); void onCreateArticle(); }}>创建文章</button><button type="button" onClick={() => { createMenu.current?.hidePopover(); onCreatePaper(); }}>导入论文</button></div></header>
     <div ref={listRef} className="folder-tree" onKeyDown={onListKeyDown}>
       <div className="root-contents" role="region" aria-label="根目录内容" onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => void drop(event, null)}>
         {root?.loading && !root.items.length ? <p role="status">正在读取…</p> : root?.error ? <p role="alert">{root.error}</p> : !root?.items.length ? <p>{hasFilters ? "没有符合筛选条件的顶层知识。" : "暂无未归入文件夹的知识。"}</p> : root.items.map((document) => <DocumentDirectoryRow
@@ -319,7 +330,6 @@ export function LibraryDirectory({
           onTrash={onTrash} onRename={onRename}
           checkbox={onSelect ? <label className="row-select"><span className="sr-only">选择 {document.title || "未命名网页"}</span><input type="checkbox" disabled={selectionDisabled || root.loading || root.context !== filterKey} checked={selectedIds?.has(document.id) ?? false} onChange={(event) => onSelect(document, event.target.checked)} /></label> : undefined}
         />)}
-        {root && root.total > root.pageSize && <nav className="folder-pagination" aria-label="根目录分页"><button type="button" disabled={root.loading || root.page <= 1} onClick={() => void loadBranch("unfiled", root.page - 1)}>上一页</button><span>{root.page} / {Math.ceil(root.total / root.pageSize)}</span><button type="button" disabled={root.loading || root.page * root.pageSize >= root.total} onClick={() => void loadBranch("unfiled", root.page + 1)}>下一页</button></nav>}
       </div>
       {folders.map((folder) => {
         const key = folder.id;
@@ -341,7 +351,6 @@ export function LibraryDirectory({
               onTrash={onTrash} onRename={onRename}
               checkbox={onSelect ? <label className="row-select"><span className="sr-only">选择 {document.title || "未命名网页"}</span><input type="checkbox" disabled={selectionDisabled || branch.loading || branch.context !== filterKey} checked={selectedIds?.has(document.id) ?? false} onChange={(event) => onSelect(document, event.target.checked)} /></label> : undefined}
             />)}
-            {branch && branch.total > branch.pageSize && <nav className="folder-pagination" aria-label={`${folder.name}分页`}><button type="button" disabled={branch.loading || branch.page <= 1} onClick={() => void loadBranch(key, branch.page - 1)}>上一页</button><span>{branch.page} / {Math.ceil(branch.total / branch.pageSize)}</span><button type="button" disabled={branch.loading || branch.page * branch.pageSize >= branch.total} onClick={() => void loadBranch(key, branch.page + 1)}>下一页</button></nav>}
           </div>}
         </section>;
       })}

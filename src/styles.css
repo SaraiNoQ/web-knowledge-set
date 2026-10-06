@@ -2219,7 +2219,6 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 }
 .directory-title.document-row::before { display: none; }
 .directory-title.document-row:hover, .directory-title.document-row.is-selected { padding: 5px 4px; background: transparent; }
-.directory-kind-badge { display: inline-block; margin-right: 7px; padding: 2px 4px; color: var(--vermilion); border: 1px solid rgba(189,65,44,.35); font: 600 9px/1 var(--font-mono); letter-spacing: .06em; vertical-align: 1px; }
 .directory-document-row.is-selected .directory-title { padding-left: 10px; }
 .directory-document-row > .ui-icon-button { width: 30px; min-height: 30px; padding: 0; color: var(--ink-faint); font-size: 12px; letter-spacing: -.08em; }
 .directory-document-row > .ui-icon-button.directory-permanent-delete { color: var(--vermilion-dark); font-size: 18px; }
@@ -2253,8 +2252,6 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .folder-node > div .ui-icon-button { width: 28px; min-height: 28px; font-size: 13px; }
 .folder-contents { max-height: 52vh; margin-left: 13px; overflow: auto; border-left: 1px solid var(--line); }
 .folder-contents > p { margin: 0; padding: 10px 12px; color: var(--ink-faint); font-size: var(--font-caption); }
-.folder-pagination { display: flex; align-items: center; justify-content: space-between; padding: 7px 8px 7px 12px; color: var(--ink-faint); font: 10px/1 var(--font-mono); }
-.folder-pagination button { padding: 4px; color: var(--ink-soft); background: transparent; border: 0; font-size: var(--font-caption); }
 
 @media (max-width: 820px) {
   .directory-document-row.document-row-wrap { grid-template-columns: minmax(0,1fr) 40px; min-height: 44px; padding: 2px 0; gap: 4px; }

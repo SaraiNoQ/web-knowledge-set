@@ -318,3 +318,27 @@
   .reading-number:focus-within { outline: 2px solid Highlight; }
   .import-format-tabs button[aria-pressed="true"], .paper-import-content .paper-import-tabs button[aria-selected="true"] { outline: 2px solid Highlight; }
 }
+
+/* The workspace owns the viewport; the reader scrolls beneath its tab strip. */
+.editor-shell:has(> .workspace) { display: flex; flex-direction: column; height: 100dvh; min-height: 0; overflow: hidden; }
+.editor-shell > .capture-band { flex: 0 0 auto; }
+.editor-shell > .workspace { flex: 1 1 auto; min-height: 0; height: 0; }
+.editor-shell .library-panel { height: 100%; min-height: 0; }
+.editor-shell .reader-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
+.document-tabbar { flex: 0 0 var(--document-tab-height); position: relative; top: auto; }
+.reader-layout { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.reader-layout.has-tools { align-items: start; }
+.reader-main .markdown-preview :is(h1,h2,h3,h4,h5,h6) { scroll-margin-top: 12px; }
+.editor-shell .editor-toolbar, .editor-shell.is-immersive .editor-toolbar { top: 0; }
+.document-tools { top: 0; height: var(--reader-body-height, calc(100dvh - var(--document-tab-height))); }
+.editor-shell .library-directory { margin: 0; padding: 0; border: 0; }
+.library-directory > .panel-heading { padding-bottom: 14px; margin-bottom: 10px; border-bottom: 1px solid var(--line); }
+.library-directory .root-contents { min-height: 34px; }
+@media (max-width: 820px) {
+  .editor-shell .workspace:not(.has-selection) .reader-panel { display: none; }
+  .editor-shell .workspace.has-selection .library-panel { display: none; }
+  .document-tools { top: var(--document-tab-height); height: calc(100dvh - var(--document-tab-height)); }
+}
+
+.editor-shell.is-immersive > .workspace { min-height: 0; }
+.editor-shell .workspace.is-map-mode .reader-panel { min-height: 0; }
