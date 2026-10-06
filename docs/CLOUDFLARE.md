@@ -100,3 +100,5 @@ Cloudflare Web 的正式文档和抓取任务均支持 revision 保护的回收�
 - 待补：以所有者身份完成抓取、扩展剪藏与本地抓取三端的真实标题替换验证；`0.3.6` 已在 AMO 自签名（unlisted，见 [FIREFOX_AMO.md](./FIREFOX_AMO.md)），若要走商店安装仍需提交审核并更新安装链接。
 
 相关官方资料：[Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/)、[D1 限制](https://developers.cloudflare.com/d1/platform/limits/)、[R2](https://developers.cloudflare.com/r2/)、[Browser Run](https://developers.cloudflare.com/browser-run/)、[Queues](https://developers.cloudflare.com/queues/reference/how-queues-works/)、[Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/)。
+
+- 2026-10-06 · `e7c25fd3742ab013a2929a9534f8165fa1e8c6c9` · 紧凑工作台与 Motion 拟态交互已按用户授权部署。Web Version ID `455196a4-f0b3-4405-9e8c-d7c255fd2adc`，Clip Version ID `f5eadec1-6257-4acd-a677-272f0d082278`。沿用上一阶段已通过的服务器类型/单元/构建/cloud/相关 E2E 检查；部署前重新同步审查提交、通过 Firefox AMO 包装并暂存已签名 0.3.9 XPI（精确 SHA-256 与内容验证），两个生产配置资源绑定保持不变，无新增迁移。资产上传一次内部网络重试后成功。未登录 Web `/`、`/health` 返回 Access 302，Clip `/` 返回 403；登录态资料读写、真实扩展配对/剪藏和图片读取本轮未复验。
