@@ -768,3 +768,38 @@ export interface ApiError {
     draft?: DocumentDraft | null;
   };
 }
+
+export type ImportPayload =
+  | { type: "url"; url: string | null }
+  | {
+    type: "markdown";
+    title: string;
+    sourceUrl: string | null;
+    finalUrl: string | null;
+    canonicalUrl: string | null;
+    author: string | null;
+    publishedAt: string | null;
+    capturedAt: string | null;
+    tags: string[];
+    collections: string[];
+    folder?: string | null;
+    favorite: boolean;
+    archivedAt: string | null;
+    sourceNote: string;
+    markdown: string;
+    assets?: Array<{
+      path: string;
+      sha256: string;
+      mimeType: AssetMimeType;
+      sourceUrl: string;
+      byteSize: number;
+    }>;
+  };
+
+export interface PreparedImportItem {
+  label: string;
+  sourceUrl: string | null;
+  warnings: string[];
+  error: string | null;
+  payload: ImportPayload;
+}

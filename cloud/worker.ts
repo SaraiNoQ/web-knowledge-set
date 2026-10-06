@@ -20,6 +20,7 @@ import {
   updateFolder,
   type D1Database,
 } from "./extension";
+import { handleImportApi } from "./import";
 import { handleAiApi } from "./ai";
 import { handleTitleApi } from "./title";
 import { handleSemanticApi } from "./semantic";
@@ -266,6 +267,11 @@ async function api(request: Request, env: CloudEnv, url: URL) {
       { ...env, DB: epochGuardedDatabase(env.DB, epoch) },
       epoch,
     ), 200, epoch);
+  }
+  if (url.pathname.startsWith("/api/imports/")) {
+    if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed; reload before writing" } }, 409, epoch);
+    const imported = await handleImportApi(request, epochGuardedDatabase(env.DB, epoch), url, epoch);
+    if (imported) return json(imported.body, 200, epoch);
   }
   const aiPath = url.pathname.includes("/llm") || url.pathname.includes("/derived-");
   if (aiPath && request.method !== "GET" && request.headers.get(DATA_EPOCH_HEADER) !== epoch) {

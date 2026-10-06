@@ -87,11 +87,11 @@ class SqliteD1Database implements D1Database {
 function migratedCloudDatabase() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
-  for (let version = 1; version <= 11; version += 1) {
+  for (let version = 1; version <= 12; version += 1) {
     sqlite.exec(readFileSync(new URL(`../cloud/migrations/${String(version).padStart(4, "0")}_${[
       "cloud_core", "browser_extension", "cloud_ai", "cloud_backups", "cloud_capture", "cloud_folders", "cloud_trash", "cloud_favorites",
       "cloud_papers", "cloud_paper_content_mode",
-      "semantic_indexes",
+      "semantic_indexes", "cloud_imports",
     ][version - 1]}.sql`, import.meta.url), "utf8"));
   }
   return new SqliteD1Database(sqlite);
@@ -2301,4 +2301,61 @@ test("cloud paper batches narrow a reply that ran out of budget before writing a
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("cloud Markdown imports preview, commit idempotently, and guard conflicting updates", async () => {
+  const { env, db } = sqliteEnvironment();
+  const epoch = (db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get() as { value: string }).value;
+  const headers = { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch };
+  const post = (path: string, body: unknown) => handleRequest(new Request(`https://app.example.com${path}`, { method: "POST", headers, body: JSON.stringify(body) }), env);
+  const preview = async (content: string) => {
+    const response = await post("/api/imports/preview", { kind: "markdown", files: [{ path: "研究.md", content }] });
+    assert.equal(response.status, 200);
+    return await response.json() as import("../shared/types").ImportPreview;
+  };
+  const first = await preview("# 原始正文");
+  assert.equal(first.counts.valid, 1);
+  const apply = (id: string, strategy: string) => post(`/api/imports/${id}/apply`, { strategy });
+  const created = await (await apply(first.id, "skip")).json() as import("../shared/types").ImportApplyResult;
+  assert.equal(created.counts.created, 1);
+  assert.deepEqual(await (await apply(first.id, "skip")).json(), created);
+  assert.equal((await apply(first.id, "copy")).status, 409);
+  assert.equal(db.sqlite.prepare("SELECT count(*) AS count FROM cloud_documents").get()!.count, 1);
+  const duplicate = await preview("# 新正文");
+  assert.equal(duplicate.counts.duplicate, 1);
+  const id = created.items[0].documentId!;
+  await db.prepare("UPDATE cloud_documents SET revision=revision+1, markdown='并发编辑' WHERE id=?").bind(id).run();
+  const conflict = await (await apply(duplicate.id, "update")).json() as import("../shared/types").ImportApplyResult;
+  assert.equal(conflict.counts.conflicts, 1);
+  assert.equal(db.sqlite.prepare("SELECT markdown FROM cloud_documents WHERE id=?").get(id)!.markdown, "并发编辑");
+  const next = await preview("# 安全更新");
+  assert.equal((await (await apply(next.id, "update")).json() as import("../shared/types").ImportApplyResult).counts.updated, 1);
+  assert.equal(db.sqlite.prepare("SELECT markdown FROM cloud_documents WHERE id=?").get(id)!.markdown, "# 安全更新");
+  const bad = await preview("\0invalid");
+  assert.equal(bad.counts.invalid, 1);
+  const stale = await handleRequest(new Request("https://app.example.com/api/imports/preview", { method: "POST", headers: { ...headers, "X-Zhiye-Data-Epoch": "old" }, body: '{}' }), env);
+  assert.equal(stale.status, 409);
+  const repeated = await (await post("/api/imports/preview", { kind: "markdown", files: [{ path: "同名.md", content: "第一份" }, { path: "同名.md", content: "第二份" }] })).json() as import("../shared/types").ImportPreview;
+  assert.equal(repeated.counts.duplicate, 1);
+  const deduplicated = await (await apply(repeated.id, "skip")).json() as import("../shared/types").ImportApplyResult;
+  assert.equal(deduplicated.counts.created, 1);
+  assert.equal(deduplicated.counts.skipped, 1);
+  const invalidResponse = await post("/api/imports/preview", { kind: "markdown", files: [{ path: "bad.md", content: "正文\u0007" }, { path: `${"x".repeat(1001)}.md`, content: "超长标题" }, { path: "note.md", content: '---\nsource_note: "bad\\u0007"\n---\n正文' }, { path: "good.md", content: "有效正文" }] });
+  const invalidBatch = await invalidResponse.json() as import("../shared/types").ImportPreview;
+  assert.equal(invalidBatch.counts.invalid, 3);
+  const mixed = await (await apply(invalidBatch.id, "skip")).json() as import("../shared/types").ImportApplyResult;
+  assert.equal(mixed.counts.failed, 3); assert.equal(mixed.counts.created, 1);
+  assert.deepEqual(await (await apply(invalidBatch.id, "skip")).json(), mixed);
+  db.sqlite.prepare("UPDATE cloud_documents SET final_url='https://example.com/alias' WHERE id=?").run(id);
+  const alias = await (await post("/api/imports/preview", { kind: "markdown", files: [{ path: "alias.md", content: '---\nsource: "https://example.com/alias"\n---\n来源别名' }] })).json() as import("../shared/types").ImportPreview;
+  assert.equal(alias.items[0].existingDocumentId, id);
+  assert.equal((await (await apply(alias.id, "skip")).json() as import("../shared/types").ImportApplyResult).counts.skipped, 1);
+  const backupResponse = await post("/api/data-safety/backups", {});
+  assert.equal(backupResponse.status, 201);
+  const backup = await backupResponse.json() as { id: string };
+  assert.equal((await post(`/api/data-safety/backups/${backup.id}/verify`, {})).status, 200);
+  assert.equal((await handleRequest(new Request(`https://app.example.com/api/data-safety/backups/${backup.id}/export.zhiye-backup`), env)).status, 200);
+  assert.equal((await post(`/api/data-safety/backups/${backup.id}/restore`, {})).status, 200);
+  assert.equal(db.sqlite.prepare("SELECT markdown FROM cloud_documents WHERE id=?").get(id)!.markdown, "# 安全更新");
+
 });

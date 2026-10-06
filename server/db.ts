@@ -1,3 +1,4 @@
+import type { ImportPayload, PreparedImportItem } from "../shared/types.js";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { chmodSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -903,40 +904,8 @@ export interface DocumentPatch {
   folderId?: string | null;
 }
 
-export type ImportPayload =
-  | { type: "url"; url: string | null }
-  | {
-    type: "markdown";
-    title: string;
-    sourceUrl: string | null;
-    finalUrl: string | null;
-    canonicalUrl: string | null;
-    author: string | null;
-    publishedAt: string | null;
-    capturedAt: string | null;
-    tags: string[];
-    collections: string[];
-    folder?: string | null;
-    favorite: boolean;
-    archivedAt: string | null;
-    sourceNote: string;
-    markdown: string;
-    assets?: Array<{
-      path: string;
-      sha256: string;
-      mimeType: AssetMimeType;
-      sourceUrl: string;
-      byteSize: number;
-    }>;
-  };
+export type { ImportPayload, PreparedImportItem } from "../shared/types.js";
 
-export interface PreparedImportItem {
-  label: string;
-  sourceUrl: string | null;
-  warnings: string[];
-  error: string | null;
-  payload: ImportPayload;
-}
 
 interface ImportBatchRow {
   id: string;

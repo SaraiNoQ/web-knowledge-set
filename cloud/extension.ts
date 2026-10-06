@@ -28,7 +28,7 @@ export class CloudHttpError extends Error {
 
 const encoder = new TextEncoder();
 export const MAX_CLOUD_ROW_TEXT_BYTES = 1_900_000;
-const unsafeControl = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
+export const unsafeControl = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
 
 export async function jsonObject(request: Request, maxBytes = 2 * 1024 * 1024 + 16_384) {
   if (request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
