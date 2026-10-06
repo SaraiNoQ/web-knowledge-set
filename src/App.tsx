@@ -11,6 +11,8 @@ import {
   useState,
 } from "react";
 import { lazy, Suspense } from "react";
+import { motion, LayoutGroup } from "motion/react";
+import { MATERIAL_SPRING } from "./components/ui/InteractionMotion";
 import type { ChangeEvent, FormEvent, KeyboardEvent, ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeKatex from "rehype-katex";
@@ -2053,10 +2055,11 @@ export default function App() {
   };
   const selectBulkFiles = (event: ChangeEvent<HTMLInputElement>) => chooseBulkFiles(Array.from(event.target.files || []));
   const switchImportFormat = (kind: ImportKind | "paper") => {
+    if (bulkImportBusy || paperImportBusy || uploadPreparing) return;
     if (kind === "paper") { setBulkImportOpen(false); setPaperImportOpen(true); setPaperImportError(""); }
     else { setPaperImportOpen(false); setBulkImportOpen(true); setBulkImportKind(kind); setBulkImportStrategy("skip"); setBulkImportFiles([]); setBulkImportText(""); setBulkImportError(""); setBulkImportNotice(""); }
   };
-  const importTabs = (active: ImportKind | "paper", disabled: boolean) => <fieldset className="bulk-kind import-format-tabs" disabled={disabled}><legend className="sr-only">导入格式</legend>{([["urls", "网址列表"], ["bookmarks", "浏览器书签"], ["markdown", "Markdown"], ["bundle", "织页知识包"], ["paper", "论文 PDF"]] as const).map(([kind, label]) => <button key={kind} type="button" aria-pressed={active === kind} disabled={cloudMode && ["urls", "bookmarks", "bundle"].includes(kind)} title={cloudMode && ["urls", "bookmarks", "bundle"].includes(kind) ? "云端暂不支持此格式" : undefined} onClick={() => switchImportFormat(kind)}>{label}</button>)}</fieldset>;
+  const importTabs = (active: ImportKind | "paper", disabled: boolean) => <LayoutGroup id="import-formats"><fieldset className="bulk-kind import-format-tabs" disabled={disabled}><legend className="sr-only">导入格式</legend>{([["urls", "网址列表"], ["bookmarks", "浏览器书签"], ["markdown", "Markdown"], ["bundle", "织页知识包"], ["paper", "论文 PDF"]] as const).map(([kind, label]) => <button key={kind} type="button" aria-pressed={active === kind} disabled={cloudMode && ["urls", "bookmarks", "bundle"].includes(kind)} title={cloudMode && ["urls", "bookmarks", "bundle"].includes(kind) ? "云端暂不支持此格式" : undefined} onClick={() => switchImportFormat(kind)}>{active === kind && <motion.span className="import-tab-surface" layoutId="import-selected" transition={MATERIAL_SPRING} />}<span className="import-tab-label">{label}</span></button>)}</fieldset></LayoutGroup>;
 
   externalIntentHandlerRef.current = async (intents) => {
     const externalError = intents.find((intent): intent is Extract<ExternalIntent, { kind: "error" }> => intent.kind === "error");
@@ -3591,36 +3594,31 @@ export default function App() {
         quickJumpRef.current = true; return true;
       }} onCreateArticle={async (title) => { const created = await createArticle(title); if (created) { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); quickJumpRef.current = true; } return created; }} />
 
-      {paperImportOpen && <Modal open panel={false} className="shortcut-backdrop" title="导入论文" onClose={() => { if (!paperImportBusy) setPaperImportOpen(false); }}>
-        <section className="shortcut-card paper-import-card">
-          <header><div><h2>导入一篇论文</h2><p>原始 PDF 会只读保存，再由已配置的 LLM 生成分页对照。</p></div><button type="button" onClick={() => setPaperImportOpen(false)} disabled={paperImportBusy} aria-label="关闭导入论文">×</button></header>
-          {importTabs("paper", paperImportBusy)}
-          <div className="paper-import-tabs" role="tablist" aria-label="论文来源类型"><button type="button" role="tab" aria-selected={paperImportMode === "url"} onClick={() => setPaperImportMode("url")}>公开链接</button><button type="button" role="tab" aria-selected={paperImportMode === "pdf"} onClick={() => setPaperImportMode("pdf")}>上传 PDF</button></div>
-          {paperImportMode === "url" ? <label className="paper-import-field"><span>论文链接</span><input type="url" value={paperImportUrl} onChange={(event) => setPaperImportUrl(event.target.value)} placeholder="https://arxiv.org/abs/..." disabled={paperImportBusy} /><small>支持 arXiv 页面和直接 PDF；IEEE / ACM 等请上传 PDF。</small></label> : <label className="paper-import-upload"><span>选择原始 PDF</span><input type="file" accept="application/pdf,.pdf" onChange={(event) => setPaperImportFile(event.target.files?.[0] || null)} disabled={paperImportBusy} /><strong>{paperImportFile?.name || "尚未选择 PDF"}</strong><small>单文件上限 50 MiB；原始文件不会被 AI 改写。</small></label>}
-          <div className="paper-import-boundary"><strong>AI 发送范围</strong><span>整份 PDF，或逐页页图 + 页码结构 + 图表说明</span><small>默认先发整份 PDF；端点不接受时，浏览器用 PDF.js 把每页渲染成 JPEG 后按批发送。原始文件不会被 AI 改写。</small></div>
-          {paperImportError && <p className="paper-import-error" role="alert">{paperImportError}</p>}
-          <footer><button type="button" onClick={() => setPaperImportOpen(false)} disabled={paperImportBusy}>取消</button><button type="button" className="primary-button" onClick={() => void importPaper()} disabled={paperImportBusy || (paperImportMode === "url" ? !paperImportUrl.trim() : !paperImportFile)}>{paperImportBusy ? <><Spinner />处理中…</> : "创建论文"}</button></footer>
-        </section>
-      </Modal>}
-
-      {bulkImportOpen && (
+      {(bulkImportOpen || paperImportOpen) && (
         <Modal
           open
           panel={false}
           className="shortcut-backdrop bulk-import-backdrop"
-          title="批量导入"
-          onClose={() => { if (bulkImportTask) cancelBulkImportTask(); else void closeBulkImport(); }}
+          title="导入"
+          dismissible={!paperImportBusy && (!bulkImportBusy || Boolean(bulkImportTask))}
+          onClose={() => { if (paperImportOpen) { if (!paperImportBusy) setPaperImportOpen(false); } else if (bulkImportTask) cancelBulkImportTask(); else void closeBulkImport(); }}
         >
           <section className="bulk-import-card">
             <header>
-              <div><h2 id="bulk-import-title">批量导入</h2><p>{bulkImportKind === "bundle" ? "恢复便携知识包；完整留档仍在“数据安全”中管理。" : "先检查，再一次写入资料库。"}</p></div>
+              <div><h2 id="bulk-import-title">导入</h2><p>{paperImportOpen ? "导入论文 PDF，保存原文并生成分页对照。" : bulkImportKind === "bundle" ? "恢复便携知识包；完整留档仍在“数据安全”中管理。" : "先检查，再一次写入资料库。"}</p></div>
               {bulkImportTask
                 ? <button className="bulk-cancel-task" type="button" autoFocus onClick={cancelBulkImportTask}>{bulkImportTask === "validating" ? "取消校验" : "取消导入"}</button>
-                : <button type="button" autoFocus onClick={() => void closeBulkImport()} disabled={bulkImportBusy} aria-label="关闭批量导入">×</button>}
+                : <button type="button" autoFocus onClick={() => { if (paperImportOpen) setPaperImportOpen(false); else void closeBulkImport(); }} disabled={bulkImportBusy || paperImportBusy} aria-label="关闭导入">×</button>}
             </header>
 
-            {!bulkImportPreview ? <>
-              {importTabs(bulkImportKind, bulkImportBusy || uploadPreparing)}
+            {!bulkImportPreview && importTabs(paperImportOpen ? "paper" : bulkImportKind, bulkImportBusy || paperImportBusy || uploadPreparing)}
+            {paperImportOpen ? <div className="paper-import-content">
+              <div className="paper-import-tabs" role="tablist" aria-label="论文来源类型"><button type="button" role="tab" disabled={paperImportBusy} aria-selected={paperImportMode === "url"} onClick={() => setPaperImportMode("url")}>公开链接</button><button type="button" role="tab" disabled={paperImportBusy} aria-selected={paperImportMode === "pdf"} onClick={() => setPaperImportMode("pdf")}>上传 PDF</button></div>
+              {paperImportMode === "url" ? <label className="paper-import-field"><span>论文链接</span><input type="url" value={paperImportUrl} onChange={(event) => setPaperImportUrl(event.target.value)} placeholder="https://arxiv.org/abs/..." disabled={paperImportBusy} /><small>支持 arXiv 页面和直接 PDF；IEEE / ACM 等请上传 PDF。</small></label> : <label className="paper-import-upload"><span>选择原始 PDF</span><WorkspaceIcon name="paper" size={28} /><input className="sr-only paper-pdf-input" type="file" accept="application/pdf,.pdf" onChange={(event) => setPaperImportFile(event.target.files?.[0] || null)} disabled={paperImportBusy} /><span className="paper-pdf-picker">选择 PDF 文件</span><strong>{paperImportFile?.name || "尚未选择 PDF"}</strong><small>单文件上限 50 MiB；原始文件不会被 AI 改写。</small></label>}
+              <div className="paper-import-boundary"><strong>AI 发送范围</strong><span>整份 PDF，或逐页页图 + 页码结构 + 图表说明</span><small>默认先发整份 PDF；端点不接受时，浏览器用 PDF.js 把每页渲染成 JPEG 后按批发送。原始文件不会被 AI 改写。</small></div>
+              {paperImportError && <p className="paper-import-error" role="alert">{paperImportError}</p>}
+              <footer className="bulk-dialog-actions paper-import-actions"><button type="button" onClick={() => setPaperImportOpen(false)} disabled={paperImportBusy}>取消</button><button type="button" className="primary-button" onClick={() => void importPaper()} disabled={paperImportBusy || (paperImportMode === "url" ? !paperImportUrl.trim() : !paperImportFile)}>{paperImportBusy ? <><Spinner />处理中…</> : "创建论文"}</button></footer>
+            </div> : !bulkImportPreview ? <>
 
               {bulkImportKind === "urls" ? (
                 <label className="bulk-text"><span>每行一个公开网页地址</span><textarea value={bulkImportText} onChange={(event) => { setBulkImportText(event.target.value); setBulkImportError(""); }} rows={10} placeholder={'https://example.com/article-one\nhttps://example.com/article-two'} disabled={bulkImportBusy} /></label>
@@ -3667,8 +3665,8 @@ export default function App() {
                 </> : <button className="primary-button" type="button" onClick={() => void closeBulkImport()}>完成</button>}
               </footer>
             </>}
-            {bulkImportNotice && <p className="bulk-import-notice" role="status">{bulkImportNotice}</p>}
-            {bulkImportError && <p className="bulk-import-error" role="alert">{bulkImportError}</p>}
+            {!paperImportOpen && bulkImportNotice && <p className="bulk-import-notice" role="status">{bulkImportNotice}</p>}
+            {!paperImportOpen && bulkImportError && <p className="bulk-import-error" role="alert">{bulkImportError}</p>}
           </section>
         </Modal>
       )}
@@ -3746,7 +3744,8 @@ export default function App() {
       <main className={workspaceClassName}>
         <aside id="library-panel" className={`library-panel ${libraryCollapsed ? "is-collapsed" : ""}`} aria-label="知识列表">
           <nav className="sidebar-tabbar" aria-label="目录分类">
-            <div className="sidebar-category-toggle" role="group" aria-label="目录视图切换" style={{ "--category-index": sidebarSearch ? 4 : ({ all: 0, favorites: 1, paper: 2, trash: 3 } as const)[libraryView] } as import("react").CSSProperties}>
+            <div className="sidebar-category-toggle" role="group" aria-label="目录视图切换">
+              <motion.span aria-hidden="true" className="sidebar-category-surface" initial={false} animate={{ x: `${(sidebarSearch ? 4 : ({ all: 0, favorites: 1, paper: 2, trash: 3 } as const)[libraryView]) * 100}%` }} transition={MATERIAL_SPRING} />
               {([["all", "列表"], ["favorites", "收藏"], ["paper", "论文"], ["trash", "回收站"], ["search", "搜索"]] as const).map(([value, label]) => <button key={value} type="button" aria-label={label} title={label} aria-pressed={value === "search" ? sidebarSearch : !sidebarSearch && libraryView === value} disabled={closing || batchBusy} onClick={() => { if (value === "search") void openSidebarSearch(); else void applyLibraryView(value); }} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return; event.preventDefault(); const buttons = Array.from(event.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>("button")); const index = buttons.indexOf(event.currentTarget); buttons[event.key === "Home" ? 0 : event.key === "End" ? 4 : (index + (event.key === "ArrowRight" ? 1 : 4)) % 5]?.focus(); }}><WorkspaceIcon name={({ all: "list", favorites: "star", paper: "paper", trash: "trash", search: "search" } as const)[value]} size={18} /></button>)}
             </div>
           </nav>
@@ -3862,8 +3861,8 @@ export default function App() {
                 </div>
 
                 <div className="document-actions">
-                  <button type="button" className={`favorite-button ${currentDoc.favorite ? "is-active" : ""}`} aria-pressed={currentDoc.favorite} onClick={() => void toggleFavorite()} disabled={organizationLocked || metadataDirty}><WorkspaceIcon name="star" size={17} />{currentDoc.favorite ? "取消收藏" : "设为收藏"}</button>
-                  <button type="button" className="primary-button" onClick={() => void toggleCloudEditing()} disabled={currentDoc.status !== "ready" || saveState === "saving"}>{cloudEditing ? "返回阅读" : "编辑这篇知识"}</button>
+                  <button type="button" className={`favorite-button ${currentDoc.favorite ? "is-active" : ""}`} aria-pressed={currentDoc.favorite} onClick={() => void toggleFavorite()} disabled={organizationLocked || metadataDirty}><WorkspaceIcon name="star" size={17} />{currentDoc.favorite ? "取消收藏" : "收藏"}</button>
+                  <button type="button" className="primary-button" onClick={() => void toggleCloudEditing()} disabled={currentDoc.status !== "ready" || saveState === "saving"}>{cloudEditing ? "返回阅读" : "编辑"}</button>
                   <button type="button" className="history-button" onClick={toggleDerived} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen} aria-controls="derived-knowledge">AI 派生</button>
                   <button type="button" className="history-button translation-button" onClick={openTranslation} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen && derivedPreferredType === "translation"} aria-controls="derived-knowledge">翻译</button>
                 </div>
@@ -3928,7 +3927,7 @@ export default function App() {
                   </form>
                 )}
                 <div className="document-actions">
-                  <button type="button" className={`favorite-button ${currentDoc.favorite ? "is-active" : ""}`} aria-pressed={currentDoc.favorite} onClick={() => void toggleFavorite()} disabled={organizationLocked || metadataDirty}><WorkspaceIcon name="star" size={17} />{currentDoc.favorite ? "取消收藏" : "设为收藏"}</button>
+                  <button type="button" className={`favorite-button ${currentDoc.favorite ? "is-active" : ""}`} aria-pressed={currentDoc.favorite} onClick={() => void toggleFavorite()} disabled={organizationLocked || metadataDirty}><WorkspaceIcon name="star" size={17} />{currentDoc.favorite ? "取消收藏" : "收藏"}</button>
                   <button type="button" className="history-button" onClick={() => void toggleArchive()} disabled={organizationLocked || metadataDirty}>{currentDoc.archivedAt ? "取消归档" : "归档"}</button>
                   <button type="button" className="history-button" onClick={toggleCollectionManager} disabled={closing} aria-expanded={collectionsOpen} aria-controls="collection-manager">管理分类</button>
                   <button type="button" className="history-button" onClick={toggleQuality} disabled={closing || currentDoc.status !== "ready"} aria-expanded={qualityOpen} aria-controls="capture-quality">质量检查</button>

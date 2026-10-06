@@ -102,7 +102,7 @@ for (const cloud of [false, true]) {
     const initialBackground = await page.locator("body").evaluate((element) => getComputedStyle(element).backgroundColor);
     await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
   await page.getByRole("dialog", { name: "快捷搜索与新建", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
-    if (cloud) await page.getByRole("button", { name: "编辑这篇知识", exact: true }).click();
+    if (cloud) await page.getByRole("button", { name: "编辑", exact: true }).click();
     const editor = page.getByRole("textbox", { name: "Markdown 编辑器" });
     await editor.fill("主题切换保留未保存正文。");
     await rail.getByRole("button", { name: "切换到深色模式", exact: true }).click();
@@ -154,7 +154,7 @@ test("editor fills the remaining viewport and can reveal the complete last line"
   await page.goto("/");
   await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
   await page.getByRole("dialog", { name: "快捷搜索与新建", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
-  await page.getByRole("button", { name: "编辑这篇知识", exact: true }).click();
+  await page.getByRole("button", { name: "编辑", exact: true }).click();
   await expect(page.locator(".document-head .title-field")).toHaveCount(0);
   const editor = page.getByRole("textbox", { name: "Markdown 编辑器" });
   await editor.fill(Array.from({ length: 100 }, (_, index) => `段落 ${index}：正文回归。`).join("\n\n") + "\n\n最后一行完整可见");

@@ -109,6 +109,7 @@ This inventory is generated from the locked production dependency metadata. Bund
 | fflate | 0.8.3 | MIT | Arjun Barrett | https://101arrowz.github.io/fflate |
 | float-tooltip | 1.7.5 | MIT | Vasco Asturiano | https://github.com/vasturiano/float-tooltip |
 | force-graph | 1.51.4 | MIT | Vasco Asturiano | https://github.com/vasturiano/force-graph |
+| framer-motion | 14.0.0 | MIT | Matt Perry | https://github.com/motiondivision/motion#readme |
 | fsevents | 2.3.2 | MIT | Philipp Dunkel, Ben Noordhuis, Elan Shankar, Paul Miller | https://github.com/fsevents/fsevents |
 | hast-util-from-dom | 5.0.1 | ISC | Keith McKnight | https://github.com/syntax-tree/hast-util-from-dom#readme |
 | hast-util-from-html-isomorphic | 2.0.0 | MIT | Remco Haszing | https://github.com/syntax-tree/hast-util-from-html-isomorphic#readme |
@@ -187,6 +188,9 @@ This inventory is generated from the locked production dependency metadata. Bund
 | micromark-util-symbol | 2.0.1 | MIT | Titus Wormer | https://github.com/micromark/micromark/tree/main#readme |
 | micromark-util-types | 2.0.2 | MIT | Titus Wormer | https://github.com/micromark/micromark/tree/main#readme |
 | micromark | 4.0.2 | MIT | Titus Wormer | https://github.com/micromark/micromark/tree/main#readme |
+| motion-dom | 14.0.0 | MIT | Matt Perry | https://github.com/motiondivision/motion#readme |
+| motion-utils | 14.0.0 | MIT | Matt Perry | https://github.com/motiondivision/motion#readme |
+| motion | 14.0.0 | MIT | Matt Perry | https://github.com/motiondivision/motion#readme |
 | ms | 2.1.3 | MIT | — | https://github.com/vercel/ms#readme |
 | nth-check | 3.0.1 | BSD-2-Clause | Felix Boehm | https://github.com/fb55/nth-check |
 | object-assign | 4.1.1 | MIT | Sindre Sorhus | https://github.com/sindresorhus/object-assign#readme |
@@ -220,6 +224,7 @@ This inventory is generated from the locked production dependency metadata. Bund
 | tinycolor2 | 1.6.0 | MIT | Brian Grinstead | https://github.com/bgrins/TinyColor#readme |
 | trim-lines | 3.0.1 | MIT | Titus Wormer | https://github.com/wooorm/trim-lines#readme |
 | trough | 2.2.0 | MIT | Titus Wormer | https://github.com/wooorm/trough#readme |
+| tslib | 2.8.1 | 0BSD | Microsoft Corp. | https://www.typescriptlang.org/ |
 | turndown | 7.2.4 | MIT | Dom Christie | https://github.com/mixmark-io/turndown#readme |
 | uhyphen | 0.2.0 | ISC | Andrea Giammarchi | https://github.com/WebReflection/uhyphen#readme |
 | unified | 11.0.5 | MIT | Titus Wormer | https://unifiedjs.com |

@@ -46,7 +46,7 @@ test("directory categories align with article tabs and reuse existing views", as
     if (immersive) await page.getByRole("button", { name: "进入沉浸模式", exact: true }).click();
     const header = await categories.boundingBox();
     const articleTabs = await page.locator(".document-tabbar").boundingBox();
-    expect(header!.height).toBe(33);
+    expect(header!.height).toBe(42);
     expect(header!.y).toBe(articleTabs!.y);
     expect(header!.height).toBe(articleTabs!.height);
     if (immersive) await page.getByRole("button", { name: "退出沉浸模式", exact: true }).click();
@@ -82,7 +82,7 @@ test("search opens body matches and category changes protect unsaved edits", asy
   await expect(page.getByRole("searchbox", { name: "搜索文档", exact: true })).toHaveValue("联邦原型");
   await expect(panel.locator(".library-search-result-title")).toHaveText(document.title);
   await panel.locator(".library-search-result-title").click();
-  await page.getByRole("button", { name: "编辑这篇知识", exact: true }).click();
+  await page.getByRole("button", { name: "编辑", exact: true }).click();
   const editor = page.getByRole("textbox", { name: "Markdown 编辑器" });
   await editor.fill("分类切换前尚未保存的正文");
   await page.getByLabel("目录分类", { exact: true }).getByRole("button", { name: "收藏", exact: true }).click();
@@ -135,7 +135,7 @@ test("quick actions search, open results, create named articles, and protect dra
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole("button", { name: "重命名文章", exact: true })).toHaveAttribute("title", enterTitle);
 
-  await page.getByRole("button", { name: "编辑这篇知识", exact: true }).click();
+  await page.getByRole("button", { name: "编辑", exact: true }).click();
   const editor = page.getByRole("textbox", { name: "Markdown 编辑器" });
   await editor.fill("创建前必须保护的未保存正文");
   await railSearch.click();
@@ -399,7 +399,7 @@ test("mobile rail opens quick actions without leaving the current search or read
   await page.keyboard.press("Escape");
   await expect(quickActions).toHaveCount(0);
   await expect(page.getByRole("button", { name: "重命名文章", exact: true })).toHaveAttribute("title", document.title);
-  await page.getByRole("button", { name: "编辑这篇知识", exact: true }).click();
+  await page.getByRole("button", { name: "编辑", exact: true }).click();
   const editor = page.getByRole("textbox", { name: "Markdown 编辑器" });
   await editor.fill("手机搜索返回之前尚未保存的正文");
   await railSearch.click();

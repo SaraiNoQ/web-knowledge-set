@@ -714,7 +714,7 @@ test("opens one keyboard-accessible help and about dialog in normal and recovery
 test("previews a batch before importing it", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "批量导入" }).click();
-  const dialog = page.getByRole("dialog", { name: "批量导入" });
+  const dialog = page.getByRole("dialog", { name: "导入" });
   await dialog.getByRole("button", { name: "Markdown" }).click();
   await dialog.getByLabel("选择多个 .md 文件").setInputFiles(Array.from({ length: 101 }, (_, index) => ({
     name: `note-${index}.md`, mimeType: "text/markdown", buffer: Buffer.from("# note"),
@@ -746,7 +746,7 @@ test("previews a batch before importing it", async ({ page }) => {
   await cleanup;
   await closeReady;
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("zhiye:close-timeout", { detail: { attemptId: "9100" } })));
-  await dialog.getByRole("button", { name: "关闭批量导入" }).click();
+  await dialog.getByRole("button", { name: "关闭导入" }).click();
   await expect(dialog).toBeHidden();
 
   const downloadStarted = page.waitForEvent("download");
@@ -765,7 +765,7 @@ test("previews a batch before importing it", async ({ page }) => {
   await expect(dialog.locator(".bulk-counts")).toContainText("文档");
   await expect(dialog.locator(".bulk-counts")).toContainText("资源");
   await expect(dialog.locator(".bulk-counts .is-assets strong")).toHaveText("0");
-  await dialog.getByRole("button", { name: "关闭批量导入" }).click();
+  await dialog.getByRole("button", { name: "关闭导入" }).click();
   await expect(dialog).toBeHidden();
 });
 
@@ -1489,7 +1489,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await page.getByRole("button", { name: "保存来源信息" }).click();
   await expect(page.getByText("来源信息已保存。")).toBeVisible();
 
-  await page.getByRole("button", { name: "设为收藏" }).click();
+  await page.locator(".document-actions").getByRole("button", { name: "收藏" }).click();
   await expect(page.getByRole("button", { name: "取消收藏" })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("region", { name: "文档工作台" }).getByRole("button", { name: "归档", exact: true }).click();
   await expect(page.getByRole("button", { name: "取消归档" })).toBeVisible();
@@ -1695,14 +1695,14 @@ test("desktop data safety shows the current knowledge-base path", async ({ page 
   await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文章" }).click();
   await expect(page.locator(".workspace-location").getByText("未命名文章", { exact: true })).toBeVisible();
   const reader = page.getByRole("region", { name: "文档工作台" });
-  await expect(reader.getByRole("button", { name: "编辑这篇知识", exact: true })).toBeVisible();
+  await expect(reader.getByRole("button", { name: "编辑", exact: true })).toBeVisible();
   await expect(reader.getByLabel("来源信息")).toHaveCount(0);
   await reader.getByRole("button", { name: "AI 派生", exact: true }).click();
   const derived = page.getByRole("complementary", { name: "AI 派生知识" });
   await expect(derived).toBeVisible();
   await expect(derived.getByRole("button", { name: "标签建议", exact: true })).toHaveCount(0);
   await derived.getByRole("button", { name: "关闭 AI 派生知识" }).click();
-  await reader.getByRole("button", { name: "编辑这篇知识", exact: true }).click();
+  await reader.getByRole("button", { name: "编辑", exact: true }).click();
   await expect(reader.getByRole("button", { name: "返回阅读", exact: true })).toBeVisible();
   await expect(reader.getByLabel("Markdown 编辑器")).toBeVisible();
 });
@@ -1786,7 +1786,7 @@ test("routes desktop capture and file intents through existing imports", async (
   await expect(page.locator(".library-directory .row-select")).toHaveCount(0);
   await expect(page.locator(".workspace-location").getByText("远端测试文章", { exact: true })).toBeVisible({ timeout: 8_000 });
   const reader = page.getByRole("region", { name: "文档工作台" });
-  await expect(reader.getByRole("button", { name: "编辑这篇知识", exact: true })).toBeVisible();
+  await expect(reader.getByRole("button", { name: "编辑", exact: true })).toBeVisible();
   await expect(reader.getByLabel("来源信息")).toHaveCount(0);
   for (const label of ["归档", "管理分类", "质量检查", "采集历史", "修订历史", "移入回收站"]) {
     await expect(reader.getByRole("button", { name: label, exact: true })).toHaveCount(0);
@@ -1799,7 +1799,7 @@ test("routes desktop capture and file intents through existing imports", async (
     };
     return value.items.some((item) => item.sourceUrl === "https://example.com/desktop-warm-link");
   })).toBe(true);
-  const dialog = page.getByRole("dialog", { name: "批量导入" });
+  const dialog = page.getByRole("dialog", { name: "导入" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("已从桌面接收 1 个文件")).toBeVisible();
   await expect(dialog.getByText("已添加 1 个文件")).toBeVisible();
@@ -2052,7 +2052,7 @@ test("favorites from the cloud title area and labels the article as favorited", 
   const deferAfterReload = page.getByRole("button", { name: "稍后设置" });
   if (await deferAfterReload.isVisible()) await deferAfterReload.click();
   await page.getByRole("button", { name: "云端收藏入口测试", exact: true }).click();
-  const favorite = page.getByRole("button", { name: "设为收藏" });
+  const favorite = page.locator(".document-actions").getByRole("button", { name: "收藏" });
   await expect(favorite).toBeVisible();
   await favorite.click();
   await expect(page.getByRole("button", { name: "取消收藏" })).toHaveAttribute("aria-pressed", "true");

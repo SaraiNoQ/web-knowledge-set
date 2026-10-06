@@ -87,8 +87,8 @@ test("switching preserves the editor instance, dirty content, selection and scro
   await page.getByRole("button", { name: "退出沉浸模式" }).focus();
   await page.evaluate(() => window.scrollTo(0, 700));
   const toolbar = await page.locator(".editor-toolbar").boundingBox();
-  expect(toolbar!.y).toBeGreaterThanOrEqual(33);
-  expect(await page.locator(".editor-toolbar").evaluate((element) => getComputedStyle(element).top)).toBe("33px");
+  expect(toolbar!.y).toBeGreaterThanOrEqual(42);
+  expect(await page.locator(".editor-toolbar").evaluate((element) => getComputedStyle(element).top)).toBe("42px");
   await page.getByRole("button", { name: "退出沉浸模式" }).click();
   await expect(page.locator(".cm-editor")).toHaveAttribute("data-preserved", "yes");
   await expect(editor).toContainText("尚未保存。");
@@ -222,7 +222,7 @@ test("paper translation drafts and reader state survive immersive switching", as
   await page.goto("/");
   await page.getByRole("button", { name: "导入", exact: true }).click();
   await page.getByRole("button", { name: "论文 PDF", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "导入论文" });
+  const dialog = page.getByRole("dialog", { name: "导入" });
   await dialog.getByRole("tab", { name: "上传 PDF" }).click();
   await dialog.locator('input[type="file"]').setInputFiles({ name: "immersive.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7\nE2E fixture\n", "ascii") });
   const upload = page.waitForResponse((response) => response.url().endsWith("/api/papers/upload") && response.request().method() === "POST");

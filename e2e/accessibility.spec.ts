@@ -92,9 +92,9 @@ test("has no serious or critical accessibility violations in primary workflows",
     await expectNoHighImpactViolations(page, "Markdown 编辑器");
 
     await page.getByRole("button", { name: "批量导入" }).click();
-    await expect(page.getByRole("dialog", { name: "批量导入" })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "导入" })).toBeVisible();
     await expectNoHighImpactViolations(page, "批量导入");
-    await page.getByRole("button", { name: "关闭批量导入" }).click();
+    await page.getByRole("button", { name: "关闭导入" }).click();
 
     await page.getByRole("button", { name: "打开设置", exact: true }).click();
     await expect(page.getByRole("heading", { name: "AI 派生设置" })).toBeVisible();

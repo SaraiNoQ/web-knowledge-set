@@ -21,7 +21,7 @@ test("one Markdown upload accepts files, drops, directories and shows import res
     await page.goto("/");
     await expect(page.locator(".masthead")).toHaveCount(0);
     await page.getByRole("button", { name: "导入", exact: true }).click();
-    const modal = page.getByRole("dialog", { name: "批量导入", exact: true });
+    const modal = page.getByRole("dialog", { name: "导入", exact: true });
     await modal.getByLabel("选择 Markdown 文件", { exact: true }).setInputFiles({ name: "picked.md", mimeType: "text/markdown", buffer: Buffer.from("# 点击添加的文档") });
     await page.locator(".markdown-dropzone").evaluate((element) => { const dataTransfer = new DataTransfer(); dataTransfer.items.add(new File(["# 拖放的文档"], "dropped.md", { type: "text/markdown" })); element.dispatchEvent(new DragEvent("drop", { dataTransfer, bubbles: true })); });
     await expect(modal.getByRole("list", { name: "已添加的 Markdown 文件" }).locator("li")).toHaveCount(2);
@@ -53,7 +53,7 @@ test("one Markdown upload accepts files, drops, directories and shows import res
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.getByRole("button", { name: "导入", exact: true }).click();
     await page.getByRole("button", { name: "论文 PDF", exact: true }).click();
-    const paper = page.getByRole("dialog", { name: "导入论文", exact: true });
+    const paper = page.getByRole("dialog", { name: "导入", exact: true });
     await expect(paper.getByRole("button", { name: "论文 PDF", exact: true })).toHaveAttribute("aria-pressed", "true");
     await expect(paper.getByRole("tab", { name: "上传 PDF", exact: true })).toBeVisible();
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -83,3 +83,60 @@ test("quick actions reveal and scroll to documents from settings with mouse and 
     await expect(page.locator(".reader-panel")).toBeFocused();
   }
 });
+
+for (const reducedMotion of ["reduce", "no-preference"] as const) {
+  test(`compact chrome and material feedback respect ${reducedMotion}`, async ({ page }) => {
+    await page.emulateMedia({ reducedMotion });
+    await page.goto("/");
+    await expect(page.locator(".workspace-rail")).toHaveCSS("width", "48px");
+    await expect(page.locator(".sidebar-tabbar")).toHaveCSS("height", "42px");
+    await page.getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
+    await page.getByRole("option", { name: /新建空白文章/ }).click();
+    await expect(page.locator(".document-tabs")).toHaveCSS("height", "42px");
+    await expect(page.locator(".compact-document-head")).toHaveCSS("height", "42px");
+    await expect(page.locator(".document-actions").getByRole("button", { name: "收藏", exact: true })).toBeVisible();
+    await expect(page.locator(".document-actions").getByRole("button", { name: "编辑", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "导入", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "导入", exact: true });
+    await dialog.evaluate((element) => { element.setAttribute("data-surface-identity", "same"); });
+    const initialWidth = await dialog.locator(".bulk-import-card").evaluate((element) => element.clientWidth);
+    await dialog.getByRole("button", { name: "论文 PDF", exact: true }).click();
+    await expect(dialog).toHaveAttribute("data-surface-identity", "same");
+    expect(await dialog.locator(".bulk-import-card").evaluate((element) => element.clientWidth)).toBe(initialWidth);
+    await expect(dialog.getByRole("tab", { name: "公开链接", exact: true })).toBeVisible();
+    await dialog.getByRole("tab", { name: "上传 PDF", exact: true }).click();
+    await expect(dialog.locator('input[type="file"]')).toHaveCount(1);
+    await expect(dialog.getByText("选择 PDF 文件", { exact: true })).toBeVisible();
+    expect((await new AxeBuilder({ page }).include(".bulk-import-card").analyze()).violations).toEqual([]);
+    if (reducedMotion === "no-preference") await page.screenshot({ path: "/tmp/zhiye-material-paper-desktop.png" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(dialog).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (reducedMotion === "no-preference") await page.screenshot({ path: "/tmp/zhiye-material-paper-mobile.png" });
+    await dialog.getByRole("button", { name: "Markdown", exact: true }).click();
+    await expect(dialog).toHaveAttribute("data-surface-identity", "same");
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.getByRole("button", { name: "打开设置", exact: true }).click();
+    const reading = page.getByRole("button", { name: "阅读与显示", exact: true });
+    await reading.focus();
+    await page.keyboard.down(" ");
+    await expect.poll(() => reading.evaluate((element) => getComputedStyle(element).transform)).toMatch(reducedMotion === "reduce" ? /^none$/ : /^matrix/);
+    await page.keyboard.up(" ");
+    await expect(page.getByRole("spinbutton", { name: "正文字号", exact: true })).toBeVisible();
+    await expect.poll(() => reading.evaluate((element) => getComputedStyle(element).transform)).toBe("none");
+    const bounds = (await reading.boundingBox())!;
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await page.mouse.down();
+    await expect.poll(() => reading.evaluate((element) => getComputedStyle(element).transform)).toMatch(reducedMotion === "reduce" ? /^none$/ : /^matrix/);
+    await page.mouse.move(0, 0);
+    await page.mouse.up();
+    await expect.poll(() => reading.evaluate((element) => getComputedStyle(element).transform)).toBe("none");
+    const size = page.getByRole("spinbutton", { name: "正文字号", exact: true });
+    await expect(size).toHaveCSS("appearance", "textfield");
+    await size.fill("16");
+    await size.press("ArrowUp");
+    await expect(size).toHaveValue("17");
+  });
+}

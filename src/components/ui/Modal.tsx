@@ -2,6 +2,9 @@ import { useEffect, useId, useRef } from "react";
 
 import type { MouseEvent, ReactNode } from "react";
 
+import { animate } from "motion/mini";
+import { spring, type AnimationPlaybackControls } from "motion";
+import { MATERIAL_SPRING } from "./InteractionMotion";
 import { IconButton } from "./Controls";
 
 export interface ModalProps {
@@ -40,8 +43,16 @@ export function Modal({
 
     openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (!dialog.open) dialog.showModal();
+    const surface = dialog.querySelector<HTMLElement>(":scope > section");
+    const transform = surface?.style.transform || "";
+    let entrance: AnimationPlaybackControls | null = null;
+    if (surface && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      entrance = animate(surface, { transform: ["scale(.985)", "scale(1)"] }, { ...MATERIAL_SPRING, type: spring, onComplete: () => { entrance?.cancel(); surface.style.transform = transform; } });
+    }
 
     return () => {
+      entrance?.cancel();
+      if (surface) surface.style.transform = transform;
       if (dialog.open) dialog.close();
       if (openerRef.current?.isConnected) openerRef.current.focus({ preventScroll: true });
     };

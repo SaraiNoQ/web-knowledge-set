@@ -13,12 +13,12 @@ test("tabs compress, evict in opening order, and preserve the current dirty docu
   const tabs = page.getByRole("navigation", { name: "已打开的文章" });
   for (const title of titles) await page.locator(".directory-document-row").getByRole("button", { name: title, exact: true }).click();
   await expect(tabs.locator(".document-tab")).toHaveCount(7);
-  expect((await page.locator(".document-tabbar").boundingBox())!.height).toBe(33);
+  expect((await page.locator(".document-tabbar").boundingBox())!.height).toBe(42);
   const widths = await tabs.locator(".document-tab").evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().width));
   expect(widths.every((width) => width < 210 && width >= 120)).toBe(true);
   expect(await tabs.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   await tabs.getByRole("button", { name: titles[0], exact: true }).click();
-  await page.getByRole("button", { name: "编辑这篇知识", exact: true }).click();
+  await page.getByRole("button", { name: "编辑", exact: true }).click();
   await page.getByRole("textbox", { name: "Markdown 编辑器" }).fill("# 必须保留的草稿");
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(tabs.locator(".document-tab")).toHaveCount(2);
@@ -32,8 +32,8 @@ test("tabs compress, evict in opening order, and preserve the current dirty docu
   await expect(page.getByText("已保存", { exact: true })).toBeVisible();
   await page.setViewportSize({ width: 1000, height: 900 });
   for (const title of titles.slice(1, 6)) await page.locator(".directory-document-row").getByRole("button", { name: title, exact: true }).click();
-  await expect(tabs.locator(".document-tab")).toHaveCount(4);
-  await expect(tabs.locator(".document-tab-select")).toHaveText(titles.slice(2, 6));
+  await expect(tabs.locator(".document-tab")).toHaveCount(5);
+  await expect(tabs.locator(".document-tab-select")).toHaveText(titles.slice(1, 6));
   await tabs.getByRole("button", { name: titles[2], exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(tabs.locator(".document-tab-select")).toHaveText(titles.slice(4, 6));
@@ -56,7 +56,7 @@ test("tab capacity resumes after a pending organization update", async ({ page, 
   });
   await page.goto("/");
   for (const title of titles) await page.locator(".directory-document-row").getByRole("button", { name: title, exact: true }).click();
-  await page.getByRole("button", { name: "设为收藏", exact: true }).click();
+  await page.locator(".document-actions").getByRole("button", { name: "收藏", exact: true }).click();
   const tabs = page.getByRole("navigation", { name: "已打开的文章" });
   await expect(tabs.locator(".document-tab-select").last()).toBeDisabled();
   await page.setViewportSize({ width: 390, height: 844 });
@@ -88,7 +88,7 @@ for (const cloud of [false, true]) test(`right outline folds and navigates real 
   await outline.getByRole("button", { name: "重复标题", exact: true }).last().click();
   await expect(page.locator('.reader-main .markdown-preview h2').last()).toBeInViewport();
   await page.screenshot({ path: `test-results/outline-${cloud ? "web" : "local"}-reading.png` });
-  if (cloud) await page.getByRole("button", { name: "编辑这篇知识", exact: true }).click();
+  if (cloud) await page.getByRole("button", { name: "编辑", exact: true }).click();
   await page.getByRole("button", { name: "对照", exact: true }).click();
   await outline.getByRole("button", { name: "中部跳转", exact: true }).click();
   await expect.poll(async () => {
@@ -135,7 +135,7 @@ for (const cloud of [false, true]) {
       await page.getByRole("dialog", { name: "快捷搜索与新建", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
     } };
     await create.click();
-    if (cloud) await page.getByRole("button", { name: "编辑这篇知识" }).click();
+    if (cloud) await page.getByRole("button", { name: "编辑" }).click();
     if (cloud) {
       await page.getByRole("button", { name: "重命名文章", exact: true }).dblclick();
       await page.getByRole("textbox", { name: "文章标题", exact: true }).fill("第一篇工作笔记");
@@ -148,7 +148,7 @@ for (const cloud of [false, true]) {
     await create.click();
     const tabs = page.getByRole("navigation", { name: "已打开的文章" });
     await expect(tabs.locator(".document-tab-select")).toHaveCount(2);
-    if (cloud) await page.getByRole("button", { name: "编辑这篇知识" }).click();
+    if (cloud) await page.getByRole("button", { name: "编辑" }).click();
     if (cloud) {
       await page.getByRole("button", { name: "重命名文章", exact: true }).dblclick();
       await page.getByRole("textbox", { name: "文章标题", exact: true }).fill("第二篇工作笔记");
@@ -174,7 +174,7 @@ for (const cloud of [false, true]) {
       await expect(page.getByLabel("作者", { exact: true })).toHaveValue("尚未保存的作者");
       await page.getByLabel("作者", { exact: true }).fill("");
     }
-    if (cloud) await page.getByRole("button", { name: "编辑这篇知识" }).click();
+    if (cloud) await page.getByRole("button", { name: "编辑" }).click();
     await page.getByRole("textbox", { name: "Markdown 编辑器" }).fill("尚未保存的内容。");
     await page.getByRole("button", { name: "关闭文章：第一篇工作笔记" }).click();
     const dialog = page.getByRole("alertdialog", { name: "存在未保存修改" });
