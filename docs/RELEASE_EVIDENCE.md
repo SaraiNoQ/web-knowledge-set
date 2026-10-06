@@ -1,5 +1,13 @@
 # 发布证据
 
+## `1.0.6` Apple Silicon DMG
+
+- 2026-10-06（Asia/Singapore）发布准备提交：`a3ccdfd6e337f190ece6ebf880b406906d588007`，基于已合并当前功能的 main `8a20c784cec5e8bd156df506ee9cbb18806cec7e`；package/Cargo/Tauri/Info.plist 版本一致为1.0.6，构建号10006。指定服务器类型检查、生产构建及独立发布配置审查通过；没有重复全库或端到端测试。
+- macOS DMG workflow：[run 37357618487](https://github.com/SaraiNoQ/web-knowledge-set/actions/runs/37357618487) 成功完成 main tip 标签校验、版本断言、macOS 应用编译、ad-hoc 签名及 `codesign --verify --deep --strict`、DMG 封装、artifact 上传、校验和生成与正式发布。
+- 正式 Release：[v1.0.6](https://github.com/SaraiNoQ/web-knowledge-set/releases/tag/v1.0.6) 为 immutable、非 draft、非 prerelease；DMG `Zhiye_1.0.6_aarch64.dmg`（239644896字节）与 `SHA256SUMS` 均为 uploaded。
+- DMG SHA-256：`398af6840a4d54d17f259dbc0903d27df822915c073007fd8e4625524aa08724`。从正式 Release 下载 `SHA256SUMS`，文件名和摘要与 GitHub 发布资产的服务器端 `digest` 一致；没有宣称在本机重装或启动验证。
+- 应用使用 ad-hoc 签名，未使用 Apple Developer ID、未公证且无自动更新通道。
+
 ## `1.0.4` Apple Silicon DMG
 
 - 发布准备提交：`97d26808b49c943890a099be8280ba5de6baaebd`；该提交包含 AI 远程端点安全公网 DNS 解析修复和统一的 1.0.4 版本源。
