@@ -249,3 +249,5 @@
 - 本阶段为代码更新，未发布新的 Cloudflare 生产部署，也未重发桌面安装包。
 
 - 2026-10-06 · `e7c25fd3742ab013a2929a9534f8165fa1e8c6c9` · 紧凑工作台与 Motion 拟态交互已按用户授权部署。Web Version ID `455196a4-f0b3-4405-9e8c-d7c255fd2adc`，Clip Version ID `f5eadec1-6257-4acd-a677-272f0d082278`。沿用上一阶段已通过的服务器类型/单元/构建/cloud/相关 E2E 检查；部署前重新同步审查提交、通过 Firefox AMO 包装并暂存已签名 0.3.9 XPI（精确 SHA-256 与内容验证），两个生产配置资源绑定保持不变，无新增迁移。资产上传一次内部网络重试后成功。未登录 Web `/`、`/health` 返回 Access 302，Clip `/` 返回 403；登录态资料读写、真实扩展配对/剪藏和图片读取本轮未复验。
+
+- 2026-10-06 · `2a5ba2d` · 修正论文导入标签的垂直跳动：两组始终驻留在各自栏中的弹簧指示器只沿 X 轴切换；论文来源标签铺满格式栏并改为黑底白字选中态；移除 AI 发送范围说明块。Web Version ID `625afa0f-e9dd-4336-957c-76b13437f0b8`，Clip Version ID `350f597c-0e88-4b02-8118-c52f6f38fbf3`。无 D1 迁移，资源绑定未变。Node 24.19.0 `pnpm check`、`build`、双 Worker `cloud:bundle` dry-run、`notices:check` 和独立审查通过。未登录 Web `/`、`/health` 返回 Access 302，Clip `/` 返回 403；登录态资料读写、真实扩展配对/剪藏和图片读取本轮未复验。
