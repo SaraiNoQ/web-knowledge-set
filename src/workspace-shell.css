@@ -253,9 +253,9 @@
 /* One import surface and compact paper-like reading controls. */
 .editor-shell .workspace { min-height: calc(100dvh - 80px); }
 .bulk-import-card { border-radius: 4px; border-color: var(--line-strong); box-shadow: 0 18px 52px rgba(31,29,25,.18); }
-.import-format-tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; padding: 5px; border: 0; border-radius: 6px; background: var(--paper-deep); box-shadow: var(--material-inset); }
-.import-format-tabs button { position: relative; isolation: isolate; min-width: 0; padding: 8px 6px; border: 0; border-radius: 4px; min-height: 40px; background: transparent; }
-.import-tab-surface { position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--paper-light); box-shadow: var(--material-raised); pointer-events: none; }
+.import-format-tabs { position: relative; isolation: isolate; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; padding: 5px; border: 0; border-radius: 6px; background: var(--paper-deep); box-shadow: var(--material-inset); }
+.import-format-tabs button { position: relative; z-index: 1; min-width: 0; padding: 8px 6px; border: 0; border-radius: 4px; min-height: 40px; background: transparent; }
+.import-tab-surface { position: absolute; inset: 5px auto 5px 5px; z-index: 0; width: calc((100% - 10px) / 5); border-radius: 4px; background: var(--paper-light); box-shadow: var(--material-raised); pointer-events: none; }
 .import-tab-label { position: relative; }
 .import-format-tabs button[aria-pressed="true"] { color: var(--vermilion-dark); background: transparent; }
 .markdown-dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; min-height: 200px; padding: 24px; border: 1px dashed var(--line-strong); border-radius: 4px; background: var(--paper-light); color: var(--ink-soft); }
@@ -295,9 +295,11 @@
 
 .reading-number input::-webkit-inner-spin-button, .reading-number input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .paper-import-content { min-height: 280px; }
-.paper-import-content .paper-import-tabs { width: min(320px, 100%); margin: 0 0 18px; padding: 4px; gap: 4px; border: 0; border-radius: 5px; background: var(--paper-deep); box-shadow: var(--material-inset); }
-.paper-import-content .paper-import-tabs button { min-height: 32px; border: 0; border-radius: 3px; }
-.paper-import-content .paper-import-tabs button[aria-selected="true"] { color: var(--vermilion-dark); background: var(--paper-light); box-shadow: var(--material-raised); }
+.paper-import-content .paper-import-tabs { position: relative; isolation: isolate; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; height: 44px; margin: 0 0 18px; padding: 0; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 0; background: var(--paper); box-shadow: none; }
+.paper-import-content .paper-import-tabs .import-tab-surface { inset: 0 auto 0 0; width: 50%; border-radius: 0; background: var(--ink); box-shadow: none; }
+.paper-import-content .paper-import-tabs button { position: relative; z-index: 1; min-height: 42px; color: var(--ink-soft); background: transparent; border: 0; border-right: 1px solid var(--line); font-size: 12px; }
+.paper-import-content .paper-import-tabs button:last-child { border-right: 0; }
+.paper-import-content .paper-import-tabs button[aria-selected="true"] { color: var(--paper-light); background: transparent; }
 .paper-import-content .paper-import-field { margin: 0; }
 .paper-import-content .paper-import-field input { border-radius: 4px; box-shadow: var(--material-inset); border-color: transparent; }
 .paper-import-content .paper-import-field input:focus { border-color: var(--vermilion); }
@@ -305,16 +307,13 @@
 .paper-pdf-picker { padding: 9px 16px; color: var(--ink); background: var(--paper); border-radius: 4px; box-shadow: var(--material-raised); font: 500 13px/1.4 var(--font-sans); cursor: pointer; }
 .paper-import-upload > svg { color: var(--vermilion-dark); }
 .paper-import-upload:focus-within { outline: 2px solid var(--vermilion); outline-offset: 3px; }
-.paper-import-content .paper-import-boundary { gap: 6px; padding: 16px 0 0; border: 0; border-top: 1px solid var(--line); background: transparent; }
-.paper-import-content .paper-import-boundary small { font-family: var(--font-sans); }
 .paper-import-actions { gap: 10px; }
 .paper-import-actions > button:not(.primary-button) { padding: 0 14px; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 4px; background: transparent; }
 @media (max-width: 580px) {
-  .import-format-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .import-format-tabs button { font-size: 12px; }
+  .import-format-tabs button { padding-inline: 2px; font-size: 10px; white-space: nowrap; }
 }
 @media (forced-colors: active) {
   .reading-number { border-color: ButtonText; }
   .reading-number:focus-within { outline: 2px solid Highlight; }
-  .import-format-tabs button[aria-pressed="true"] { outline: 2px solid Highlight; }
+  .import-format-tabs button[aria-pressed="true"], .paper-import-content .paper-import-tabs button[aria-selected="true"] { outline: 2px solid Highlight; }
 }

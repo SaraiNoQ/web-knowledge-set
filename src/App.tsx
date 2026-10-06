@@ -11,7 +11,7 @@ import {
   useState,
 } from "react";
 import { lazy, Suspense } from "react";
-import { motion, LayoutGroup } from "motion/react";
+import { motion } from "motion/react";
 import { MATERIAL_SPRING } from "./components/ui/InteractionMotion";
 import type { ChangeEvent, FormEvent, KeyboardEvent, ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
@@ -2059,7 +2059,15 @@ export default function App() {
     if (kind === "paper") { setBulkImportOpen(false); setPaperImportOpen(true); setPaperImportError(""); }
     else { setPaperImportOpen(false); setBulkImportOpen(true); setBulkImportKind(kind); setBulkImportStrategy("skip"); setBulkImportFiles([]); setBulkImportText(""); setBulkImportError(""); setBulkImportNotice(""); }
   };
-  const importTabs = (active: ImportKind | "paper", disabled: boolean) => <LayoutGroup id="import-formats"><fieldset className="bulk-kind import-format-tabs" disabled={disabled}><legend className="sr-only">导入格式</legend>{([["urls", "网址列表"], ["bookmarks", "浏览器书签"], ["markdown", "Markdown"], ["bundle", "织页知识包"], ["paper", "论文 PDF"]] as const).map(([kind, label]) => <button key={kind} type="button" aria-pressed={active === kind} disabled={cloudMode && ["urls", "bookmarks", "bundle"].includes(kind)} title={cloudMode && ["urls", "bookmarks", "bundle"].includes(kind) ? "云端暂不支持此格式" : undefined} onClick={() => switchImportFormat(kind)}>{active === kind && <motion.span className="import-tab-surface" layoutId="import-selected" transition={MATERIAL_SPRING} />}<span className="import-tab-label">{label}</span></button>)}</fieldset></LayoutGroup>;
+  const importTabs = (active: ImportKind | "paper", disabled: boolean) => {
+    const formats = [["urls", "网址列表"], ["bookmarks", "浏览器书签"], ["markdown", "Markdown"], ["bundle", "织页知识包"], ["paper", "论文 PDF"]] as const;
+    const activeIndex = formats.findIndex(([kind]) => kind === active);
+    return <fieldset className="bulk-kind import-format-tabs" disabled={disabled}>
+      <legend className="sr-only">导入格式</legend>
+      <motion.span aria-hidden="true" className="import-tab-surface" initial={false} animate={{ x: `${activeIndex * 100}%` }} transition={MATERIAL_SPRING} />
+      {formats.map(([kind, label]) => <button key={kind} type="button" aria-pressed={active === kind} disabled={cloudMode && ["urls", "bookmarks", "bundle"].includes(kind)} title={cloudMode && ["urls", "bookmarks", "bundle"].includes(kind) ? "云端暂不支持此格式" : undefined} onClick={() => switchImportFormat(kind)}><span className="import-tab-label">{label}</span></button>)}
+    </fieldset>;
+  };
 
   externalIntentHandlerRef.current = async (intents) => {
     const externalError = intents.find((intent): intent is Extract<ExternalIntent, { kind: "error" }> => intent.kind === "error");
@@ -3613,9 +3621,13 @@ export default function App() {
 
             {!bulkImportPreview && importTabs(paperImportOpen ? "paper" : bulkImportKind, bulkImportBusy || paperImportBusy || uploadPreparing)}
             {paperImportOpen ? <div className="paper-import-content">
-              <div className="paper-import-tabs" role="tablist" aria-label="论文来源类型"><button type="button" role="tab" disabled={paperImportBusy} aria-selected={paperImportMode === "url"} onClick={() => setPaperImportMode("url")}>公开链接</button><button type="button" role="tab" disabled={paperImportBusy} aria-selected={paperImportMode === "pdf"} onClick={() => setPaperImportMode("pdf")}>上传 PDF</button></div>
+              <div className="paper-import-tabs" role="tablist" aria-label="论文来源类型">
+                <motion.span aria-hidden="true" className="import-tab-surface" initial={false} animate={{ x: `${paperImportMode === "url" ? 0 : 100}%` }} transition={MATERIAL_SPRING} />
+                <button type="button" role="tab" disabled={paperImportBusy} aria-selected={paperImportMode === "url"} onClick={() => setPaperImportMode("url")}>公开链接</button>
+                <button type="button" role="tab" disabled={paperImportBusy} aria-selected={paperImportMode === "pdf"} onClick={() => setPaperImportMode("pdf")}>上传 PDF</button>
+              </div>
               {paperImportMode === "url" ? <label className="paper-import-field"><span>论文链接</span><input type="url" value={paperImportUrl} onChange={(event) => setPaperImportUrl(event.target.value)} placeholder="https://arxiv.org/abs/..." disabled={paperImportBusy} /><small>支持 arXiv 页面和直接 PDF；IEEE / ACM 等请上传 PDF。</small></label> : <label className="paper-import-upload"><span>选择原始 PDF</span><WorkspaceIcon name="paper" size={28} /><input className="sr-only paper-pdf-input" type="file" accept="application/pdf,.pdf" onChange={(event) => setPaperImportFile(event.target.files?.[0] || null)} disabled={paperImportBusy} /><span className="paper-pdf-picker">选择 PDF 文件</span><strong>{paperImportFile?.name || "尚未选择 PDF"}</strong><small>单文件上限 50 MiB；原始文件不会被 AI 改写。</small></label>}
-              <div className="paper-import-boundary"><strong>AI 发送范围</strong><span>整份 PDF，或逐页页图 + 页码结构 + 图表说明</span><small>默认先发整份 PDF；端点不接受时，浏览器用 PDF.js 把每页渲染成 JPEG 后按批发送。原始文件不会被 AI 改写。</small></div>
+
               {paperImportError && <p className="paper-import-error" role="alert">{paperImportError}</p>}
               <footer className="bulk-dialog-actions paper-import-actions"><button type="button" onClick={() => setPaperImportOpen(false)} disabled={paperImportBusy}>取消</button><button type="button" className="primary-button" onClick={() => void importPaper()} disabled={paperImportBusy || (paperImportMode === "url" ? !paperImportUrl.trim() : !paperImportFile)}>{paperImportBusy ? <><Spinner />处理中…</> : "创建论文"}</button></footer>
             </div> : !bulkImportPreview ? <>
