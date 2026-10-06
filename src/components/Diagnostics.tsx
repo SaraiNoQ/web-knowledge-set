@@ -1,3 +1,4 @@
+import { Button } from "./ui/Controls";
 import { useEffect, useState } from "react";
 
 import type { DiagnosticReport } from "../../shared/types";
@@ -63,7 +64,7 @@ export function Diagnostics({ onClose }: { onClose: () => void }) {
       <main className="safety-page diagnostics-page">
         <div className="safety-loading" role={error ? "alert" : "status"}>
           <p>{error || "正在整理本机诊断信息…"}</p>
-          {error && <button type="button" onClick={onClose}>返回数据安全</button>}
+          {error && <Button type="button" onClick={onClose}>返回数据安全</Button>}
         </div>
       </main>
     );
@@ -81,7 +82,7 @@ export function Diagnostics({ onClose }: { onClose: () => void }) {
           <h1 id="diagnostics-title">诊断台</h1>
           <p>只整理版本、队列、完整性计数与稳定错误码。</p>
         </div>
-        <button type="button" className="safety-close" onClick={onClose}>返回数据安全</button>
+        <Button type="button" className="safety-close" onClick={onClose}>返回数据安全</Button>
       </header>
 
       {(error || notice) && (
@@ -116,7 +117,7 @@ export function Diagnostics({ onClose }: { onClose: () => void }) {
             <div><dt>文件异常</dt><dd>{report.health ? report.health.missingSnapshots + report.health.missingAssets + report.health.unsafeSnapshotEntries + report.health.unsafeAssetEntries : "—"}</dd></div>
             <div><dt>本地日志</dt><dd>{report.logs.length} 条</dd></div>
           </dl>
-          <button type="button" className="primary-button" onClick={() => void download()} disabled={exporting}>{exporting ? "正在整理…" : "导出诊断包"}</button>
+          <Button type="button" className="primary-button" onClick={() => void download()} disabled={exporting}>{exporting ? "正在整理…" : "导出诊断包"}</Button>
           <small>包内仍可能反映运行时间与错误类型；与他人分享前请人工检查。</small>
         </aside>
 

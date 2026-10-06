@@ -39,8 +39,8 @@ export function WorkspaceSettings({ cloud, semanticRefresh, onClose, readingMarg
     <header><div><h1 id="workspace-settings-title">设置</h1><p>调整阅读体验与 AI 服务。</p></div><Button onClick={onClose}>返回资料库</Button></header>
     <div className="settings-layout">
       <nav className="settings-navigation" aria-label="设置分类">
-        <button type="button" aria-current={section === "reading" ? "page" : undefined} onClick={() => setSection("reading")}>阅读与显示</button>
-        <button type="button" aria-current={section === "ai" ? "page" : undefined} onClick={() => setSection("ai")}>AI 派生设置</button>
+        <Button type="button" aria-current={section === "reading" ? "page" : undefined} onClick={() => setSection("reading")}>阅读与显示</Button>
+        <Button type="button" aria-current={section === "ai" ? "page" : undefined} onClick={() => setSection("ai")}>AI 派生设置</Button>
       </nav>
       <div className="settings-content">
         <section hidden={section !== "reading"} aria-labelledby="reading-settings-title">

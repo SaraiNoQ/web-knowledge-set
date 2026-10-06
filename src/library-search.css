@@ -1,6 +1,6 @@
 .library-search { display: flex; flex-direction: column; gap: 14px; min-width: 0; color: var(--ink); font-size: var(--font-ui); }
 .library-search-controls { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.library-search-input { display: flex; flex: 1; align-items: center; gap: 5px; min-width: 0; min-height: 38px; padding: 3px 5px 3px 10px; background: var(--paper-light); border: 1px solid var(--line-strong); border-radius: 4px; }
+.library-search-input { display: flex; flex: 1; align-items: center; gap: 5px; min-width: 0; min-height: 38px; padding: 3px 5px 3px 10px; background: var(--paper-light); border: 1px solid var(--line-strong); border-radius: var(--control-radius); }
 .library-search-input:focus-within { border-color: var(--vermilion); }
 .library-search-input > svg { flex-shrink: 0; color: var(--ink-soft); }
 .library-search-input input { width: 100%; min-width: 0; padding: 5px 0; color: var(--ink); background: transparent; border: 0; outline: 0; }
@@ -14,7 +14,7 @@
 .library-search-settings-button { width: 30px; height: 36px; }
 .library-search-settings { display: grid; gap: 13px; padding-bottom: 15px; border-bottom: 1px solid var(--line); }
 .library-search-switch { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 24px; }
-.library-search-switch input { appearance: none; flex: 0 0 auto; width: 34px; height: 20px; margin: 0; background: var(--paper-deep); border: 1px solid var(--line-strong); border-radius: 20px; cursor: pointer; }
+.library-search-switch input { appearance: none; flex: 0 0 auto; width: 34px; height: 20px; margin: 0; background: var(--paper-deep); border: 1px solid var(--line-strong); border-radius: var(--control-radius); cursor: pointer; }
 .library-search-switch input::before { display: block; width: 14px; height: 14px; margin: 2px; content: ""; background: var(--ink-soft); border-radius: 50%; transition: transform 140ms ease; }
 .library-search-switch input:checked { background: var(--vermilion); border-color: var(--vermilion); }
 .library-search-switch input:checked::before { background: var(--paper-light); transform: translateX(14px); }
@@ -33,7 +33,7 @@
 .library-search-start dd { margin: 0; color: var(--ink-soft); font-size: var(--font-small); line-height: 1.55; }
 .library-search-history { margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--line); }
 .library-search-history-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
-.library-search-history > button { display: flex; align-items: center; gap: 7px; width: 100%; padding: 8px 4px; color: var(--ink); text-align: left; background: transparent; border: 0; border-radius: 4px; }
+.library-search-history > button { display: flex; align-items: center; gap: 7px; width: 100%; padding: 8px 4px; color: var(--ink); text-align: left; background: transparent; border: 0; border-radius: var(--control-radius); }
 .library-search-history > button:hover { background: var(--paper-deep); }
 .library-search-history > button svg { flex-shrink: 0; color: var(--ink-soft); }
 .library-search-history > button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -60,7 +60,7 @@
 .library-search-message { margin: 0; color: var(--ink-soft); font-size: var(--font-small); line-height: 1.7; }
 .library-search-message[role="alert"] { color: var(--vermilion-dark); }
 .library-search-message p { margin: 0 0 8px; }
-.library-search-message button { padding: 5px 8px; color: var(--ink); background: var(--paper-light); border: 1px solid var(--line-strong); border-radius: 3px; }
+.library-search-message button { padding: 5px 8px; color: var(--ink); background: var(--paper-light); border: 1px solid var(--line-strong); border-radius: var(--control-radius); }
 .library-search-pagination { display: flex; align-items: center; justify-content: space-between; gap: 7px; padding-top: 9px; border-top: 1px solid var(--line); font-size: var(--font-small); }
-.library-search-pagination button { padding: 5px 8px; color: var(--ink); background: var(--paper-light); border: 1px solid var(--line-strong); border-radius: 3px; }
+.library-search-pagination button { padding: 5px 8px; color: var(--ink); background: var(--paper-light); border: 1px solid var(--line-strong); border-radius: var(--control-radius); }
 @media (prefers-reduced-motion: reduce) { .library-search-switch input::before, .library-search-expand svg { transition: none; } }

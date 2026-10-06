@@ -70,11 +70,14 @@ test("has no serious or critical accessibility violations in primary workflows",
     await expect(page.getByLabel("网页地址")).toBeVisible();
     await expect(page.locator(".document-list .state-loading")).toHaveCount(0);
     await expectNoHighImpactViolations(page, "资料库");
+    await page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "搜索", exact: true }).click();
+    await page.getByRole("button", { name: "搜索设置", exact: true }).click();
     const librarySelect = page.getByRole("combobox").first();
     const selectedValueId = await librarySelect.locator("span").first().getAttribute("id");
     expect(selectedValueId).toBeTruthy();
     expect((await librarySelect.getAttribute("aria-describedby"))?.split(/\s+/u)).toContain(selectedValueId);
 
+    await page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "列表", exact: true }).click();
     const readyRow = page.locator(".document-row-wrap").filter({ hasText: "已就绪" }).first();
     if (await readyRow.count()) {
       await readyRow.locator(".document-row").click();

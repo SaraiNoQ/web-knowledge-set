@@ -3,7 +3,7 @@ import type { ReactNode, Ref } from "react";
 import type { DocumentListResponse, DocumentSearchScope, DocumentSort, KnowledgeFolder } from "../../shared/types";
 import { searchTerms } from "../../shared/search";
 import { api } from "../api";
-import { Select } from "./ui/Controls";
+import { Button, Select } from "./ui/Controls";
 import { WorkspaceIcon } from "./ui/WorkspaceIcon";
 import "../library-search.css";
 
@@ -88,12 +88,12 @@ export function LibrarySearch({ folders, refreshKey, inputRef, onOpen, active }:
       <div className="library-search-input">
         <WorkspaceIcon name="search" size={18} />
         <input ref={inputRef} aria-label="搜索文档" type="search" maxLength={200} placeholder="输入并开始搜索…" value={query} onChange={(event) => changeQuery(event.target.value)} />
-        <button type="button" className="library-search-icon library-search-case" aria-label="区分大小写" aria-pressed={caseSensitive} title="区分大小写" onClick={() => { setCaseSensitive(!caseSensitive); setPage(1); }}>Aa</button>
-        {query && <button type="button" className="library-search-icon" aria-label="清空搜索" title="清空搜索" onClick={() => changeQuery("")}><WorkspaceIcon name="close" size={16} /></button>}
+        <Button type="button" className="library-search-icon library-search-case" aria-label="区分大小写" aria-pressed={caseSensitive} title="区分大小写" onClick={() => { setCaseSensitive(!caseSensitive); setPage(1); }}>Aa</Button>
+        {query && <Button type="button" className="library-search-icon" aria-label="清空搜索" title="清空搜索" onClick={() => changeQuery("")}><WorkspaceIcon name="close" size={16} /></Button>}
       </div>
-      <button type="button" className="library-search-icon library-search-settings-button" aria-label="搜索设置" aria-expanded={settingsOpen} aria-controls={`${id}-settings`} onClick={() => setSettingsOpen(!settingsOpen)}>
+      <Button type="button" className="library-search-icon library-search-settings-button" aria-label="搜索设置" aria-expanded={settingsOpen} aria-controls={`${id}-settings`} onClick={() => setSettingsOpen(!settingsOpen)}>
         <svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M3 6h18M3 12h18M3 18h18M8 3v6M16 9v6M9 15v6" /></svg>
-      </button>
+      </Button>
     </div>
     {settingsOpen && <div className="library-search-settings" id={`${id}-settings`}>
       <label className="library-search-switch"><span>折叠搜索结果</span><input type="checkbox" role="switch" checked={collapseResults} onChange={(event) => { setCollapseResults(event.target.checked); setExpanded({}); }} /></label>
@@ -109,20 +109,20 @@ export function LibrarySearch({ folders, refreshKey, inputRef, onOpen, active }:
       <h3>搜索选项</h3>
       <p>输入关键词搜索文档，在搜索设置中缩小范围。</p>
       <dl><div><dt>标题</dt><dd>匹配文章与论文标题</dd></div><div><dt>正文</dt><dd>匹配已保存的文档正文</dd></div><div><dt>来源信息</dt><dd>匹配网址、作者与来源备注</dd></div><div><dt>文件夹 / 类型 / 收藏</dt><dd>筛选对应文档</dd></div></dl>
-      {history.length > 0 && <div className="library-search-history"><div className="library-search-history-heading"><h3>搜索历史</h3><button type="button" className="library-search-icon" aria-label="清除搜索历史" onClick={() => setHistory([])}><WorkspaceIcon name="close" size={16} /></button></div>{history.map((value) => <button type="button" key={value} onClick={() => changeQuery(value)}><WorkspaceIcon name="search" size={14} /><span>{value}</span></button>)}</div>}
+      {history.length > 0 && <div className="library-search-history"><div className="library-search-history-heading"><h3>搜索历史</h3><Button type="button" className="library-search-icon" aria-label="清除搜索历史" onClick={() => setHistory([])}><WorkspaceIcon name="close" size={16} /></Button></div>{history.map((value) => <Button type="button" key={value} onClick={() => changeQuery(value)}><WorkspaceIcon name="search" size={14} /><span>{value}</span></Button>)}</div>}
     </div> : <>
       <div className="library-search-summary"><span role="status" aria-live="polite">{loading ? "正在搜索…" : result ? `${result.total} 篇结果` : "搜索结果"}</span><label><span className="sr-only">搜索结果排序</span><Select density="compact" aria-label="搜索结果排序" value={sort} onChange={(event) => { setSort(event.target.value as DocumentSort); setPage(1); }}><option value="updated">最近修改</option><option value="created">最近添加</option><option value="title">标题 (A–Z)</option></Select></label></div>
-      {error && <div className="library-search-message" role="alert"><p>{error}</p><button type="button" onClick={() => setRetryKey((value) => value + 1)}>重试搜索</button></div>}
+      {error && <div className="library-search-message" role="alert"><p>{error}</p><Button type="button" onClick={() => setRetryKey((value) => value + 1)}>重试搜索</Button></div>}
       {!loading && result?.total === 0 && <p className="library-search-message">没有找到匹配文档。试试其他关键词或调整搜索设置。</p>}
       {!loading && result && <div className="library-search-results">{result.items.map((document) => {
         const isExpanded = expanded[document.id] ?? !collapseResults;
         const snippets = document.searchMatches?.length ? document.searchMatches : [document.sourceUrl].filter(Boolean);
         return <article className="library-search-result" key={document.id}>
-          <div className="library-search-result-heading"><button type="button" className={`library-search-icon library-search-expand${isExpanded ? " is-expanded" : ""}`} aria-label={`${isExpanded ? "折叠" : "展开"} ${document.title} 的搜索结果`} aria-expanded={isExpanded} aria-controls={`${id}-${document.id}`} onClick={() => setExpanded((previous) => ({ ...previous, [document.id]: !isExpanded }))}><WorkspaceIcon name="chevron" size={14} /></button><button type="button" className="library-search-result-title" disabled={openingId !== null} onClick={() => void openDocument(document.id)} title={document.title}>{highlight(document.title, term, caseSensitive)}</button><span className="library-search-kind">{document.kind === "paper" ? "论文" : "文章"}</span></div>
-          {isExpanded && <div className={`library-search-snippets${moreContext ? " has-more-context" : ""}`} id={`${id}-${document.id}`}>{snippets.length ? snippets.slice(0, moreContext ? 5 : 2).map((snippet, index) => <button type="button" key={index} disabled={openingId !== null} onClick={() => void openDocument(document.id)}>{highlight(snippet, term, caseSensitive)}</button>) : <p>标题匹配，点击打开文档。</p>}</div>}
+          <div className="library-search-result-heading"><Button type="button" className={`library-search-icon library-search-expand${isExpanded ? " is-expanded" : ""}`} aria-label={`${isExpanded ? "折叠" : "展开"} ${document.title} 的搜索结果`} aria-expanded={isExpanded} aria-controls={`${id}-${document.id}`} onClick={() => setExpanded((previous) => ({ ...previous, [document.id]: !isExpanded }))}><WorkspaceIcon name="chevron" size={14} /></Button><Button type="button" className="library-search-result-title" disabled={openingId !== null} onClick={() => void openDocument(document.id)} title={document.title}>{highlight(document.title, term, caseSensitive)}</Button><span className="library-search-kind">{document.kind === "paper" ? "论文" : "文章"}</span></div>
+          {isExpanded && <div className={`library-search-snippets${moreContext ? " has-more-context" : ""}`} id={`${id}-${document.id}`}>{snippets.length ? snippets.slice(0, moreContext ? 5 : 2).map((snippet, index) => <Button type="button" key={index} disabled={openingId !== null} onClick={() => void openDocument(document.id)}>{highlight(snippet, term, caseSensitive)}</Button>) : <p>标题匹配，点击打开文档。</p>}</div>}
         </article>;
       })}</div>}
-      {result && result.total > result.pageSize && <nav className="library-search-pagination" aria-label="搜索结果分页"><button type="button" disabled={loading || page <= 1} onClick={() => setPage(page - 1)}>上一页</button><span>{page} / {Math.ceil(result.total / result.pageSize)}</span><button type="button" disabled={loading || page * result.pageSize >= result.total} onClick={() => setPage(page + 1)}>下一页</button></nav>}
+      {result && result.total > result.pageSize && <nav className="library-search-pagination" aria-label="搜索结果分页"><Button type="button" disabled={loading || page <= 1} onClick={() => setPage(page - 1)}>上一页</Button><span>{page} / {Math.ceil(result.total / result.pageSize)}</span><Button type="button" disabled={loading || page * result.pageSize >= result.total} onClick={() => setPage(page + 1)}>下一页</Button></nav>}
     </>}
   </section>;
 }

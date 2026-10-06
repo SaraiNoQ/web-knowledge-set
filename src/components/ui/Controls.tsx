@@ -1,5 +1,6 @@
 import { Children, forwardRef, isValidElement, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { WorkspaceIcon } from "./WorkspaceIcon";
 
 import type {
   ButtonHTMLAttributes,
@@ -20,16 +21,15 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { className = "", density = "regular", type = "button", variant = "secondary", ...props },
+  { className = "", density = "regular", type = "button", variant: requestedVariant, children, ...props },
   ref,
 ) {
+  const closeIcon = children === "×";
+  const variant = requestedVariant ?? (/\b(primary-button|rail-brand)\b/u.test(className) ? "primary" : /\bdanger\b/u.test(className) ? "danger" : closeIcon || "aria-pressed" in props || "aria-current" in props || "aria-expanded" in props || props.role === "option" || /\b(document-tab-select|directory-title|outline-heading|outline-fold|breadcrumb-title)\b/u.test(className) ? "ghost" : "secondary");
   return (
-    <button
-      ref={ref}
-      type={type}
-      className={`ui-button ui-button--${variant} ui-button--${density} ${className}`.trim()}
-      {...props}
-    />
+    <button ref={ref} type={type} className={`ui-button ui-button--${variant} ui-button--${closeIcon ? "compact" : density} ${closeIcon ? "ui-icon-button" : ""} ${className}`.trim()} {...props}>
+      {closeIcon ? <WorkspaceIcon name="close" size={18} /> : children}
+    </button>
   );
 });
 

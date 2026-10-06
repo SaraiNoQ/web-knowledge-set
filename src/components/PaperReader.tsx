@@ -60,10 +60,10 @@ function clampZoom(value: number) {
 function PaperZoom({ zoom, onZoom }: { zoom: number; onZoom: (value: number) => void }) {
   return (
     <span className="paper-reader-zoom" role="group" aria-label="原始 PDF 缩放">
-      <button type="button" onClick={() => onZoom(clampZoom(zoom - ZOOM_STEP))} disabled={zoom <= ZOOM_MIN} aria-label="缩小原始 PDF">-</button>
+      <Button type="button" onClick={() => onZoom(clampZoom(zoom - ZOOM_STEP))} disabled={zoom <= ZOOM_MIN} aria-label="缩小原始 PDF">-</Button>
       <span aria-live="polite">{Math.round(zoom * 100)}%</span>
-      <button type="button" onClick={() => onZoom(clampZoom(zoom + ZOOM_STEP))} disabled={zoom >= ZOOM_MAX} aria-label="放大原始 PDF">+</button>
-      <button type="button" className="paper-reader-zoom-reset" onClick={() => onZoom(1)} disabled={zoom === 1} aria-label="恢复原始 PDF 缩放">重置</button>
+      <Button type="button" onClick={() => onZoom(clampZoom(zoom + ZOOM_STEP))} disabled={zoom >= ZOOM_MAX} aria-label="放大原始 PDF">+</Button>
+      <Button type="button" className="paper-reader-zoom-reset" onClick={() => onZoom(1)} disabled={zoom === 1} aria-label="恢复原始 PDF 缩放">重置</Button>
     </span>
   );
 }
@@ -333,7 +333,7 @@ export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChan
     } finally { setSaving(false); }
   };
 
-  if (error && !paper) return <section className="paper-reader paper-reader-state" aria-label="论文阅读器"><button type="button" className="paper-reader-back" onClick={onClose}>← 返回资料库</button><div role="alert"><strong>无法打开论文</strong><p>{error}</p></div></section>;
+  if (error && !paper) return <section className="paper-reader paper-reader-state" aria-label="论文阅读器"><Button type="button" className="paper-reader-back" onClick={onClose}>← 返回资料库</Button><div role="alert"><strong>无法打开论文</strong><p>{error}</p></div></section>;
   if (!paper) return <section className="paper-reader paper-reader-state" aria-label="论文阅读器"><span className="eyebrow">PAPER READER</span><strong>正在打开论文…</strong></section>;
 
   const pages = paper.pageCount || paper.pages.length || 1;
@@ -342,19 +342,19 @@ export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChan
   return (
     <section className="paper-reader" aria-label="论文对照阅读器">
       <header className="paper-reader-header">
-        <button type="button" className="paper-reader-back" onClick={onClose}>← 返回资料库</button>
+        <Button type="button" className="paper-reader-back" onClick={onClose}>← 返回资料库</Button>
         <div><span className="eyebrow">PAPER READER · {paper.status.toUpperCase()}</span><h1>{title || paper.title || "未命名论文"}</h1><p>{paper.author || "作者待提取"} · {paper.sourceUrl}</p></div>
         <div className="paper-reader-actions"><span className="paper-reader-type">PAPER</span>{readOnly && <span className="paper-reader-type">只读</span>}{editing ? <><Button density="compact" onClick={() => { setEditing(false); if (page) setDraftBlocks(page.translationBlocks); }}>取消</Button><Button density="compact" variant="primary" onClick={() => void save()} disabled={saving}>{saving ? "保存中…" : "保存本页"}</Button></> : <Button density="compact" variant="primary" onClick={() => setEditing(true)} disabled={!page || processing || readOnly}>编辑译文</Button>}</div>
       </header>
 
       {error && <div className="paper-reader-notice is-error" role="alert">{error}</div>}
-      {notice && <div className="paper-reader-notice" role="status">{notice}<button type="button" aria-label="关闭提示" onClick={() => setNotice("")}>×</button></div>}
+      {notice && <div className="paper-reader-notice" role="status">{notice}<Button type="button" aria-label="关闭提示" onClick={() => setNotice("")}>×</Button></div>}
 
       {processing ? <div className="paper-reader-processing"><span className="eyebrow">LLM EXTRACTION</span><h2>{paper.status === "queued" && !progress ? "等待开始分页提取" : "正在生成分页对照"}</h2><p>{progress ? progressText(progress) : "原始 PDF 已保存；模型会按页生成原文块、中文译文和图表说明。"}</p>{progress && progress.total > 0 && <div className="paper-reader-progress" role="progressbar" aria-valuemin={0} aria-valuemax={progress.total} aria-valuenow={progress.done}><span style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} /></div>}{paper.status === "queued" && !progress && <Button variant="primary" onClick={() => void drive()}>开始提取</Button>}</div> : paper.status === "failed" ? <div className="paper-reader-processing is-error"><span className="eyebrow">EXTRACTION FAILED</span><h2>论文提取失败</h2><p>{paperFailureMessage(paper)}</p><Button onClick={() => void drive()}>重新提取</Button></div> : (
         <div className="paper-reader-body">
-          <aside className="paper-reader-pages" aria-label="论文页码">{Array.from({ length: pages }, (_, index) => { const number = index + 1; return <button key={number} type="button" className={number === pageNumber ? "is-active" : ""} aria-current={number === pageNumber ? "page" : undefined} onClick={() => { if (!editing) setPageNumber(number); }}>{String(number).padStart(2, "0")}</button>; })}</aside>
+          <aside className="paper-reader-pages" aria-label="论文页码">{Array.from({ length: pages }, (_, index) => { const number = index + 1; return <Button key={number} type="button" className={number === pageNumber ? "is-active" : ""} aria-current={number === pageNumber ? "page" : undefined} onClick={() => { if (!editing) setPageNumber(number); }}>{String(number).padStart(2, "0")}</Button>; })}</aside>
           <div className="paper-reader-stage">
-            <div className="paper-reader-page-toolbar"><strong>第 {pageNumber} 页 / {pages}</strong><span>{page ? `${page.originalBlocks.length} 个原文块 · ${page.translationBlocks.length} 个译文块` : "本页译文尚未生成"}</span><div><button type="button" onClick={() => setPageNumber((value) => Math.max(1, value - 1))} disabled={pageNumber === 1 || editing}>上一页</button><button type="button" onClick={() => setPageNumber((value) => Math.min(pages, value + 1))} disabled={pageNumber === pages || editing}>下一页</button></div></div>
+            <div className="paper-reader-page-toolbar"><strong>第 {pageNumber} 页 / {pages}</strong><span>{page ? `${page.originalBlocks.length} 个原文块 · ${page.translationBlocks.length} 个译文块` : "本页译文尚未生成"}</span><div><Button type="button" onClick={() => setPageNumber((value) => Math.max(1, value - 1))} disabled={pageNumber === 1 || editing}>上一页</Button><Button type="button" onClick={() => setPageNumber((value) => Math.min(pages, value + 1))} disabled={pageNumber === pages || editing}>下一页</Button></div></div>
             <div
               className={`paper-reader-columns${dragging ? " is-dragging" : ""}`}
               ref={columnsRef}

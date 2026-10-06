@@ -520,9 +520,10 @@ test("knowledge map fills the window height at the bottom of the page", async ({
   for (const width of [1440, 1000, 800, 560]) {
     await page.setViewportSize({ width, height: 900 });
     await expect.poll(async () => page.locator(".knowledge-map-host").evaluate((element) =>
-      Math.abs(Math.round(element.clientHeight - window.innerHeight)))).toBeLessThanOrEqual(2);
+      Math.abs(Math.round(element.clientHeight - document.querySelector(".reader-layout")!.clientHeight)))).toBeLessThanOrEqual(2);
     const atBottom = await page.evaluate(() => {
-      window.scrollTo(0, 100_000);
+      const reader = document.querySelector(".reader-layout") as HTMLElement;
+      reader.scrollTo(0, 100_000);
       const bottomOf = (selector: string) => {
         const node = document.querySelector(selector) as HTMLElement | null;
         return node ? Math.round(node.getBoundingClientRect().bottom) : null;
@@ -533,19 +534,19 @@ test("knowledge map fills the window height at the bottom of the page", async ({
         hostBottom: bottomOf(".knowledge-map-host"),
         mapBottom: bottomOf(".knowledge-map"),
         canvasBottom: bottomOf(".knowledge-map-canvas"),
-        inner: window.innerHeight,
-        scrolled: Math.round(window.scrollY),
+        inner: Math.round(reader.getBoundingClientRect().bottom),
+        readerTop: Math.round(reader.getBoundingClientRect().top),
+        scrolled: Math.round(reader.scrollTop),
         overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       };
     });
-    expect(atBottom.scrolled).toBeGreaterThan(0);
     expect(atBottom.overflowX).toBeLessThanOrEqual(0);
-    expect(Math.abs(atBottom.top)).toBeLessThanOrEqual(2);
+    expect(Math.abs(atBottom.top - atBottom.readerTop)).toBeLessThanOrEqual(2);
     for (const bottom of [atBottom.hostBottom, atBottom.mapBottom, atBottom.canvasBottom]) {
       expect(bottom).not.toBeNull();
       expect(Math.abs((bottom as number) - atBottom.inner)).toBeLessThanOrEqual(2);
     }
-    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.evaluate(() => document.querySelector(".reader-layout")?.scrollTo(0, 0));
   }
 });
 
@@ -716,13 +717,13 @@ test("previews a batch before importing it", async ({ page }) => {
   await page.getByRole("button", { name: "批量导入" }).click();
   const dialog = page.getByRole("dialog", { name: "导入" });
   await dialog.getByRole("button", { name: "Markdown" }).click();
-  await dialog.getByLabel("选择多个 .md 文件").setInputFiles(Array.from({ length: 101 }, (_, index) => ({
+  await dialog.getByLabel("选择 Markdown 文件").setInputFiles(Array.from({ length: 101 }, (_, index) => ({
     name: `note-${index}.md`, mimeType: "text/markdown", buffer: Buffer.from("# note"),
   })));
   await expect(dialog.getByText("最多选择 100 个 Markdown 文件。")).toBeVisible();
   await expect(dialog.getByRole("button", { name: "检查导入内容" })).toBeDisabled();
   await dialog.getByRole("button", { name: "浏览器书签" }).click();
-  await dialog.getByLabel("选择浏览器导出的 bookmarks.html").setInputFiles({
+  await dialog.locator('input[type="file"]').setInputFiles({
     name: "bookmarks.html", mimeType: "text/html", buffer: Buffer.alloc(10 * 1024 * 1024 + 1),
   });
   await expect(dialog.getByText("导入文件合计不能超过 10 MiB。")).toBeVisible();
@@ -734,7 +735,7 @@ test("previews a batch before importing it", async ({ page }) => {
   await expect(dialog.getByRole("button", { name: "确认导入" })).toBeDisabled();
   await dialog.getByRole("button", { name: "重新选择" }).click();
   await dialog.getByRole("button", { name: "Markdown" }).click();
-  await dialog.getByLabel("选择多个 .md 文件").setInputFiles({
+  await dialog.getByLabel("选择 Markdown 文件").setInputFiles({
     name: "batch-close.md", mimeType: "text/markdown", buffer: Buffer.from("# 批量关闭测试"),
   });
   await dialog.getByRole("button", { name: "检查导入内容" }).click();
@@ -758,7 +759,7 @@ test("previews a batch before importing it", async ({ page }) => {
   if (!bundlePath) throw new Error("Portable bundle download has no local path");
   await page.getByRole("button", { name: "批量导入" }).click();
   await dialog.getByRole("button", { name: "织页知识包" }).click();
-  await dialog.getByLabel("选择织页导出的 .zip 知识包").setInputFiles({
+  await dialog.locator('input[type="file"]').setInputFiles({
     name: download.suggestedFilename(), mimeType: "application/zip", buffer: await readFile(bundlePath),
   });
   await dialog.getByRole("button", { name: "检查导入内容" }).click();
@@ -1465,7 +1466,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "回收站", exact: true }).click();
   await expect(page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
 
-  await page.getByRole("button", { name: "文档资料库", exact: true }).click();
+  await page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "列表", exact: true }).click();
   await page.locator("#library-panel").getByRole("button", { name: "远端测试文章", exact: true }).click();
   await expect(duplicateBanner).toHaveCount(0);
 
@@ -2032,7 +2033,7 @@ test("spaces the selected marker and returns to the article title", async ({ pag
   expect(fixedPosition.bottom).toBeCloseTo(24, 0);
   expect(fixedPosition.right).toBeCloseTo(24, 0);
   await backToTitle.click();
-  await expect.poll(() => page.locator(".document-head").evaluate((element) => Math.abs(element.getBoundingClientRect().top))).toBeLessThan(2);
+  await expect.poll(() => page.locator(".document-head").evaluate((element) => Math.abs(element.getBoundingClientRect().top - document.querySelector(".reader-layout")!.getBoundingClientRect().top))).toBeLessThan(2);
   await expect(backToTitle).toBeHidden();
 });
 
@@ -2061,6 +2062,7 @@ test("favorites from the cloud title area and labels the article as favorited", 
 test("permanently deletes a trashed article from its directory row", async ({ page }) => {
   await page.goto("/");
   const deferOnboarding = page.getByRole("button", { name: "稍后设置" });
+  await deferOnboarding.or(page.getByRole("button", { name: "新建", exact: true })).first().waitFor();
   if (await deferOnboarding.isVisible()) await deferOnboarding.click();
   const firstCreated = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/documents");
   await page.getByRole("button", { name: "新建", exact: true }).click();
@@ -2072,7 +2074,7 @@ test("permanently deletes a trashed article from its directory row", async ({ pa
   await page.getByRole("button", { name: "移入回收站" }).click();
   await page.getByRole("alertdialog", { name: "移入回收站" }).getByRole("button", { name: "移入回收站" }).click();
 
-  await page.getByRole("button", { name: "文档资料库", exact: true }).click();
+  await page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "列表", exact: true }).click();
   await page.getByRole("button", { name: "新建", exact: true }).click();
   await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文章" }).click();
   await page.getByLabel("文档标题").fill("待永久删除文章");

@@ -1,3 +1,4 @@
+import { Button } from "./ui/Controls";
 import { useEffect, useState } from "react";
 import type { BrowserExtensionPairing, BrowserExtensionPairingCode } from "../../shared/types";
 import { api } from "../api";
@@ -53,13 +54,13 @@ export function BrowserExtension({ onPairingCountChange }: { onPairingCountChang
     </div>
     <p>Chrome 升级时覆盖旧解压目录并在扩展管理页点“重新加载”；Firefox 下载签名 XPI 后从扩展管理页安装。</p>
     <div className="extension-actions">
-      <button type="button" className="primary-button" onClick={() => void generate()} disabled={busy}>{busy ? "生成中…" : "生成 5 分钟配对码"}</button>
-      <button type="button" className="guide-button" onClick={() => void load().catch((cause) => setError((cause as Error).message))} disabled={busy}>刷新已配对浏览器</button>
+      <Button type="button" className="primary-button" onClick={() => void generate()} disabled={busy}>{busy ? "生成中…" : "生成 5 分钟配对码"}</Button>
+      <Button type="button" className="guide-button" onClick={() => void load().catch((cause) => setError((cause as Error).message))} disabled={busy}>刷新已配对浏览器</Button>
     </div>
     {code ? <div className="extension-code" role="status" aria-live="polite"><strong>{code.code}</strong><small>仅可使用一次，{new Date(code.expiresAt).toLocaleTimeString()} 前有效</small></div> : <p className="extension-code-empty">点击上方红色按钮后，配对码会显示在这里。</p>}
     {pairings.length > 0 && <ul className="extension-pairings">{pairings.map((pairing) => <li key={pairing.id}>
       <span>{pairing.browser === "chrome" ? "Chrome" : "Firefox"} · {new Date(pairing.createdAt).toLocaleDateString()}</span>
-      <button type="button" onClick={() => void revoke(pairing)} disabled={busy}>撤销</button>
+      <Button type="button" onClick={() => void revoke(pairing)} disabled={busy}>撤销</Button>
     </li>)}</ul>}
     <p>扩展只向 clip.sarainoq.cn 保存新副本；保存后会通知已打开的织页标签页刷新目录。图片只保留原链接，不上传登录凭证、完整 DOM 或登录态图片字节。</p>
     {error && <p className="form-error" role="alert">{error}</p>}

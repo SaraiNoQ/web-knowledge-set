@@ -1,3 +1,5 @@
+import { FileSelectButton } from "./ui/Uploads";
+import { Button } from "./ui/Controls";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
@@ -75,10 +77,10 @@ function BackupRow({
       </div>
       {(backup.errorCode || backup.errorMessage) && <p className="backup-error">{userErrorMessage(backup.errorCode ?? "BACKUP_FAILED")}</p>}
       <div className="backup-actions">
-        <button type="button" onClick={onVerify} disabled={busy || recovery || !backup.directoryName}>重新校验</button>
-        <button type="button" onClick={onExport} disabled={busy || !restorable}>导出文件</button>
-        <button className="restore-button" type="button" onClick={onRestore} disabled={busy || !restorable}>恢复此留档</button>
-        <button className="delete-button" type="button" onClick={onDelete} disabled={busy}>删除此留档</button>
+        <Button type="button" onClick={onVerify} disabled={busy || recovery || !backup.directoryName}>重新校验</Button>
+        <Button type="button" onClick={onExport} disabled={busy || !restorable}>导出文件</Button>
+        <Button className="restore-button" type="button" onClick={onRestore} disabled={busy || !restorable}>恢复此留档</Button>
+        <Button className="delete-button" type="button" onClick={onDelete} disabled={busy}>删除此留档</Button>
       </div>
     </li>
   );
@@ -323,8 +325,8 @@ export function DataSafety({
         {error ? (
           <div className="safety-loading" role="alert">
             <p>{error}</p>
-            <button type="button" onClick={() => { setError(""); void refresh().catch((cause) => setError((cause as Error).message)); }}>重试</button>
-            <button type="button" onClick={onClose}>返回资料库</button>
+            <Button type="button" onClick={() => { setError(""); void refresh().catch((cause) => setError((cause as Error).message)); }}>重试</Button>
+            <Button type="button" onClick={onClose}>返回资料库</Button>
           </div>
         ) : <div className="safety-loading" role="status">正在核对本地数据…</div>}
       </main>
@@ -351,7 +353,7 @@ export function DataSafety({
           <h1>数据安全</h1>
           <p>{cloud ? "将 D1 文档、AI 设置与派生结果写入私有 R2，创建可恢复的云端留档。" : "校验数据库、网页快照与离线资源，创建可恢复的完整留档。"}</p>
         </div>
-        <div className="safety-head-actions">{!cloud && <button type="button" className="safety-close" onClick={onDiagnostics} disabled={Boolean(busy)}>诊断台</button>}{!recovery && <button type="button" className="safety-close" onClick={onClose} disabled={Boolean(busy)}>返回资料库</button>}</div>
+        <div className="safety-head-actions">{!cloud && <Button type="button" className="safety-close" onClick={onDiagnostics} disabled={Boolean(busy)}>诊断台</Button>}{!recovery && <Button type="button" className="safety-close" onClick={onClose} disabled={Boolean(busy)}>返回资料库</Button>}</div>
       </header>
 
       {recovery && (
@@ -398,19 +400,10 @@ export function DataSafety({
               <p>{cloud ? ".zhiye-cloud-backup 未加密，包含云端文档与 AI 结果，不包含 API Key；导入不会自动恢复。" : ".zhiye-backup / .zhiye-cloud-backup 均可；本机导入会把云端留档转成 .zhiye-backup，只新增已校验留档，不会自动恢复。云端不含网页快照与离线图片。"}</p>
             </div>
             <div className="backup-ledger-actions">
-              <label className="backup-import">
-                <input
-                  type="file"
-                  accept={cloud ? ".zhiye-cloud-backup,application/vnd.zhiye.cloud-backup+json" : ".zhiye-backup,.zhiye-cloud-backup,application/vnd.zhiye.backup+zip,application/vnd.zhiye.cloud-backup+json"}
-                  aria-label="导入完整留档文件"
-                  disabled={Boolean(busy) || status.maintenance}
-                  onChange={(event) => void importBackup(event)}
-                />
-                <span>{busy === "import" ? "正在导入…" : "导入留档文件"}</span>
-              </label>
-              <button className="primary-button" type="button" onClick={() => void createBackup()} disabled={Boolean(busy) || recovery || status.maintenance}>
+              <FileSelectButton label={busy === "import" ? "正在导入…" : "导入留档文件"} inputLabel="导入完整留档文件" accept={cloud ? ".zhiye-cloud-backup,application/vnd.zhiye.cloud-backup+json" : ".zhiye-backup,.zhiye-cloud-backup,application/vnd.zhiye.backup+zip,application/vnd.zhiye.cloud-backup+json"} disabled={Boolean(busy) || status.maintenance} onChange={(event) => void importBackup(event)} />
+              <Button className="primary-button" type="button" onClick={() => void createBackup()} disabled={Boolean(busy) || recovery || status.maintenance}>
                 {busy === "create" ? "正在留档…" : "创建留档"}
-              </button>
+              </Button>
             </div>
           </header>
           {!status.backups.length ? <p className="safety-empty">还没有完整留档。</p> : (
@@ -439,7 +432,7 @@ export function DataSafety({
               {dataDirectory ? <code title={dataDirectory} aria-label={`当前知识库路径：${dataDirectory}`}>{dataDirectory}</code> : dataDirectoryError ? <p role="alert">{dataDirectoryError}</p> : <span>正在读取…</span>}
             </div>
             <p>选择新的空文件夹后，织页会在安全重启期间迁移当前数据；迁移失败会保留原位置。</p>
-            <button type="button" onClick={() => void changeDataDirectory()} disabled={Boolean(busy) || recovery || status.maintenance}>{busy === "location" ? "正在准备迁移…" : "更改知识库位置"}</button>
+            <Button type="button" onClick={() => void changeDataDirectory()} disabled={Boolean(busy) || recovery || status.maintenance}>{busy === "location" ? "正在准备迁移…" : "更改知识库位置"}</Button>
             <hr />
           </>}
           <div><span className="eyebrow">HOUSEKEEPING</span><h2>自动留档</h2></div>
@@ -447,12 +440,12 @@ export function DataSafety({
           <form onSubmit={saveRetention}>
             <label htmlFor="backup-retention">保留每日留档</label>
             <div><input id="backup-retention" type="number" min="1" max="100" step="1" value={retention} onChange={(event) => setRetention(Number(event.target.value))} disabled={Boolean(busy) || recovery || status.maintenance} /><span>份</span></div>
-            <button type="submit" disabled={Boolean(busy) || recovery || status.maintenance}>保存设置</button>
+            <Button type="submit" disabled={Boolean(busy) || recovery || status.maintenance}>保存设置</Button>
           </form>
           <hr />
           <h3>文件清理</h3>
           <p>只删除没有任何数据库记录引用的网页快照与离线资源；失败项会留待下次重试。</p>
-          <button type="button" onClick={() => void cleanup()} disabled={Boolean(busy) || recovery || status.maintenance}>{busy === "cleanup" ? "正在清理…" : "清理未引用文件"}</button>
+          <Button type="button" onClick={() => void cleanup()} disabled={Boolean(busy) || recovery || status.maintenance}>{busy === "cleanup" ? "正在清理…" : "清理未引用文件"}</Button>
         </aside>}
       </div>
     </main>

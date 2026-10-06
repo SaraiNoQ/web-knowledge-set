@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { IconButton } from "./ui/Controls";
+import { Button, IconButton } from "./ui/Controls";
 import { WorkspaceIcon } from "./ui/WorkspaceIcon";
 
 export interface OpenDocumentTab { id: string; title: string }
@@ -41,12 +41,12 @@ export function DocumentTabs({ documents, selectedId, dirty, disabled, onSelect,
   return <div className="document-tabbar">
     <div ref={list} className="document-tabs" role="navigation" aria-label="已打开的文章">
       {documents.map((document, index) => <div key={document.id} className={`document-tab ${selectedId === document.id ? "is-active" : ""}`}>
-        <button type="button" className="document-tab-select" aria-pressed={selectedId === document.id} aria-controls="reader-panel" disabled={disabled} title={document.title} tabIndex={selectedId === document.id || (!selectedId && index === 0) ? 0 : -1} onClick={() => void onSelect(document.id)} onKeyDown={(event) => {
+        <Button type="button" className="document-tab-select" aria-pressed={selectedId === document.id} aria-controls="reader-panel" disabled={disabled} title={document.title} tabIndex={selectedId === document.id || (!selectedId && index === 0) ? 0 : -1} onClick={() => void onSelect(document.id)} onKeyDown={(event) => {
           if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
           event.preventDefault();
           const next = event.key === "Home" ? 0 : event.key === "End" ? documents.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + documents.length) % documents.length;
           void onSelect(documents[next].id).then((selected) => { if (selected || documents[next].id === selectedId) list.current?.querySelectorAll<HTMLButtonElement>('.document-tab-select')[next]?.focus(); });
-        }}><WorkspaceIcon name="document" size={17} /><span>{document.title || "未命名网页"}</span>{selectedId === document.id && dirty && <i className="tab-dirty" aria-label="有未保存修改" />}</button>
+        }}><WorkspaceIcon name="document" size={17} /><span>{document.title || "未命名网页"}</span>{selectedId === document.id && dirty && <i className="tab-dirty" aria-label="有未保存修改" />}</Button>
         <IconButton label={`关闭文章：${document.title || "未命名网页"}`} disabled={disabled} onClick={(event) => { const button = event.currentTarget; void onClose(document.id).then(() => window.requestAnimationFrame(() => { if (!button.isConnected) { const target = list.current?.querySelector<HTMLButtonElement>('[aria-pressed="true"]') ?? globalThis.document.querySelector<HTMLInputElement>('#library-panel input'); target?.focus(); } })); }}><WorkspaceIcon name="close" size={14} /></IconButton>
       </div>)}
     </div>

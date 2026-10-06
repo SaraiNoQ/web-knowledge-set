@@ -1,3 +1,4 @@
+import { Button } from "./ui/Controls";
 import { useEffect, useState } from "react";
 
 import type { SemanticSettings } from "../../shared/types";
@@ -139,18 +140,18 @@ export function SemanticSettingsPanel({ cloud, refreshKey }: { cloud: boolean; r
           <div className="semantic-settings-card">
             <label><span>向量模型</span><input aria-label="向量模型" value={model} onChange={(event) => { setModel(event.target.value); setTestedModel(""); setDimension(null); }} maxLength={200} disabled={busy} /></label>
             <small>默认 BAAI/bge-m3。向量请求固定发送到 https://api.siliconflow.cn/v1/embeddings。</small>
-            <button type="button" onClick={() => void saveModel()} disabled={busy || !model.trim() || model.trim() === settings.model}>保存模型</button>
+            <Button type="button" onClick={() => void saveModel()} disabled={busy || !model.trim() || model.trim() === settings.model}>保存模型</Button>
           </div>
           <div className="semantic-settings-card">
             <label><span>SiliconFlow API 密钥</span><input aria-label="向量 API 密钥" type="password" autoComplete="new-password" spellCheck={false} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={settings.apiKeyConfigured ? "已配置；输入可替换" : "粘贴向量 API Key"} disabled={busy} /></label>
             <small>{cloud ? "云端密钥单独保存在当前浏览器，不写入 D1、留档或导出。" : "密钥只保存在当前服务进程内存，服务重启后需重新设置。"}</small>
-            <div><button type="button" onClick={() => void storeKey()} disabled={busy || !apiKey.trim()}>保存密钥</button>{settings.apiKeyConfigured && <button type="button" onClick={() => void removeKey()} disabled={busy}>清除密钥</button>}</div>
+            <div><Button type="button" onClick={() => void storeKey()} disabled={busy || !apiKey.trim()}>保存密钥</Button>{settings.apiKeyConfigured && <Button type="button" onClick={() => void removeKey()} disabled={busy}>清除密钥</Button>}</div>
           </div>
         </div>
         <div className="semantic-settings-actions">
-          <button type="button" onClick={() => void testModel()} disabled={busy || !settings.apiKeyConfigured || !model.trim()}>{busy ? "处理中…" : "测试向量连接"}</button>
+          <Button type="button" onClick={() => void testModel()} disabled={busy || !settings.apiKeyConfigured || !model.trim()}>{busy ? "处理中…" : "测试向量连接"}</Button>
           <label><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} disabled={busy} />允许自动建立语义关联</label>
-          <button type="button" className="primary-button" onClick={() => void applyEnabled()} disabled={busy || enabled === settings.enabled}>{enabled ? "启用并索引" : "暂停索引"}</button>
+          <Button type="button" className="primary-button" onClick={() => void applyEnabled()} disabled={busy || enabled === settings.enabled}>{enabled ? "启用并索引" : "暂停索引"}</Button>
         </div>
         <dl className="semantic-progress">
           <div><dt>已建立</dt><dd>{settings.indexedDocuments}</dd></div><div><dt>待处理</dt><dd>{settings.pendingDocuments}</dd></div>
@@ -158,8 +159,8 @@ export function SemanticSettingsPanel({ cloud, refreshKey }: { cloud: boolean; r
           <div><dt>状态</dt><dd>{settings.enabled ? "启用" : "暂停"}</dd></div>
         </dl>
         {settings.lastError && <p className="semantic-settings-message is-error" role="status">最近索引错误：{settings.lastError}（连续失败 {settings.consecutiveFailures} 次）</p>}
-        {settings.failedDocuments > 0 && <button type="button" onClick={() => void runIndexAction("retry")} disabled={busy}>重试失败资料</button>}
-        <button type="button" onClick={() => void runIndexAction("rebuild")} disabled={busy || !(settings.indexedDocuments || settings.indexingDocuments || settings.failedDocuments || settings.totalChunks)}>重建全部索引</button>
+        {settings.failedDocuments > 0 && <Button type="button" onClick={() => void runIndexAction("retry")} disabled={busy}>重试失败资料</Button>}
+        <Button type="button" onClick={() => void runIndexAction("rebuild")} disabled={busy || !(settings.indexedDocuments || settings.indexingDocuments || settings.failedDocuments || settings.totalChunks)}>重建全部索引</Button>
         {dimension !== null && <p className="semantic-settings-message" role="status">{notice}</p>}
         {notice && dimension === null && <p className="semantic-settings-message" role="status">{notice}</p>}
         {error && <p className="semantic-settings-message is-error" role="alert">{error}</p>}

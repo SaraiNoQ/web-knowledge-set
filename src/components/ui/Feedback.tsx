@@ -185,7 +185,7 @@ function ToastItem({ toast, dismiss }: { toast: ToastRecord; dismiss: (id: strin
     <div className={`ui-toast ui-toast--${toast.tone}`} role={toast.tone === "error" ? "alert" : "status"}>
       <span className="ui-toast-mark" aria-hidden="true">{toast.tone === "success" ? "✓" : "!"}</span>
       <div className="ui-toast-message">{toast.message}</div>
-      {toast.action && <button type="button" className="ui-toast-action" onClick={() => { toast.action?.onClick(); dismiss(toast.id); }}>{toast.action.label}</button>}
+      {toast.action && <Button type="button" className="ui-toast-action" onClick={() => { toast.action?.onClick(); dismiss(toast.id); }}>{toast.action.label}</Button>}
       <IconButton label="关闭通知" onClick={() => dismiss(toast.id)}>×</IconButton>
     </div>
   );

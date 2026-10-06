@@ -1,3 +1,5 @@
+import { SegmentedControl } from "./ui/SegmentedControl";
+import { Button } from "./ui/Controls";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 
@@ -478,18 +480,18 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
           {!cloud && <label className="map-check"><input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} /><span>显示归档</span></label>}
           <label className="map-check"><input type="checkbox" checked={showFolders} onChange={(event) => setShowFolders(event.target.checked)} /><span>显示文件夹关系</span></label>
           <label className="map-threshold"><span>语义阈值 · {semanticThreshold.toFixed(2)}</span><input aria-label="语义推荐阈值" type="range" min="0.3" max="0.9" step="0.01" value={semanticThreshold} disabled={!semanticEnabled || semanticLoading || items.length > SEMANTIC_GRAPH_MAX_NODES} onChange={(event) => setSemanticThreshold(Number(event.target.value))} /></label>
-          <div className="map-view-switch" role="group" aria-label="图谱范围"><button type="button" aria-pressed={!localMode} onClick={() => setLocalMode(false)}>全库</button><button type="button" aria-pressed={localMode} disabled={!selected} onClick={() => setLocalMode(true)}>单篇关联</button></div>
+          <SegmentedControl label="图谱范围" className="map-view-switch" value={localMode ? "local" : "all"} options={[{ value: "all", label: "全库" }, { value: "local", label: "单篇关联", disabled: !selected }]} onChange={(value) => setLocalMode(value === "local")} />
           <div className="map-key"><span><i className="map-key-article" />文章</span><span><i className="map-key-paper" />论文</span><span><i className="map-key-folder" />文件夹</span><span><i className="map-key-line" />文件夹归属</span><span><i className="map-key-semantic" />语义推荐</span></div>
           <p className="map-privacy-note">语义分数是模型相似度，不是正确率；连线不表示引用或事实关系。</p>
           {semanticEnabled && items.length > SEMANTIC_GRAPH_MAX_NODES && <p className="map-semantic-status" role="status">当前包含 {items.length.toLocaleString("zh-CN")} 篇，超过首版 1,000 篇语义计算规模；全部节点仍会显示，请搜索或筛选后查看语义推荐。</p>}
           {semanticCalculationPending && <p className="map-semantic-status" role="status">正在加载向量并计算语义关联…</p>}
           {semanticEnabled && items.length <= SEMANTIC_GRAPH_MAX_NODES && !semanticCalculationPending && !readyVectorIds.length && !semanticError && <p className="map-semantic-status" role="status">资料索引完成后会显示语义推荐。</p>}
           {semanticError && <p className="map-semantic-status is-error" role="status">{semanticError}</p>}
-          <details className="map-accessible-list"><summary>节点列表（{documents.length}）</summary><ul>{documents.map((item) => <li key={item.id}><button type="button" aria-pressed={selectedId === item.id} onClick={() => { setSelectedId(item.id); setLocalMode(true); }}>{item.title || "未命名资料"}<small>{item.kind === "paper" ? "论文" : "文章"}</small></button></li>)}</ul></details>
+          <details className="map-accessible-list"><summary>节点列表（{documents.length}）</summary><ul>{documents.map((item) => <li key={item.id}><Button type="button" aria-pressed={selectedId === item.id} onClick={() => { setSelectedId(item.id); setLocalMode(true); }}>{item.title || "未命名资料"}<small>{item.kind === "paper" ? "论文" : "文章"}</small></Button></li>)}</ul></details>
         </aside>
         <div className="knowledge-map-canvas" role="region" aria-label="资料关联画布">
           {loading && <p className="map-loading" role="status">正在展开资料节点…</p>}
-          {error ? <div className="map-state"><span className="eyebrow">MAP · ERROR</span><h3>无法载入知识地图</h3><p>{error}</p><button type="button" onClick={() => setRetryCount((value) => value + 1)}>重试</button></div>
+          {error ? <div className="map-state"><span className="eyebrow">MAP · ERROR</span><h3>无法载入知识地图</h3><p>{error}</p><Button type="button" onClick={() => setRetryCount((value) => value + 1)}>重试</Button></div>
             : !loading && !documents.length ? <div className="map-state"><span className="eyebrow">MAP · EMPTY</span><h3>{query || kind || folderId || favorite !== undefined ? "没有匹配的资料" : "知识地图还是空的"}</h3><p>保存文章或论文后，它们会在这里出现。</p></div>
               : <div className="map-canvas-inner" ref={observeHost}>
                 {width > 0 && height > 0 && <ForceGraph2D
@@ -551,19 +553,19 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
                     else graph.current?.pauseAnimation();
                   }}
                 />}
-                <div className="map-canvas-toolbar"><button type="button" onClick={fit} aria-label="适应画布">适应画布</button><button type="button" onClick={togglePause} aria-pressed={paused}>{paused ? "继续布局" : "暂停布局"}</button></div>
+                <div className="map-canvas-toolbar"><Button type="button" onClick={fit} aria-label="适应画布">适应画布</Button><Button type="button" onClick={togglePause} aria-pressed={paused}>{paused ? "继续布局" : "暂停布局"}</Button></div>
                 <span className="map-coordinate-note">{draggingNode ? "拖动时暂时隐藏连线，松开后恢复。" : "位置仅用于排布，不代表相似度。"}</span>
               </div>}
         </div>
         <aside className={"knowledge-map-detail " + (selected ? "is-open" : "")} aria-label="资料详情">
-          <div className="map-detail-head"><span className="eyebrow">SELECTED NODE</span>{selected && <button type="button" className="map-detail-close" onClick={() => { setSelectedId(null); setLocalMode(false); }} aria-label="关闭详情">×</button>}</div>
+          <div className="map-detail-head"><span className="eyebrow">SELECTED NODE</span>{selected && <Button type="button" className="map-detail-close" onClick={() => { setSelectedId(null); setLocalMode(false); }} aria-label="关闭详情">×</Button>}</div>
           {selected ? <>
             <span className={"map-kind-mark " + selected.kind} aria-hidden="true" />
             <h3>{selected.title || "未命名资料"}</h3>
             <dl className="map-metadata"><div><dt>类型</dt><dd>{selected.kind === "paper" ? "论文" : "文章"}</dd></div><div><dt>文件夹</dt><dd>{selected.folderName || "未分类"}</dd></div><div><dt>状态</dt><dd>{statusLabel(selected)}</dd></div><div><dt>语义索引</dt><dd>{semanticStateLabel(selected)}</dd></div></dl>
-            <section className="map-detail-related"><h4>语义推荐</h4>{selectedSemanticPeers.length ? <ul>{selectedSemanticPeers.map(({ item, score }) => <li key={item.id}><button type="button" onClick={() => { setSelectedId(item.id); setLocalMode(true); }}>{item.title || "未命名资料"}<small>{item.kind === "paper" ? "论文" : "文章"} · 模型分数 {score.toFixed(2)}</small></button></li>)}</ul> : <p>{selected.semanticState === "ready" ? "当前阈值下没有语义推荐。" : "索引建立后会显示语义推荐。"}</p>}<small className="map-model-score-note">模型分数不代表正确率。</small></section>
-            <section className="map-detail-related"><h4>文件夹中的其他资料</h4>{selectedFolderPeers.length ? <ul>{selectedFolderPeers.map((peer) => <li key={peer.id}><button type="button" onClick={() => setSelectedId(peer.id)}>{peer.title || "未命名资料"}<small>{peer.kind === "paper" ? "论文" : "文章"}</small></button></li>)}</ul> : <p>目前没有其他同文件夹资料。</p>}</section>
-            <button className="map-open-reader" type="button" onClick={openSelected}>打开阅读 <span aria-hidden="true">↗</span></button>
+            <section className="map-detail-related"><h4>语义推荐</h4>{selectedSemanticPeers.length ? <ul>{selectedSemanticPeers.map(({ item, score }) => <li key={item.id}><Button type="button" onClick={() => { setSelectedId(item.id); setLocalMode(true); }}>{item.title || "未命名资料"}<small>{item.kind === "paper" ? "论文" : "文章"} · 模型分数 {score.toFixed(2)}</small></Button></li>)}</ul> : <p>{selected.semanticState === "ready" ? "当前阈值下没有语义推荐。" : "索引建立后会显示语义推荐。"}</p>}<small className="map-model-score-note">模型分数不代表正确率。</small></section>
+            <section className="map-detail-related"><h4>文件夹中的其他资料</h4>{selectedFolderPeers.length ? <ul>{selectedFolderPeers.map((peer) => <li key={peer.id}><Button type="button" onClick={() => setSelectedId(peer.id)}>{peer.title || "未命名资料"}<small>{peer.kind === "paper" ? "论文" : "文章"}</small></Button></li>)}</ul> : <p>目前没有其他同文件夹资料。</p>}</section>
+            <Button className="map-open-reader" type="button" onClick={openSelected}>打开阅读 <span aria-hidden="true">↗</span></Button>
           </> : <p className="map-empty-detail">选择一个节点查看资料信息。</p>}
         </aside>
       </div>

@@ -1,3 +1,4 @@
+import { Button } from "./ui/Controls";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
@@ -110,10 +111,10 @@ export function AppUpdater({ beforeOperation, disabled }: { beforeOperation: () 
   if (!configured) return null;
 
   return <>
-    <button type="button" className="local-mark update-link" onClick={() => void checkNow()} disabled={disabled}>检查更新</button>
+    <Button type="button" className="local-mark update-link" onClick={() => void checkNow()} disabled={disabled}>检查更新</Button>
     {open && <Modal open panel={false} className="shortcut-backdrop" title="应用更新" dismissible={!busy} onClose={close}>
       <section className="shortcut-card update-card">
-        <header><div><span className="eyebrow">SIGNED UPDATE</span><h2 id="update-title">应用更新</h2></div><button type="button" onClick={close} disabled={busy} aria-label="稍后更新">×</button></header>
+        <header><div><span className="eyebrow">SIGNED UPDATE</span><h2 id="update-title">应用更新</h2></div><Button type="button" onClick={close} disabled={busy} aria-label="稍后更新">×</Button></header>
         {phase === "checking" && <p role="status">正在通过 GitHub Releases 检查签名更新…</p>}
         {phase === "current" && <p role="status">当前已经是最新版本。</p>}
         {metadata && <div className="update-release"><strong>v{metadata.currentVersion} → v{metadata.version}</strong>{metadata.date && <time dateTime={metadata.date}>{new Date(metadata.date).toLocaleDateString("zh-CN")}</time>}{metadata.body && <p>{metadata.body.slice(0, 4_000)}</p>}</div>}
@@ -123,9 +124,9 @@ export function AppUpdater({ beforeOperation, disabled }: { beforeOperation: () 
         {phase === "restarting" && <p role="status">更新已安装，正在安全保存并重新启动…</p>}
         {error && <p className="update-error" role="alert">{error}</p>}
         <footer>
-          <button type="button" onClick={close} disabled={busy}>稍后</button>
-          {phase === "available" && <button type="button" className="primary-button" onClick={() => void install()}>创建留档并更新</button>}
-          {phase === "error" && <button type="button" className="primary-button" onClick={() => void (installedRef.current ? restart() : updateRef.current ? install() : checkNow())}>{installedRef.current ? "重试重启" : "重试"}</button>}
+          <Button type="button" onClick={close} disabled={busy}>稍后</Button>
+          {phase === "available" && <Button type="button" className="primary-button" onClick={() => void install()}>创建留档并更新</Button>}
+          {phase === "error" && <Button type="button" className="primary-button" onClick={() => void (installedRef.current ? restart() : updateRef.current ? install() : checkNow())}>{installedRef.current ? "重试重启" : "重试"}</Button>}
         </footer>
       </section>
     </Modal>}

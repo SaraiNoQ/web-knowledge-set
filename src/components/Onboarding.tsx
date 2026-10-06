@@ -1,3 +1,4 @@
+import { Button } from "./ui/Controls";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useState } from "react";
@@ -83,15 +84,15 @@ export function Onboarding({ state, onComplete, onLater, revisit = false }: {
     <section className={`onboarding-page ${revisit ? "is-revisit" : ""}`} aria-labelledby="onboarding-title">
       <header className="onboarding-masthead">
         <div className="brand"><span className="brand-seal">知</span><span><strong>织页</strong><small>ZHIYE · FIRST THREAD</small></span></div>
-        <button type="button" autoFocus={revisit} onClick={() => revisit ? onLater() : void complete()} disabled={busy}>{revisit ? "关闭指南" : "稍后设置"}</button>
+        <Button type="button" autoFocus={revisit} onClick={() => revisit ? onLater() : void complete()} disabled={busy}>{revisit ? "关闭指南" : "稍后设置"}</Button>
       </header>
 
       <div className="onboarding-layout">
         <nav className="onboarding-rail" aria-label="使用指南进度">
           {steps.map((item, index) => (
-            <button type="button" key={item.mark} aria-current={index === step ? "step" : undefined} onClick={() => setStep(index)} disabled={busy || restartRequired}>
+            <Button type="button" key={item.mark} aria-current={index === step ? "step" : undefined} onClick={() => setStep(index)} disabled={busy || restartRequired}>
               <span>{item.mark}</span><strong>{item.title}</strong>
-            </button>
+            </Button>
           ))}
         </nav>
 
@@ -109,11 +110,11 @@ export function Onboarding({ state, onComplete, onLater, revisit = false }: {
               <div className="onboarding-restart" role="status">
                 <strong>位置已保存</strong>
                 <p>织页必须安全关闭本地服务后再从新目录启动。重新打开时，首次设置会在新的空知识库中继续。</p>
-                <button type="button" className="primary-button" onClick={() => void closeForRestart()} disabled={busy}>{busy ? "正在安全退出…" : "安全退出织页"}</button>
+                <Button type="button" className="primary-button" onClick={() => void closeForRestart()} disabled={busy}>{busy ? "正在安全退出…" : "安全退出织页"}</Button>
               </div>
             ) : desktop ? <>
               <p className="onboarding-lead">默认位置由 macOS 管理。若你需要把知识库放到外置盘或其他目录，只能选择一个真实的空文件夹；织页不会悄悄搬动已有数据。</p>
-              <button type="button" className="onboarding-directory" onClick={() => void chooseDirectory()} disabled={busy}>{busy ? "正在打开选择器…" : "选择其他空文件夹"}<span>↗</span></button>
+              <Button type="button" className="onboarding-directory" onClick={() => void chooseDirectory()} disabled={busy}>{busy ? "正在打开选择器…" : "选择其他空文件夹"}<span>↗</span></Button>
               <small>选择过程完全在桌面端完成，网页界面不会收到绝对路径。</small>
             </> : <>
               <p className="onboarding-lead">本地 Web 服务使用启动时的数据目录。浏览器不能在服务运行中安全切换它。</p>
@@ -143,16 +144,16 @@ export function Onboarding({ state, onComplete, onLater, revisit = false }: {
 
           {step === 5 && <>
             <h1 id="onboarding-title">先留返回键，<br />再请模型帮忙。</h1>
-            <p className="onboarding-lead">“数据安全”会校验并管理完整备份。AI 默认关闭；开启后仍需逐篇查看发送范围并明确确认，模型结果作为派生内容保存，不直接改写正文。</p>
+            <p className="onboarding-lead">“数据安全”会校验并管理完整备份。AI 默认关闭；开启后，手动派生由你主动点击生成操作发起，模型结果作为派生内容保存，不直接改写正文。</p>
             <ol className="onboarding-sequence"><li><span>1</span><div><strong>自动留档</strong><p>每日最多一次，默认保留最近 7 份。</p></div></li><li><span>2</span><div><strong>升级前保护</strong><p>数据库迁移前先生成可验证备份。</p></div></li><li><span>3</span><div><strong>AI 需要确认</strong><p>只向你配置的端点发送当次明示的文本。</p></div></li></ol>
           </>}
 
           {error && <p className="onboarding-error" role="alert">{error}</p>}
           {!restartRequired && <footer className="onboarding-actions">
-            <button type="button" onClick={() => setStep((value) => Math.max(0, value - 1))} disabled={busy || step === 0}>上一步</button>
+            <Button type="button" onClick={() => setStep((value) => Math.max(0, value - 1))} disabled={busy || step === 0}>上一步</Button>
             {step < steps.length - 1
-              ? <button type="button" className="primary-button" onClick={() => setStep((value) => value + 1)} disabled={busy}>继续</button>
-              : <button type="button" className="primary-button" onClick={() => void complete()} disabled={busy}>{busy ? "正在保存…" : state.completed ? "关闭指南" : "进入资料库"}</button>}
+              ? <Button type="button" className="primary-button" onClick={() => setStep((value) => value + 1)} disabled={busy}>继续</Button>
+              : <Button type="button" className="primary-button" onClick={() => void complete()} disabled={busy}>{busy ? "正在保存…" : state.completed ? "关闭指南" : "进入资料库"}</Button>}
           </footer>}
         </section>
       </div>

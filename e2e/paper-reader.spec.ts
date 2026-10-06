@@ -32,7 +32,7 @@ test("imports a paper and opens the bilingual page reader", async ({ page }) => 
   await page.getByRole("button", { name: "论文 PDF", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "导入" });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("tab", { name: "上传 PDF" }).click();
+  await dialog.getByRole("button", { name: "上传 PDF" }).click();
   await dialog.locator('input[type="file"]').setInputFiles({
     name: "e2e-paper.pdf",
     mimeType: "application/pdf",
@@ -92,7 +92,7 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
   await page.getByRole("button", { name: "导入", exact: true }).click();
   await page.getByRole("button", { name: "论文 PDF", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "导入" });
-  await dialog.getByRole("tab", { name: "上传 PDF" }).click();
+  await dialog.getByRole("button", { name: "上传 PDF" }).click();
   await dialog.locator('input[type="file"]').setInputFiles({ name: "layout.pdf", mimeType: "application/pdf", buffer: minimalPdf() });
   await dialog.getByRole("button", { name: "创建论文" }).click();
   await expect(page.getByRole("heading", { name: "E2E 论文" })).toBeVisible({ timeout: 10_000 });
@@ -120,35 +120,37 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
   const readerFits = await page.locator(".paper-reader").evaluate((element) => element.scrollHeight <= element.clientHeight + 1);
   expect(readerFits).toBe(true);
 
-  // The content area is exactly one viewport tall and the reader's own header
+  // The content area is exactly one reading viewport tall and the reader's own header
   // sits above it in the page flow, so scrolling past the header and the app
-  // chrome leaves the paper filling the window with nothing left over below it.
+  // chrome leaves the paper filling the reading area with nothing left over below it.
   for (const width of [1440, 1000, 800]) {
     await page.setViewportSize({ width, height: 900 });
     await expect.poll(async () => page.evaluate(() => {
       const body = document.querySelector(".paper-reader-body") as HTMLElement;
-      return Math.abs(Math.round(body.clientHeight - window.innerHeight));
+      return Math.abs(Math.round(body.clientHeight - document.querySelector(".reader-layout")!.clientHeight));
     })).toBeLessThanOrEqual(2);
     const atBottom = await page.evaluate(() => {
-      window.scrollTo(0, 100_000);
+      const reader = document.querySelector(".reader-layout") as HTMLElement;
+      reader.scrollTo(0, 100_000);
       const body = document.querySelector(".paper-reader-body") as HTMLElement;
       const header = document.querySelector(".paper-reader-header") as HTMLElement;
       const rect = body.getBoundingClientRect();
       return {
         top: Math.round(rect.top),
         bottom: Math.round(rect.bottom),
-        inner: window.innerHeight,
+        inner: Math.round(reader.getBoundingClientRect().bottom),
+        readerTop: Math.round(reader.getBoundingClientRect().top),
         headerBottom: Math.round(header.getBoundingClientRect().bottom),
-        scrolled: Math.round(window.scrollY),
+        scrolled: Math.round(reader.scrollTop),
       };
     });
     // The chrome and the reader's header must be scrollable away, and the paper
-    // must then fill the window exactly.
+    // must then fill the reading area exactly.
     expect(atBottom.scrolled).toBeGreaterThan(0);
-    expect(atBottom.headerBottom).toBeLessThanOrEqual(1);
-    expect(Math.abs(atBottom.top)).toBeLessThanOrEqual(2);
+    expect(atBottom.headerBottom).toBeLessThanOrEqual(atBottom.readerTop + 1);
+    expect(Math.abs(atBottom.top - atBottom.readerTop)).toBeLessThanOrEqual(2);
     expect(Math.abs(atBottom.bottom - atBottom.inner)).toBeLessThanOrEqual(2);
-    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.locator(".reader-layout").evaluate((element) => element.scrollTo(0, 0));
   }
   await page.setViewportSize({ width: 1440, height: 900 });
 

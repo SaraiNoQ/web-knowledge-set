@@ -55,7 +55,7 @@ test("one Markdown upload accepts files, drops, directories and shows import res
     await page.getByRole("button", { name: "论文 PDF", exact: true }).click();
     const paper = page.getByRole("dialog", { name: "导入", exact: true });
     await expect(paper.getByRole("button", { name: "论文 PDF", exact: true })).toHaveAttribute("aria-pressed", "true");
-    await expect(paper.getByRole("tab", { name: "上传 PDF", exact: true })).toBeVisible();
+    await expect(paper.getByRole("button", { name: "上传 PDF", exact: true })).toBeVisible();
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -74,12 +74,12 @@ test("quick actions reveal and scroll to documents from settings with mouse and 
     const input = panel.getByRole("combobox"); await input.fill(title);
     const result = panel.getByRole("option", { name: new RegExp(title) }); await expect(result).toBeVisible();
     await expect(panel).toContainText("Shift + Enter");
-    expect(await page.locator(".quick-actions-panel").evaluate((el) => getComputedStyle(el).borderRadius)).toBe("4px");
+    expect(await page.locator(".quick-actions-panel").evaluate((el) => getComputedStyle(el).borderRadius)).toBe("6px");
     if (mouse) await result.click(); else await input.press("Enter");
     await expect(panel).toBeHidden();
     await expect(page.locator(".workspace-settings")).toHaveCount(0);
     await expect(page.locator(".markdown-preview h1")).toHaveText(title);
-    await expect.poll(async () => (await page.locator(".reader-panel").boundingBox())!.y).toBeLessThanOrEqual(2);
+    await expect.poll(async () => Math.abs((await page.locator(".reader-panel").boundingBox())!.y - (await page.locator(".workspace").boundingBox())!.y)).toBeLessThanOrEqual(2);
     await expect(page.locator(".reader-panel")).toBeFocused();
   }
 });
@@ -103,8 +103,8 @@ for (const reducedMotion of ["reduce", "no-preference"] as const) {
     await dialog.getByRole("button", { name: "论文 PDF", exact: true }).click();
     await expect(dialog).toHaveAttribute("data-surface-identity", "same");
     expect(await dialog.locator(".bulk-import-card").evaluate((element) => element.clientWidth)).toBe(initialWidth);
-    await expect(dialog.getByRole("tab", { name: "公开链接", exact: true })).toBeVisible();
-    await dialog.getByRole("tab", { name: "上传 PDF", exact: true }).click();
+    await expect(dialog.getByRole("button", { name: "公开链接", exact: true })).toBeVisible();
+    await dialog.getByRole("button", { name: "上传 PDF", exact: true }).click();
     await expect(dialog.locator('input[type="file"]')).toHaveCount(1);
     await expect(dialog.getByText("选择 PDF 文件", { exact: true })).toBeVisible();
     expect((await new AxeBuilder({ page }).include(".bulk-import-card").analyze()).violations).toEqual([]);

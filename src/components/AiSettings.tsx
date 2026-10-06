@@ -1,10 +1,11 @@
+import { SegmentedControl } from "./ui/SegmentedControl";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 import type { LlmApiKeyStatus, LlmConnectionTestResult, LlmSettings } from "../../shared/types";
 import { api } from "../api";
 import { isAbortError, userErrorFrom } from "../error-messages";
-import { Select } from "./ui/Controls";
+import { Button, Select } from "./ui/Controls";
 import { useDialogs } from "./ui/Feedback";
 import { SemanticSettingsPanel } from "./SemanticSettings";
 
@@ -224,7 +225,7 @@ export function AiSettings({ cloud = false, semanticRefresh = 0, embedded = fals
         revision: settings.revision,
       });
       install(updated);
-      setNotice(updated.enabled ? "AI 派生已启用。只有逐篇确认后才会发送正文。" : "设置已保存，AI 仍处于关闭状态。");
+      setNotice(updated.enabled ? "AI 派生已启用，可手动发起生成。" : "设置已保存，AI 仍处于关闭状态。");
     } catch (cause) {
       setError(userErrorFrom(cause, "AI 设置未保存，请检查输入后重试。"));
     } finally {
@@ -286,24 +287,20 @@ export function AiSettings({ cloud = false, semanticRefresh = 0, embedded = fals
   return (
     <section className="ai-settings" aria-labelledby="ai-settings-title">
       <header>
-        <div>{embedded ? <h2 id="ai-settings-title">AI 派生设置</h2> : <h1 id="ai-settings-title">AI 派生设置</h1>}<p>默认不发送任何内容。每篇文档都需先核对准确的发送范围，再明确确认。</p></div>
-        {!embedded && <button type="button" onClick={onClose}>返回资料库</button>}
+        <div>{embedded ? <h2 id="ai-settings-title">AI 派生设置</h2> : <h1 id="ai-settings-title">AI 派生设置</h1>}<p>按需调整 AI 平台与模型，手动派生由你点击生成操作发起。</p></div>
+        {!embedded && <Button type="button" onClick={onClose}>返回资料库</Button>}
       </header>
 
       {loading ? <div className="ai-settings-state" role="status">正在读取 AI 设置…</div> : !settings ? <div className="ai-settings-state is-error" role="alert">{error || "无法读取 AI 设置。"}</div> : (
         <div className="ai-settings-grid">
           <section className="ai-settings-card">
-            <div className="ai-setting-lead"><span>01</span><div><h2>明确开启</h2><p>开启设置本身不会发送正文；生成前仍需逐篇确认。</p></div></div>
-            <label className="ai-enable"><input type="checkbox" checked={enabled} onChange={(event) => { setEnabled(event.target.checked); clearTestResult(); }} disabled={locked} /><span><strong>允许 AI 派生知识</strong><small>{enabled ? "已准备：仍需逐篇确认" : "关闭：不会自动发生模型网络请求"}</small></span></label>
+            <div className="ai-setting-lead"><span>01</span><div><h2>明确开启</h2><p>开启设置本身不会发送正文；手动派生通过生成操作发起。</p></div></div>
+            <label className="ai-enable"><input type="checkbox" checked={enabled} onChange={(event) => { setEnabled(event.target.checked); clearTestResult(); }} disabled={locked} /><span><strong>允许 AI 派生知识</strong><small>{enabled ? "已启用：可发起生成" : "关闭：不会自动发生模型网络请求"}</small></span></label>
           </section>
 
           <section className="ai-settings-card">
             <div className="ai-setting-lead"><span>02</span><div><h2>网络目标</h2><p>远程端点必须使用 HTTPS；本地端点仅允许本机地址。</p></div></div>
-            {!cloud && <fieldset className="ai-endpoint-kind" disabled={locked}>
-              <legend className="sr-only">端点类型</legend>
-              <button type="button" aria-pressed={target === "remote"} onClick={() => { setTarget("remote"); clearTestResult(); }}>远程 HTTPS</button>
-              <button type="button" aria-pressed={target === "local"} onClick={() => { setTarget("local"); clearTestResult(); }}>可信本地端点</button>
-            </fieldset>}
+            {!cloud && <SegmentedControl label="端点类型" className="ai-endpoint-kind" value={target} disabled={locked} options={[{ value: "remote", label: "远程 HTTPS" }, { value: "local", label: "可信本地端点" }]} onChange={(value) => { setTarget(value); clearTestResult(); }} />}
             {target === "remote" ? <>
               <label>
                 <span>AI 平台</span>
@@ -328,8 +325,8 @@ export function AiSettings({ cloud = false, semanticRefresh = 0, embedded = fals
                 </label>
                 <div>
                   <span>{desktop ? (keychainEndpoint === undefined ? "正在检查 macOS 钥匙串…" : keychainEndpoint ? (endpointValue(keychainEndpoint) === currentRemoteEndpoint ? "当前平台密钥已保存到 macOS 钥匙串" : "钥匙串内有其他平台密钥；当前平台需重新输入") : "将保存到 macOS 钥匙串") : cloud ? "保存于当前浏览器站点存储；共享设备用完请删除" : "仅保存于当前本地服务进程"}</span>
-                  <button type="button" onClick={() => void storeApiKey()} disabled={locked || !apiKey.trim() || !remoteUrl.trim()}>保存密钥</button>
-                  {(processKeyEndpoint || keychainEndpoint) && <button type="button" className="danger" onClick={() => void deleteApiKey()} disabled={locked}>删除密钥</button>}
+                  <Button type="button" onClick={() => void storeApiKey()} disabled={locked || !apiKey.trim() || !remoteUrl.trim()}>保存密钥</Button>
+                  {(processKeyEndpoint || keychainEndpoint) && <Button type="button" className="danger" onClick={() => void deleteApiKey()} disabled={locked}>删除密钥</Button>}
                 </div>
               </div>
               <div className={`ai-key-state ${processKeyConfigured ? "is-ready" : ""}`}><i />{processKeyConfigured ? (cloud ? "当前页面已加载当前平台密钥；Worker 不会将密钥写入 D1 或留档。" : "当前进程已加载当前平台密钥；密钥不会返回浏览器。") : "当前平台未加载密钥。切换平台后需重新输入。"}</div>
@@ -340,7 +337,7 @@ export function AiSettings({ cloud = false, semanticRefresh = 0, embedded = fals
               <label className="ai-local-trust"><input type="checkbox" checked={localTrusted} onChange={(event) => { setLocalTrusted(event.target.checked); clearTestResult(); }} disabled={locked} /><span>我信任这个本机端点，并理解正文会发送给运行它的进程。</span></label>
             </>}
             <div className="ai-connection-test">
-              <button type="button" onClick={() => void testConnection()} disabled={locked || (target === "remote" ? !remoteUrl.trim() || !remoteModel.trim() || !processKeyConfigured || Boolean(apiKey.trim()) : !localUrl.trim() || !localModel.trim() || !localTrusted)}>{testing ? "测试中…" : "测试连接"}</button>
+              <Button type="button" onClick={() => void testConnection()} disabled={locked || (target === "remote" ? !remoteUrl.trim() || !remoteModel.trim() || !processKeyConfigured || Boolean(apiKey.trim()) : !localUrl.trim() || !localModel.trim() || !localTrusted)}>{testing ? "测试中…" : "测试连接"}</Button>
               <small>{target === "remote" && apiKey.trim() ? "先保存密钥，再测试该密钥与当前端点。" : "只发送固定探针，不发送文档；远程供应商可能收取小额费用。"}</small>
               {testResult && <div className="ai-test-result is-success" role="status"><strong>连接成功</strong><span>{testResult.target === "remote" ? "远程" : "本机"} · {testResult.model} · {testResult.durationMs} ms</span><small>固定探针未发送正文；远程供应商可能收取小额费用。</small></div>}
               {testError && <div className="ai-test-result is-error" role="alert"><strong>连接失败</strong><span>{testError}</span><small>{cloud ? "密钥不会因测试失败而写入 D1 或留档。" : "密钥不会因测试失败而写入数据库或留档。"}</small></div>}
@@ -355,8 +352,8 @@ export function AiSettings({ cloud = false, semanticRefresh = 0, embedded = fals
           </aside>
 
           <footer>
-            <button type="button" className="text-button danger" onClick={() => void disableAndDelete()} disabled={locked}>关闭 AI 并删除全部结果</button>
-            <button type="button" className="primary-button" onClick={() => void save()} disabled={locked || (target === "remote" ? !remoteUrl.trim() || !remoteModel.trim() || (enabled && !processKeyConfigured) : !localUrl.trim() || !localModel.trim() || (enabled && !localTrusted))}>{saving ? "保存中…" : "保存设置"}</button>
+            <Button type="button" className="text-button danger" onClick={() => void disableAndDelete()} disabled={locked}>关闭 AI 并删除全部结果</Button>
+            <Button type="button" className="primary-button" onClick={() => void save()} disabled={locked || (target === "remote" ? !remoteUrl.trim() || !remoteModel.trim() || (enabled && !processKeyConfigured) : !localUrl.trim() || !localModel.trim() || (enabled && !localTrusted))}>{saving ? "保存中…" : "保存设置"}</Button>
           </footer>
           {notice && <p className="ai-settings-message" role="status">{notice}</p>}
           {error && <p className="ai-settings-message is-error" role="alert">{error}</p>}

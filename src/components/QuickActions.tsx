@@ -1,3 +1,4 @@
+import { Button } from "./ui/Controls";
 import { useEffect, useId, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { DocumentSummary } from "../../shared/types";
@@ -161,13 +162,13 @@ export function QuickActions({ open, onClose, onOpenDocument, onCreateArticle }:
           }}
           onKeyDown={handleKeyDown}
         />
-        <button type="button" aria-label="关闭快捷面板" onClick={onClose}><WorkspaceIcon name="close" size={19} /></button>
+        <Button type="button" aria-label="关闭快捷面板" onClick={onClose}><WorkspaceIcon name="close" size={19} /></Button>
       </header>
 
       <div ref={results} className="quick-actions-results" aria-busy={loading}>
         {loading && <div className="quick-actions-skeleton" role="status" aria-label="正在搜索资料"><i /><i /><i /></div>}
         {!loading && error && <p className="quick-actions-message" role="alert">{error}</p>}
-        {!loading && !error && items.length > 0 && <div id={`${id}-results`} role="listbox" aria-label="资料搜索结果">{items.map((item, index) => <button
+        {!loading && !error && items.length > 0 && <div id={`${id}-results`} role="listbox" aria-label="资料搜索结果">{items.map((item, index) => <Button
           type="button"
           role="option"
           id={`${id}-result-${index}`}
@@ -184,12 +185,12 @@ export function QuickActions({ open, onClose, onOpenDocument, onCreateArticle }:
             <small>{item.searchMatches?.[0] || (item.kind === "paper" ? "论文 · 标题匹配" : "文章 · 标题匹配")}</small>
           </span>
           <span className="quick-actions-result-kind">{item.kind === "paper" ? "论文" : "文章"}</span>
-        </button>)}</div>}
+        </Button>)}</div>}
         {!loading && !error && items.length > 0 && <>
           {total > items.length && <p className="quick-actions-more">还有 {total - items.length} 篇匹配资料</p>}
           <p className="quick-actions-more">按 Shift + Enter 用“{term}”创建新文章</p>
         </>}
-        {!loading && !error && canCreate && <div id={`${id}-results`} role="listbox" aria-label="快捷操作"><button
+        {!loading && !error && canCreate && <div id={`${id}-results`} role="listbox" aria-label="快捷操作"><Button
           type="button"
           role="option"
           id={createOptionId}
@@ -201,7 +202,7 @@ export function QuickActions({ open, onClose, onOpenDocument, onCreateArticle }:
           <span className="quick-actions-create-mark"><WorkspaceIcon name="plus" size={18} /></span>
           <span><strong>{term ? `新建文章“${term}”` : "新建空白文章"}</strong><small>{term ? "按回车创建并开始编辑" : "输入标题后按 Shift + Enter 创建"}</small></span>
           <kbd>↵</kbd>
-        </button></div>}
+        </Button></div>}
       </div>
 
       <footer className="quick-actions-footer">

@@ -223,7 +223,7 @@ test("paper translation drafts and reader state survive immersive switching", as
   await page.getByRole("button", { name: "导入", exact: true }).click();
   await page.getByRole("button", { name: "论文 PDF", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "导入" });
-  await dialog.getByRole("tab", { name: "上传 PDF" }).click();
+  await dialog.getByRole("button", { name: "上传 PDF" }).click();
   await dialog.locator('input[type="file"]').setInputFiles({ name: "immersive.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7\nE2E fixture\n", "ascii") });
   const upload = page.waitForResponse((response) => response.url().endsWith("/api/papers/upload") && response.request().method() === "POST");
   await dialog.getByRole("button", { name: "创建论文" }).click();

@@ -8,9 +8,9 @@ export function CachedImage({ src, alt = "", onError }: { src: string; alt?: str
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
   return <span className="offline-image">
-    <button type="button" className="image-viewer-trigger" aria-label={`查看图片：${alt || "正文图片"}`} disabled={!loaded} onClick={() => setOpen(true)}>
+    <Button type="button" className="image-viewer-trigger" aria-label={`查看图片：${alt || "正文图片"}`} disabled={!loaded} onClick={() => setOpen(true)}>
       <img src={src} alt={alt} loading="lazy" onLoad={() => setLoaded(true)} onError={onError} />
-    </button>
+    </Button>
     {open && <ImageViewer src={src} alt={alt} onClose={() => setOpen(false)} />}
   </span>;
 }

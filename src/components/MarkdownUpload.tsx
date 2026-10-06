@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, IconButton } from "./ui/Controls";
+import { UploadZone } from "./ui/Uploads";
 import { WorkspaceIcon } from "./ui/WorkspaceIcon";
 
 function fileKey(file: File) { return file.webkitRelativePath || file.name; }
@@ -50,16 +51,13 @@ export function MarkdownUpload({ files, onChange, disabled, onPreparingChange }:
     finally { if (generation.current === ticket) { setPreparing(false); onPreparingChange(false); } }
   };
   return <div className="markdown-upload">
-    <div className={`markdown-dropzone${dragging ? " is-dragging" : ""}`} role="group" aria-label="Markdown 上传区"
+    <UploadZone className={`markdown-dropzone${dragging ? " is-dragging" : ""}`} aria-label="Markdown 上传区" title={preparing ? "正在读取目录…" : "拖放 Markdown 文件或目录"} hint="支持 .md、.markdown · 最多 100 个文件 · 总计 10 MiB" actions={<><Button disabled={disabled || preparing} onClick={() => fileInput.current?.click()}>选择文件</Button><Button disabled={disabled || preparing} onClick={() => directoryInput.current?.click()}>选择目录</Button></>}
       onDragOver={(event) => { event.preventDefault(); if (!disabled && !preparing) { setDragging(true); event.dataTransfer.dropEffect = "copy"; } }}
       onDragLeave={(event) => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDragging(false); }}
       onDrop={(event) => { event.preventDefault(); setDragging(false); void drop(event.dataTransfer.items, Array.from(event.dataTransfer.files)); }}>
-      <WorkspaceIcon name="import" size={28} /><strong>{preparing ? "正在读取目录…" : "拖放 Markdown 文件或目录"}</strong>
-      <div><Button disabled={disabled || preparing} onClick={() => fileInput.current?.click()}>选择文件</Button><Button disabled={disabled || preparing} onClick={() => directoryInput.current?.click()}>选择目录</Button></div>
-      <small>支持 .md、.markdown · 最多 100 个文件 · 总计 10 MiB</small>
       <input ref={fileInput} className="sr-only" tabIndex={-1} aria-label="选择 Markdown 文件" type="file" multiple accept=".md,.markdown,text/markdown,text/plain" disabled={disabled || preparing} onChange={(event) => { addFiles(Array.from(event.currentTarget.files || [])); event.currentTarget.value = ""; }} />
       <input ref={directoryInput} className="sr-only" tabIndex={-1} aria-label="选择 Markdown 目录" type="file" multiple {...{ webkitdirectory: "", directory: "" }} disabled={disabled || preparing} onChange={(event) => { addFiles(Array.from(event.currentTarget.files || [])); event.currentTarget.value = ""; }} />
-    </div>
+    </UploadZone>
     {files.length > 0 && <><div className="upload-list-heading"><strong>已添加 {files.length} 个文件</strong><span>{size(files.reduce((sum, file) => sum + file.size, 0))}</span></div><ul className="upload-file-list" aria-label="已添加的 Markdown 文件">{files.map((file) => <li key={fileKey(file)}><WorkspaceIcon name="document" size={18} /><div><strong>{file.name}</strong><small>{fileKey(file)}</small></div><span>{size(file.size)}</span><IconButton label={`移除文件：${fileKey(file)}`} disabled={disabled || preparing} onClick={() => onChange(files.filter((value) => value !== file))}><WorkspaceIcon name="close" size={16} /></IconButton></li>)}</ul></>}
     {error && <p className="bulk-import-error" role="alert">{error}</p>}
   </div>;

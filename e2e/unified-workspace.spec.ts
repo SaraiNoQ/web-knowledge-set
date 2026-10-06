@@ -1,3 +1,4 @@
+import { AxeBuilder } from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
@@ -26,7 +27,7 @@ test("root and expanded folders show every document while the reader scrolls bel
   const paperDocument = await (await request.get(`/api/documents/${paper.id}`)).json();
   expect(paperDocument.folderId).toBe(null);
   await page.goto("/");
-  await expect(page.locator('.root-contents button[aria-description="论文"]')).toBeVisible();
+  await expect(page.locator('.root-contents button[aria-description="论文"]').filter({ hasText: paperDocument.title })).toBeVisible();
   await expect(page.locator(".directory-kind-badge")).toHaveCount(0);
   await expect(page.locator(".root-contents .directory-document-label").filter({ hasText: prefix })).toHaveCount(61);
   await expect(page.locator(".library-directory .panel-heading").getByRole("button", { name: "新建", exact: true })).toBeVisible();
@@ -86,4 +87,53 @@ test("leaving the reader before a preview completes prevents the send", async ({
   await page.getByRole("button", { name: "AI 派生", exact: true }).click();
   await expect(page.locator(".derived-empty")).toBeVisible();
   expect(starts).toEqual([]);
+});
+
+test("shared controls keep the same upload design, focus, widths and theme", async ({ page, request }) => {
+  const listing = await request.get("/api/documents");
+  const headers = { Origin: "http://127.0.0.1:4174", "X-Zhiye-Data-Epoch": listing.headers()["x-zhiye-data-epoch"] };
+  const title = `控件统一${Date.now()}`;
+  const { document } = await (await request.post("/api/documents", { headers, data: { title } })).json();
+  expect((await request.patch(`/api/documents/${document.id}`, { headers, data: { revision: 1, markdown: "# 统一阅读\n\n正文保留纸张风格。" } })).ok()).toBe(true);
+  await page.goto("/");
+  await page.locator(".root-contents").getByRole("button", { name: title, exact: true }).click();
+  await page.getByRole("button", { name: "导入", exact: true }).click();
+  const modal = page.getByRole("dialog", { name: "导入", exact: true });
+  const markdownButton = modal.getByRole("button", { name: "选择文件", exact: true });
+  const markdownStyle = await markdownButton.evaluate((element) => { const style = getComputedStyle(element); return [style.height, style.borderRadius, style.boxShadow, style.fontFamily]; });
+  await modal.getByRole("button", { name: "论文 PDF", exact: true }).click();
+  await modal.getByRole("button", { name: "上传 PDF", exact: true }).click();
+  const pdf = modal.getByRole("button", { name: "选择 PDF 文件", exact: true });
+  expect(await pdf.evaluate((element) => { const style = getComputedStyle(element); return [style.height, style.borderRadius, style.boxShadow, style.fontFamily]; })).toEqual(markdownStyle);
+  expect((await new AxeBuilder({ page }).include(".bulk-import-card").analyze()).violations).toEqual([]);
+  await page.screenshot({ path: "/tmp/zhiye-unified-upload-desktop.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: "/tmp/zhiye-unified-upload-mobile.png" });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole("button", { name: "打开设置", exact: true }).click();
+  await page.getByRole("button", { name: "阅读与显示", exact: true }).click();
+  const select = await page.locator(".reading-control > .ui-select-wrap").boundingBox();
+  for (const number of await page.locator(".reading-number").all()) expect((await number.boundingBox())!.width).toBe(select!.width);
+  const size = page.getByRole("spinbutton", { name: "正文字号", exact: true });
+  await size.fill("16"); await size.focus();
+  const box = (await size.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, -100);
+  await expect(size).toHaveValue("17");
+  await expect(page.locator(".reading-text-preview")).toHaveCSS("font-size", "17px");
+  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  expect((await new AxeBuilder({ page }).include(".workspace-settings").analyze()).violations).toEqual([]);
+  await page.screenshot({ path: "/tmp/zhiye-unified-settings-dark.png" });
+  await page.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
+  await page.getByRole("button", { name: "返回资料库", exact: true }).click();
+  await page.getByRole("button", { name: "AI 派生", exact: true }).click();
+  await page.getByRole("button", { name: "AI 对话", exact: true }).click();
+  await expect(page.getByRole("button", { name: "发送并生成", exact: true })).toBeVisible();
+  await expect(page.locator(".derived-panel").getByText("01 · GENERATE", { exact: true })).toHaveCount(0);
+  expect((await new AxeBuilder({ page }).include(".derived-panel").analyze()).violations).toEqual([]);
+  await page.screenshot({ path: "/tmp/zhiye-unified-ai-desktop.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: "/tmp/zhiye-unified-ai-mobile.png" });
 });
