@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AiSettings } from "./AiSettings";
 import { Button, Select } from "./ui/Controls";
 import { DEFAULT_READING_MARGIN, normalizeReadingMargin, saveReadingMargin, DEFAULT_READING_TEXT, READING_FONTS, normalizeReadingText, saveReadingText, type ReadingTextSettings } from "../reading-preferences";
@@ -9,8 +9,23 @@ export function WorkspaceSettings({ cloud, semanticRefresh, onClose, readingMarg
   readingText: ReadingTextSettings; onReadingTextChange: (value: ReadingTextSettings) => void;
 }) {
   const [section, setSection] = useState("ai");
+  const readingSettingsRef = useRef<HTMLDivElement>(null);
   const [numberDraft, setNumberDraft] = useState({ fontSize: String(readingText.fontSize), lineHeight: String(readingText.lineHeight), letterSpacing: String(readingText.letterSpacing) });
   useEffect(() => setNumberDraft({ fontSize: String(readingText.fontSize), lineHeight: String(readingText.lineHeight), letterSpacing: String(readingText.letterSpacing) }), [readingText]);
+  useEffect(() => {
+    const root = readingSettingsRef.current;
+    if (!root) return;
+    const stepFocusedNumber = (event: WheelEvent) => {
+      const input = event.target instanceof HTMLInputElement && event.target.type === "number" ? event.target : null;
+      if (!input || !input.closest(".reading-number") || document.activeElement !== input || event.deltaY === 0 || event.ctrlKey || event.metaKey) return;
+      event.preventDefault();
+      const previous = input.value;
+      try { event.deltaY < 0 ? input.stepUp() : input.stepDown(); } catch { return; }
+      if (input.value !== previous) input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    root.addEventListener("wheel", stepFocusedNumber, { passive: false });
+    return () => root.removeEventListener("wheel", stepFocusedNumber);
+  }, []);
   const [storageFailed, setStorageFailed] = useState(false);
   const changeMargin = (value: number) => {
     const normalized = normalizeReadingMargin(value);
@@ -30,7 +45,7 @@ export function WorkspaceSettings({ cloud, semanticRefresh, onClose, readingMarg
       <div className="settings-content">
         <section hidden={section !== "reading"} aria-labelledby="reading-settings-title">
           <h2 id="reading-settings-title">阅读与显示</h2>
-          <div className="reading-setting">
+          <div ref={readingSettingsRef} className="reading-setting">
             <div className="reading-control"><label htmlFor="reading-margin">正文两侧总留白</label><div className="reading-number"><input type="number" aria-label="正文两侧总留白百分比" min={0} max={50} step={1} value={readingMargin} onChange={(event) => changeMargin(event.currentTarget.valueAsNumber)} /><span>%</span></div><input id="reading-margin" type="range" min={0} max={50} step={1} value={readingMargin} style={{ "--range-progress": `${readingMargin * 2}%` } as import("react").CSSProperties} onChange={(event) => changeMargin(event.currentTarget.valueAsNumber)} /></div>
             <div className="reading-control"><label htmlFor="reading-font">正文字体</label><Select aria-label="正文字体" id="reading-font" value={readingText.font} onChange={(event) => changeText({ font: event.target.value as ReadingTextSettings["font"] })}>{Object.entries(READING_FONTS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</Select></div>
             {([{ key: "fontSize", label: "正文字号", unit: "px", min: 12, max: 28, step: 1 }, { key: "lineHeight", label: "正文行间距", unit: "倍", min: 1.2, max: 2.8, step: .05 }, { key: "letterSpacing", label: "正文字间距", unit: "em", min: 0, max: .15, step: .01 }] as const).map((field) => <div className="reading-control" key={field.key}><label htmlFor={`reading-${field.key}`}>{field.label}</label><div className="reading-number"><input id={`reading-${field.key}`} aria-label={field.label} type="number" min={field.min} max={field.max} step={field.step} value={numberDraft[field.key]} onChange={(event) => { const value = event.currentTarget.value; const number = event.currentTarget.valueAsNumber; setNumberDraft((current) => ({ ...current, [field.key]: value })); if (value && number >= field.min && number <= field.max) changeText({ [field.key]: number }); }} onBlur={(event) => changeText({ [field.key]: event.currentTarget.valueAsNumber })} /><span>{field.unit}</span></div></div>)}

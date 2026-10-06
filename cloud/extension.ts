@@ -735,19 +735,22 @@ export async function updateDocument(db: D1Database, id: string, body: Record<st
   const hasFavorite = Object.hasOwn(body, "favorite");
   if (keys.some((key) => !["title", "markdown", "folderId", "favorite", "revision"].includes(key)) ||
     typeof body.revision !== "number" || !Number.isSafeInteger(body.revision) || body.revision < 1 ||
-    hasTitle !== hasMarkdown || (!hasTitle && !hasFolder && !hasFavorite) ||
+    (!hasTitle && !hasMarkdown && !hasFolder && !hasFavorite) ||
     (hasFavorite && typeof body.favorite !== "boolean") ||
-    (hasTitle && (typeof body.title !== "string" || !body.title.trim() || body.title.length > 1_000 ||
-      typeof body.markdown !== "string" || encoder.encode(body.markdown).byteLength > MAX_CLOUD_ROW_TEXT_BYTES ||
-      unsafeControl.test(body.title) || unsafeControl.test(body.markdown)))) {
+    (hasTitle && (typeof body.title !== "string" || !body.title.trim() || body.title.length > 1_000 || unsafeControl.test(body.title))) ||
+    (hasMarkdown && (typeof body.markdown !== "string" || encoder.encode(body.markdown).byteLength > MAX_CLOUD_ROW_TEXT_BYTES || unsafeControl.test(body.markdown)))) {
     throw new CloudHttpError(400, "INVALID_DOCUMENT_UPDATE", "A positive revision and a valid content or folder change are required");
   }
   const folderId = hasFolder ? folderIdValue(body.folderId) : undefined;
   const assignments: string[] = [];
   const values: unknown[] = [];
   if (hasTitle) {
-    assignments.push("title = ?", "markdown = ?");
-    values.push((body.title as string).trim(), body.markdown);
+    assignments.push("title = ?");
+    values.push((body.title as string).trim());
+  }
+  if (hasMarkdown) {
+    assignments.push("markdown = ?");
+    values.push(body.markdown as string);
   }
   if (hasFolder) {
     assignments.push("folder_id = ?");
@@ -763,7 +766,7 @@ export async function updateDocument(db: D1Database, id: string, body: Record<st
      WHERE id = ? AND revision = ? AND deleted_at IS NULL${folderId ? " AND EXISTS (SELECT 1 FROM cloud_folders WHERE id = ?)" : ""}`,
   ).bind(...values, now, id, body.revision, ...(folderId ? [folderId] : []));
   let result: D1Result;
-  if (hasTitle) {
+  if (hasTitle || hasMarkdown) {
     if (!db.batch) throw new CloudHttpError(503, "CLOUD_BATCH_UNAVAILABLE", "D1 batch support is required");
     [result] = await db.batch([
       update,
