@@ -304,7 +304,7 @@ export function DerivedKnowledge({ cloud = false, hideTagSuggestions = false, do
 
           {loading ? <div className="derived-state" role="status">正在翻阅派生记录…</div> : (
             <>
-              <section className="derived-generator" aria-label="生成派生内容">
+              <section className={`derived-generator${type !== "translation" && type !== "custom" ? " is-inline" : ""}`} aria-label="生成派生内容">
                 <div className="derived-options">
                   <SegmentedControl label="派生类型" value={type} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing} options={[...(Object.entries(TYPE_LABEL) as Array<[DerivedResultType, string]>).filter(([value]) => value !== "tag-suggestions" || (!cloud && !hideTagSuggestions)).map(([value, label]) => ({ value, label })), { value: "custom", label: CUSTOM_LABEL }]} onChange={onTypeChange} />
                   {type === "translation" && <label className="derived-target-language"><span>翻译为</span><Select aria-label="翻译目标语言" value={targetLanguage} onChange={(event) => { setTargetLanguage(event.target.value as TranslationLanguage); }} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing}>{(Object.entries(TRANSLATION_LANGUAGES) as Array<[TranslationLanguage, string]>).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></label>}

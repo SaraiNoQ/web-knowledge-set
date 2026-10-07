@@ -282,7 +282,7 @@ test("flat controls reserve material depth for interaction and directory menus s
 });
 
 
-test("derived tabs fill the generator and generation success expires as a toast", async ({ page, request }) => {
+test("derived controls adapt to their inputs without a top gap and success expires as a toast", async ({ page, request }) => {
   const settingsResponse = await request.get("/api/settings/llm");
   const settings = await settingsResponse.json();
   const headers = { Origin: "http://127.0.0.1:4174", "X-Zhiye-Data-Epoch": settingsResponse.headers()["x-zhiye-data-epoch"] };
@@ -310,15 +310,31 @@ test("derived tabs fill the generator and generation success expires as a toast"
   await page.getByRole("button", { name: "AI 派生", exact: true }).click();
   const panel = page.getByRole("complementary", { name: "AI 派生知识", exact: true });
   await expect(panel.getByText("选择生成内容", { exact: true })).toHaveCount(0);
-  for (const width of [1440, 390]) {
-    await page.setViewportSize({ width, height: 900 });
-    for (const type of ["摘要", "翻译"]) {
-      await panel.getByRole("button", { name: type, exact: true }).click();
-      const tabs = (await panel.locator(".ui-segmented").boundingBox())!;
-      const get = (await panel.getByRole("button", { name: "获取", exact: true }).boundingBox())!;
-      expect(Math.abs(tabs.x + tabs.width - get.x - get.width)).toBeLessThanOrEqual(1);
-      expect(get.y).toBeGreaterThanOrEqual(tabs.y + tabs.height);
-      if (type === "翻译") await page.screenshot({ path: `/tmp/zhiye-derived-translation-${width}.png` });
+  for (const theme of ["light", "dark"]) {
+    if (theme === "dark") await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const type of ["摘要", "分层提纲", "关键词", "翻译"]) {
+        await panel.getByRole("button", { name: type, exact: true }).click();
+        const tabs = (await panel.locator(".ui-segmented").boundingBox())!;
+        const get = (await panel.getByRole("button", { name: "获取", exact: true }).boundingBox())!;
+        const readingTop = (await page.locator(".cloud-reader").boundingBox())!.y;
+        expect(Math.abs((await panel.boundingBox())!.y - readingTop)).toBeLessThanOrEqual(1);
+        if (type === "翻译") {
+          expect(Math.abs(tabs.x + tabs.width - get.x - get.width)).toBeLessThanOrEqual(1);
+          expect(get.y).toBeGreaterThanOrEqual(tabs.y + tabs.height);
+        } else if (width > 580) {
+          expect(Math.abs(get.y - tabs.y)).toBeLessThanOrEqual(1);
+          expect(Math.abs(get.height - tabs.height)).toBeLessThanOrEqual(1);
+          expect(get.x).toBeGreaterThan(tabs.x + tabs.width);
+        } else {
+          expect(get.y).toBeGreaterThanOrEqual(tabs.y + tabs.height);
+          expect(Math.abs(get.x - tabs.x)).toBeLessThanOrEqual(1);
+          expect(Math.abs(get.width - tabs.width)).toBeLessThanOrEqual(1);
+        }
+        if (type === "摘要") await page.screenshot({ path: `/tmp/zhiye-derived-inline-${theme}-${width}.png` });
+        if (type === "翻译") await page.screenshot({ path: `/tmp/zhiye-derived-translation-${width}.png` });
+      }
     }
   }
   await page.setViewportSize({ width: 1440, height: 900 });
