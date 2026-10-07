@@ -118,3 +118,5 @@ Cloudflare Web 的正式文档和抓取任务均支持 revision 保护的回收�
 - 2026-10-07 · `f26d217c93d01fa18023772debe9a141b1e3a976` · 文件夹整行状态/取消嵌套滚动、派生栏满宽及4秒成功toast已按持续自动提交部署授权发布。Web Version ID `818d7ba7-1700-4434-9687-8eef018c9df7`，Clip Version ID `126914b3-d347-4e91-9b55-da8df907e193`。正式配置及既有绑定未变，无D1迁移；服务器门禁和独立复审通过。未登录Web `/`、`/health` 为Access302，Clip `/` 为403；生产登录态读写、真实AI端点、配对剪藏和图片读取本轮未复验。
 
 - 2026-10-07 · `ea86dbd2ecffe1bddeaf68d65a8bd679ed6330a4` · 派生顶部白条及常规生成按钮布局修复已按持续自动提交部署授权发布。Web Version ID `1a3e0543-984e-4ba6-ada2-07c3b66cc488`，Clip Version ID `16757a0e-280e-4550-b245-138b9d08b2e1`。正式配置及既有绑定未变，无D1迁移；服务器门禁及独立审查通过，GitHub提交已推送。未登录Web `/`、`/health` 为Access302，Clip `/` 为403；生产登录态读写、真实AI端点、配对剪藏和图片读取本轮未复验。
+
+- 2026-10-08 · `66c97bfeec0011e45b599123f0e7ad09639b3a0d`（`codex/markdown-toolbar-layout`）· 紧凑文章头部单行布局、云端主题/字数位置和大纲对齐已按用户明确授权重新部署。Web Version ID `25a88616-8d53-485e-a045-5bb8ccbc1d93`，Clip Version ID `50bea99b-38fc-4591-9e0c-1cb415ce158e`。Node 24.19.0 / pnpm 11.7.0 的 check、217/218 单元/集成（1 项既有跳过）、build、cloud:check 45/45、双 Worker dry-run 与 15 项相关 Playwright E2E 通过；diff 独立复审通过。无 D1 迁移，生产绑定未变。按用户要求未打开浏览器，Access 登录态读写、配对剪藏及图片交付未复验。

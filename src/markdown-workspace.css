@@ -33,12 +33,15 @@
 [data-reading-style="technical"] .markdown-preview hr { width: 100%; margin-block: 2em; }
 
 .markdown-style-select { min-width: 82px; max-width: 140px; }
-.editor-toolbar .markdown-style-select { width: 88px; flex: 0 0 88px; margin-left: 10px; }
 .editor-shell .editor-toolbar { flex-wrap: wrap; gap: 8px; }
 .markdown-toolbar-host { flex: 0 1 auto; min-width: 0; }
 .markdown-toolbar-host:empty { display: none; }
 .markdown-toolbar-host .markdown-format-toolbar { padding: 0; border: 0; background: transparent; }
-.editor-shell .compact-document-head .document-actions { flex-wrap: wrap; }
+.editor-shell .compact-document-head .document-actions { flex-wrap: nowrap; gap: 2px; }
+.editor-shell .compact-document-head:has(.mode-switch) .document-actions { flex-wrap: wrap; }
+.editor-shell .compact-document-head .document-actions > button { padding-inline: 1px; gap: 2px; font-size: 11px; }
+.editor-shell .compact-document-head .markdown-style-select { width: 70px; min-width: 70px; max-width: 70px; flex: 0 0 70px; }
+.save-indicator .editor-stats { margin-left: 0; color: var(--ink-faint); letter-spacing: 0; }
 .compact-document-head .document-actions > * { order: 0; }
 .compact-document-head .mode-switch.ui-segmented { width: 180px; }
 .pane-label-overlay { position: sticky; top: 0; z-index: 2; height: 0; flex: 0 0 0; pointer-events: none; }
@@ -73,9 +76,8 @@
   .markdown-selection-toolbar .ui-icon-button { min-height: 40px; width: 40px; }
   .editor-shell .editor-toolbar { padding: 8px 12px; }
   .editor-shell .editor-toolbar .mode-switch { width: auto; flex: 1 1 150px; }
-  .editor-toolbar .markdown-style-select { order: 1; margin-left: 0; }
   .editor-toolbar .markdown-toolbar-host { order: 1; flex-basis: 100%; }
-  .editor-shell .compact-document-head .document-actions { width: 100%; gap: 4px; }
+  .editor-shell .compact-document-head .document-actions { width: 100%; gap: 2px; }
   .editor-shell .compact-document-head { height: auto; overflow: visible; }
   .compact-document-head .mode-switch.ui-segmented { flex: 0 0 100%; width: 100%; }
   [data-reading-style="editorial"] .markdown-preview h1 { font-size: 2em; }

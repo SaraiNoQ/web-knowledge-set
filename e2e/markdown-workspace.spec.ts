@@ -65,7 +65,7 @@ for (const cloud of [false, true]) test(`${cloud ? "cloud" : "local"} editor for
       await expect(bubble).toBeHidden();
     }
   } finally { releaseSave(); }
-  await expect(page.locator(".save-indicator")).toHaveText("已保存");
+  await expect(page.locator(".save-indicator > span[aria-live]")).toHaveText("已保存");
   const saved = await (await request.get(`/api/documents/${document.id}`)).json();
   expect(saved.markdown).toContain("[**选中文字**](https://example.com)");
   expect(saved.markdown).toContain("| 列名 | 内容 |");

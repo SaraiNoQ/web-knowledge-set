@@ -80,8 +80,10 @@ for (const cloud of [false, true]) test(`right outline folds and navigates real 
   await page.locator(".directory-document-row").getByRole("button", { name: title, exact: true }).click();
   await page.getByRole("button", { name: "展开右侧功能区", exact: true }).click();
   const outline = page.getByRole("navigation", { name: "Markdown 大纲" });
+  await expect(outline.locator(".outline-fold-space")).toHaveCount(0);
   await expect(outline.getByRole("button", { name: "代码中的假标题", exact: true })).toHaveCount(0);
   await expect(outline.locator(".outline-heading")).toHaveCount(6);
+  await expect(outline.locator(".outline-heading").first()).toHaveCSS("justify-content", "flex-start");
   await outline.getByRole("button", { name: "折叠 子标题", exact: true }).click();
   await expect(outline.getByRole("button", { name: "跳级标题", exact: true })).toHaveCount(0);
   await outline.getByRole("button", { name: "展开 子标题", exact: true }).click();
