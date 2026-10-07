@@ -132,7 +132,7 @@
 .breadcrumb-title, .breadcrumb-title-input { flex: 0 1 auto; min-width: 0; max-width: 20ic; font: inherit; color: var(--ink); }
 .breadcrumb-title { padding: 4px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; background: transparent; border: 0; }
 .breadcrumb-title-input { width: auto; field-sizing: content; padding: 4px 6px; background: var(--paper-light); border: 1px solid var(--vermilion); border-radius: var(--control-radius); }
-.editor-shell .compact-document-head { display: flex; height: 42px; min-height: 42px; align-items: center; gap: 12px; padding: 5px 16px; overflow-x: auto; scrollbar-width: none; }
+.editor-shell .compact-document-head { display: flex; height: auto; min-height: 42px; align-items: center; gap: 12px; padding: 5px 16px; overflow-x: auto; scrollbar-width: none; }
 .compact-document-head::-webkit-scrollbar { display: none; }
 .editor-shell .compact-document-head .document-actions button { height: 30px; min-height: 30px; padding: 0 10px; border-radius: var(--control-radius); white-space: nowrap; }
 .compact-document-head .document-kicker { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; overflow: hidden; white-space: nowrap; }

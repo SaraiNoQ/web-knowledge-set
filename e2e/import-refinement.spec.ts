@@ -93,7 +93,12 @@ for (const reducedMotion of ["reduce", "no-preference"] as const) {
     await page.getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
     await page.getByRole("option", { name: /新建空白文章/ }).click();
     await expect(page.locator(".document-tabs")).toHaveCSS("height", "42px");
-    await expect(page.locator(".compact-document-head")).toHaveCSS("height", "42px");
+    const compactHead = page.locator(".compact-document-head");
+    await expect(compactHead).toHaveCSS("min-height", "42px");
+    const headBox = (await compactHead.boundingBox())!;
+    const actionsBox = (await compactHead.locator(".document-actions").boundingBox())!;
+    expect(actionsBox.y).toBeGreaterThanOrEqual(headBox.y);
+    expect(actionsBox.y + actionsBox.height).toBeLessThanOrEqual(headBox.y + headBox.height);
     await expect(page.locator(".document-actions").getByRole("button", { name: "收藏", exact: true })).toBeVisible();
     await expect(page.locator(".document-actions").getByRole("button", { name: "编辑", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "导入", exact: true }).click();

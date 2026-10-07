@@ -17,6 +17,18 @@ for (const cloud of [false, true]) test(`Markdown toolbar and floating pane labe
   await page.getByRole("button", { name: title, exact: true }).click();
   const head = page.locator(".compact-document-head");
   if (cloud) {
+    const actions = head.locator(".document-actions");
+    await actions.evaluate((element) => { element.style.width = "260px"; });
+    const constrainedHeader = (await head.boundingBox())!;
+    const constrainedActions = (await actions.boundingBox())!;
+    expect(constrainedHeader.height).toBeGreaterThan(42);
+    expect(constrainedActions.y + constrainedActions.height).toBeLessThanOrEqual(constrainedHeader.y + constrainedHeader.height);
+    for (const control of await actions.locator("button, [role=combobox]").all()) {
+      const bounds = (await control.boundingBox())!;
+      expect(bounds.y).toBeGreaterThanOrEqual(constrainedHeader.y);
+      expect(bounds.y + bounds.height).toBeLessThanOrEqual(constrainedHeader.y + constrainedHeader.height);
+    }
+    await actions.evaluate((element) => element.style.removeProperty("width"));
     await expect(head.getByRole("group", { name: "编辑器显示模式", exact: true })).toHaveCount(0);
     await expect(head.locator(".document-actions > button").first()).toHaveText("编辑");
     await head.getByRole("button", { name: "编辑", exact: true }).click();
