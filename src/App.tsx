@@ -703,7 +703,9 @@ export default function App() {
     observer.observe(reader);
     return () => observer.disconnect();
   }, [runtimeMode, onboarding, selectedId, aiSettingsOpen, safetyOpen, diagnosticsOpen]);
-  useEffect(() => { if (readerScrollRef.current) readerScrollRef.current.scrollTop = 0; }, [selectedId]);
+  useEffect(() => {
+    readerScrollRef.current?.querySelectorAll<HTMLElement>(".reader-main, .cloud-reader, .cloud-article-body").forEach((element) => { element.scrollTop = 0; });
+  }, [selectedId]);
   const documentHeadRef = useRef<HTMLElement>(null);
   const sidebarSearchRef = useRef<HTMLInputElement>(null);
   const libraryListRef = useRef<HTMLDivElement>(null);
@@ -3837,13 +3839,13 @@ export default function App() {
 
         <section id="reader-panel" ref={readerPanelRef} className="reader-panel" aria-label="文档工作台" tabIndex={-1}>
           <DocumentTabs documents={openDocuments} selectedId={selectedId} dirty={hasUnsavedChanges} disabled={closing || organizationSaving || batchBusy || captureApplying || Boolean(collectionAction) || Boolean(tagAction) || Boolean(lifecycleAction) || restoringRevision !== null} onSelect={async (id) => { const opened = await selectDocument(id); if (opened) { graphReturnRef.current = false; setGraphMode(false); } return opened; }} onClose={closeDocumentTab} toolsOpen={toolsOpen} onToggleTools={() => setToolsOpen((value) => !value)} />
-          <div ref={readerScrollRef} className={`reader-layout${toolsOpen ? " has-tools" : ""}`}><div className="reader-main">
           {selectedId && <div className="workspace-location">
             <IconButton label="返回文档目录" disabled={closing} onClick={() => void closeDocument()}><Icon size={18}><path d="M20 12H4m6-6-6 6 6 6" /></Icon></IconButton>
             <span>{folders.find((folder) => folder.id === currentDoc?.folderId)?.name ?? "目录"}</span><WorkspaceIcon name="chevron" size={13} />{titleEdit?.id === currentDoc?.id && titleEdit ? <input autoFocus className="breadcrumb-title-input" aria-label="文章标题" maxLength={1000} size={Math.max(1, Math.min(20, Array.from(titleEdit.title).length))} value={titleEdit.title} onChange={(event) => setTitleEdit({ ...titleEdit, title: event.target.value })} onBlur={() => setTitleEdit(null)} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); setTitleEdit(null); } if (event.key === "Enter") { event.preventDefault(); const edit = titleEdit; setTitleEdit(null); void renameDocument(edit, edit.title); } }} /> : <Button type="button" className="breadcrumb-title" aria-label="重命名文章" title={currentDoc?.title || "双击重命名文章"} disabled={!currentDoc || organizationLocked || metadataDirty || paperDirty} onDoubleClick={() => { if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "F2") { event.preventDefault(); if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); } }}>{Array.from(currentDoc?.title || "正在打开…").slice(0, 20).join("")}{Array.from(currentDoc?.title || "").length > 20 ? "…" : ""}</Button>}
 
           </div>}
 
+          <div ref={readerScrollRef} className={`reader-layout${toolsOpen ? " has-tools" : ""}`}><div className="reader-main">
           {graphMounted && <div className={`knowledge-map-host ${graphMode && !selectedId ? "is-active" : "is-dormant"}`} aria-hidden={!graphMode || Boolean(selectedId)}><Suspense fallback={<div className="map-load-fallback" role="status">正在准备知识地图…</div>}><KnowledgeMap active={graphMode && !selectedId} cloud={cloudMode} libraryView={libraryView === "trash" ? "all" : libraryView} query={query} onQueryChange={setQuery} onOpenDocument={(id) => void openGraphDocument(id)} refreshKey={listRefresh + semanticRefresh} /></Suspense></div>}
           {graphMode && !selectedId ? null : !selectedId ? (
             <div className="welcome-state">
@@ -3875,6 +3877,7 @@ export default function App() {
                   <Button type="button" className="history-button translation-button" onClick={openTranslation} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen && derivedPreferredType === "translation"} aria-controls="derived-knowledge">翻译</Button>
                 </div>
               </header>
+              <section className={cloudEditing ? "cloud-article-body" : "preview-pane cloud-reader"} aria-label={cloudEditing ? "文章编辑区域" : "Markdown 预览"}>
               <DerivedKnowledge cloud={cloudMode} hideTagSuggestions={desktopRuntime} document={currentDoc} open={derivedOpen} preferredType={derivedPreferredType} onTypeChange={setDerivedPreferredType} onClose={() => setDerivedOpen(false)} generationBlockedReason={derivedBlockedReason} onAdoptTags={desktopRuntime ? adoptDerivedTags : async () => undefined} />
               {needsCapturePolling(currentDoc) ? <div className="capture-progress" aria-live="polite"><div className="progress-orbit"><i /><i /><span>织</span></div><h3>{STATUS_LABEL[currentDoc.status]}</h3><p>{cloudMode ? "Cloudflare Queue 与 Browser Run 正在处理，完成后会自动刷新。" : "本地服务正在处理，完成后会自动刷新。"}</p></div> : currentDoc.status === "failed" ? <div className="capture-failed" role="alert"><span className="failure-code">{currentDoc.errorCode || "BROWSER_FAILED"}</span><h3>这张网页没有抓取成功</h3><p>{userErrorMessage(currentDoc.errorCode ?? "BROWSER_FAILED")}</p><Button type="button" className="primary-button" onClick={() => void retryCapture()} disabled={retrying}>{retrying ? "重试中…" : "重新抓取"}</Button></div> : cloudEditing ? <div className="editor-workbench">
                 <div className="editor-toolbar">
@@ -3889,10 +3892,11 @@ export default function App() {
                   {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><div className="pane-label">MARKDOWN</div><MarkdownEditor ref={markdownEditorRef} value={draft.markdown} onChange={(markdown) => setDraft((value) => value ? { ...value, markdown } : value)} readOnly={saveState === "saving" || organizationSaving} /></section>}
                   {mode !== "edit" && <section className="preview-pane" aria-label="Markdown 预览"><div className="pane-label">PREVIEW</div>{draft.markdown.trim() ? <MarkdownPreview markdown={draft.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : []} /> : <StatePanel kind="empty" title="这里还没有文字" />}</section>}
                 </div>
-              </div> : <section className="preview-pane cloud-reader" aria-label="Markdown 预览">
+              </div> : <>
                 <div className="pane-label">READ ONLY · MARKDOWN</div>
                 {currentDoc.markdown.trim() ? <MarkdownPreview markdown={currentDoc.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : []} /> : <StatePanel kind="empty" title="这张织片没有正文" />}
-              </section>}
+              </>}
+              </section>
             </>
           ) : currentDoc && draft ? (
             <>

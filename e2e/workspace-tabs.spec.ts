@@ -148,6 +148,10 @@ for (const cloud of [false, true]) {
     await create.click();
     const tabs = page.getByRole("navigation", { name: "已打开的文章" });
     await expect(tabs.locator(".document-tab-select")).toHaveCount(2);
+    const tabTitle = tabs.locator(".document-tab-select").first();
+    await tabTitle.hover();
+    await expect(tabTitle).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(tabTitle).toHaveCSS("box-shadow", "none");
     if (cloud) await page.getByRole("button", { name: "编辑" }).click();
     if (cloud) {
       await page.getByRole("button", { name: "重命名文章", exact: true }).dblclick();

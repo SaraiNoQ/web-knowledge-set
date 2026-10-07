@@ -35,10 +35,15 @@ test("root and expanded folders show every document while the reader scrolls bel
   await page.locator(".folder-node > button[aria-expanded]").filter({ hasText: prefix }).click();
   await expect(page.locator(".folder-contents .directory-document-label").filter({ hasText: prefix })).toHaveCount(35);
   await expect(page.locator(".folder-pagination")).toHaveCount(0);
+  expect(await page.locator(".reader-main").evaluate((element) => element.scrollHeight <= element.clientHeight)).toBe(true);
+  await page.screenshot({ path: "/tmp/zhiye-reader-empty.png" });
   await page.locator(".root-contents").getByRole("button", { name: `${prefix}-0`, exact: true }).click();
   const tabs = await page.locator(".document-tabbar").boundingBox();
   const scroll = await page.locator(".reader-layout").boundingBox();
-  expect(Math.abs(scroll!.y - tabs!.y - tabs!.height)).toBeLessThanOrEqual(1);
+  const location = (await page.locator(".workspace-location").boundingBox())!;
+  expect(location.height).toBe(42);
+  expect(Math.abs(location.y - tabs!.y - tabs!.height)).toBeLessThanOrEqual(1);
+  expect(Math.abs(scroll!.y - location.y - location.height)).toBeLessThanOrEqual(1);
   expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(true);
   await page.getByRole("button", { name: "展开右侧功能区", exact: true }).click();
   const outline = page.locator(".document-tools");
@@ -46,13 +51,26 @@ test("root and expanded folders show every document while the reader scrolls bel
   const outlineTop = (await outline.boundingBox())!.y;
   await outline.evaluate((element) => { element.scrollTop = element.scrollHeight; });
   await expect(outline.getByRole("button", { name: "最后章节", exact: true })).toBeInViewport();
-  await page.locator(".reader-layout").evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  const preview = page.locator(".preview-pane.cloud-reader");
+  const previewTop = (await preview.boundingBox())!.y;
+  const headTop = (await page.locator(".compact-document-head").boundingBox())!.y;
+  await preview.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  expect(await page.locator(".reader-layout").evaluate((element) => element.scrollTop)).toBe(0);
+  expect(await page.locator(".reader-main").evaluate((element) => element.scrollTop)).toBe(0);
+  expect((await page.locator(".workspace-location").boundingBox())!.y).toBe(location.y);
+  expect((await page.locator(".compact-document-head").boundingBox())!.y).toBe(headTop);
+  expect((await preview.boundingBox())!.y).toBe(previewTop);
+  await expect(page.locator(".markdown-preview h2").last()).toBeInViewport();
+  await outline.getByRole("button", { name: "最后章节", exact: true }).click();
   await expect(page.locator(".markdown-preview h2").last()).toBeInViewport();
   expect(Math.abs((await outline.boundingBox())!.y - outlineTop)).toBeLessThanOrEqual(1);
   await page.getByRole("button", { name: "收起右侧功能区", exact: true }).first().click();
   expect((await page.locator(".document-tabbar").boundingBox())!.y).toBe(tabs!.y);
+  await page.screenshot({ path: "/tmp/zhiye-reader-desktop.png" });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator(".document-tabbar")).toBeVisible();
+  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await page.screenshot({ path: "/tmp/zhiye-reader-mobile-dark.png" });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
@@ -196,4 +214,54 @@ test("sidebar rows align left and composite controls keep a single focus surface
   await expect(page.getByRole("searchbox", { name: "搜索文档", exact: true })).toHaveCSS("outline-style", "none");
   await expect(page.locator(".library-search-input")).toHaveCSS("outline-style", "solid");
   await expect(page.locator(".library-search-input")).toHaveCSS("outline-width", "2px");
+});
+
+
+test("flat controls reserve material depth for interaction and directory menus share one surface", async ({ page, request }) => {
+  const listing = await request.get("/api/documents");
+  const headers = { Origin: "http://127.0.0.1:4174", "X-Zhiye-Data-Epoch": listing.headers()["x-zhiye-data-epoch"] };
+  const title = `平面菜单${Date.now()}`;
+  expect((await request.post("/api/documents", { headers, data: { title } })).ok()).toBe(true);
+  await page.goto("/");
+  for (const theme of ["light", "dark"]) {
+    if (theme === "dark") await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(page.locator(".sidebar-category-toggle")).toHaveCSS("box-shadow", "none");
+      await expect(page.locator(".sidebar-category-toggle .ui-segmented-surface")).toHaveCSS("box-shadow", "none");
+      const trigger = page.getByRole("button", { name: `更多操作：${title}`, exact: true });
+      await trigger.click();
+      const menu = page.getByRole("dialog", { name: `操作：${title}`, exact: true });
+      await expect(menu).toHaveCSS("box-shadow", "none");
+      for (const button of await menu.getByRole("button").all()) await expect(button).toHaveCSS("box-shadow", "none");
+      const move = menu.getByRole("button", { name: "移动到文件夹…", exact: true });
+      await expect(move).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(move).toHaveCSS("font-weight", "500");
+      await move.hover();
+      await expect(move).toHaveCSS("box-shadow", "none");
+      await page.screenshot({ path: `/tmp/zhiye-flat-menu-${theme}-${width}.png` });
+      await page.keyboard.press("Escape");
+      await expect(trigger).toBeFocused();
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+  }
+  await page.getByRole("button", { name: "导入", exact: true }).click();
+  const upload = page.getByRole("dialog", { name: "导入", exact: true });
+  const file = upload.getByRole("button", { name: "选择文件", exact: true });
+  await expect(file).toHaveCSS("box-shadow", "none");
+  await file.hover();
+  await expect.poll(() => file.evaluate((element) => getComputedStyle(element).boxShadow)).not.toBe("none");
+  await page.mouse.down();
+  await expect.poll(() => file.evaluate((element) => getComputedStyle(element).boxShadow)).toContain("inset");
+  // Cancel the pointer activation so this visual check does not open a file chooser.
+  await page.mouse.move(1, 1);
+  await page.mouse.up();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
+  const quick = page.getByRole("dialog", { name: "快捷搜索与新建", exact: true });
+  await expect(quick.locator(".quick-actions-header > button, .quick-actions-header > svg")).toHaveCount(0);
+  await page.screenshot({ path: "/tmp/zhiye-flat-quick-desktop.png" });
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.screenshot({ path: "/tmp/zhiye-flat-quick-mobile.png" });
+  await page.keyboard.press("Escape");
 });

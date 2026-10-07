@@ -58,9 +58,10 @@
 .document-tab .ui-icon-button { flex-shrink: 0; width: 26px; min-height: 28px; padding: 0; border-radius: var(--control-radius); }
 .document-tabbar > .ui-icon-button { width: 40px; min-height: 30px; height: 30px; padding: 0; margin: 0 4px; flex-shrink: 0; }
 .tab-dirty { width: 6px; height: 6px; background: var(--vermilion); border-radius: 50%; flex-shrink: 0; }
-.workspace-location { display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 4px 20px; color: var(--ink-soft); border-bottom: 1px solid var(--line); font-size: 12px; }
+.workspace-location { display: flex; align-items: center; gap: 8px; height: 42px; min-height: 42px; flex: 0 0 42px; padding: 4px 20px; color: var(--ink-soft); border-bottom: 1px solid var(--line); font-size: 12px; }
 .workspace-location > span { max-width: 35%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-location strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.workspace-location > .breadcrumb-title.ui-button { height: 30px; min-height: 30px; }
 .workspace-location .ui-icon-button { width: 30px; min-height: 30px; padding: 0; }
 .editor-shell .document-head { padding: 24px 36px 20px; }
 .editor-shell .document-head h2, .editor-shell .title-field input { font-size: clamp(24px,2.5vw,34px); }
@@ -256,7 +257,7 @@
 .reading-control { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 16px; padding: 18px 0; border-bottom: 1px solid var(--line); }
 .reading-control > label { color: var(--ink); font-size: 14px; }
 .reading-control > .ui-select-wrap { width: 200px; }
-.reading-number { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 200px; min-width: 0; min-height: 40px; padding: 7px 12px; border: 1px solid transparent; border-radius: 4px; background: var(--paper-light); box-shadow: var(--material-inset); transition: border-color 140ms, background-color 140ms; }
+.reading-number { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 200px; min-width: 0; min-height: 40px; padding: 7px 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--paper-light); box-shadow: none; transition: border-color 140ms, background-color 140ms; }
 .reading-number:focus-within { border-color: var(--vermilion); background: var(--paper); }
 .reading-number input[type="number"] { width: auto; min-width: 0; flex: 1; min-height: 24px; padding: 0; border: 0; outline: 0; background: transparent; color: var(--ink); text-align: right; font: 500 15px/1.4 var(--font-sans); font-variant-numeric: tabular-nums; appearance: textfield; -moz-appearance: textfield; }
 .reading-number span { min-width: 20px; color: var(--ink-soft); font-size: 12px; }
@@ -277,7 +278,7 @@
 .reading-number input::-webkit-inner-spin-button, .reading-number input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .paper-import-content { min-height: 280px; }
 .paper-import-content .paper-import-field { margin: 0; }
-.paper-import-content .paper-import-field input { border-radius: var(--control-radius); box-shadow: var(--material-inset); border-color: transparent; }
+.paper-import-content .paper-import-field input { border-radius: var(--control-radius); box-shadow: none; border-color: var(--line); }
 .paper-import-content .paper-import-field input:focus { border-color: var(--vermilion); }
 .paper-import-content .paper-import-upload { min-height: 200px; margin: 0; border-radius: 4px; background: var(--paper-light); }
 .paper-import-actions { gap: 10px; }
@@ -296,8 +297,13 @@
 .editor-shell .library-panel { height: 100%; min-height: 0; }
 .editor-shell .reader-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
 .document-tabbar { flex: 0 0 var(--document-tab-height); position: relative; top: auto; }
-.reader-layout { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
-.reader-layout.has-tools { align-items: start; }
+.reader-layout { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.reader-main { height: 100%; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.reader-main:has(> .compact-document-head) { display: flex; flex-direction: column; overflow: hidden; }
+.reader-main > .compact-document-head { flex: 0 0 auto; }
+.reader-main > :is(.cloud-reader, .cloud-article-body) { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.editor-shell .reader-main > .welcome-state { min-height: 0; height: 100%; padding: 24px; }
+.reader-layout.has-tools { align-items: stretch; }
 .reader-main .markdown-preview :is(h1,h2,h3,h4,h5,h6) { scroll-margin-top: 12px; }
 .editor-shell .editor-toolbar, .editor-shell.is-immersive .editor-toolbar { top: 0; }
 .document-tools { top: 0; height: var(--reader-body-height, calc(100dvh - var(--document-tab-height))); }
@@ -311,7 +317,7 @@
 }
 
 .editor-shell.is-immersive > .workspace { min-height: 0; }
-.editor-shell .workspace.is-map-mode .reader-panel { min-height: 0; }
+.editor-shell .workspace.is-map-mode .reader-panel { display: flex !important; min-height: 0; }
 
 .derived-generator { grid-template-columns: minmax(0,1fr) auto; align-items: center; padding: 18px; gap: 14px; }
 .derived-generator > div:first-child { grid-column: 1 / -1; }
@@ -333,5 +339,5 @@ fieldset.sidebar-category-toggle > button { min-height: 26px; padding: 0 2px; }
 
 @media (max-width: 580px) { .reading-control { grid-template-columns: minmax(0,1fr) 140px; } .reading-control > .ui-select-wrap, .reading-number { width: 140px; } }
 @media (max-width: 760px) { .reader-main .paper-reader-body { height: auto; } }
-.reader-main .knowledge-map-host { height: var(--reader-body-height, 100dvh); min-height: 0; }
+.editor-shell .reader-main .knowledge-map-host { height: var(--reader-body-height, 100dvh); min-height: 0; }
 .reader-main .knowledge-map { height: 100%; min-height: 0; }

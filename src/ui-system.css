@@ -1,32 +1,32 @@
-/* One paper control vocabulary; spatial feedback comes from InteractionMotion. */
+/* Flat paper controls; depth appears only while interacting. */
 :root { --control-radius: 4px; --panel-radius: 6px; --control-height: 40px; --control-height-compact: 32px; }
-fieldset.ui-segmented { position: relative; isolation: isolate; display: grid; grid-template-columns: repeat(var(--segment-count), minmax(0, 1fr)); grid-auto-flow: row; gap: 0; min-width: 0; margin: 0; padding: 4px; border: 0; border-radius: var(--panel-radius); background: var(--paper-deep); box-shadow: var(--material-inset); }
-.ui-segmented-surface { position: absolute; inset: 4px auto 4px 4px; width: calc((100% - 8px) / var(--segment-count)); background: var(--paper-light); border-radius: var(--control-radius); box-shadow: var(--material-raised); pointer-events: none; }
+fieldset.ui-segmented { position: relative; isolation: isolate; display: grid; grid-template-columns: repeat(var(--segment-count), minmax(0, 1fr)); grid-auto-flow: row; gap: 0; min-width: 0; margin: 0; padding: 4px; border: 0; border-radius: var(--panel-radius); background: var(--paper-deep); box-shadow: none; }
+.ui-segmented-surface { position: absolute; inset: 4px auto 4px 4px; width: calc((100% - 8px) / var(--segment-count)); background: var(--paper-light); border-radius: var(--control-radius); box-shadow: none; pointer-events: none; }
 fieldset.ui-segmented > button { position: relative; z-index: 1; min-width: 0; min-height: var(--control-height-compact); padding: 6px 8px; color: var(--ink-soft); background: transparent; border: 0; border-radius: var(--control-radius); box-shadow: none; font: 500 12px/1.4 var(--font-sans); letter-spacing: 0; }
 fieldset.ui-segmented > button[aria-pressed="true"] { color: var(--vermilion-dark); background: transparent; }
 fieldset.ui-segmented > button:disabled { opacity: .55; }
 @media (max-width: 580px) { fieldset.ui-segmented > button { padding-inline: 2px; font-size: 10px; } }
 @media (forced-colors: active) { fieldset.ui-segmented > button[aria-pressed="true"] { outline: 2px solid Highlight; } }
-:root { --panel-shadow: 0 12px 34px rgba(39,35,28,.16); --on-accent: #fffaf0; }
-:root[data-theme="dark"] { --panel-shadow: 0 12px 34px rgba(0,0,0,.36); --on-accent: var(--paper-deep); }
+:root { --panel-shadow: none; --on-accent: #fffaf0; }
+:root[data-theme="dark"] { --panel-shadow: none; --on-accent: var(--paper-deep); }
 button.ui-button { border-radius: var(--control-radius); font-family: var(--font-sans); letter-spacing: 0; transition: color 140ms ease-out, background-color 140ms ease-out, border-color 140ms ease-out, box-shadow 140ms ease-out; }
 button.ui-button--regular { min-height: var(--control-height); }
 button.ui-button--compact { min-height: var(--control-height-compact); }
-button.ui-button.ui-button--secondary { color: var(--ink); background: var(--paper-light); border-color: var(--line); box-shadow: var(--material-raised); }
-button.ui-button.ui-button--secondary:hover:not(:disabled) { color: var(--vermilion-dark); background: var(--paper); border-color: var(--line-strong); }
-button.ui-button.ui-button--primary, button.ui-button.rail-brand { color: var(--on-accent); background: var(--vermilion); border-color: var(--vermilion); box-shadow: var(--material-raised); }
-button.ui-button.ui-button--primary:hover:not(:disabled) { color: var(--on-accent); background: var(--vermilion-dark); border-color: var(--vermilion-dark); }
+button.ui-button.ui-button--secondary { color: var(--ink); background: var(--paper-light); border-color: var(--line); box-shadow: none; }
+button.ui-button.ui-button--secondary:hover:not(:disabled) { color: var(--vermilion-dark); background: var(--paper); border-color: var(--line-strong); box-shadow: var(--material-raised); }
+button.ui-button.ui-button--primary, button.ui-button.rail-brand { color: var(--on-accent); background: var(--vermilion); border-color: var(--vermilion); box-shadow: none; }
+button.ui-button.ui-button--primary:hover:not(:disabled) { color: var(--on-accent); background: var(--vermilion-dark); border-color: var(--vermilion-dark); box-shadow: var(--material-raised); }
 button.ui-button.ui-button--danger { color: var(--vermilion-dark); background: transparent; border-color: var(--line-strong); box-shadow: none; }
 button.ui-button.ui-button--danger:hover:not(:disabled) { color: var(--on-accent); background: var(--vermilion-dark); border-color: var(--vermilion-dark); }
 button.ui-button.ui-button--ghost { color: var(--ink-soft); background: transparent; border-color: transparent; box-shadow: none; }
-button.ui-button.ui-button--ghost:hover:not(:disabled) { color: var(--ink); background: var(--paper-deep); box-shadow: none; }
-button.ui-button.ui-button--warning { color: #fffaf0; background: #80602b; border-color: #80602b; box-shadow: var(--material-raised); }
-button.ui-button:active:not(:disabled) { box-shadow: var(--material-inset); }
+button.ui-button.ui-button--ghost:hover:not(:disabled) { color: var(--ink); background: var(--paper-deep); border-color: transparent; box-shadow: none; }
+button.ui-button.ui-button--warning { color: #fffaf0; background: #80602b; border-color: #80602b; box-shadow: none; }
+button.ui-button:active:not(:disabled), button.ui-button:is(.ui-button--primary,.ui-button--secondary):active:not(:disabled) { box-shadow: var(--material-inset); }
 button.ui-button:disabled { cursor: not-allowed; opacity: .55; box-shadow: none; }
 button.ui-icon-button { display: inline-grid; place-items: center; min-width: 32px; padding-inline: 0; }
 button.ui-button.rail-brand { width: 32px; height: 32px; min-height: 32px; padding: 0; font: 500 23px/1 var(--font-serif); }
 :where(button, input, textarea, .ui-select, a):focus-visible { outline: 2px solid var(--vermilion); outline-offset: 3px; }
-:is(.ui-input,.ui-textarea,.ui-select) { border-radius: var(--control-radius); background: var(--paper-light); color: var(--ink); border-color: var(--line); box-shadow: var(--material-inset); }
+:is(.ui-input,.ui-textarea,.ui-select) { border-radius: var(--control-radius); background: var(--paper-light); color: var(--ink); border-color: var(--line); box-shadow: none; }
 .quick-actions-panel, .ui-select-menu, .ui-hover-card, .directory-action-menu[popover], .ui-modal-panel, .shortcut-card, .update-card, .onboarding-dialog, .bulk-import-card { border-radius: var(--panel-radius); border-color: var(--line-strong); box-shadow: var(--panel-shadow); }
 .ui-select-menu [role="option"], .directory-action-menu :is(button,a) { border-radius: var(--control-radius); }
 .ui-select-menu [role="option"].is-active { color: var(--vermilion-dark); background: var(--paper-deep); }
@@ -74,3 +74,16 @@ fieldset.ui-segmented > button.ui-button[aria-pressed="true"] { background: tran
 button.directory-title.document-row.ui-button:is(:hover,:active,[aria-current]),
 .directory-document-row > button.ui-icon-button.ui-button:is(:hover,:active) { background: transparent; box-shadow: none; }
 @media (forced-colors: active) { .library-search-input:focus-within { outline: 2px solid Highlight; outline-offset: 2px; } }
+
+/* A document tab is one hover surface, including its close affordance. */
+.document-tab:hover { background: var(--paper-deep); }
+.document-tab.is-active:hover { background: var(--paper-light); }
+.document-tab > button.ui-button.ui-button--ghost:is(:hover,:active) { background: transparent; border-color: transparent; box-shadow: none; }
+.document-tab > button.ui-button:focus-visible { outline-offset: -2px; }
+
+/* Menu rows share the menu surface instead of becoming individual cards. */
+.directory-action-menu[popover] :is(button.ui-button.ui-button--secondary,button.ui-button.ui-button--danger,a) { justify-content: flex-start; color: var(--ink-soft); background: transparent; border: 0; box-shadow: none; font-weight: 500; }
+.directory-action-menu[popover] :is(button.ui-button.ui-button--secondary,button.ui-button.ui-button--danger,a):is(:hover,:focus-visible) { color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, var(--paper-light)); box-shadow: none; }
+.directory-action-menu[popover] button.ui-button.ui-button--danger { color: var(--vermilion-dark); border-top: 1px solid var(--line); }
+.directory-action-menu[popover] button.ui-button.ui-button--danger:is(:hover,:focus-visible) { color: var(--vermilion-dark); background: color-mix(in srgb, var(--vermilion) 8%, var(--paper-light)); }
+.directory-action-menu[popover] button.ui-button:active:not(:disabled) { box-shadow: var(--material-inset); }

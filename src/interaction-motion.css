@@ -1,11 +1,11 @@
-/* Paper pressed into a shallow tray; one material across controls. */
+/* Shallow physical feedback is reserved for hover, focus and press. */
 :root {
-  --material-inset: inset 0 2px 4px rgba(57,52,43,.12), inset 0 -1px 2px rgba(255,253,247,.7);
-  --material-raised: 0 2px 5px rgba(57,52,43,.15), inset 0 1px 1px rgba(255,253,247,.65);
+  --material-inset: inset 0 1px 3px rgba(57,52,43,.14);
+  --material-raised: 0 2px 5px rgba(57,52,43,.14);
 }
 :root[data-theme="dark"] {
-  --material-inset: inset 0 2px 4px rgba(0,0,0,.32), inset 0 -1px 1px rgba(255,255,255,.04);
-  --material-raised: 0 2px 5px rgba(0,0,0,.3), inset 0 1px 1px rgba(255,255,255,.08);
+  --material-inset: inset 0 1px 3px rgba(0,0,0,.32);
+  --material-raised: 0 2px 5px rgba(0,0,0,.3);
 }
 button, input, textarea, .ui-select, .document-tab, .directory-document-row {
   transition: color 140ms ease-out, background-color 140ms ease-out, border-color 140ms ease-out, box-shadow 140ms ease-out;

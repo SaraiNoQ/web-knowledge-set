@@ -136,7 +136,6 @@ export function QuickActions({ open, onClose, onOpenDocument, onCreateArticle }:
   return <Modal open={open} title="快捷搜索与新建" onClose={onClose} panel={false} className="quick-actions-backdrop">
     <section className="quick-actions-panel" aria-label="快捷搜索与新建文章">
       <header className="quick-actions-header">
-        <WorkspaceIcon name="quickSearch" size={21} />
         <input
           ref={input}
           role="combobox"
@@ -162,7 +161,6 @@ export function QuickActions({ open, onClose, onOpenDocument, onCreateArticle }:
           }}
           onKeyDown={handleKeyDown}
         />
-        <Button type="button" aria-label="关闭快捷面板" onClick={onClose}><WorkspaceIcon name="close" size={19} /></Button>
       </header>
 
       <div ref={results} className="quick-actions-results" aria-busy={loading}>

@@ -85,7 +85,7 @@ test("switching preserves the editor instance, dirty content, selection and scro
   await editor.focus();
   expect(await page.evaluate(() => ({ anchor: getSelection()?.anchorOffset, focus: getSelection()?.focusOffset }))).toEqual(selection);
   await page.getByRole("button", { name: "退出沉浸模式" }).focus();
-  await page.locator(".reader-layout").evaluate((element) => element.scrollTo(0, 700));
+  await page.locator(".reader-main").evaluate((element) => element.scrollTo(0, 700));
   const toolbar = await page.locator(".editor-toolbar").boundingBox();
   expect(toolbar!.y).toBeGreaterThanOrEqual(42);
   expect(await page.locator(".editor-toolbar").evaluate((element) => getComputedStyle(element).top)).toBe("0px");
@@ -188,7 +188,9 @@ test("unavailable cloud storage still allows entering and exiting", async ({ pag
   await expect(page.locator(".masthead")).toHaveCount(0);
 });
 
-test("immersive knowledge map keeps its canvas mounted and fills the viewport", async ({ page }) => {
+test("immersive knowledge map keeps its canvas mounted and fills the viewport", async ({ page, request }) => {
+  const listing = await request.get("/api/documents");
+  expect((await request.post("/api/documents", { headers: { Origin: "http://127.0.0.1:4174", "X-Zhiye-Data-Epoch": listing.headers()["x-zhiye-data-epoch"] }, data: { title: "地图布局验收" } })).ok()).toBe(true);
   await page.goto("/");
   await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "查看知识地图", exact: true }).click();
   const canvas = page.locator(".map-canvas-inner canvas");
@@ -198,14 +200,14 @@ test("immersive knowledge map keeps its canvas mounted and fills the viewport", 
   for (const width of [1440, 800, 320]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(canvas).toHaveAttribute("data-preserved", "yes");
-    await expect.poll(() => page.locator(".knowledge-map-host.is-active").evaluate((element) => element.clientHeight)).toBe(900);
+    await expect.poll(() => page.locator(".knowledge-map-host.is-active").evaluate((element) => element.clientHeight - document.querySelector(".reader-layout")!.clientHeight)).toBe(0);
     const bounds = await page.evaluate(() => {
       window.scrollTo(0, 100_000);
       const rect = document.querySelector(".knowledge-map-host.is-active")!.getBoundingClientRect();
-      return { top: rect.top, bottom: rect.bottom, overflow: document.documentElement.scrollWidth > innerWidth };
+      return { top: rect.top, bottom: rect.bottom, viewportTop: document.querySelector(".reader-layout")!.getBoundingClientRect().top, overflow: document.documentElement.scrollWidth > innerWidth };
     });
-    expect(Math.round(bounds.top)).toBe(0);
-    expect(Math.round(bounds.bottom)).toBe(900);
+    expect(Math.round(bounds.top)).toBe(Math.round(bounds.viewportTop));
+    await expect.poll(() => page.locator(".knowledge-map-host.is-active").evaluate((element) => Math.round(element.getBoundingClientRect().bottom))).toBe(900);
     expect(bounds.overflow).toBe(false);
     await expect(page.getByRole("button", { name: "退出沉浸模式" })).toBeVisible();
   }

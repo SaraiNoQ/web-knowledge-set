@@ -10,7 +10,7 @@
 .library-search-icon:hover { color: var(--ink); background: var(--paper-deep); }
 .library-search-icon:is([aria-pressed="true"], [aria-expanded="true"]).library-search-settings-button,
 .library-search-case[aria-pressed="true"] { color: var(--vermilion-dark); background: var(--paper-deep); }
-.library-search-case { font-size: 14px; }
+.library-search-case.ui-button { min-height: 28px; padding: 3px; font-size: 14px; }
 .library-search-settings-button { width: 30px; height: 36px; }
 .library-search-settings { display: grid; gap: 13px; padding-bottom: 15px; border-bottom: 1px solid var(--line); }
 .library-search-switch { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 24px; }

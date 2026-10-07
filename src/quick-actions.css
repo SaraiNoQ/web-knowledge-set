@@ -23,13 +23,12 @@
   transition: border-color 160ms ease-out;
 }
 .quick-actions-header:has(input:focus) { border-bottom-color: var(--vermilion); }
-.quick-actions-header > svg { flex: 0 0 auto; color: var(--vermilion-dark); }
 .quick-actions-header input {
   flex: 1;
   width: 100%;
   min-width: 0;
   height: 40px;
-  padding: 0;
+  padding: 0 14px;
   color: var(--ink);
   caret-color: var(--vermilion);
   background: transparent;
@@ -40,20 +39,6 @@
 }
 .quick-actions-header input::placeholder { color: var(--ink-soft); opacity: 1; }
 .quick-actions-header input:focus { outline: none; }
-.quick-actions-header > button {
-  display: grid;
-  flex: 0 0 36px;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  color: var(--ink-soft);
-  background: transparent;
-  border: 0;
-  border-radius: var(--control-radius);
-}
-.quick-actions-header > button:hover { color: var(--ink); background: var(--paper-deep); }
-.quick-actions-header > button:focus-visible { outline-offset: -2px; }
 .quick-actions-results {
   flex: 1 1 auto;
   min-height: 0;
@@ -112,7 +97,6 @@
   .quick-actions-panel { max-height: calc(100dvh - 24px); }
   .quick-actions-header { gap: 8px; padding: 10px 12px; }
   .quick-actions-header input { height: 44px; font-size: 16px; }
-  .quick-actions-header > button { flex-basis: 44px; width: 44px; height: 44px; }
   .quick-actions-results { padding: 8px; }
   .quick-actions-result, .quick-actions-create { gap: 10px; padding-inline: 10px; }
   .quick-actions-create small { white-space: normal; }

@@ -220,6 +220,8 @@ test("quick actions stay compact and accessible across themes, content, and sear
   const dialog = page.getByRole("dialog", { name: "快捷搜索与新建", exact: true });
   const panel = dialog.locator(".quick-actions-panel");
   const input = dialog.getByRole("combobox", { name: "搜索资料或输入文章标题", exact: true });
+  await expect(panel.locator(".quick-actions-header > svg, .quick-actions-header > button")).toHaveCount(0);
+  expect(await input.evaluate((element) => parseFloat(getComputedStyle(element).paddingLeft))).toBeGreaterThanOrEqual(12);
   const empty = await panel.boundingBox();
   expect(empty!.width).toBeLessThanOrEqual(640);
   expect(empty!.height).toBeLessThan(210);
@@ -256,7 +258,7 @@ test("quick actions stay compact and accessible across themes, content, and sear
   await input.fill("");
   await expect(dialog.getByRole("option", { name: /新建空白文章/ })).toBeVisible();
   await input.press("Tab");
-  await expect(dialog.getByRole("button", { name: "关闭快捷面板" })).toBeFocused();
+  await expect(dialog.getByRole("option", { name: /新建空白文章/ })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
 });
@@ -446,7 +448,11 @@ test("search input and custom field menus reuse the existing compact controls", 
   await page.goto("/");
   const panel = await search(page, "CustomSelectToken");
   await expect(panel.locator(".library-search-input")).toHaveCSS("border-radius", "4px");
-  await panel.getByRole("button", { name: "搜索设置", exact: true }).click();
+  expect((await panel.getByRole("button", { name: "清空搜索", exact: true }).locator("svg").boundingBox())!.width).toBeGreaterThanOrEqual(16);
+  const settingsButton = panel.getByRole("button", { name: "搜索设置", exact: true });
+  expect((await settingsButton.locator("svg").boundingBox())!.width).toBeGreaterThanOrEqual(18);
+  await panel.screenshot({ path: "/tmp/zhiye-reader-search-settings.png" });
+  await settingsButton.click();
   const scope = panel.getByRole("combobox", { name: "搜索范围", exact: true });
   await scope.click();
   const menu = page.getByRole("listbox", { name: "搜索范围", exact: true });
