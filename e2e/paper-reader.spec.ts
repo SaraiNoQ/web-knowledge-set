@@ -127,10 +127,10 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
     await page.setViewportSize({ width, height: 900 });
     await expect.poll(async () => page.evaluate(() => {
       const body = document.querySelector(".paper-reader-body") as HTMLElement;
-      return Math.abs(Math.round(body.clientHeight - document.querySelector(".reader-layout")!.clientHeight));
+      return Math.abs(Math.round(body.clientHeight - document.querySelector(".reader-main")!.clientHeight));
     })).toBeLessThanOrEqual(2);
     const atBottom = await page.evaluate(() => {
-      const reader = document.querySelector(".reader-layout") as HTMLElement;
+      const reader = document.querySelector(".reader-main") as HTMLElement;
       reader.scrollTo(0, 100_000);
       const body = document.querySelector(".paper-reader-body") as HTMLElement;
       const header = document.querySelector(".paper-reader-header") as HTMLElement;
@@ -150,7 +150,7 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
     expect(atBottom.headerBottom).toBeLessThanOrEqual(atBottom.readerTop + 1);
     expect(Math.abs(atBottom.top - atBottom.readerTop)).toBeLessThanOrEqual(2);
     expect(Math.abs(atBottom.bottom - atBottom.inner)).toBeLessThanOrEqual(2);
-    await page.locator(".reader-layout").evaluate((element) => element.scrollTo(0, 0));
+    await page.locator(".reader-main").evaluate((element) => element.scrollTo(0, 0));
   }
   await page.setViewportSize({ width: 1440, height: 900 });
 

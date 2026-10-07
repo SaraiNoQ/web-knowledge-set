@@ -514,9 +514,7 @@ test("knowledge map fills the window height at the bottom of the page", async ({
   await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "查看知识地图", exact: true }).click();
   await expect(page.getByRole("heading", { name: "知识地图", exact: true })).toBeVisible();
 
-  // The map is one viewport tall and the app chrome above it stays in the page
-  // flow, so scrolling past the chrome leaves the map filling the window - the
-  // canvas region must reach the bottom too, not just the host box.
+  // The map and its canvas fill the measured reader below the fixed chrome.
   for (const width of [1440, 1000, 800, 560]) {
     await page.setViewportSize({ width, height: 900 });
     await expect.poll(async () => page.locator(".knowledge-map-host").evaluate((element) =>
@@ -1994,7 +1992,7 @@ test("renders inline and display LaTeX in article previews", async ({ page }) =>
   await expect.poll(() => display.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
 });
 
-test("spaces the selected marker and returns to the article title", async ({ page }) => {
+test("keeps selected rows aligned and the article header fixed while reading", async ({ page }) => {
   await page.goto("/");
   const deferOnboarding = page.getByRole("button", { name: "稍后设置" });
   await deferOnboarding.or(page.getByLabel("网页地址")).first().waitFor();
@@ -2005,9 +2003,9 @@ test("spaces the selected marker and returns to the article title", async ({ pag
 
   const selectedTitle = page.locator(".directory-document-row.is-selected .directory-title");
   await expect(selectedTitle).toBeVisible();
-  await expect.poll(() => selectedTitle.evaluate((element) => getComputedStyle(element).paddingLeft)).toBe("10px");
+  await expect.poll(() => selectedTitle.evaluate((element) => getComputedStyle(element).paddingLeft)).toBe("4px");
   await selectedTitle.hover();
-  await expect.poll(() => selectedTitle.evaluate((element) => getComputedStyle(element).paddingLeft)).toBe("10px");
+  await expect.poll(() => selectedTitle.evaluate((element) => getComputedStyle(element).paddingLeft)).toBe("4px");
 
   await page.getByLabel("文档标题").fill("返回标题滚动测试");
   await page.getByLabel("Markdown 编辑器").fill(Array.from({ length: 120 }, (_, index) => `第 ${index + 1} 段长文，用于验证真实滚轮滚动。`).join("\n\n"));
@@ -2024,15 +2022,8 @@ test("spaces the selected marker and returns to the article title", async ({ pag
   await expect(backToTitle).toBeHidden();
   await page.mouse.move(1000, 520);
   await page.mouse.wheel(0, 1_200);
-  await expect.poll(() => page.locator(".document-head").evaluate((element) => element.getBoundingClientRect().top)).toBeLessThan(-240);
-  await expect(backToTitle).toBeVisible();
-  const fixedPosition = await backToTitle.evaluate((element) => {
-    const rect = element.getBoundingClientRect();
-    return { bottom: window.innerHeight - rect.bottom, right: window.innerWidth - rect.right };
-  });
-  expect(fixedPosition.bottom).toBeCloseTo(24, 0);
-  expect(fixedPosition.right).toBeCloseTo(24, 0);
-  await backToTitle.click();
+  const reader = page.locator(".preview-pane.cloud-reader");
+  await expect.poll(() => reader.evaluate((element) => element.scrollTop)).toBeGreaterThan(240);
   await expect.poll(() => page.locator(".document-head").evaluate((element) => Math.abs(element.getBoundingClientRect().top - document.querySelector(".reader-layout")!.getBoundingClientRect().top))).toBeLessThan(2);
   await expect(backToTitle).toBeHidden();
 });

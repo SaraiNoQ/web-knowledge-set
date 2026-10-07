@@ -20,7 +20,7 @@ export default defineConfig({
     { name: "auth", testMatch: "**/auth.setup.ts" },
     {
       name: "chromium",
-      testIgnore: "**/auth.setup.ts",
+      testIgnore: ["**/auth.setup.ts", "**/scrollbar-firefox.spec.ts"],
       dependencies: ["auth"],
       use: { storageState: "test-results/e2e-auth.json" },
     },

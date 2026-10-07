@@ -147,7 +147,7 @@ test("shared controls keep the same upload design, focus, widths and theme", asy
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole("button", { name: "打开设置", exact: true }).click();
   await page.getByRole("button", { name: "阅读与显示", exact: true }).click();
-  const select = await page.locator(".reading-control > .ui-select-wrap").boundingBox();
+  const select = await page.locator(".reading-control > .ui-select-wrap:not(.markdown-style-select)").boundingBox();
   for (const number of await page.locator(".reading-number").all()) expect((await number.boundingBox())!.width).toBe(select!.width);
   const size = page.getByRole("spinbutton", { name: "正文字号", exact: true });
   await size.fill("16"); await size.focus();

@@ -728,7 +728,7 @@ export default function App() {
     const observer = new ResizeObserver(update);
     observer.observe(reader);
     return () => observer.disconnect();
-  }, [runtimeMode, onboarding, selectedId, aiSettingsOpen, safetyOpen, diagnosticsOpen]);
+  }, [runtimeMode, onboarding, appearanceLoaded, selectedId, aiSettingsOpen, safetyOpen, diagnosticsOpen]);
   useEffect(() => {
     readerScrollRef.current?.querySelectorAll<HTMLElement>(".reader-main, .cloud-reader, .cloud-article-body").forEach((element) => { element.scrollTop = 0; });
   }, [selectedId]);

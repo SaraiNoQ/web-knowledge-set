@@ -305,7 +305,7 @@ test("search settings use actual fields and Aa distinguishes case", async ({ pag
   await chooseSearchOption(page, "搜索文档类型", "文章");
   await panel.getByRole("checkbox", { name: "仅搜索收藏", exact: true }).check();
   await expect(panel.locator(".library-search-result-title")).toHaveText(document.title);
-  await page.getByRole("searchbox", { name: "搜索文档", exact: true }).fill("标题");
+  await page.getByRole("searchbox", { name: "搜索文档", exact: true }).fill("SearchCASE 标题");
   await expect(panel.getByText("没有找到匹配文档。试试其他关键词或调整搜索设置。", { exact: true })).toBeVisible();
   await chooseSearchOption(page, "搜索范围", "标题");
   await expect(panel.locator(".library-search-result-title")).toHaveText(document.title);
