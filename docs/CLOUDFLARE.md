@@ -42,6 +42,8 @@ Cloudflare Web 的正式文档和抓取任务均支持 revision 保护的回收�
 
 ## 部署记录
 
+- 2026-09-26 · `6bf46a2` · 修复 favicon 主线遗漏。旧修复 `969f41b` 只存在于 `codex/web-favicon`，最新 main `045c12c` 不包含该提交，源码缺少图标声明和 `public/favicon.svg`。现恢复两者，并为扩展 Vite 构建设置 `publicDir:false`，避免 Web 图标进入 Firefox 安装包。Node 24.19.0 冻结安装、类型检查、测试（204 通过、1 跳过）、构建、Cloudflare 检查（42 通过）、favicon Playwright（含鉴权 setup 共 2 项）、Firefox AMO lint 与双 Worker dry-run 通过；已有签名 0.3.7 XPI 按记录摘要重新暂存且内容一致。Web Version ID `786e709c-078c-407c-88a7-cb2c93052bb3`，clip Version ID `a5cb43fe-db2f-45d3-b3d7-937f818d1755`。无 D1 迁移。登录态生产 favicon 和业务读写仍待所有者会话验证。
+
 - 2026-10-06（Asia/Singapore）· 云端Markdown导入、统一上传/论文入口、阅读排版和快捷定位 `4e27b9ea59b2b761d84f1d57fb85f52eba58104a`（已推送 `codex/import-reading-refinements`），用户明确授权提交并部署。0012_cloud_imports.sql 新增暂存表迁移已独立审查，在远端zhiye-cloud成功应用一次，未修改已有资料或生产绑定。类型/构建、云端45/45、排版单位2/2及导入/排版/论文/沉浸17/17、补充目录拖放/导航3/3、帮助/桌面入口/更新4/4通过；原有SIGKILL超时的单独复验通过，门禁边界见发布证据。最终Firefox AMO构建校验、0.3.9签名XPI严格暂存及双Worker dry-run通过。Web版本 `53ae7fa3-bbc2-441b-8e10-789dc0be82d1`、Clip版本 `070ba927-4543-41aa-86fe-64be12223bfd` 均发布成功；Wrangler确认域名与DB/BACKUPS/IMAGES/CAPTURE_QUEUE/BROWSER/ASSETS等适用绑定保持一致。上线后Web /health首轮只读请求发生ECONNRESET，限一次重试后未登录仍为Access302，未重发部署；登录态实际上传、读写、配对/剪藏、图片交付及XPI下载未复验，未重新发布桌面DMG。
 
 - 2026-10-06（Asia/Singapore）· 分项设置、阅读留白及全屏图片查看 `bc0d086650978b9dbad882887a49ed6f7e022de7`（`codex/reading-settings-images`）按用户明确授权部署。用户随后要求“只管部署，不要做多余测试”，已停止本轮正在执行的重复测试管线，未继续云端/浏览器/扩展测试、dry-run 或上线后验收；使用此前完成构建、门禁与独立复审的产物直接发布。已按既有 SHA-256 和当前构建内容严格暂存 Firefox 0.3.9 签名 XPI，确保分发文件保留。Web 版本 `3400489e-0f72-4cb0-b77d-ad1b7c86781a`、Clip 版本 `fc603fb1-152e-499f-876f-9e2e872247e9` 均由生产配置发布成功，Wrangler 输出确认自定义域名和适用的 DB/BACKUPS/IMAGES/CAPTURE_QUEUE/BROWSER/ASSETS 绑定；无 schema 或生产资源变更，未发布桌面包。
