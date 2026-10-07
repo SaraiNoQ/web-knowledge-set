@@ -9,6 +9,7 @@ import "./paper-reader-wireframe.css";
 import "./workspace-shell.css";
 import "./interaction-motion.css";
 import "./ui-system.css";
+import "./markdown-workspace.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

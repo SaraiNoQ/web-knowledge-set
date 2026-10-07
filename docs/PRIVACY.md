@@ -8,6 +8,8 @@ SQLite 数据库保存文档正文、标题、来源地址和元数据、一级�
 
 沉浸模式只保存一个显示偏好布尔值：本地 Web 与桌面应用保存在当前知识库的 SQLite 设置表，随本地完整留档保存；Cloudflare Web 保存在当前浏览器站点的 `localStorage` 项 `zhiye:immersive-mode`，不会上传至云端数据库或跨设备同步。清除该站点的浏览器存储会重置云端显示偏好。
 
+Markdown 展示风格、字体、字号、行距与字距保存在当前浏览器或桌面 WebView 的 `localStorage` 项 `zhiye:reading-text`，两侧留白保存在 `zhiye:reading-margin`。它们只影响本地显示，不上传正文或偏好，不进入文档、知识包和数据库备份；清除站点存储会恢复默认排版。切换风格与格式编辑不加载第三方字体、样式或编辑器服务。
+
 默认位置：
 
 - macOS 桌面端：`~/Library/Application Support/io.github.sarainoq.zhiye`

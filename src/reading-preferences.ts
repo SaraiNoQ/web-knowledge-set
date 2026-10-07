@@ -17,13 +17,24 @@ export function saveReadingMargin(value: number) {
   catch { return false; }
 }
 export const READING_FONTS = { serif: "衬线字体", sans: "无衬线字体", mono: "等宽字体" } as const;
-export interface ReadingTextSettings { font: keyof typeof READING_FONTS; fontSize: number; lineHeight: number; letterSpacing: number }
-export const DEFAULT_READING_TEXT: ReadingTextSettings = { font: "serif", fontSize: 16, lineHeight: 1.95, letterSpacing: 0 };
+export const READING_STYLES = {
+  paper: { label: "纸页", description: "温润衬线，适合日常阅读", font: "serif", lineHeight: 1.95 },
+  minimal: { label: "极简", description: "清晰留白，适合笔记与清单", font: "sans", lineHeight: 1.8 },
+  editorial: { label: "书刊", description: "鲜明标题，适合长文与随笔", font: "serif", lineHeight: 2.1 },
+  technical: { label: "技术", description: "紧凑层级，适合说明与代码", font: "sans", lineHeight: 1.7 },
+} as const;
+export type ReadingStyle = keyof typeof READING_STYLES;
+export interface ReadingTextSettings { style: ReadingStyle; font: keyof typeof READING_FONTS; fontSize: number; lineHeight: number; letterSpacing: number }
+export const DEFAULT_READING_TEXT: ReadingTextSettings = { style: "paper", font: "serif", fontSize: 16, lineHeight: 1.95, letterSpacing: 0 };
 const TEXT_KEY = "zhiye:reading-text";
 const bounded = (value: unknown, fallback: number, min: number, max: number, digits: number) => typeof value === "number" && Number.isFinite(value) ? Number(Math.max(min, Math.min(max, value)).toFixed(digits)) : fallback;
 export function normalizeReadingText(value: unknown): ReadingTextSettings {
   const input = value && typeof value === "object" ? value as Partial<ReadingTextSettings> : {};
-  return { font: input.font && Object.hasOwn(READING_FONTS, input.font) ? input.font : "serif", fontSize: bounded(input.fontSize, 16, 12, 28, 0), lineHeight: bounded(input.lineHeight, 1.95, 1.2, 2.8, 2), letterSpacing: bounded(input.letterSpacing, 0, 0, .15, 2) };
+  return { style: input.style && Object.hasOwn(READING_STYLES, input.style) ? input.style : "paper", font: input.font && Object.hasOwn(READING_FONTS, input.font) ? input.font : "serif", fontSize: bounded(input.fontSize, 16, 12, 28, 0), lineHeight: bounded(input.lineHeight, 1.95, 1.2, 2.8, 2), letterSpacing: bounded(input.letterSpacing, 0, 0, .15, 2) };
+}
+export function applyReadingStyle(settings: ReadingTextSettings, style: ReadingStyle): ReadingTextSettings {
+  const preset = READING_STYLES[style];
+  return { ...settings, style, font: preset.font, lineHeight: preset.lineHeight };
 }
 export function loadReadingText() {
   try { return normalizeReadingText(JSON.parse(localStorage.getItem(TEXT_KEY) || "null")); } catch { return { ...DEFAULT_READING_TEXT }; }

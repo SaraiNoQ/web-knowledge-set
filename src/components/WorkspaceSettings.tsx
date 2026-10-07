@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { MarkdownStyleSelect } from "./MarkdownStyleSelect";
 import { AiSettings } from "./AiSettings";
 import { Button, Select } from "./ui/Controls";
-import { DEFAULT_READING_MARGIN, normalizeReadingMargin, saveReadingMargin, DEFAULT_READING_TEXT, READING_FONTS, normalizeReadingText, saveReadingText, type ReadingTextSettings } from "../reading-preferences";
+import { DEFAULT_READING_MARGIN, normalizeReadingMargin, saveReadingMargin, DEFAULT_READING_TEXT, READING_FONTS, READING_STYLES, normalizeReadingText, saveReadingText, type ReadingTextSettings } from "../reading-preferences";
 
 export function WorkspaceSettings({ cloud, semanticRefresh, onClose, readingMargin, onReadingMarginChange, readingText, onReadingTextChange }: {
   cloud: boolean; semanticRefresh: number; onClose: () => void;
@@ -46,10 +47,14 @@ export function WorkspaceSettings({ cloud, semanticRefresh, onClose, readingMarg
         <section hidden={section !== "reading"} aria-labelledby="reading-settings-title">
           <h2 id="reading-settings-title">阅读与显示</h2>
           <div ref={readingSettingsRef} className="reading-setting">
+            <div className="reading-control"><span>Markdown 展示风格</span><MarkdownStyleSelect value={readingText} onChange={changeText} /></div>
+            <p className="reading-style-description">{READING_STYLES[readingText.style].description}。风格切换会应用推荐字体与行距，字号、字距和留白保持你的设置。</p>
             <div className="reading-control"><label htmlFor="reading-margin">正文两侧总留白</label><div className="reading-number"><input type="number" aria-label="正文两侧总留白百分比" min={0} max={50} step={1} value={readingMargin} onChange={(event) => changeMargin(event.currentTarget.valueAsNumber)} /><span>%</span></div><input id="reading-margin" type="range" min={0} max={50} step={1} value={readingMargin} style={{ "--range-progress": `${readingMargin * 2}%` } as import("react").CSSProperties} onChange={(event) => changeMargin(event.currentTarget.valueAsNumber)} /></div>
             <div className="reading-control"><label htmlFor="reading-font">正文字体</label><Select aria-label="正文字体" id="reading-font" value={readingText.font} onChange={(event) => changeText({ font: event.target.value as ReadingTextSettings["font"] })}>{Object.entries(READING_FONTS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</Select></div>
             {([{ key: "fontSize", label: "正文字号", unit: "px", min: 12, max: 28, step: 1 }, { key: "lineHeight", label: "正文行间距", unit: "倍", min: 1.2, max: 2.8, step: .05 }, { key: "letterSpacing", label: "正文字间距", unit: "em", min: 0, max: .15, step: .01 }] as const).map((field) => <div className="reading-control" key={field.key}><label htmlFor={`reading-${field.key}`}>{field.label}</label><div className="reading-number"><input id={`reading-${field.key}`} aria-label={field.label} type="number" min={field.min} max={field.max} step={field.step} value={numberDraft[field.key]} onChange={(event) => { const value = event.currentTarget.value; const number = event.currentTarget.valueAsNumber; setNumberDraft((current) => ({ ...current, [field.key]: value })); if (value && number >= field.min && number <= field.max) changeText({ [field.key]: number }); }} onBlur={(event) => changeText({ [field.key]: event.currentTarget.valueAsNumber })} /><span>{field.unit}</span></div></div>)}
-            <div className="reading-text-preview" style={{ paddingInline: `${readingMargin / 2}%`, fontFamily: `var(--font-${readingText.font})`, fontSize: readingText.fontSize, lineHeight: readingText.lineHeight, letterSpacing: `${readingText.letterSpacing}em` }} aria-label="阅读效果预览"><strong>留一段安静的阅读时间</strong><p>文字的大小、间距与宽度，共同决定阅读的节奏。调整到舒适的状态，让每一行内容都有呼吸的空间。</p></div>
+            <div className="reading-style-sample" data-reading-style={readingText.style} style={{ "--reading-font": `var(--font-${readingText.font})`, "--reading-font-size": `${readingText.fontSize}px`, "--reading-line-height": readingText.lineHeight, "--reading-letter-spacing": `${readingText.letterSpacing}em` } as import("react").CSSProperties}>
+              <article className="reading-text-preview markdown-preview" style={{ paddingInline: `${readingMargin / 2}%` }} aria-label="阅读效果预览"><h2>留一段安静的阅读时间</h2><p>文字的大小、间距与宽度，共同决定阅读的节奏。调整到舒适的状态，让每一行内容都有呼吸的空间。</p><blockquote><p>把值得留下的想法，写成自己的知识。</p></blockquote><p>支持 <strong>重点</strong>、列表、表格与 <code>Markdown</code>。</p></article>
+            </div>
             {storageFailed && <p role="status">设置已在当前页面生效，但浏览器无法保存；刷新后会恢复默认值。</p>}
             <div><Button onClick={() => { changeMargin(DEFAULT_READING_MARGIN); changeText(DEFAULT_READING_TEXT); }}>恢复默认阅读设置</Button></div>
           </div>
