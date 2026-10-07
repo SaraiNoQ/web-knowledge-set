@@ -110,3 +110,5 @@ Cloudflare Web 的正式文档和抓取任务均支持 revision 保护的回收�
 - 2026-10-07 · `410d148f79dcf9554e96640818e94ba9cecd9010`（运行时代码 `950ec6f`）· 目录/阅读滚动、AI直接发送及统一控件已按用户授权自动发布。Web Version ID `02299cc3-0fb8-4811-a150-40857c398db7`，Clip Version ID `4a8580c2-4ca3-4539-a3ca-e9bce82ec3e9`。两 Worker 均使用正式配置，现有 DB/BACKUPS/IMAGES/Queue/Browser 绑定未变，无 D1 迁移。服务器冻结依赖、类型/单元/构建/cloud API/Firefox AMO与精确签名XPI暂存/双dry-run/许可证及相关 Playwright 均通过，三个功能阶段和沉浸断言同步均独立审查。未登录 Web `/`、`/health` 返回 Access 302，Clip `/` 返回 403；生产登录态读写、真实AI端点、配对剪藏和图片读取本轮未复验。
 
 - 2026-10-07 · `aa6f603936be4938dca91f4c1d218c8bced9fb6a` · 侧栏左对齐、透明悬停及搜索单层聚焦修复已按用户自动提交部署授权发布。Web Version ID `bf39260b-edee-432a-a2b1-127c850bf7cd`，Clip Version ID `068d71d3-687f-4a0a-875b-496ad10a9ae6`。正式配置和既有绑定未变，无 D1 迁移。服务器门禁和独立复审通过。未登录 Web `/`、`/health` 返回 Access 302，Clip `/` 返回 403；生产登录态读写、配对剪藏和图片读取本轮未复验。
+
+- 2026-10-07 · `0cb4075ca61fc6fe698b33bc108d4a7c978cfe17` · 阅读滚动边界、搜索图标/快捷面板、标签悬停及中式平面共享控件已按持续自动提交部署授权发布。Web Version ID `e56786f7-0ba9-49b5-952f-6260b8cf6a48`，Clip Version ID `22439db2-b50f-4ade-901c-abf03a893cf5`。正式配置、既有绑定未变，无D1迁移；服务器门禁和独立审查通过。未登录Web `/`、`/health` 为Access 302，Clip `/` 为403；生产登录态读写、配对剪藏及图片读取本轮未复验。
