@@ -17,7 +17,7 @@ import { userErrorMessage } from "../error-messages";
 import { Button, IconButton, Select } from "./ui/Controls";
 import { SegmentedControl } from "./ui/SegmentedControl";
 import { WorkspaceIcon } from "./ui/WorkspaceIcon";
-import { useDialogs } from "./ui/Feedback";
+import { useDialogs, useToast } from "./ui/Feedback";
 
 const TYPE_LABEL: Record<DerivedResultType, string> = {
   summary: "摘要",
@@ -97,6 +97,7 @@ interface DerivedKnowledgeProps {
 
 export function DerivedKnowledge({ cloud = false, hideTagSuggestions = false, document, open, preferredType: type, onTypeChange, onClose, generationBlockedReason, onAdoptTags }: DerivedKnowledgeProps) {
   const dialogs = useDialogs();
+  const toast = useToast();
   const [settings, setSettings] = useState<LlmSettings | null>(null);
   const [results, setResults] = useState<DerivedResult[]>([]);
   const [total, setTotal] = useState(0);
@@ -166,18 +167,20 @@ export function DerivedKnowledge({ cloud = false, hideTagSuggestions = false, do
   useEffect(() => {
     if (task?.status !== "running") return;
     const context = contextRef.current;
+    let completed = false;
     const timer = window.setInterval(() => {
       void api.getDerivedTaskById(task.id).then((updated) => {
-        if (contextRef.current !== context) return;
+        if (completed || contextRef.current !== context) return;
         setTask(updated);
         if (updated.status === "succeeded") {
-          setNotice(`${typeLabel(updated.type, updated.targetLanguage, updated.preview.promptVersion)}已生成，正文与标签均未修改。`);
+          completed = true;
+          toast.success(`${typeLabel(updated.type, updated.targetLanguage, updated.preview.promptVersion)}已生成，正文与标签均未修改。`);
           void loadResults(1);
         }
-      }).catch((cause) => setError((cause as Error).message));
+      }).catch((cause) => { if (!completed && contextRef.current === context) setError((cause as Error).message); });
     }, 900);
-    return () => window.clearInterval(timer);
-  }, [loadResults, task?.id, task?.status]);
+    return () => { completed = true; window.clearInterval(timer); };
+  }, [loadResults, task?.id, task?.status, toast]);
 
   const requestPreview = () => api.previewDerivedResult(document.id, type === "custom" ? "summary" : type, document.revision, type === "translation" ? targetLanguage : undefined, type === "custom" ? customPrompt : undefined);
 
@@ -187,7 +190,7 @@ export function DerivedKnowledge({ cloud = false, hideTagSuggestions = false, do
     if (contextRef.current !== context) return;
     setTask(started);
     if (started.status === "succeeded") {
-      setNotice(cloud ? `${typeLabel(started.type, started.targetLanguage, started.preview.promptVersion)}已生成并保存；正文未修改。` : `${typeLabel(started.type, started.targetLanguage, started.preview.promptVersion)}已有相同输入结果，未重复请求模型。`);
+      toast.success(cloud ? `${typeLabel(started.type, started.targetLanguage, started.preview.promptVersion)}已生成并保存；正文未修改。` : `${typeLabel(started.type, started.targetLanguage, started.preview.promptVersion)}已有相同输入结果，未重复请求模型。`);
       await loadResults(1);
     }
   };
@@ -301,8 +304,7 @@ export function DerivedKnowledge({ cloud = false, hideTagSuggestions = false, do
 
           {loading ? <div className="derived-state" role="status">正在翻阅派生记录…</div> : (
             <>
-              <section className="derived-generator" aria-labelledby="derived-generator-title">
-                <div><h4 id="derived-generator-title">选择生成内容</h4></div>
+              <section className="derived-generator" aria-label="生成派生内容">
                 <div className="derived-options">
                   <SegmentedControl label="派生类型" value={type} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing} options={[...(Object.entries(TYPE_LABEL) as Array<[DerivedResultType, string]>).filter(([value]) => value !== "tag-suggestions" || (!cloud && !hideTagSuggestions)).map(([value, label]) => ({ value, label })), { value: "custom", label: CUSTOM_LABEL }]} onChange={onTypeChange} />
                   {type === "translation" && <label className="derived-target-language"><span>翻译为</span><Select aria-label="翻译目标语言" value={targetLanguage} onChange={(event) => { setTargetLanguage(event.target.value as TranslationLanguage); }} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing}>{(Object.entries(TRANSLATION_LANGUAGES) as Array<[TranslationLanguage, string]>).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></label>}

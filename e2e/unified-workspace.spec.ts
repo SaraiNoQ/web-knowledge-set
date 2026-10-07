@@ -34,6 +34,21 @@ test("root and expanded folders show every document while the reader scrolls bel
   await expect(page.getByRole("heading", { name: "文件夹", exact: true })).toHaveCount(0);
   await page.locator(".folder-node > button[aria-expanded]").filter({ hasText: prefix }).click();
   await expect(page.locator(".folder-contents .directory-document-label").filter({ hasText: prefix })).toHaveCount(35);
+  const folderButton = page.locator(".folder-node > button[aria-expanded]").filter({ hasText: prefix });
+  await folderButton.hover();
+  await expect(folderButton).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  const renameFolder = page.getByRole("button", { name: `重命名 ${prefix}`, exact: true });
+  await renameFolder.hover();
+  await expect(renameFolder).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  expect(await renameFolder.evaluate((element) => getComputedStyle(element).color)).toBe(await folderButton.evaluate((element) => getComputedStyle(element).color));
+  await expect(page.locator(".folder-contents")).toHaveCSS("overflow-y", "visible");
+  await expect(page.locator(".folder-contents")).toHaveCSS("max-height", "none");
+  await folderButton.locator("..").screenshot({ path: "/tmp/zhiye-folder-flat-light.png" });
+  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await renameFolder.hover();
+  await expect(renameFolder).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await folderButton.locator("..").screenshot({ path: "/tmp/zhiye-folder-flat-dark.png" });
+  await page.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
   await expect(page.locator(".folder-pagination")).toHaveCount(0);
   expect(await page.locator(".reader-main").evaluate((element) => element.scrollHeight <= element.clientHeight)).toBe(true);
   await page.screenshot({ path: "/tmp/zhiye-reader-empty.png" });
@@ -264,4 +279,65 @@ test("flat controls reserve material depth for interaction and directory menus s
   await page.setViewportSize({ width: 390, height: 900 });
   await page.screenshot({ path: "/tmp/zhiye-flat-quick-mobile.png" });
   await page.keyboard.press("Escape");
+});
+
+
+test("derived tabs fill the generator and generation success expires as a toast", async ({ page, request }) => {
+  const settingsResponse = await request.get("/api/settings/llm");
+  const settings = await settingsResponse.json();
+  const headers = { Origin: "http://127.0.0.1:4174", "X-Zhiye-Data-Epoch": settingsResponse.headers()["x-zhiye-data-epoch"] };
+  expect((await request.put("/api/settings/llm", { headers, data: { revision: settings.revision, enabled: true, target: "local", remote: settings.remote, local: settings.local } })).ok()).toBe(true);
+  const title = `派生布局${Date.now()}`;
+  const { document } = await (await request.post("/api/documents", { headers, data: { title } })).json();
+  expect((await request.patch(`/api/documents/${document.id}`, { headers, data: { revision: 1, markdown: "# 生成布局\n\n测试摘要内容。" } })).ok()).toBe(true);
+  await page.route("**/derived-results?*", async (route) => { const response = await route.fetch(); await route.fulfill({ json: { ...await response.json(), total: 31 } }); });
+  let releasePoll!: () => void;
+  let pollArrived!: () => void;
+  const heldPoll = new Promise<void>((resolve) => { releasePoll = resolve; });
+  const receivedPoll = new Promise<void>((resolve) => { pollArrived = resolve; });
+  let firstPoll = true;
+  await page.route("**/api/derived-tasks/*", async (route) => {
+    if (route.request().method() !== "GET" || !firstPoll) return route.continue();
+    firstPoll = false;
+    const response = await route.fetch();
+    const value = await response.json();
+    pollArrived();
+    await heldPoll;
+    await route.fulfill({ json: { ...value, status: "succeeded" } });
+  });
+  await page.goto("/");
+  await page.locator(".root-contents").getByRole("button", { name: title, exact: true }).click();
+  await page.getByRole("button", { name: "AI 派生", exact: true }).click();
+  const panel = page.getByRole("complementary", { name: "AI 派生知识", exact: true });
+  await expect(panel.getByText("选择生成内容", { exact: true })).toHaveCount(0);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const type of ["摘要", "翻译"]) {
+      await panel.getByRole("button", { name: type, exact: true }).click();
+      const tabs = (await panel.locator(".ui-segmented").boundingBox())!;
+      const get = (await panel.getByRole("button", { name: "获取", exact: true }).boundingBox())!;
+      expect(Math.abs(tabs.x + tabs.width - get.x - get.width)).toBeLessThanOrEqual(1);
+      expect(get.y).toBeGreaterThanOrEqual(tabs.y + tabs.height);
+      if (type === "翻译") await page.screenshot({ path: `/tmp/zhiye-derived-translation-${width}.png` });
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await panel.getByRole("button", { name: "摘要", exact: true }).click();
+  await page.screenshot({ path: "/tmp/zhiye-derived-fullwidth.png" });
+  await panel.getByRole("button", { name: "获取", exact: true }).click();
+  await receivedPoll;
+  await panel.getByRole("navigation", { name: "派生历史分页" }).getByRole("button", { name: "下一页", exact: true }).click();
+  await expect(panel.getByRole("navigation", { name: "派生历史分页" })).toContainText("2 / 2");
+  const toast = page.locator(".ui-toast--success").filter({ hasText: "摘要已生成" });
+  await expect(toast).toHaveCount(1, { timeout: 12_000 });
+  const retiredResponse = page.waitForResponse((response) => response.url().includes("/api/derived-tasks/"));
+  releasePoll();
+  await (await retiredResponse).finished();
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(toast).toHaveCount(1);
+  await expect(panel.locator(".derived-message")).toHaveCount(0);
+  await expect(toast).toHaveCount(0, { timeout: 6_000 });
+  await panel.getByRole("button", { name: "获取", exact: true }).click();
+  await expect(toast).toHaveCount(1);
+  await expect(toast).toHaveCount(0, { timeout: 6_000 });
 });

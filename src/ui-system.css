@@ -87,3 +87,8 @@ button.directory-title.document-row.ui-button:is(:hover,:active,[aria-current]),
 .directory-action-menu[popover] button.ui-button.ui-button--danger { color: var(--vermilion-dark); border-top: 1px solid var(--line); }
 .directory-action-menu[popover] button.ui-button.ui-button--danger:is(:hover,:focus-visible) { color: var(--vermilion-dark); background: color-mix(in srgb, var(--vermilion) 8%, var(--paper-light)); }
 .directory-action-menu[popover] button.ui-button:active:not(:disabled) { box-shadow: var(--material-inset); }
+
+/* Folder labels and actions belong to one flat row. */
+.folder-node { color: var(--ink-soft); border-color: transparent; border-radius: var(--control-radius); }
+.editor-shell .folder-node:has(> button[aria-expanded="true"]) { color: var(--vermilion-dark); background: color-mix(in srgb, var(--vermilion) 8%, var(--paper)); }
+.folder-node button.ui-button.ui-button--ghost, .folder-node button.ui-button.ui-button--ghost:is(:hover,:active,[aria-expanded]) { color: inherit; background: transparent; border-color: transparent; box-shadow: none; }

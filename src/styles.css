@@ -2194,7 +2194,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .folder-node > div { display: flex; opacity: 0; transition: opacity 120ms ease; }
 .folder-node:hover > div, .folder-node:focus-within > div { opacity: 1; }
 .folder-node > div .ui-icon-button { width: 28px; min-height: 28px; font-size: 13px; }
-.folder-contents { max-height: 52vh; margin-left: 13px; overflow: auto; border-left: 1px solid var(--line); }
+.folder-contents { max-height: none; margin-left: 13px; overflow: visible; border-left: 1px solid var(--line); }
 .folder-contents > p { margin: 0; padding: 10px 12px; color: var(--ink-faint); font-size: var(--font-caption); }
 
 @media (max-width: 820px) {

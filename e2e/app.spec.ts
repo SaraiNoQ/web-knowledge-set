@@ -883,7 +883,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await page.getByText("我信任这个本机端点", { exact: false }).click();
   await page.getByText("允许 AI 派生知识", { exact: true }).click();
   await page.getByRole("button", { name: "保存设置" }).click();
-  await expect(page.getByText("AI 派生已启用。", { exact: false })).toBeVisible();
+  await expect(page.getByText("AI 派生已启用，可手动发起生成。", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "返回资料库" }).click();
   await page.getByRole("button", { name: "AI 生命周期文章", exact: true }).click();
 
@@ -968,7 +968,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(panel.getByLabel("模型发送范围预览")).toHaveCount(0);
   await expect(panel.getByText("翻译 · English正在生成")).toBeVisible();
   await expect(panel.getByText(/批次进度 [1-9]\d* \/ \d+/u)).toBeVisible({ timeout: 8_000 });
-  await expect(panel.getByText("翻译 · English已生成", { exact: false })).toBeVisible({ timeout: 45_000 });
+  await expect(page.locator(".ui-toast--success").getByText("翻译 · English已生成", { exact: false })).toBeVisible({ timeout: 45_000 });
   await expect(panel.getByText("翻译 · English", { exact: true }).last()).toBeVisible();
   await expect(panel.getByText("结果超过 250,000 字符", { exact: false })).toBeVisible();
   await expect(panel.getByLabel("派生结果纯文本")).toBeVisible();
