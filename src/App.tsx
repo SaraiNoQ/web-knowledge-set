@@ -3898,7 +3898,7 @@ export default function App() {
                 </div>
 
                 <div className="document-actions">
-                  {!cloudEditing && <MarkdownStyleSelect value={readingText} onChange={changeMarkdownStyle} />}
+                  <MarkdownStyleSelect value={readingText} onChange={changeMarkdownStyle} />
                   {cloudEditing && <SegmentedControl label="编辑器显示模式" className="mode-switch" value={mode} options={(["edit", "split", "preview"] as EditorMode[]).map((value) => ({ value, label: value === "edit" ? "编辑" : value === "split" ? "对照" : "预览" }))} onChange={(value) => { if (longArticle && value !== "edit") setLongPreviewDocumentId(currentDoc.id); setMode(value); }} />}
                   <Button type="button" className="primary-button" onClick={() => void toggleCloudEditing()} disabled={currentDoc.status !== "ready" || saveState === "saving"}>{cloudEditing ? "返回阅读" : "编辑"}</Button>
                   <Button type="button" className={`favorite-button ${currentDoc.favorite ? "is-active" : ""}`} aria-pressed={currentDoc.favorite} onClick={() => void toggleFavorite()} disabled={organizationLocked || metadataDirty}><WorkspaceIcon name="star" size={17} />{currentDoc.favorite ? "取消收藏" : "收藏"}</Button>
@@ -3910,10 +3910,8 @@ export default function App() {
               <DerivedKnowledge cloud={cloudMode} hideTagSuggestions={desktopRuntime} document={currentDoc} open={derivedOpen} preferredType={derivedPreferredType} onTypeChange={setDerivedPreferredType} onClose={() => setDerivedOpen(false)} generationBlockedReason={derivedBlockedReason} onAdoptTags={desktopRuntime ? adoptDerivedTags : async () => undefined} />
               {needsCapturePolling(currentDoc) ? <div className="capture-progress" aria-live="polite"><div className="progress-orbit"><i /><i /><span>织</span></div><h3>{STATUS_LABEL[currentDoc.status]}</h3><p>{cloudMode ? "Cloudflare Queue 与 Browser Run 正在处理，完成后会自动刷新。" : "本地服务正在处理，完成后会自动刷新。"}</p></div> : currentDoc.status === "failed" ? <div className="capture-failed" role="alert"><span className="failure-code">{currentDoc.errorCode || "BROWSER_FAILED"}</span><h3>这张网页没有抓取成功</h3><p>{userErrorMessage(currentDoc.errorCode ?? "BROWSER_FAILED")}</p><Button type="button" className="primary-button" onClick={() => void retryCapture()} disabled={retrying}>{retrying ? "重试中…" : "重新抓取"}</Button></div> : cloudEditing ? <div className="editor-workbench">
                 <div className="editor-toolbar">
-                  <MarkdownStyleSelect value={readingText} onChange={changeMarkdownStyle} />
-                  <div className="editor-stats">{draft.markdown.length.toLocaleString("zh-CN")} 字符</div>
                   <div className="markdown-toolbar-host" ref={setMarkdownToolbarHost} />
-                  <div className={`save-indicator save-${saveState}`} aria-live="polite">{saveState === "saving" ? <><Spinner />正在保存</> : saveState === "saved" ? "已保存" : saveState === "error" ? "保存失败" : saveState === "conflict" ? "版本冲突" : dirty ? "未保存" : "已同步"}</div>
+                  <div className={`save-indicator save-${saveState}`}><span aria-live="polite">{saveState === "saving" ? <><Spinner />正在保存</> : saveState === "saved" ? "已保存" : saveState === "error" ? "保存失败" : saveState === "conflict" ? "版本冲突" : dirty ? "未保存" : "已同步"}</span><span className="editor-stats">{draft.markdown.length.toLocaleString("zh-CN")} 字符</span></div>
                   <Button type="button" className="text-button save-button" aria-keyshortcuts="Meta+S Control+S" onClick={() => void saveNow()} disabled={!dirty || saveState === "saving" || saveState === "conflict"}>保存</Button>
                 </div>
                 {saveState === "error" && <div className="inline-error" role="alert">{saveError}</div>}
@@ -4090,11 +4088,8 @@ export default function App() {
                   <div className="editor-toolbar">
                     <SegmentedControl label="编辑器显示模式" className="mode-switch" value={mode} options={(["edit", "split", "preview"] as EditorMode[]).map((value) => ({ value, label: value === "edit" ? "编辑" : value === "split" ? "对照" : "预览" }))} onChange={(value) => { if (longArticle && value !== "edit") setLongPreviewDocumentId(currentDoc.id); setMode(value); }} />
                     <MarkdownStyleSelect value={readingText} onChange={changeMarkdownStyle} />
-                    <div className="editor-stats">{draft.markdown.length.toLocaleString("zh-CN")} 字符</div>
                     <div className="markdown-toolbar-host" ref={setMarkdownToolbarHost} />
-                    <div className={`save-indicator save-${saveState}`} aria-live="polite">
-                      {saveState === "saving" ? <><Spinner />正在保存</> : saveState === "saved" ? "已保存" : saveState === "error" ? "保存失败" : saveState === "conflict" ? "版本冲突" : dirty ? "未保存" : "已同步"}
-                    </div>
+                    <div className={`save-indicator save-${saveState}`}><span aria-live="polite">{saveState === "saving" ? <><Spinner />正在保存</> : saveState === "saved" ? "已保存" : saveState === "error" ? "保存失败" : saveState === "conflict" ? "版本冲突" : dirty ? "未保存" : "已同步"}</span><span className="editor-stats">{draft.markdown.length.toLocaleString("zh-CN")} 字符</span></div>
                     {saveState === "error" && <Button type="button" className="text-button danger" onClick={() => void saveNow()} disabled={closing}>重试</Button>}
                     <Button type="button" className="text-button save-button" aria-keyshortcuts="Meta+S Control+S" onClick={() => void saveNow()} disabled={closing || !dirty || saveState === "saving" || saveState === "conflict"} title="保存（⌘S）">保存</Button>
                     <Button type="button" className="history-button" onClick={() => void toggleHistory()} disabled={closing || organizationSaving || hasUnsavedChanges || saveState === "saving"} aria-expanded={historyOpen} aria-controls="revision-history">修订历史</Button>

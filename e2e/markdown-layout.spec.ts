@@ -18,21 +18,50 @@ for (const cloud of [false, true]) test(`Markdown toolbar and floating pane labe
   const head = page.locator(".compact-document-head");
   if (cloud) {
     const actions = head.locator(".document-actions");
+    await expect(actions.getByRole("combobox", { name: "Markdown 展示风格", exact: true })).toHaveCount(1);
+    await expect(page.locator(".editor-toolbar .markdown-style-select")).toHaveCount(0);
+    await actions.getByRole("button", { name: "收藏", exact: true }).click();
+    await expect(actions.getByRole("button", { name: "取消收藏", exact: true })).toBeVisible();
     await actions.evaluate((element) => { element.style.width = "260px"; });
     const constrainedHeader = (await head.boundingBox())!;
     const constrainedActions = (await actions.boundingBox())!;
-    expect(constrainedHeader.height).toBeGreaterThan(42);
+    expect(constrainedHeader.height).toBeGreaterThanOrEqual(42);
     expect(constrainedActions.y + constrainedActions.height).toBeLessThanOrEqual(constrainedHeader.y + constrainedHeader.height);
+    const constrainedRows: number[] = [];
     for (const control of await actions.locator("button, [role=combobox]").all()) {
       const bounds = (await control.boundingBox())!;
+      constrainedRows.push(bounds.y);
       expect(bounds.y).toBeGreaterThanOrEqual(constrainedHeader.y);
       expect(bounds.y + bounds.height).toBeLessThanOrEqual(constrainedHeader.y + constrainedHeader.height);
+      expect(bounds.x).toBeGreaterThanOrEqual(constrainedActions.x);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(constrainedActions.x + constrainedActions.width);
     }
+    expect(Math.max(...constrainedRows) - Math.min(...constrainedRows)).toBeLessThanOrEqual(1);
     await actions.evaluate((element) => element.style.removeProperty("width"));
+    for (const width of [1440, 800, 390, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      const layout = await actions.evaluate((element) => {
+        const actions = element.getBoundingClientRect();
+        const controls = Array.from(element.querySelectorAll<HTMLElement>(":scope > .markdown-style-select, :scope > button"), (control) => {
+          const bounds = control.getBoundingClientRect();
+          return { x: bounds.x, right: bounds.right, centerY: bounds.y + bounds.height / 2 };
+        });
+        return { actions: { x: actions.x, right: actions.right }, controls };
+      });
+      const centers = layout.controls.map((control) => control.centerY);
+      expect(Math.max(...centers) - Math.min(...centers), `width=${width}; layout=${JSON.stringify(layout)}`).toBeLessThanOrEqual(1);
+      expect(layout.controls.every((control) => control.x >= layout.actions.x && control.right <= layout.actions.right), `controls fit at ${width}px: ${JSON.stringify(layout)}`).toBe(true);
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
     await expect(head.getByRole("group", { name: "编辑器显示模式", exact: true })).toHaveCount(0);
     await expect(head.locator(".document-actions > button").first()).toHaveText("编辑");
     await head.getByRole("button", { name: "编辑", exact: true }).click();
     await expect(head.locator(".document-actions > button").first()).toHaveText("返回阅读");
+    await expect(actions.getByRole("combobox", { name: "Markdown 展示风格", exact: true })).toBeVisible();
+    const status = page.locator(".editor-toolbar .save-indicator");
+    await expect(status.locator(":scope > span[aria-live]")).toHaveText("已同步");
+    await expect(status.locator(":scope > .editor-stats")).toContainText("字符");
+    await expect(status.locator(":scope > span")).toHaveCount(2);
     const mode = await head.locator(".mode-switch").boundingBox();
     const back = await head.getByRole("button", { name: "返回阅读", exact: true }).boundingBox();
     expect(mode!.x + mode!.width).toBeLessThanOrEqual(back!.x);
