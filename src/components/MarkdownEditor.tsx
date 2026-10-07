@@ -1,4 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo, undoDepth, redoDepth } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { Compartment, EditorState, StateEffect, StateField } from "@codemirror/state";
@@ -64,6 +65,7 @@ interface MarkdownEditorProps {
   value: string;
   onChange: (value: string) => void;
   readOnly?: boolean;
+  toolbarHost?: HTMLElement | null;
 }
 
 const paperTheme = EditorView.theme({
@@ -103,7 +105,7 @@ const paperTheme = EditorView.theme({
 
 export interface MarkdownEditorHandle { jumpTo: (offset: number) => void }
 
-export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(function MarkdownEditor({ value, onChange, readOnly = false }, ref) {
+export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(function MarkdownEditor({ value, onChange, readOnly = false, toolbarHost }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   useImperativeHandle(ref, () => ({ jumpTo(offset) {
@@ -195,8 +197,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
     // The shared Select restores its own trigger first; return to the insertion.
     requestAnimationFrame(() => viewRef.current?.focus());
   };
-  return <div className="markdown-editor">
-    <div className="markdown-format-toolbar" role="toolbar" aria-label="Markdown 格式工具">
+  const toolbar = <div className="markdown-format-toolbar" role="toolbar" aria-label="Markdown 格式工具">
       <Select density="compact" aria-label="段落格式" value="" disabled={readOnly} onChange={(event) => runFromMenu(blockFormat(event.target.value as BlockFormat))}>
         <option value="" disabled>段落</option><option value="paragraph">正文</option><option value="h1">一级标题</option><option value="h2">二级标题</option><option value="h3">三级标题</option>
       </Select>
@@ -211,7 +212,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
         <IconButton label="撤销" title="撤销（⌘ / Ctrl+Z）" disabled={readOnly || !tools.undo} onMouseDown={(event) => event.preventDefault()} onClick={() => run(undo)}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="m8 4-5 5 5 5M3 9h11a6 6 0 0 1 0 12" /></svg></IconButton>
         <IconButton label="重做" title="重做（⌘ / Ctrl+Shift+Z）" disabled={readOnly || !tools.redo} onMouseDown={(event) => event.preventDefault()} onClick={() => run(redo)}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="m16 4 5 5-5 5m5-5H10a6 6 0 0 0 0 12" /></svg></IconButton>
       </div>
-    </div>
+    </div>;
+  return <div className="markdown-editor">
+    {toolbarHost ? createPortal(toolbar, toolbarHost) : toolbar}
     <div className="markdown-editor-host" ref={hostRef} />
   </div>;
 });

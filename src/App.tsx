@@ -348,6 +348,18 @@ function PreviewImage({ src, alt }: { src?: string; alt?: string }) {
   return source ? <OfflineImage asset={context.bySource.get(source)} alt={alt} /> : <ImagePlaceholder alt={alt}>图片地址不可用。</ImagePlaceholder>;
 }
 
+function PaneLabel({ children }: { children: ReactNode }) {
+  return <div className="pane-label-overlay"><div className="pane-label">{children}</div></div>;
+}
+
+function markPaneScroll(event: import("react").UIEvent<HTMLDivElement>) {
+  const target = event.target;
+  if (!(target instanceof HTMLElement) || !target.matches(".cm-scroller, .preview-pane")) return;
+  const pane = target.closest(".editor-pane, .preview-pane");
+  const scrolled = target.scrollTop > 0;
+  if (pane && pane.hasAttribute("data-scrolled") !== scrolled) pane.toggleAttribute("data-scrolled", scrolled);
+}
+
 const headingComponents = Object.fromEntries(["h1", "h2", "h3", "h4", "h5", "h6"].map((tag) => [tag, ({ node, children, ...props }: { node?: { position?: { start: { offset?: number } } }; children?: ReactNode }) => createElement(tag, { ...props, "data-heading-offset": node?.position?.start.offset }, children)])) as Components;
 
 const MarkdownPreview = memo(function MarkdownPreview({ markdown, sourceUrl, assets = EMPTY_DOCUMENT_ASSETS }: { markdown: string; sourceUrl: string; assets?: DocumentAsset[] }) {
@@ -574,6 +586,7 @@ export default function App() {
   const immersiveToggleRef = useRef<HTMLButtonElement>(null);
   const libraryRailRef = useRef<HTMLButtonElement>(null);
   const editorGridRef = useRef<HTMLDivElement>(null);
+  const [markdownToolbarHost, setMarkdownToolbarHost] = useState<HTMLDivElement | null>(null);
   const [titleEdit, setTitleEdit] = useState<{ id: string; revision: number; title: string } | null>(null);
   const [graphMode, setGraphMode] = useState(false);
   const [paperDirty, setPaperDirty] = useState(false);
@@ -3886,8 +3899,9 @@ export default function App() {
 
                 <div className="document-actions">
                   {!cloudEditing && <MarkdownStyleSelect value={readingText} onChange={changeMarkdownStyle} />}
-                  <Button type="button" className={`favorite-button ${currentDoc.favorite ? "is-active" : ""}`} aria-pressed={currentDoc.favorite} onClick={() => void toggleFavorite()} disabled={organizationLocked || metadataDirty}><WorkspaceIcon name="star" size={17} />{currentDoc.favorite ? "取消收藏" : "收藏"}</Button>
+                  {cloudEditing && <SegmentedControl label="编辑器显示模式" className="mode-switch" value={mode} options={(["edit", "split", "preview"] as EditorMode[]).map((value) => ({ value, label: value === "edit" ? "编辑" : value === "split" ? "对照" : "预览" }))} onChange={(value) => { if (longArticle && value !== "edit") setLongPreviewDocumentId(currentDoc.id); setMode(value); }} />}
                   <Button type="button" className="primary-button" onClick={() => void toggleCloudEditing()} disabled={currentDoc.status !== "ready" || saveState === "saving"}>{cloudEditing ? "返回阅读" : "编辑"}</Button>
+                  <Button type="button" className={`favorite-button ${currentDoc.favorite ? "is-active" : ""}`} aria-pressed={currentDoc.favorite} onClick={() => void toggleFavorite()} disabled={organizationLocked || metadataDirty}><WorkspaceIcon name="star" size={17} />{currentDoc.favorite ? "取消收藏" : "收藏"}</Button>
                   <Button type="button" className="history-button" onClick={toggleDerived} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen} aria-controls="derived-knowledge">AI 派生</Button>
                   <Button type="button" className="history-button translation-button" onClick={openTranslation} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen && derivedPreferredType === "translation"} aria-controls="derived-knowledge">翻译</Button>
                 </div>
@@ -3896,17 +3910,17 @@ export default function App() {
               <DerivedKnowledge cloud={cloudMode} hideTagSuggestions={desktopRuntime} document={currentDoc} open={derivedOpen} preferredType={derivedPreferredType} onTypeChange={setDerivedPreferredType} onClose={() => setDerivedOpen(false)} generationBlockedReason={derivedBlockedReason} onAdoptTags={desktopRuntime ? adoptDerivedTags : async () => undefined} />
               {needsCapturePolling(currentDoc) ? <div className="capture-progress" aria-live="polite"><div className="progress-orbit"><i /><i /><span>织</span></div><h3>{STATUS_LABEL[currentDoc.status]}</h3><p>{cloudMode ? "Cloudflare Queue 与 Browser Run 正在处理，完成后会自动刷新。" : "本地服务正在处理，完成后会自动刷新。"}</p></div> : currentDoc.status === "failed" ? <div className="capture-failed" role="alert"><span className="failure-code">{currentDoc.errorCode || "BROWSER_FAILED"}</span><h3>这张网页没有抓取成功</h3><p>{userErrorMessage(currentDoc.errorCode ?? "BROWSER_FAILED")}</p><Button type="button" className="primary-button" onClick={() => void retryCapture()} disabled={retrying}>{retrying ? "重试中…" : "重新抓取"}</Button></div> : cloudEditing ? <div className="editor-workbench">
                 <div className="editor-toolbar">
-                  <SegmentedControl label="编辑器显示模式" className="mode-switch" value={mode} options={(["edit", "split", "preview"] as EditorMode[]).map((value) => ({ value, label: value === "edit" ? "编辑" : value === "split" ? "对照" : "预览" }))} onChange={(value) => { if (longArticle && value !== "edit") setLongPreviewDocumentId(currentDoc.id); setMode(value); }} />
                   <MarkdownStyleSelect value={readingText} onChange={changeMarkdownStyle} />
                   <div className="editor-stats">{draft.markdown.length.toLocaleString("zh-CN")} 字符</div>
+                  <div className="markdown-toolbar-host" ref={setMarkdownToolbarHost} />
                   <div className={`save-indicator save-${saveState}`} aria-live="polite">{saveState === "saving" ? <><Spinner />正在保存</> : saveState === "saved" ? "已保存" : saveState === "error" ? "保存失败" : saveState === "conflict" ? "版本冲突" : dirty ? "未保存" : "已同步"}</div>
                   <Button type="button" className="text-button save-button" aria-keyshortcuts="Meta+S Control+S" onClick={() => void saveNow()} disabled={!dirty || saveState === "saving" || saveState === "conflict"}>保存</Button>
                 </div>
                 {saveState === "error" && <div className="inline-error" role="alert">{saveError}</div>}
                 {conflict && <div className="conflict-banner" role="alert"><div><strong>这篇知识已在别处更新</strong><span>你的文字仍保留在编辑器中。请复制需要保留的内容，然后载入最新版。</span></div><Button type="button" onClick={() => { installCurrentDocument(conflict); updateListItem(conflict); setDraft(draftOf(conflict)); setConflict(null); setSaveState("idle"); }}>载入最新版</Button></div>}
-                <div ref={editorGridRef} className={`editor-grid mode-${mode}`}>
-                  {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><div className="pane-label">MARKDOWN</div><MarkdownEditor ref={markdownEditorRef} value={draft.markdown} onChange={(markdown) => setDraft((value) => value ? { ...value, markdown } : value)} readOnly={saveState === "saving" || organizationSaving} /></section>}
-                  {mode !== "edit" && <section className="preview-pane" aria-label="Markdown 预览" tabIndex={0}><div className="pane-label">PREVIEW</div>{draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : EMPTY_DOCUMENT_ASSETS} /> : <StatePanel kind="empty" title="这里还没有文字" />}</section>}
+                <div ref={editorGridRef} className={`editor-grid mode-${mode}`} onScrollCapture={markPaneScroll}>
+                  {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><PaneLabel>MARKDOWN</PaneLabel><MarkdownEditor ref={markdownEditorRef} toolbarHost={markdownToolbarHost} value={draft.markdown} onChange={(markdown) => setDraft((value) => value ? { ...value, markdown } : value)} readOnly={saveState === "saving" || organizationSaving} /></section>}
+                  {mode !== "edit" && <section className="preview-pane" aria-label="Markdown 预览" tabIndex={0}><PaneLabel>PREVIEW</PaneLabel>{draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : EMPTY_DOCUMENT_ASSETS} /> : <StatePanel kind="empty" title="这里还没有文字" />}</section>}
                 </div>
               </div> : <>
                 <div className="pane-label">READ ONLY · MARKDOWN</div>
@@ -4077,6 +4091,7 @@ export default function App() {
                     <SegmentedControl label="编辑器显示模式" className="mode-switch" value={mode} options={(["edit", "split", "preview"] as EditorMode[]).map((value) => ({ value, label: value === "edit" ? "编辑" : value === "split" ? "对照" : "预览" }))} onChange={(value) => { if (longArticle && value !== "edit") setLongPreviewDocumentId(currentDoc.id); setMode(value); }} />
                     <MarkdownStyleSelect value={readingText} onChange={changeMarkdownStyle} />
                     <div className="editor-stats">{draft.markdown.length.toLocaleString("zh-CN")} 字符</div>
+                    <div className="markdown-toolbar-host" ref={setMarkdownToolbarHost} />
                     <div className={`save-indicator save-${saveState}`} aria-live="polite">
                       {saveState === "saving" ? <><Spinner />正在保存</> : saveState === "saved" ? "已保存" : saveState === "error" ? "保存失败" : saveState === "conflict" ? "版本冲突" : dirty ? "未保存" : "已同步"}
                     </div>
@@ -4101,9 +4116,9 @@ export default function App() {
                     </aside>
                   )}
 
-                  <div ref={editorGridRef} className={`editor-grid mode-${mode}`}>
-                    {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><div className="pane-label">MARKDOWN</div><MarkdownEditor ref={markdownEditorRef} value={draft.markdown} onChange={(markdown) => { if (!closeAttemptRef.current) setDraft((value) => value ? { ...value, markdown } : value); }} readOnly={editorLocked} /></section>}
-                    {mode !== "edit" && longPreviewAllowed && <section className="preview-pane" aria-label="Markdown 预览" tabIndex={0}><div className="pane-label">PREVIEW</div>{draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} /> : <StatePanel kind="empty" title="这里还没有文字">在编辑区写下 Markdown，预览会同步出现。</StatePanel>}</section>}
+                  <div ref={editorGridRef} className={`editor-grid mode-${mode}`} onScrollCapture={markPaneScroll}>
+                    {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><PaneLabel>MARKDOWN</PaneLabel><MarkdownEditor ref={markdownEditorRef} toolbarHost={markdownToolbarHost} value={draft.markdown} onChange={(markdown) => { if (!closeAttemptRef.current) setDraft((value) => value ? { ...value, markdown } : value); }} readOnly={editorLocked} /></section>}
+                    {mode !== "edit" && longPreviewAllowed && <section className="preview-pane" aria-label="Markdown 预览" tabIndex={0}><PaneLabel>PREVIEW</PaneLabel>{draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} /> : <StatePanel kind="empty" title="这里还没有文字">在编辑区写下 Markdown，预览会同步出现。</StatePanel>}</section>}
                   </div>
                 </div></>
               )}

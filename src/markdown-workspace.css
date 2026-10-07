@@ -34,6 +34,16 @@
 
 .markdown-style-select { min-width: 82px; max-width: 140px; }
 .editor-toolbar .markdown-style-select { width: 88px; flex: 0 0 88px; margin-left: 10px; }
+.editor-shell .editor-toolbar { flex-wrap: wrap; gap: 8px; }
+.markdown-toolbar-host { flex: 0 1 auto; min-width: 0; }
+.markdown-toolbar-host:empty { display: none; }
+.markdown-toolbar-host .markdown-format-toolbar { padding: 0; border: 0; background: transparent; }
+.editor-shell .compact-document-head .document-actions { flex-wrap: wrap; }
+.compact-document-head .document-actions > * { order: 0; }
+.compact-document-head .mode-switch.ui-segmented { width: 180px; }
+.pane-label-overlay { position: sticky; top: 0; z-index: 2; height: 0; flex: 0 0 0; pointer-events: none; }
+.pane-label-overlay > .pane-label { position: absolute; top: 0; right: 0; margin: 0; }
+[data-scrolled] > .pane-label-overlay > .pane-label { opacity: .5; }
 .editor-shell .markdown-editor { display: flex; flex-direction: column; overflow: hidden; }
 .markdown-editor-host { flex: 1 1 auto; min-height: 0; }
 .markdown-editor-host > .cm-editor { height: 100%; }
@@ -64,6 +74,10 @@
   .editor-shell .editor-toolbar { padding: 8px 12px; }
   .editor-shell .editor-toolbar .mode-switch { width: auto; flex: 1 1 150px; }
   .editor-toolbar .markdown-style-select { order: 1; margin-left: 0; }
+  .editor-toolbar .markdown-toolbar-host { order: 1; flex-basis: 100%; }
+  .editor-shell .compact-document-head .document-actions { width: 100%; gap: 4px; }
+  .editor-shell .compact-document-head { height: auto; overflow: visible; }
+  .compact-document-head .mode-switch.ui-segmented { flex: 0 0 100%; width: 100%; }
   [data-reading-style="editorial"] .markdown-preview h1 { font-size: 2em; }
 }
 @media (forced-colors: active) {
