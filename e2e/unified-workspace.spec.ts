@@ -137,3 +137,63 @@ test("shared controls keep the same upload design, focus, widths and theme", asy
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: "/tmp/zhiye-unified-ai-mobile.png" });
 });
+
+
+test("sidebar rows align left and composite controls keep a single focus surface", async ({ page, request }) => {
+  const listing = await request.get("/api/documents");
+  const headers = { Origin: "http://127.0.0.1:4174", "X-Zhiye-Data-Epoch": listing.headers()["x-zhiye-data-epoch"] };
+  const titles = [`短${Date.now()}`, `长标题${Date.now()}用于检查目录同层图标固定对齐和文本省略`];
+  for (const title of titles) expect((await request.post("/api/documents", { headers, data: { title } })).ok()).toBe(true);
+  await page.goto("/");
+  for (const theme of ["light", "dark"] as const) {
+    if (theme === "dark") await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      const rows = titles.map((title) => page.locator(".root-contents").getByRole("button", { name: title, exact: true }));
+      const icons = [];
+      for (const row of rows) {
+        const box = (await row.boundingBox())!;
+        const icon = (await row.locator("svg").boundingBox())!;
+        icons.push(icon.x - box.x);
+        expect(icon.x - box.x).toBeLessThan(8);
+        await row.hover();
+        await expect(row).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+        await expect(row).toHaveCSS("box-shadow", "none");
+        await row.click();
+        if (width < 821) await page.getByRole("button", { name: "返回文档目录", exact: true }).click();
+        await expect(row).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+        expect((await row.locator("svg").boundingBox())!.x).toBe(icon.x);
+      }
+      expect(icons[0]).toBe(icons[1]);
+      const more = page.locator(".root-contents").getByRole("button", { name: `更多操作：${titles[0]}`, exact: true });
+      await more.hover();
+      await expect(more).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(more).toHaveCSS("box-shadow", "none");
+      await rows[0].hover();
+      await page.screenshot({ path: `/tmp/zhiye-sidebar-${theme}-${width}.png` });
+      const searchTab = page.locator(".sidebar-category-toggle").getByRole("button", { name: "搜索", exact: true });
+      await searchTab.hover();
+      await expect(searchTab).toHaveCSS("box-shadow", "none");
+      await expect(searchTab).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await searchTab.click();
+      const input = page.getByRole("searchbox", { name: "搜索文档", exact: true });
+      await expect(input).toBeFocused();
+      await expect(input).toHaveCSS("outline-style", "none");
+      const tray = page.locator(".library-search-input");
+      await expect.poll(() => tray.evaluate((element) => { const probe = document.createElement("span"); probe.style.color = "var(--vermilion)"; element.append(probe); const accent = getComputedStyle(probe).color; probe.remove(); return getComputedStyle(element).borderTopColor === accent; })).toBe(true);
+      await page.screenshot({ path: `/tmp/zhiye-search-${theme}-${width}.png` });
+      await page.keyboard.press("Tab");
+      const caseButton = page.getByRole("button", { name: "区分大小写", exact: true });
+      await expect(caseButton).toBeFocused();
+      await expect(caseButton).toHaveCSS("outline-style", "solid");
+      await page.locator(".sidebar-category-toggle").getByRole("button", { name: "列表", exact: true }).click();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+  }
+  await page.emulateMedia({ forcedColors: "active" });
+  await page.locator(".sidebar-category-toggle").getByRole("button", { name: "搜索", exact: true }).click();
+  await expect(page.getByRole("searchbox", { name: "搜索文档", exact: true })).toHaveCSS("outline-style", "none");
+  await expect(page.locator(".library-search-input")).toHaveCSS("outline-style", "solid");
+  await expect(page.locator(".library-search-input")).toHaveCSS("outline-width", "2px");
+});

@@ -40,7 +40,7 @@
 .editor-shell .library-directory h3 { color: var(--ink-soft); font: 500 12px/1.4 var(--font-sans); }
 .editor-shell .directory-document-row { border-bottom: 0; border-radius: 4px; }
 .editor-shell .directory-document-row.is-selected { background: rgba(189,65,44,.07); }
-.editor-shell .directory-title.document-row { display: flex; align-items: center; gap: 8px; }
+.editor-shell .directory-title.document-row { display: flex; align-items: center; justify-content: flex-start; gap: 8px; }
 .editor-shell .directory-title.document-row > svg { flex: 0 0 auto; color: var(--ink-soft); }
 .editor-shell .directory-title.document-row { overflow: hidden; }
 .editor-shell .folder-chevron { display: flex; }

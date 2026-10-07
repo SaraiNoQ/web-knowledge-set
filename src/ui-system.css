@@ -19,7 +19,7 @@ button.ui-button.ui-button--primary:hover:not(:disabled) { color: var(--on-accen
 button.ui-button.ui-button--danger { color: var(--vermilion-dark); background: transparent; border-color: var(--line-strong); box-shadow: none; }
 button.ui-button.ui-button--danger:hover:not(:disabled) { color: var(--on-accent); background: var(--vermilion-dark); border-color: var(--vermilion-dark); }
 button.ui-button.ui-button--ghost { color: var(--ink-soft); background: transparent; border-color: transparent; box-shadow: none; }
-button.ui-button.ui-button--ghost:hover:not(:disabled) { color: var(--ink); background: var(--paper-deep); box-shadow: var(--material-inset); }
+button.ui-button.ui-button--ghost:hover:not(:disabled) { color: var(--ink); background: var(--paper-deep); box-shadow: none; }
 button.ui-button.ui-button--warning { color: #fffaf0; background: #80602b; border-color: #80602b; box-shadow: var(--material-raised); }
 button.ui-button:active:not(:disabled) { box-shadow: var(--material-inset); }
 button.ui-button:disabled { cursor: not-allowed; opacity: .55; box-shadow: none; }
@@ -41,7 +41,7 @@ button.ui-button.rail-brand { width: 32px; height: 32px; min-height: 32px; paddi
 .ui-upload-zone.is-dragging { border-color: var(--vermilion); background: color-mix(in srgb, var(--vermilion) 6%, var(--paper-light)); }
 .editor-shell .compact-document-head { padding-block: 4px; }
 .editor-shell .compact-document-head .document-actions button { height: var(--control-height-compact); min-height: var(--control-height-compact); }
-fieldset.ui-segmented > button.ui-button { background: transparent; border-color: transparent; box-shadow: none; min-height: var(--control-height-compact); }
+fieldset.ui-segmented > button.ui-button, fieldset.ui-segmented > button.ui-button.ui-button--ghost:is(:hover,:active) { background: transparent; border-color: transparent; box-shadow: none; min-height: var(--control-height-compact); }
 fieldset.ui-segmented > button.ui-button[aria-pressed="true"] { color: var(--vermilion-dark); }
 fieldset.sidebar-category-toggle > button.ui-button { min-height: 26px; }
 button.directory-title.ui-button { background: transparent; box-shadow: none; }
@@ -68,3 +68,9 @@ button.ui-button:is([aria-current], [aria-pressed="true"], [aria-expanded="true"
 button.ui-button.ui-button--ghost:is([aria-current], [aria-expanded="true"], [aria-selected="true"], .is-active) { background: color-mix(in srgb, var(--vermilion) 8%, var(--paper-light)); }
 fieldset.ui-segmented > button.ui-button[aria-pressed="true"] { background: transparent; }
 :is(.app-shell,.ui-modal) :is(input:not([type="number"]),textarea,.ui-select):focus-visible { outline: 2px solid var(--vermilion); outline-offset: 3px; }
+
+/* The search tray owns focus; its native input must not draw a second frame. */
+:is(.app-shell,.ui-modal) .library-search-input input:focus-visible { outline: 0; box-shadow: none; }
+button.directory-title.document-row.ui-button:is(:hover,:active,[aria-current]),
+.directory-document-row > button.ui-icon-button.ui-button:is(:hover,:active) { background: transparent; box-shadow: none; }
+@media (forced-colors: active) { .library-search-input:focus-within { outline: 2px solid Highlight; outline-offset: 2px; } }

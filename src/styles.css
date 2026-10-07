@@ -2142,7 +2142,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   transition: background 140ms ease, opacity 140ms ease;
 }
 .directory-document-row.document-row-wrap:has(.row-select) { grid-template-columns: 22px minmax(0,1fr) 32px; }
-.directory-document-row:hover, .directory-document-row.is-selected { background: rgba(255,252,244,.68); }
+.directory-document-row:hover { background: color-mix(in srgb, var(--ink) 5%, var(--paper)); }
 .directory-document-row.is-selected { box-shadow: inset 3px 0 0 var(--vermilion); }
 .directory-document-row.is-moving { opacity: .5; }
 .directory-document-row .row-select { width: 22px; min-height: 32px; }
@@ -2164,7 +2164,6 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 }
 .directory-title.document-row::before { display: none; }
 .directory-title.document-row:hover, .directory-title.document-row.is-selected { padding: 5px 4px; background: transparent; }
-.directory-document-row.is-selected .directory-title { padding-left: 10px; }
 .directory-document-row > .ui-icon-button { width: 30px; min-height: 30px; padding: 0; color: var(--ink-faint); font-size: 12px; letter-spacing: -.08em; }
 .directory-document-row > .ui-icon-button.directory-permanent-delete { color: var(--vermilion-dark); font-size: 18px; }
 .directory-hover-detail { display: grid; gap: 5px; min-width: 250px; }
