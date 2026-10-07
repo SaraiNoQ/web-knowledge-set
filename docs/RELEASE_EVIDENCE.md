@@ -262,3 +262,5 @@
 - 服务器 Node 24.19.0 / pnpm 11.7.0：check/build 通过；完整单元/集成 213 通过、1 跳过；cloud API 45/45；Firefox AMO 0.3.9 校验、固定 SHA-256 签名 XPI 暂存、双 Worker dry-run 与许可证检查通过，无新增迁移/依赖。
 - 跨页面 Playwright 覆盖目录多页全量、长文/大纲独立滚动、快速导航、草稿保护、导入、设置、帮助、备份/恢复、图谱、论文缩放、AI 单次发送/取消/删除及卸载取消发送。已删除控件和旧窗口滚动断言同步后，相关失败定点复验通过；最终主流程无障碍检查 2/2（含 auth），无 serious/critical；上传/设置/AI 子区域 axe 无违规，Impeccable 静态扫描无问题。桌面、窄屏、深色截图已按限定轮次检查，独立审查三个阶段均通过。
 - 本记录为源码与 Web 验证；未重发 macOS 安装包。生产部署版本另记。
+
+- 2026-10-07 · `410d148f79dcf9554e96640818e94ba9cecd9010`（运行时代码 `950ec6f`）· 目录/阅读滚动、AI直接发送及统一控件已按用户授权自动发布。Web Version ID `02299cc3-0fb8-4811-a150-40857c398db7`，Clip Version ID `4a8580c2-4ca3-4539-a3ca-e9bce82ec3e9`。两 Worker 均使用正式配置，现有 DB/BACKUPS/IMAGES/Queue/Browser 绑定未变，无 D1 迁移。服务器冻结依赖、类型/单元/构建/cloud API/Firefox AMO与精确签名XPI暂存/双dry-run/许可证及相关 Playwright 均通过，三个功能阶段和沉浸断言同步均独立审查。未登录 Web `/`、`/health` 返回 Access 302，Clip `/` 返回 403；生产登录态读写、真实AI端点、配对剪藏和图片读取本轮未复验。
