@@ -51,7 +51,7 @@
 .document-tabs { height: var(--document-tab-height); display: flex; flex: 1; min-width: 0; align-self: stretch; overflow: hidden; }
 .document-tab { display: flex; flex: 0 1 210px; min-width: 0; align-items: center; padding: 0 8px 0 12px; border-right: 1px solid var(--line); }
 .document-tab.is-active { background: var(--paper-light); box-shadow: inset 0 -2px var(--vermilion); }
-.document-tab > .document-tab-select { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; align-self: stretch; padding: 0; color: var(--ink-soft); background: transparent; border: 0; font-size: 13px; text-align: left; }
+.document-tab > .document-tab-select { display: flex; align-items: center; justify-content: flex-start; gap: 8px; flex: 1; min-width: 0; align-self: stretch; padding: 0; color: var(--ink-soft); background: transparent; border: 0; font-size: 13px; text-align: left; }
 .document-tab.is-active > .document-tab-select { color: var(--ink); }
 .document-tab > .document-tab-select > svg { flex-shrink: 0; }
 .document-tab > .document-tab-select > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

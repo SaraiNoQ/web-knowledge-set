@@ -152,6 +152,12 @@ for (const cloud of [false, true]) {
     await expect(tabs.locator(".document-tab-select")).toHaveCount(2);
     const tabTitle = tabs.locator(".document-tab-select").first();
     await tabTitle.hover();
+    const tabBox = (await tabTitle.boundingBox())!;
+    const iconBox = (await tabTitle.locator(":scope > svg").boundingBox())!;
+    const titleBox = (await tabTitle.locator(":scope > span").boundingBox())!;
+    expect(Math.abs(iconBox.x - tabBox.x)).toBeLessThanOrEqual(2);
+    expect(iconBox.x + iconBox.width).toBeLessThan(titleBox.x);
+    await expect(tabTitle).toHaveCSS("justify-content", "flex-start");
     await expect(tabTitle).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await expect(tabTitle).toHaveCSS("box-shadow", "none");
     if (cloud) await page.getByRole("button", { name: "编辑" }).click();
