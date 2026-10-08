@@ -23,7 +23,6 @@ stage=install
 pnpm install --frozen-lockfile
 stage=policy
 node scripts/check-delivery.mjs
-node --test tests/delivery-policy.test.mjs tests/cloudflare-delivery.test.mjs
 stage=production-plan
 node scripts/cloudflare-delivery.mjs plan "$request_path"
 full_validation=$(node -e 'try { console.log(JSON.parse(require("node:fs").readFileSync(process.argv[1])).fullValidation === true ? "true" : "false"); } catch { process.exit(1); }' "$request_path")
@@ -35,6 +34,7 @@ if [ "$full_validation" = true ]; then
   stage=full-release-browsers
   pnpm exec playwright install chromium firefox --only-shell
   stage=full-release-unit-integration
+  node --test tests/delivery-policy.test.mjs tests/cloudflare-delivery.test.mjs
   pnpm test
 fi
 # A production build creates required publishable assets; routine releases reuse CI tests.

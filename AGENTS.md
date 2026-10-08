@@ -18,114 +18,61 @@
 | `vite.config.ts` / `tsconfig*.json` | Frontend build and TypeScript project configuration. |
 | `AGENTS.md` / `CLAUDE.md` | Project map and mandatory contributor workflow; keep both mirrored in sync for Codex and Claude Code. |
 
-# Mandatory delivery workflow
+# Development workflow
 
-Default sequence: update main → feature branch → acceptance item → implement → server gates → independent review → commit and PR → GitHub checks → merge → main checks → production deployment → evidence.
+Default: **focused change → targeted check → one PR → automatic merge → cloud deployment only when needed**. Full validation is for an explicitly requested major/formal release, not everyday fixes. A workflow-only task stops after changing the workflow; do not expand it into live acceptance, UI integration or deployment activation.
 
-## Authorization and boundaries
+## Daily work
 
-- The canonical origin is `git@github.com:SaraiNoQ/web-knowledge-set.git`. Verify it before pushing. Never rewrite shared history, force-push a shared branch, push directly to main, or bypass protection with administrator privileges.
-- Within the requested feature, agents are authorized to create/push branches, open/update PRs, merge a reviewed passing PR, and deploy cloud-related changes merged into main. This is standing authorization for compatible releases; destructive migrations, data deletion, resource replacement, desktop releases and AMO signing require explicit task authorization.
-- One independently acceptable feature slice uses one short-lived `codex/<topic>` branch and one PR. Keep unrelated changes out. A PR can contain multiple focused, reviewed and passing milestone commits; do not accumulate completed stages into one final commit.
-- Local workspaces are for editing, Git and synchronization only. Never install dependencies, compile, run applications or dependency-backed tests locally. Development gates run on `root@123.207.203.208` using `/Users/sarainoq/Documents/settings/key1.pem`. GitHub-hosted ephemeral Linux/macOS CI is an explicit exception. Native macOS artifacts require macOS runner evidence.
+1. Read this file and the files relevant to the task. Check the working tree and canonical origin `git@github.com:SaraiNoQ/web-knowledge-set.git`; fetch main. Start a new `codex/<topic>` branch from latest main, or continue the same unmerged task. Never overwrite another task's changes.
+2. Make the smallest complete change. Small fixes need only a PR problem/acceptance note; do not add feature-ledger entries, release notes, version bumps or tags by habit. Update user/security documentation only when behavior requires it. Large features/releases may use a specification and acceptance ledger.
+3. Run the minimum checks below. Reuse passing evidence for unchanged code/toolchain. A failure requires its related checks again, not the entire repository.
+4. Get one focused independent review for the PR. Reuse it while the reviewed code is unchanged; do not require a new review for every commit, CI update or merge operation.
+5. Make a focused Conventional Commit, push and open/update one PR. Do not split a small task into procedural milestones, commits or evidence-only PRs. Attach the PR to the chat.
+6. When applicable checks pass and review findings are resolved, automatically merge with `gh pr merge <number> --merge --match-head-commit <reviewed-head>`. This and cloud-related automatic deployment have standing user authorization; do not ask again. Never push directly to main, force-push shared history or use `--admin`.
+7. Report the PR, checks and actual deployment result briefly. Do not claim unperformed checks. Deploy results normally live in Actions summaries/artifacts; Git release-evidence updates are for formal releases or significant incidents, not every small fix.
 
-## 1. Start and register
+## Minimum verification
 
-- Read both contributor files. Inspect `git status`, origin, remote main and any PR for the task. Fetch main before choosing a baseline. Never discard, stash, commit or move another task's changes without authorization; use a separate worktree when needed.
-- New features branch from latest `origin/main`; continue the existing branch only for the same unmerged feature. Never reuse an already merged feature branch for a new task.
-- Register new product features or major delivery milestones as unchecked acceptance items in the narrowest relevant document (otherwise `docs/FEATURES.md`). For a small bug/layout/text fix, the PR problem, acceptance and focused check are enough: do not create extra ledger/release-evidence edits unless user-facing behavior or safety documentation actually changes.
+| Change | Required checks |
+| --- | --- |
+| Documentation/rules/workflows | `git diff --check`; mirrored instructions, affected syntax/policy checks. No application dependency install/build or product suites. |
+| Small CSS/layout/text/icon fix | One relevant existing browser regression or a focused visual/manual check. Build only assets needed to exercise it. No unrelated types/unit/cloud/native/AMO suites. |
+| Small UI logic/TypeScript fix | Affected TypeScript project and one relevant regression. No full browser suite or macOS merely because UI is shared. |
+| Service/cloud/extension/native fix | Affected module/API/platform checks and necessary build/dry-run only. |
+| Auth/migration/backup/restore/deletion | Focused security, compatibility and data-preservation checks plus review. Do not replace these with a visual check; do not automatically add unrelated suites. |
+| Explicit major/formal release | Full CI: frozen install, types, unit/integration/E2E, dependency/security/notice checks and applicable cloud/extension/native/package acceptance. |
 
-## 2. Choose the smallest sufficient validation
+CI selects checks from changed paths. `validation:release`, a release tag, or an explicit `full_validation=true` selects full release validation. Known workflow/native-only changes do not republish Worker assets. Unknown paths stay conservative. Do not promote an everyday fix to a full release just because files are large, tests are available, or main was merged.
 
-**Daily changes use targeted checks. The complete workflow is reserved for an explicitly requested major release, release tag or full release rehearsal. A changed line, a UI tweak, a PR, a main merge or a Cloudflare deployment does not by itself justify full validation.**
+## Environment
 
-| Change | Minimum validation before PR | Do not run by default |
-| --- | --- | --- |
-| Documentation, contributor rules, workflow-only changes | `git diff --check`, mirrored-file check; workflow syntax/policy regression only when affected | Dependency install, application build, all unit/E2E tests, macOS, Cloudflare/AMO packaging |
-| Small CSS/layout/text/icon fix | Inspect the changed view at the relevant viewport/theme; one existing targeted browser test or a concrete manual check | All unit tests, full browser suite, cloud tests, macOS and extension release checks |
-| Small UI behavior or TypeScript fix | Relevant type check and one regression for the changed behavior; build only when needed to exercise that check | Unrelated modules and platform/package checks |
-| Service/cloud/extension fix | Tests for the changed module or API; affected build/dry-run/extension validation only | Full application regression, unrelated cloud or native checks |
-| Migration, auth, backup/restore, deletion | Focused security/data-preservation/compatibility checks and independent review; destructive production changes still require approval | Unrelated UI/platform suites; risk does not automatically mean every repository gate |
-| Explicit major release | Frozen install, full types/unit/integration/E2E, applicable cloud/extension/native/security/notice/package and production acceptance gates | Nothing required for the actual release target |
+- Local workspace: editing, Git and synchronization only. Do not install dependencies, build, run servers/apps or dependency-backed tests locally.
+- Developer checks run on `root@123.207.203.208` with `/Users/sarainoq/Documents/settings/key1.pem`; use an isolated `/root/dev/zhiye-<task>` mirror. GitHub ephemeral Linux/macOS CI is the platform exception. Mirrors are not Git worktrees.
+- Use locked Node `24.19.0`, pnpm `11.7.0`; use the project Rust toolchain only for native work. Reuse dependencies/caches when the lockfile is unchanged.
+- Sync with `scripts/sync-to-campus.sh <user@host> <isolated-directory>`; exclude Git metadata, credentials, dependencies, artifacts and local data. Never sync over another task's active mirror.
+- Server browser tests use `bash scripts/run-server-e2e.sh <spec> [-g <test>]`. The pre-created root:zhiye-ci 0660 `/run/lock/zhiye-e2e.lock` prevents fixed-port conflicts; never replace a live lock.
 
-- State the selected level and exact targeted check in the PR. Start with the smallest level; expand only for a concrete uncovered impact, a newly failing related check, or explicit release authorization. Do not expand merely because a file is large or shared UI is used on desktop.
-- Do not invent a test for a text-only edit. For UI changes use an existing relevant test or a documented focused visual/manual check; nontrivial logic needs a regression that would fail if the bug returned.
-- Infrastructure/safety checks remain mandatory where applicable: no secrets, correct source SHA, immutable published migrations, explicit destructive-operation approval and truthful evidence. Lightweight verification never means disabling security or data-loss guards.
+## PR and safety rules
 
-## 3. Implement, verify and independently review
+- PRs state the problem, acceptance and targeted check/result. Add migration, release or recovery details only when relevant. Resolve conflicts with latest main and rerun only affected checks. Preserve original commits with merge commits.
+- `ci-required` always returns a result and only accepts explicitly planned skips. PR jobs are read-only and receive no production secrets; never execute PR code through `pull_request_target`. Pin external Actions to commit SHAs.
+- main protection applies to administrators: PRs, up-to-date `ci-required`, resolved conversations, no forced pushes/deletion. Do not require a second account approval in this single-maintainer repository.
+- Never commit secrets, signed binaries, generated dependencies, real libraries or backups. Keep AGENTS.md and CLAUDE.md identical when instructions change.
 
-- Use a server source mirror isolated by task/run, below `/root/dev/`; production automation uses its own non-root account and directories. Never synchronize into a mirror another task is using. Mirrors are not Git worktrees.
-- Use `scripts/sync-to-campus.sh <user@host> <absolute-isolated-directory>` with the task's SSH configuration. Exclude `.git`, credentials, dependencies, generated artifacts, browser caches, reports and local data. Never use synchronization to copy production credentials or real libraries.
-- Toolchain: Node `24.19.0`, pnpm `11.7.0`, Rust from `rust-toolchain.toml`; frozen lockfile installation. Do not substitute the server's global Node/pnpm versions.
-- Run only the selected targeted gates from the table. Reuse a passing result for the same code and toolchain; do not rerun it at commit, PR, merge and deploy. New code invalidates only checks affected by that code. A merge from main requires renewed checks only for affected/conflicting paths.
-- Use `bash scripts/run-server-e2e.sh <spec> [-g <test>]` for targeted server browser checks; the pre-created root:zhiye-ci 0660 `/run/lock/zhiye-e2e.lock` prevents fixture-port conflicts. Never replace a live lock. Run the complete browser suite only for a release/full-validation request.
-- If an applicable check fails, fix it and rerun that check and its directly affected checks. Do not restart every suite by habit, suppress the failure or describe a single-test pass as a full-suite pass.
-- After the selected targeted checks pass, ask an independent agent to review the focused feature difference for correctness, security, data loss, compatibility, missing regressions and unnecessary complexity. For a small change, review once and reuse it through commit/PR/merge while the reviewed source tree is unchanged; Git metadata or CI status changes do not require another review. Resolve findings and rerun only affected checks. No self-review substitute.
-- Mark the acceptance item `- [x] ~~...~~` only after implementation, gates and independent review pass. Deployment/real-service acceptance remains unchecked until actually verified. Review the final documentation changes too.
+## Production delivery
 
-## 4. Commit and open/update PR
+- Deploy only an exact main SHA with successful push CI, using the dedicated non-root account and production Environment. Check current main, the previous successful source and actual Worker versions; stop on drift or an unmerged production baseline.
+- Routine deploys reuse CI, build required assets and run publishing safety guards. Do not repeat full tests or packaging checks. Source transfer is compressed; deployment is serialized on GitHub and the server.
+- Use the tracked production `cloud/wrangler.web.jsonc` / `cloud/wrangler.clip.jsonc` for `zhiye-web` / `zhiye-clip`; example configs are dry-run only. Preserve existing Access domains and applicable DB/BACKUPS/IMAGES/CAPTURE_QUEUE/BROWSER bindings; never recreate resources as a normal deployment.
+- Published migrations are immutable. Compatible additions may deploy automatically after focused old-data checks; manual/destructive/uncertain migrations require explicit protected approval for that SHA. A persistent unreleased schema risk blocks automatic rollback, even on retry.
+- Build before staging the exact AMO-signed XPI recorded in `extension/amo/signed-release.json`. Missing/hash/version/content mismatch blocks publication. Never publish an unsigned ZIP renamed to XPI; do not rebuild after staging without staging again.
+- Publish both Workers and verify bindings and stable Access/extension boundaries. A partial failure is not success; restore the previous pair only when schema/resources remain compatible. Never blindly retry failed migrations/bindings or roll back production data.
+- Keep credentials out of logs/source and remove private release requests on exit. Record source SHA, Worker IDs, migration/recovery state and smoke results. Boundary checks do not prove authenticated read/write, real clipping or downloads; report those separately.
 
-- Run `git diff --check`, inspect the staged file list and staged diff, then make an immediate focused Conventional Commit (`feat`, `fix`, `docs`, `chore`, `ci`, or `test`). Never commit unverified/incomplete code, artifacts, secrets or unrelated edits.
-- Push the feature branch, then create a PR using `gh pr create --base main --head <branch> --title <title> --body-file <file>`. Reuse an existing PR for the feature. Attach every created/continued PR to the current chat with the app's PR attachment tool.
-- Fill the PR template with the validation level, exact targeted checks and results, acceptance boundaries, independent reviewer findings/resolution, reviewed SHA, migrations, deployment impact and recovery limits. Keep this evidence accurate after updates. Agent review is not approval by another GitHub identity.
+## Explicit releases and references
 
-## 5. Merge and follow through
-
-- Standing authorization remains: after targeted checks and review, automatically merge the PR and deploy cloud-related changes. Do not ask again or turn the daily delivery into a major-release rehearsal.
-- When merge is authorized, wait for `ci-required` and every applicable check to succeed; resolve review conversations. If main advances, merge latest main into the feature branch, resolve conflicts, repeat only affected targeted checks and review, and wait for fresh CI. Do not convert a small fix into a full-release rehearsal.
-- Before merging, verify the PR difference and final head correspond to the independently reviewed source tree. Reuse that review if unchanged; later code changes need focused renewed review and only their affected checks.
-- Use `gh pr merge <number> --merge --match-head-commit <reviewed-head-sha>`. Do not use `--admin`, squash or rebase merging. Verify GitHub reports the PR merged and its original commits are ancestors of main.
-- Follow main CI and the deployment run through completion. Delete the merged branch only after confirming merge; do not switch a dirty workspace or remove a worktree still used by another task.
-- Report PR URL, merged SHA, checks, deployment and unverified acceptance separately. A commit/push/PR merge, a dry-run, a partial Worker release or Access redirects alone never proves full production acceptance.
-
-# GitHub Actions and protection
-
-- `CI` handles PRs targeting main and main pushes with change-scoped checks; full validation is opt-in for an explicit release request/tag. Documentation/workflow-only PRs run policy/syntax checks without product builds. Small UI PRs run relevant types/browser checks without native/cloud/AMO suites. All jobs use read-only permissions and ephemeral runners. No production secrets in PR jobs; never execute PR code using `pull_request_target`.
-- Pin external Actions to full commit SHAs. Validate workflow syntax, mirrored contributor files, locked toolchain and append-only migration history. Store failing test/trace evidence with a bounded retention period.
-- `ci-required` must always run and fail if required upstream jobs fail, are cancelled or unexpectedly skipped. Do not apply top-level path filters to this required workflow. Conditional macOS checks must agree with the change detector.
-- Protect main: PRs, `ci-required` from GitHub Actions, strict up-to-date checks, resolved conversations, no forced pushes/deletions and administrator enforcement. Do not demand a second account approval in this single-maintainer repository. Enable merge commits and automatic deletion of merged branches.
-
-# Firefox extension packaging
-
-- The Firefox and Chrome extension versions are sourced from `extension/manifest.firefox.json` and `extension/manifest.chrome.json`; keep them equal for a release. The current Firefox source package is `0.3.9`, with fixed AMO ID `clipper@zhiye.sarainoq.cn`; signed releases are recorded in `docs/FIREFOX_AMO.md`.
-- Build and validate from the server mirror, not the local source workspace:
-
-      cd /root/dev/zhiye
-      pnpm install --frozen-lockfile
-      pnpm firefox:amo
-
-  `pnpm firefox:amo` creates and validates `dist/extensions/zhiye-clipper-firefox.zip` and `dist/extensions/zhiye-clipper-firefox-source.zip`; it also runs the pinned `web-ext 10.6.0` lint gate. Do not commit `dist/`.
-- For a self-distributed AMO-signed package, sign the compiled directory (not the source ZIP) as unlisted. Prefer interactive variables so credentials do not enter shell history or logs:
-
-      read -r -p "AMO API key: " AMO_API_KEY
-      read -r -s -p "AMO API secret: " AMO_API_SECRET; printf '\n'
-      npm exec --yes --package=web-ext@10.6.0 -- web-ext sign \
-        --source-dir=dist/extensions/zhiye-clipper-firefox \
-        --artifacts-dir=dist/extensions/amo-signed \
-        --channel=unlisted \
-        --api-key="$AMO_API_KEY" \
-        --api-secret="$AMO_API_SECRET"
-      unset AMO_API_KEY AMO_API_SECRET
-
-  The signed `.xpi` is written below `dist/extensions/amo-signed/`. Never put AMO API keys, API secrets, pairing codes, Access credentials, or signed artifacts in Git. If a secret is pasted into chat, a commit, or a command log, revoke and rotate it before continuing. `docs/FIREFOX_AMO.md` is the source of truth for AMO metadata and review requirements.
-- To serve a signed Firefox download online, record the SHA-256 of the XPI returned by a successful AMO unlisted signing run, then after the final server `build` and `firefox:amo` gates run `node scripts/stage-firefox-xpi.mjs /path/to/AMO-signed.xpi <recorded-sha256>`; it checks that exact digest, the current manifest, signature entries, and built extension contents before copying to `dist/extensions/zhiye-clipper-firefox.xpi`. Rebuild only if you stage the XPI again before `cloud:bundle` and deployment. Never publish an unsigned ZIP renamed as `.xpi`.
-
-# Cloudflare production delivery
-
-- Only successful CI for a push to this repository's main can initiate automatic production delivery. Check out the CI run's exact SHA, never a moving branch or a PR artifact. Manual bootstrap/retry must identify an exact main SHA with successful push CI.
-- Production uses `cloud/wrangler.web.jsonc` (`zhiye-web`) and `cloud/wrangler.clip.jsonc` (`zhiye-clip`). Example configs are dry-run only. Preserve existing domains, Access policies and DB/BACKUPS/IMAGES/CAPTURE_QUEUE/BROWSER bindings; never recreate resources during normal deployment.
-- Deploy on the designated server under a dedicated non-root SSH account, isolated SHA/run/attempt directory, pinned host key and production-only credentials. Serialize production operations in GitHub and with a server lock; never cancel an in-progress release to make room for another.
-- Compare against the last successfully deployed SHA, not merely the previous Git commit. Skip documentation-only cumulative changes; unknown paths require release preparation. Recheck main immediately before production writes; stale runs stop.
-- Do not repeat already-passing CI tests during routine deployment. Build the exact merged source because publishable assets are necessary; run full server release gates only for an explicit major release/full rehearsal. Run `firefox:amo` only for changed extension inputs or a full release. Final build must precede signed-XPI staging; verify its recorded SHA-256 and current build contents with `scripts/stage-firefox-xpi.mjs`. Missing/mismatched signed XPI blocks publication. Do not rebuild after staging without staging again.
-- Existing published migrations are immutable. New migrations declare `-- deployment: compatible` or `-- deployment: manual` and undergo independent review. Compatible changes require populated-old-schema and old/new-reader compatibility evidence; destructive or uncertain changes pause for explicit approval of that exact SHA. Never bypass a failed migration or manually change production D1.
-- Save the previous pair of Worker versions before mutation. Apply approved pending migrations once, publish both Workers with their production configs and verify applicable bindings. Two deployments are not atomic: a partial release must be reported and recorded.
-- Restore the previous pair only when resource/schema compatibility is confirmed; otherwise stop for recovery. Worker rollback does not undo D1/R2 data or resource changes. Never retry a schema/binding failure blindly.
-- Check stable responses, Web Access redirects/denial and extension origin/token rejection after publication. Record authenticated read/write, actual pairing/clip and image/XPI delivery separately; unperformed business checks remain unverified.
-- Save SHA, run, migrations, old/new Worker versions and smoke results as deployment evidence. Documentation evidence returns through a separate PR, never a deployment job's direct push to main. Documentation-only evidence must not trigger another production release.
-- Before initial activation, confirm main contains current production changes, configure production environment/secrets and complete an exact-SHA manual bootstrap. Until then say “automatic deployment is not enabled”. See `docs/DEVELOPMENT_WORKFLOW.md` for setup and current evidence.
-
-# Platform releases
-
-- macOS and AMO releases are separate explicit tasks, not side effects of a Web merge. For a desktop release align package/Cargo/Tauri/Info.plist versions, merge through PR first, and tag the exact verified main tip `vX.Y.Z`.
-- Desktop workflows derive version and bundle version from reviewed source, validate the tag/main/source and packaged app identity, publish DMG plus SHA256SUMS only after macOS checks, and verify downloaded release assets. Existing ad-hoc signing is not Developer ID signing or Apple notarization; never claim either without its actual evidence.
-- Keep Firefox/Chrome manifest versions, AMO source, signed XPI, release notes and metadata aligned. Record version, source SHA, lint, signing channel and distribution URL without credentials. Signed packages remain outside Git and build-cleaned directories.
+- macOS and AMO publishing are separate explicit release tasks. A routine UI fix neither bumps versions nor creates release tags or signed packages.
+- Stable desktop tags must match current main and aligned package/Cargo/Tauri/Info.plist versions. Reuse the exact tag's full CI; publish verified DMG/checksums only on macOS evidence. Ad-hoc signing is not Developer ID signing or Apple notarization.
+- Firefox/Chrome release versions must match; AMO ID stays `clipper@zhiye.sarainoq.cn`. Signed artifacts stay outside Git and cleaned build directories. AMO credentials/signing are only needed for an actual extension release.
+- Read detailed runbooks only when needed: `docs/DEVELOPMENT_WORKFLOW.md`, `docs/CLOUDFLARE.md`, `docs/FIREFOX_AMO.md`, and the relevant release notes. Do not reread all release/history documents for a small fix.

@@ -70,7 +70,7 @@ export function checkMigrationData(migrations) {
 }
 
 export function needsCloudRelease(paths) {
-  return paths.some((path) => !/^(?:docs\/|AGENTS\.md$|CLAUDE\.md$|README\.md$|e2e\/|tests\/|cloud\/migrations\/published\.json$|\.github\/pull_request_template\.md$|\.github\/workflows\/(?:ci|cloudflare-deploy|macos[^/]*|deepseek-acceptance)\.yml$|scripts\/(?:delivery-policy|check-delivery|check-workflows|validate-change)\.(?:mjs|sh)$)/u.test(path));
+  return paths.some((path) => !/^(?:docs\/|AGENTS\.md$|CLAUDE\.md$|README\.md$|e2e\/|tests\/|cloud\/migrations\/published\.json$|\.github\/pull_request_template\.md$|\.github\/workflows\/(?:ci|cloudflare-deploy|macos[^/]*|deepseek-acceptance)\.yml$|scripts\/(?:delivery-policy|check-delivery|check-workflows|validate-change|cloudflare-delivery|server-release|record-release-exit|run-server-e2e|sync-to-campus)\.(?:mjs|sh)$)/u.test(path));
 }
 
 export function needsDesktopCheck(paths) {
