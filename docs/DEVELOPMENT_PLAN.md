@@ -56,7 +56,7 @@ v1.0 坚持以下边界：
 
 当前强制执行规范见根目录 [AGENTS.md](../AGENTS.md) / [CLAUDE.md](../CLAUDE.md)，启用记录见 [开发与自动交付](DEVELOPMENT_WORKFLOW.md)。历史路线图不能覆盖当前交付规则。
 
-每个独立功能从最新 main 建立短期 `codex/<topic>` 分支，登记验收项，在隔离服务器镜像完成门禁和独立审查，立即提交已完成阶段并创建/更新 PR。PR 完整差异与最终 SHA 经独立审查、GitHub 必需检查通过后，由 agent 使用 merge commit 合入 main；禁止直接推 main 或绕过保护。main CI 成功后自动发布云端相关累计更新，破坏性迁移单独审批，macOS/AMO 发布独立发起。
+每个独立功能从最新 main 建立短期 `codex/<topic>` 分支，小改动直接在 PR 记录验收与定向检查，只做一次独立审查并聚焦提交；仅较大功能/版本在文档登记验收。验证在隔离服务器镜像或 CI 完成。PR 完整差异与最终 SHA 经独立审查、GitHub 必需检查通过后，由 agent 使用 merge commit 合入 main；禁止直接推 main 或绕过保护。main CI 成功后自动发布云端相关累计更新，破坏性迁移单独审批，macOS/AMO 发布独立发起。
 
 ### 3.2 每阶段共同门槛
 

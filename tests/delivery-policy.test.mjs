@@ -13,7 +13,7 @@ test("required CI rejects failures, cancellations and unexpected skips", () => {
 });
 test("release checks include cumulative unknown/runtime changes but skip evidence", () => {
   assert(!needsCloudRelease(["docs/CLOUDFLARE.md", "CLAUDE.md"]));
-  assert(!needsCloudRelease([".github/workflows/macos-dmg.yml", ".github/workflows/cloudflare-deploy.yml", "scripts/delivery-policy.mjs", "scripts/check-delivery.mjs"]));
+  assert(!needsCloudRelease([".github/workflows/macos-dmg.yml", ".github/workflows/cloudflare-deploy.yml", "scripts/delivery-policy.mjs", "scripts/check-delivery.mjs", "scripts/server-release.sh", "scripts/cloudflare-delivery.mjs"]));
   assert(needsCloudRelease(["docs/CLOUDFLARE.md", "src/App.tsx"]));
   assert(needsCloudRelease(["unknown-file"]));
   assert(!needsDesktopCheck([".github/workflows/ci.yml", "src/App.tsx", "src/ui-system.css", "src-tauri/icons/zhiye.svg"]));
