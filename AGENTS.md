@@ -13,35 +13,58 @@
 | `scripts/` | Source sync, release validation, packaging, notices, smoke checks, and benchmarks. |
 | `docs/` | User, architecture, security, support, format, release, and feature-ledger documentation. |
 | `licenses/` | Reviewed license-text overrides used by notice generation. |
-| `.github/` | macOS smoke and release workflows. |
+| `.github/` | PR CI, production deployment, templates, and macOS release workflows. |
 | `package.json` / `pnpm-lock.yaml` | Locked Node commands and dependencies. |
 | `vite.config.ts` / `tsconfig*.json` | Frontend build and TypeScript project configuration. |
 | `AGENTS.md` / `CLAUDE.md` | Project map and mandatory contributor workflow; keep both mirrored in sync for Codex and Claude Code. |
 
-# Documentation workflow
+# Mandatory delivery workflow
 
-- Before implementing a product feature, add it as an unchecked item to the most relevant document in `docs/`; use `docs/FEATURES.md` when no narrower specification exists.
-- Record a short acceptance boundary with the item. After implementation, server gates, and independent review all pass, change it to a checked and struck-through item (`- [x] ~~...~~`).
-- Update affected user, privacy, security, support, or format documents in the same milestone. Do not leave completed behavior documented only in the feature ledger.
+Default sequence: update main → feature branch → acceptance item → implement → server gates → independent review → commit and PR → GitHub checks → merge → main checks → production deployment → evidence.
 
-# Development environment
+## Authorization and boundaries
 
-- Keep the local workspace for source editing and synchronization only.
-- Do not download or install project dependencies in the local workspace.
-- Do not compile, run development servers, package the application, or execute dependency-backed tests locally.
-- Synchronize the source to `/root/dev/zhiye` on `ssh -i /Users/sarainoq/Documents/settings/key1.pem root@123.207.203.208` before installing dependencies, compiling, testing, packaging, or running the application.
-- Perform all dependency installation, build, test, packaging, and development-server work on that server. Cloudflare deployments are an exception: run their authenticated deploy command only after the cloud configuration is complete.
-- Keep Git metadata, generated dependencies, build artifacts, and local data out of source synchronization (`.git`, `node_modules`, `dist`, `dist-server`, `target`, Playwright browser caches, test reports, and local data). The server directory is a build mirror, not a second Git worktree.
+- The canonical origin is `git@github.com:SaraiNoQ/web-knowledge-set.git`. Verify it before pushing. Never rewrite shared history, force-push a shared branch, push directly to main, or bypass protection with administrator privileges.
+- Within the requested feature, agents are authorized to create/push branches, open/update PRs, merge a reviewed passing PR, and deploy cloud-related changes merged into main. This is standing authorization for compatible releases; destructive migrations, data deletion, resource replacement, desktop releases and AMO signing require explicit task authorization.
+- One independently acceptable feature slice uses one short-lived `codex/<topic>` branch and one PR. Keep unrelated changes out. A PR can contain multiple focused, reviewed and passing milestone commits; do not accumulate completed stages into one final commit.
+- Local workspaces are for editing, Git and synchronization only. Never install dependencies, compile, run applications or dependency-backed tests locally. Development gates run on `root@123.207.203.208` using `/Users/sarainoq/Documents/settings/key1.pem`. GitHub-hosted ephemeral Linux/macOS CI is an explicit exception. Native macOS artifacts require macOS runner evidence.
 
-# Version control and milestone gates
+## 1. Start and register
 
-- The canonical Git remote is `git@github.com:SaraiNoQ/web-knowledge-set.git`; verify `origin` before the first push and never rewrite shared history.
-- Treat every milestone in `docs/DEVELOPMENT_PLAN.md` as a review and commit boundary. Keep unrelated work out of the milestone diff.
-- Whenever an independently verifiable stage or feature slice is complete, run its applicable gates and review, then create an immediate focused Conventional Commit; do not accumulate multiple completed slices into one large final commit, and never commit incomplete or unverified code.
-- Before committing a milestone, synchronize its source to `root@123.207.203.208:/root/dev/zhiye` using `key1.pem` and run every gate required by that milestone there. At minimum, run type checks, unit/integration tests, the production build, and relevant end-to-end or packaging checks.
-- After the server gates pass, ask an independent agent to review the complete uncommitted diff for correctness, security, data-loss risk, migrations, tests, and unnecessary complexity. The implementation agent must resolve actionable findings and repeat affected server gates before committing.
-- Commit only a reviewed, passing milestone, using a focused Conventional Commit message. Confirm the committed diff and clean working tree before starting the next milestone; push the milestone commit to the configured GitHub remote when credentials and branch policy allow.
-- Do not claim a platform release from Linux-only evidence. Platform-neutral and Linux checks run on `123.207.203.208`; signed and notarized macOS release artifacts must additionally be built and verified on an approved macOS CI runner with Apple credentials.
+- Read both contributor files. Inspect `git status`, origin, remote main and any PR for the task. Fetch main before choosing a baseline. Never discard, stash, commit or move another task's changes without authorization; use a separate worktree when needed.
+- New features branch from latest `origin/main`; continue the existing branch only for the same unmerged feature. Never reuse an already merged feature branch for a new task.
+- Before implementation, add an unchecked acceptance item to the narrowest relevant document (otherwise `docs/FEATURES.md`). State scope, acceptance and migration impact. Keep affected user/privacy/security/support/format documents current.
+
+## 2. Implement, verify and independently review
+
+- Use a server source mirror isolated by task/run, below `/root/dev/`; production automation uses its own non-root account and directories. Never synchronize into a mirror another task is using. Mirrors are not Git worktrees.
+- Use `scripts/sync-to-campus.sh <user@host> <absolute-isolated-directory>` with the task's SSH configuration. Exclude `.git`, credentials, dependencies, generated artifacts, browser caches, reports and local data. Never use synchronization to copy production credentials or real libraries.
+- Toolchain: Node `24.19.0`, pnpm `11.7.0`, Rust from `rust-toolchain.toml`; frozen lockfile installation. Do not substitute the server's global Node/pnpm versions.
+- Before every milestone commit, run `check`, complete `test`, `build`, `cloud:check`, `cloud:bundle`, `notices:check`, `firefox:amo`, `node scripts/check-delivery.mjs`, and `node --test tests/delivery-policy.test.mjs` on the server. Run relevant Playwright scenarios; before PR merge run the full browser suite in CI. Serialize all server browser tests with the common `/tmp/zhiye-e2e.lock` because fixture ports are fixed.
+- For Rust/Tauri/runtime changes also run formatting, Clippy with warnings denied, tests and platform build/smoke. For migrations, backups, restore, imports and deletion, verify populated old data and failure preservation. Never waive a failed test because a single-test rerun passed; repair or obtain a complete passing applicable run.
+- After gates pass, ask an agent that did not implement the change to review the complete uncommitted diff for correctness, security, data loss, migration compatibility, tests and unnecessary complexity. Resolve findings and rerun affected gates. No self-review substitute.
+- Mark the acceptance item `- [x] ~~...~~` only after implementation, gates and independent review pass. Deployment/real-service acceptance remains unchecked until actually verified. Review the final documentation changes too.
+
+## 3. Commit and open/update PR
+
+- Run `git diff --check`, inspect the staged file list and staged diff, then make an immediate focused Conventional Commit (`feat`, `fix`, `docs`, `chore`, `ci`, or `test`). Never commit unverified/incomplete code, artifacts, secrets or unrelated edits.
+- Push the feature branch, then create a PR using `gh pr create --base main --head <branch> --title <title> --body-file <file>`. Reuse an existing PR for the feature. Attach every created/continued PR to the current chat with the app's PR attachment tool.
+- Fill the PR template with acceptance boundaries, exact server gate results, independent reviewer findings/resolution, reviewed SHA, migrations, deployment impact and recovery limits. Keep this evidence accurate after updates. Agent review is not approval by another GitHub identity.
+
+## 4. Merge and follow through
+
+- Wait for `ci-required` and every applicable check to succeed; resolve review conversations. If main advances, merge latest main into the feature branch, resolve conflicts, repeat affected server gates and independent review, and wait for fresh CI.
+- Before merging, independently review the entire PR difference and final head SHA. Any later code change invalidates that approval and requires fresh review/checks.
+- Use `gh pr merge <number> --merge --match-head-commit <reviewed-head-sha>`. Do not use `--admin`, squash or rebase merging. Verify GitHub reports the PR merged and its original commits are ancestors of main.
+- Follow main CI and the deployment run through completion. Delete the merged branch only after confirming merge; do not switch a dirty workspace or remove a worktree still used by another task.
+- Report PR URL, merged SHA, checks, deployment and unverified acceptance separately. A commit/push/PR merge, a dry-run, a partial Worker release or Access redirects alone never proves full production acceptance.
+
+# GitHub Actions and protection
+
+- `CI` handles PRs targeting main, main pushes and manual checks using read-only permissions and ephemeral runners. No production secrets in PR jobs; never execute PR code using `pull_request_target`.
+- Pin external Actions to full commit SHAs. Validate workflow syntax, mirrored contributor files, locked toolchain and append-only migration history. Store failing test/trace evidence with a bounded retention period.
+- `ci-required` must always run and fail if required upstream jobs fail, are cancelled or unexpectedly skipped. Do not apply top-level path filters to this required workflow. Conditional macOS checks must agree with the change detector.
+- Protect main: PRs, `ci-required` from GitHub Actions, strict up-to-date checks, resolved conversations, no forced pushes/deletions and administrator enforcement. Do not demand a second account approval in this single-maintainer repository. Enable merge commits and automatic deletion of merged branches.
 
 # Firefox extension packaging
 
@@ -68,35 +91,22 @@
   The signed `.xpi` is written below `dist/extensions/amo-signed/`. Never put AMO API keys, API secrets, pairing codes, Access credentials, or signed artifacts in Git. If a secret is pasted into chat, a commit, or a command log, revoke and rotate it before continuing. `docs/FIREFOX_AMO.md` is the source of truth for AMO metadata and review requirements.
 - To serve a signed Firefox download online, record the SHA-256 of the XPI returned by a successful AMO unlisted signing run, then after the final server `build` and `firefox:amo` gates run `node scripts/stage-firefox-xpi.mjs /path/to/AMO-signed.xpi <recorded-sha256>`; it checks that exact digest, the current manifest, signature entries, and built extension contents before copying to `dist/extensions/zhiye-clipper-firefox.xpi`. Rebuild only if you stage the XPI again before `cloud:bundle` and deployment. Never publish an unsigned ZIP renamed as `.xpi`.
 
-# Cloudflare production deployment
+# Cloudflare production delivery
 
-- Production Worker configs are `cloud/wrangler.web.jsonc` (`zhiye-web`) and `cloud/wrangler.clip.jsonc` (`zhiye-clip`). The `.example.jsonc` files have placeholder IDs and no production routes; use them only for dry-run checks. Never substitute a production config with an example config.
-- Current production domains are `zhiye.sarainoq.cn` (web) and `clip.sarainoq.cn` (clipper), protected by Cloudflare Access. The configured resources are D1 `zhiye-cloud`, R2 `zhiye-cloud-backups` and `zhiye-cloud-images`, Queue `zhiye-cloud-capture`, and a Browser Run binding.
-- A production deploy is an external state change and requires explicit user authorization for that deployment. Earlier approval of design choices, bucket names, or login access is not deployment authorization.
-- Before deploying, sync the reviewed commit to `/root/dev/zhiye`, then run the fixed server toolchain gates:
+- Only successful CI for a push to this repository's main can initiate automatic production delivery. Check out the CI run's exact SHA, never a moving branch or a PR artifact. Manual bootstrap/retry must identify an exact main SHA with successful push CI.
+- Production uses `cloud/wrangler.web.jsonc` (`zhiye-web`) and `cloud/wrangler.clip.jsonc` (`zhiye-clip`). Example configs are dry-run only. Preserve existing domains, Access policies and DB/BACKUPS/IMAGES/CAPTURE_QUEUE/BROWSER bindings; never recreate resources during normal deployment.
+- Deploy on the designated server under a dedicated non-root SSH account, isolated SHA/run/attempt directory, pinned host key and production-only credentials. Serialize production operations in GitHub and with a server lock; never cancel an in-progress release to make room for another.
+- Compare against the last successfully deployed SHA, not merely the previous Git commit. Skip documentation-only cumulative changes; unknown paths require release preparation. Recheck main immediately before production writes; stale runs stop.
+- Repeat the full server release gates and browser checks. Final build and `firefox:amo` must precede signed-XPI staging; verify its recorded SHA-256 and current build contents with `scripts/stage-firefox-xpi.mjs`. Missing/mismatched signed XPI blocks publication. Do not rebuild after staging without staging again.
+- Existing published migrations are immutable. New migrations declare `-- deployment: compatible` or `-- deployment: manual` and undergo independent review. Compatible changes require populated-old-schema and old/new-reader compatibility evidence; destructive or uncertain changes pause for explicit approval of that exact SHA. Never bypass a failed migration or manually change production D1.
+- Save the previous pair of Worker versions before mutation. Apply approved pending migrations once, publish both Workers with their production configs and verify applicable bindings. Two deployments are not atomic: a partial release must be reported and recorded.
+- Restore the previous pair only when resource/schema compatibility is confirmed; otherwise stop for recovery. Worker rollback does not undo D1/R2 data or resource changes. Never retry a schema/binding failure blindly.
+- Check stable responses, Web Access redirects/denial and extension origin/token rejection after publication. Record authenticated read/write, actual pairing/clip and image/XPI delivery separately; unperformed business checks remain unverified.
+- Save SHA, run, migrations, old/new Worker versions and smoke results as deployment evidence. Documentation evidence returns through a separate PR, never a deployment job's direct push to main. Documentation-only evidence must not trigger another production release.
+- Before initial activation, confirm main contains current production changes, configure production environment/secrets and complete an exact-SHA manual bootstrap. Until then say “automatic deployment is not enabled”. See `docs/DEVELOPMENT_WORKFLOW.md` for setup and current evidence.
 
-      cd /root/dev/zhiye
-      npx -y node@24.19.0 /usr/lib/node_modules/corepack/dist/pnpm.js install --frozen-lockfile
-      npx -y node@24.19.0 /usr/lib/node_modules/corepack/dist/pnpm.js check
-      npx -y node@24.19.0 /usr/lib/node_modules/corepack/dist/pnpm.js test
-      npx -y node@24.19.0 /usr/lib/node_modules/corepack/dist/pnpm.js build
-      npx -y node@24.19.0 /usr/lib/node_modules/corepack/dist/pnpm.js cloud:check
-      npx -y node@24.19.0 /usr/lib/node_modules/corepack/dist/pnpm.js cloud:bundle
+# Platform releases
 
-  Run relevant Playwright/extension tests for the changed path. If the change adds D1 migrations, review them separately and apply each migration once to the remote `zhiye-cloud` database with the matching production Wrangler config (for example, `npx -y node@24.19.0 /usr/lib/node_modules/corepack/dist/pnpm.js exec wrangler d1 migrations apply zhiye-cloud --remote --config cloud/wrangler.web.jsonc`) before exposing code that requires the new schema; never edit production D1 manually or skip a failed migration.
-- After gates pass and the user confirms deployment, deploy both Workers so the web and clipper bindings stay compatible:
-
-      npx -y node@24.19.0 /usr/lib/node_modules/corepack/dist/pnpm.js exec wrangler deploy --config cloud/wrangler.web.jsonc
-      npx -y node@24.19.0 /usr/lib/node_modules/corepack/dist/pnpm.js exec wrangler deploy --config cloud/wrangler.clip.jsonc
-
-  Keep `DB`, `BACKUPS`, `IMAGES`, `CAPTURE_QUEUE`, and `BROWSER` bindings aligned with the reviewed config. Do not recreate existing R2 buckets or queues during a normal deploy. Afterward, verify the Access-protected production URL, authenticated web read/write, extension pairing/clip, image asset delivery, and a stable Worker response; unauthenticated requests should remain at the expected Access redirect/denial boundary. Record the deployed commit SHA and any migration/deployment IDs in the relevant release or Cloudflare evidence document.
-- Never claim Cloudflare production status from a dry-run, local build, or a deploy of only one Worker. If deployment fails, leave the existing production version running and report the exact stable error; do not retry blindly after a schema or binding failure.
-
-# GitHub development and release flow
-
-- Verify `origin` is `git@github.com:SaraiNoQ/web-knowledge-set.git`. Start feature work from the latest `main` on a focused `codex/<topic>` branch unless the user explicitly requests another branch; never rewrite shared history or force-push `main`.
-- Before code changes, read this file and `CLAUDE.md`, register product work as an unchecked acceptance item in `docs/FEATURES.md` (or the narrower relevant document), and keep one milestone focused. Do not mix unrelated fixes, generated files, local data, or credentials into the milestone.
-- Before a commit, synchronize the source to the server and run the applicable type checks, unit/integration tests, production build, cloud checks, extension/Playwright tests, and packaging checks. Then ask an independent agent to review the complete uncommitted diff for correctness, security, data loss, migrations, tests, and unnecessary complexity; resolve findings and rerun affected gates.
-- Use a focused Conventional Commit (`feat(...)`, `fix(...)`, `docs(...)`, `chore(...)`), confirm `git diff --check`, the staged file list, and a clean tracked worktree, then push the commit. After implementation, gates, and review pass, mark its feature-ledger item checked and struck through and update affected user/security/support/release evidence docs.
-- For a desktop release, keep Node/Cargo/Tauri/Info.plist/workflow versions aligned, commit and push `main` first, then create the exact `vX.Y.Z` tag. The macOS workflow must verify that the tag points at the `main` tip, build and sign on the macOS runner, publish the DMG and `SHA256SUMS`, and only then may the release be called published. Linux/server evidence alone never proves a macOS artifact.
-- For a Firefox release, keep the manifest version, AMO source package, signed XPI, release notes, and any store metadata aligned. Record the exact package version, source commit, lint result, signing channel, and distribution URL without recording credentials.
+- macOS and AMO releases are separate explicit tasks, not side effects of a Web merge. For a desktop release align package/Cargo/Tauri/Info.plist versions, merge through PR first, and tag the exact verified main tip `vX.Y.Z`.
+- Desktop workflows derive version and bundle version from reviewed source, validate the tag/main/source and packaged app identity, publish DMG plus SHA256SUMS only after macOS checks, and verify downloaded release assets. Existing ad-hoc signing is not Developer ID signing or Apple notarization; never claim either without its actual evidence.
+- Keep Firefox/Chrome manifest versions, AMO source, signed XPI, release notes and metadata aligned. Record version, source SHA, lint, signing channel and distribution URL without credentials. Signed packages remain outside Git and build-cleaned directories.

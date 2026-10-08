@@ -2,9 +2,7 @@ name: macOS desktop smoke
 
 on:
   workflow_dispatch:
-  pull_request:
-  push:
-    branches: ["main"]
+  workflow_call:
 
 permissions:
   contents: read
@@ -27,6 +25,7 @@ jobs:
       - name: Prepare Rust
         run: |
           rustup toolchain install 1.97.1 --profile minimal --no-self-update
+          rustup component add rustfmt clippy --toolchain 1.97.1
           rustup default 1.97.1
       - run: pnpm install --frozen-lockfile
       - name: Audit JavaScript dependencies
@@ -64,8 +63,11 @@ jobs:
           /tmp/syft scan "dir:$APP" --output cyclonedx-json=release-evidence/macos-app.cdx.json
           (cd "$(dirname "$APP")" && find "$(basename "$APP")" -type f -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256) > release-evidence/macos-app.sha256
           cp docs/THIRD_PARTY_NOTICES.md release-evidence/
-      - name: Exercise isolated macOS Keychain entry
-        run: cargo test --manifest-path src-tauri/Cargo.toml keychain::tests
+      - name: Rust gates
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+          cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
       - name: Exercise macOS URL and file entry points
         run: scripts/macos-desktop-smoke.sh
       - name: Upload packaged macOS app

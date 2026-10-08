@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      desktop: ${{ steps.paths.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.19.0
+      - name: Validate delivery policy and migrations
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          node scripts/check-delivery.mjs
+          node --test tests/delivery-policy.test.mjs
+          bash scripts/check-workflows.sh
+      - name: Detect desktop runtime changes
+        id: paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          node --input-type=module <<'JS'
+          import { execFileSync } from 'node:child_process';
+          import { appendFileSync } from 'node:fs';
+          import { needsDesktopCheck, validSha } from './scripts/delivery-policy.mjs';
+          const base = process.env.BASE_SHA;
+          const paths = validSha(base) && !/^0+$/.test(base)
+            ? execFileSync('git', ['diff', '--name-only', base, 'HEAD'], { encoding: 'utf8' }).trim().split('\n') : ['scripts/'];
+          appendFileSync(process.env.GITHUB_OUTPUT, `desktop=${needsDesktopCheck(paths)}\n`);
+          JS
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium firefox --only-shell
+      - run: pnpm check
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm cloud:check
+      - run: pnpm cloud:bundle
+      - run: pnpm notices:check
+      - run: pnpm firefox:amo
+      - run: pnpm exec playwright test
+      - name: Preserve failure evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: linux-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
+  desktop:
+    needs: policy
+    if: needs.policy.outputs.desktop == 'true'
+    uses: ./.github/workflows/macos-desktop-smoke.yml
+  required:
+    name: ci-required
+    if: always()
+    needs: [policy, linux, desktop]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require all applicable gates
+        env:
+          POLICY: ${{ needs.policy.result }}
+          LINUX: ${{ needs.linux.result }}
+          DESKTOP: ${{ needs.desktop.result }}
+          DESKTOP_REQUIRED: ${{ needs.policy.outputs.desktop }}
+        run: |
+          test "$POLICY" = success
+          test "$LINUX" = success
+          if [ "$DESKTOP_REQUIRED" = true ]; then
+            test "$DESKTOP" = success
+          else
+            test "$DESKTOP_REQUIRED" = false
+            test "$DESKTOP" = skipped
+          fi
