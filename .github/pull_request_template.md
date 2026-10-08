@@ -4,6 +4,10 @@
 
 ## Verification
 
+- Validation level: targeted (default) / explicit full release
+- Affected paths and selected focused test/manual UI check:
+- Why broader checks are needed (only if requested):
+
 - Server mirror / toolchain:
 - Complete gate results and applicable browser/platform checks:
 - Independent reviewer, findings and resolution:

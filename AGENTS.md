@@ -33,35 +33,54 @@ Default sequence: update main → feature branch → acceptance item → impleme
 
 - Read both contributor files. Inspect `git status`, origin, remote main and any PR for the task. Fetch main before choosing a baseline. Never discard, stash, commit or move another task's changes without authorization; use a separate worktree when needed.
 - New features branch from latest `origin/main`; continue the existing branch only for the same unmerged feature. Never reuse an already merged feature branch for a new task.
-- Before implementation, add an unchecked acceptance item to the narrowest relevant document (otherwise `docs/FEATURES.md`). State scope, acceptance and migration impact. Keep affected user/privacy/security/support/format documents current.
+- Register new product features or major delivery milestones as unchecked acceptance items in the narrowest relevant document (otherwise `docs/FEATURES.md`). For a small bug/layout/text fix, the PR problem, acceptance and focused check are enough: do not create extra ledger/release-evidence edits unless user-facing behavior or safety documentation actually changes.
 
-## 2. Implement, verify and independently review
+## 2. Choose the smallest sufficient validation
+
+**Daily changes use targeted checks. The complete workflow is reserved for an explicitly requested major release, release tag or full release rehearsal. A changed line, a UI tweak, a PR, a main merge or a Cloudflare deployment does not by itself justify full validation.**
+
+| Change | Minimum validation before PR | Do not run by default |
+| --- | --- | --- |
+| Documentation, contributor rules, workflow-only changes | `git diff --check`, mirrored-file check; workflow syntax/policy regression only when affected | Dependency install, application build, all unit/E2E tests, macOS, Cloudflare/AMO packaging |
+| Small CSS/layout/text/icon fix | Inspect the changed view at the relevant viewport/theme; one existing targeted browser test or a concrete manual check | All unit tests, full browser suite, cloud tests, macOS and extension release checks |
+| Small UI behavior or TypeScript fix | Relevant type check and one regression for the changed behavior; build only when needed to exercise that check | Unrelated modules and platform/package checks |
+| Service/cloud/extension fix | Tests for the changed module or API; affected build/dry-run/extension validation only | Full application regression, unrelated cloud or native checks |
+| Migration, auth, backup/restore, deletion | Focused security/data-preservation/compatibility checks and independent review; destructive production changes still require approval | Unrelated UI/platform suites; risk does not automatically mean every repository gate |
+| Explicit major release | Frozen install, full types/unit/integration/E2E, applicable cloud/extension/native/security/notice/package and production acceptance gates | Nothing required for the actual release target |
+
+- State the selected level and exact targeted check in the PR. Start with the smallest level; expand only for a concrete uncovered impact, a newly failing related check, or explicit release authorization. Do not expand merely because a file is large or shared UI is used on desktop.
+- Do not invent a test for a text-only edit. For UI changes use an existing relevant test or a documented focused visual/manual check; nontrivial logic needs a regression that would fail if the bug returned.
+- Infrastructure/safety checks remain mandatory where applicable: no secrets, correct source SHA, immutable published migrations, explicit destructive-operation approval and truthful evidence. Lightweight verification never means disabling security or data-loss guards.
+
+## 3. Implement, verify and independently review
 
 - Use a server source mirror isolated by task/run, below `/root/dev/`; production automation uses its own non-root account and directories. Never synchronize into a mirror another task is using. Mirrors are not Git worktrees.
 - Use `scripts/sync-to-campus.sh <user@host> <absolute-isolated-directory>` with the task's SSH configuration. Exclude `.git`, credentials, dependencies, generated artifacts, browser caches, reports and local data. Never use synchronization to copy production credentials or real libraries.
 - Toolchain: Node `24.19.0`, pnpm `11.7.0`, Rust from `rust-toolchain.toml`; frozen lockfile installation. Do not substitute the server's global Node/pnpm versions.
-- Before every milestone commit, run `check`, complete `test`, `build`, `cloud:check`, `cloud:bundle`, `notices:check`, `firefox:amo`, `node scripts/check-delivery.mjs`, and `node --test tests/delivery-policy.test.mjs` on the server. Run relevant Playwright scenarios; before PR merge run the full browser suite in CI. Run server browser tests through `bash scripts/run-server-e2e.sh`; the root-owned shared `/run/lock/zhiye-e2e.lock` (group zhiye-ci, 0660, systemd-tmpfiles) prevents fixture-port conflicts. Never replace or recreate a live lock.
-- For Rust/Tauri/runtime changes also run formatting, Clippy with warnings denied, tests and platform build/smoke. For migrations, backups, restore, imports and deletion, verify populated old data and failure preservation. Never waive a failed test because a single-test rerun passed; repair or obtain a complete passing applicable run.
-- After gates pass, ask an agent that did not implement the change to review the complete uncommitted diff for correctness, security, data loss, migration compatibility, tests and unnecessary complexity. Resolve findings and rerun affected gates. No self-review substitute.
+- Run only the selected targeted gates from the table. Reuse a passing result for the same code and toolchain; do not rerun it at commit, PR, merge and deploy. New code invalidates only checks affected by that code. A merge from main requires renewed checks only for affected/conflicting paths.
+- Use `bash scripts/run-server-e2e.sh <spec> [-g <test>]` for targeted server browser checks; the pre-created root:zhiye-ci 0660 `/run/lock/zhiye-e2e.lock` prevents fixture-port conflicts. Never replace a live lock. Run the complete browser suite only for a release/full-validation request.
+- If an applicable check fails, fix it and rerun that check and its directly affected checks. Do not restart every suite by habit, suppress the failure or describe a single-test pass as a full-suite pass.
+- After the selected targeted checks pass, ask an independent agent to review the focused feature difference for correctness, security, data loss, compatibility, missing regressions and unnecessary complexity. For a small change, review once and reuse it through commit/PR/merge while the reviewed source tree is unchanged; Git metadata or CI status changes do not require another review. Resolve findings and rerun only affected checks. No self-review substitute.
 - Mark the acceptance item `- [x] ~~...~~` only after implementation, gates and independent review pass. Deployment/real-service acceptance remains unchecked until actually verified. Review the final documentation changes too.
 
-## 3. Commit and open/update PR
+## 4. Commit and open/update PR
 
 - Run `git diff --check`, inspect the staged file list and staged diff, then make an immediate focused Conventional Commit (`feat`, `fix`, `docs`, `chore`, `ci`, or `test`). Never commit unverified/incomplete code, artifacts, secrets or unrelated edits.
 - Push the feature branch, then create a PR using `gh pr create --base main --head <branch> --title <title> --body-file <file>`. Reuse an existing PR for the feature. Attach every created/continued PR to the current chat with the app's PR attachment tool.
-- Fill the PR template with acceptance boundaries, exact server gate results, independent reviewer findings/resolution, reviewed SHA, migrations, deployment impact and recovery limits. Keep this evidence accurate after updates. Agent review is not approval by another GitHub identity.
+- Fill the PR template with the validation level, exact targeted checks and results, acceptance boundaries, independent reviewer findings/resolution, reviewed SHA, migrations, deployment impact and recovery limits. Keep this evidence accurate after updates. Agent review is not approval by another GitHub identity.
 
-## 4. Merge and follow through
+## 5. Merge and follow through
 
-- Wait for `ci-required` and every applicable check to succeed; resolve review conversations. If main advances, merge latest main into the feature branch, resolve conflicts, repeat affected server gates and independent review, and wait for fresh CI.
-- Before merging, independently review the entire PR difference and final head SHA. Any later code change invalidates that approval and requires fresh review/checks.
+- Standing authorization remains: after targeted checks and review, automatically merge the PR and deploy cloud-related changes. Do not ask again or turn the daily delivery into a major-release rehearsal.
+- When merge is authorized, wait for `ci-required` and every applicable check to succeed; resolve review conversations. If main advances, merge latest main into the feature branch, resolve conflicts, repeat only affected targeted checks and review, and wait for fresh CI. Do not convert a small fix into a full-release rehearsal.
+- Before merging, verify the PR difference and final head correspond to the independently reviewed source tree. Reuse that review if unchanged; later code changes need focused renewed review and only their affected checks.
 - Use `gh pr merge <number> --merge --match-head-commit <reviewed-head-sha>`. Do not use `--admin`, squash or rebase merging. Verify GitHub reports the PR merged and its original commits are ancestors of main.
 - Follow main CI and the deployment run through completion. Delete the merged branch only after confirming merge; do not switch a dirty workspace or remove a worktree still used by another task.
 - Report PR URL, merged SHA, checks, deployment and unverified acceptance separately. A commit/push/PR merge, a dry-run, a partial Worker release or Access redirects alone never proves full production acceptance.
 
 # GitHub Actions and protection
 
-- `CI` handles PRs targeting main, main pushes and manual checks using read-only permissions and ephemeral runners. No production secrets in PR jobs; never execute PR code using `pull_request_target`.
+- `CI` handles PRs targeting main and main pushes with change-scoped checks; full validation is opt-in for an explicit release request/tag. Documentation/workflow-only PRs run policy/syntax checks without product builds. Small UI PRs run relevant types/browser checks without native/cloud/AMO suites. All jobs use read-only permissions and ephemeral runners. No production secrets in PR jobs; never execute PR code using `pull_request_target`.
 - Pin external Actions to full commit SHAs. Validate workflow syntax, mirrored contributor files, locked toolchain and append-only migration history. Store failing test/trace evidence with a bounded retention period.
 - `ci-required` must always run and fail if required upstream jobs fail, are cancelled or unexpectedly skipped. Do not apply top-level path filters to this required workflow. Conditional macOS checks must agree with the change detector.
 - Protect main: PRs, `ci-required` from GitHub Actions, strict up-to-date checks, resolved conversations, no forced pushes/deletions and administrator enforcement. Do not demand a second account approval in this single-maintainer repository. Enable merge commits and automatic deletion of merged branches.
@@ -97,7 +116,7 @@ Default sequence: update main → feature branch → acceptance item → impleme
 - Production uses `cloud/wrangler.web.jsonc` (`zhiye-web`) and `cloud/wrangler.clip.jsonc` (`zhiye-clip`). Example configs are dry-run only. Preserve existing domains, Access policies and DB/BACKUPS/IMAGES/CAPTURE_QUEUE/BROWSER bindings; never recreate resources during normal deployment.
 - Deploy on the designated server under a dedicated non-root SSH account, isolated SHA/run/attempt directory, pinned host key and production-only credentials. Serialize production operations in GitHub and with a server lock; never cancel an in-progress release to make room for another.
 - Compare against the last successfully deployed SHA, not merely the previous Git commit. Skip documentation-only cumulative changes; unknown paths require release preparation. Recheck main immediately before production writes; stale runs stop.
-- Repeat the full server release gates and browser checks. Final build and `firefox:amo` must precede signed-XPI staging; verify its recorded SHA-256 and current build contents with `scripts/stage-firefox-xpi.mjs`. Missing/mismatched signed XPI blocks publication. Do not rebuild after staging without staging again.
+- Do not repeat already-passing CI tests during routine deployment. Build the exact merged source because publishable assets are necessary; run full server release gates only for an explicit major release/full rehearsal. Run `firefox:amo` only for changed extension inputs or a full release. Final build must precede signed-XPI staging; verify its recorded SHA-256 and current build contents with `scripts/stage-firefox-xpi.mjs`. Missing/mismatched signed XPI blocks publication. Do not rebuild after staging without staging again.
 - Existing published migrations are immutable. New migrations declare `-- deployment: compatible` or `-- deployment: manual` and undergo independent review. Compatible changes require populated-old-schema and old/new-reader compatibility evidence; destructive or uncertain changes pause for explicit approval of that exact SHA. Never bypass a failed migration or manually change production D1.
 - Save the previous pair of Worker versions before mutation. Apply approved pending migrations once, publish both Workers with their production configs and verify applicable bindings. Two deployments are not atomic: a partial release must be reported and recorded.
 - Restore the previous pair only when resource/schema compatibility is confirmed; otherwise stop for recovery. Worker rollback does not undo D1/R2 data or resource changes. Never retry a schema/binding failure blindly.

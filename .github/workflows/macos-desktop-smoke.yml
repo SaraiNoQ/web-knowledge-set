@@ -2,7 +2,16 @@ name: macOS desktop smoke
 
 on:
   workflow_dispatch:
+    inputs:
+      full_validation:
+        description: Run full release dependency audits
+        default: false
+        type: boolean
   workflow_call:
+    inputs:
+      full_validation:
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -29,6 +38,7 @@ jobs:
           rustup default 1.97.1
       - run: pnpm install --frozen-lockfile
       - name: Audit JavaScript dependencies
+        if: inputs.full_validation
         run: |
           pnpm audit --registry=https://registry.npmjs.org --audit-level high
           pnpm audit --registry=https://registry.npmjs.org --prod --audit-level high

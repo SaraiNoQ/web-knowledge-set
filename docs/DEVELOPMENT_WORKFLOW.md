@@ -6,13 +6,21 @@
 
 - [x] ~~**贡献规范与 PR CI**：统一短期分支、阶段提交、独立审查、PR、merge commit 和 main 保护要求；固定工具链，服务器门禁、策略回归、工作流静态检查与独立审查通过，必需检查不可因跳过而误通过。GitHub 实际运行和仓库保护启用另记第三阶段。~~
 - [x] ~~**自动生产部署实现**：隔离目录、非 root 专用 SSH、main 精确 SHA、累计差异、兼容迁移、签名 XPI、双 Worker 发布、失败恢复和证据留存均经过服务器检查与独立审查；实际 bootstrap 与启用另记第三阶段。~~
+- [ ] **大版本安全基线**：首轮全量验收发现现有锁文件 16 high 告警；作为正式大版本发布前的独立依赖维护处理，不捆绑日常 UI 修复。发布全量审计不得忽略这些告警。
+- [ ] **桌面通用发布工作流**：移除固定 1.0.6/tag/bundleVersion，校验源版本、main、成功 CI 与实际 macOS 产物；保留明确 ad-hoc/未公证边界，不在本任务创建 release tag。
 - [ ] **仓库启用与发布验收**：main 保护、GitHub Environment 与专用凭据配置完成；首次 main 手动部署成功后开启持续部署。登录态业务验证与边界 smoke 分开记录。
+
+## 日常变更分级（本轮优化）
+
+- [x] ~~**轻量日常 PR**：文档/工作流只做静态与策略检查；小 UI 修改只跑受影响视图/用例；后端/云端/扩展只验证相关模块。仅显式大版本/tag/full-validation 执行全量流程，普通部署不重复全套 CI。规范、CI 和部署脚本保持一致，分级策略/部署守卫与工作流静态检查通过，独立审查问题已修复并复审。~~
+
+现有规则的缺陷是每次提交强制全套门禁、PR 再跑全量、src/脚本变化触发 macOS、发布再次全量测试。新版将提交、PR 和发布的验证成本分开，复用同一 SHA 的证据；遇到失败只复跑相关检查。具体最小检查表见 AGENTS.md，第 2 节。
 
 ## GitHub 配置
 
 main 要求 PR、`ci-required`、分支保持最新、解决讨论，禁止强推与删除，管理员不得绕过。不要求第二个 GitHub 账号审批；独立 agent 审查证据仍必须写入 PR。采用 merge commit，合并后删除分支。
 
-CI 在 GitHub 临时 Linux/macOS runner 运行；开发者的本地目录只编辑与同步，提交前在指定服务器验证。外部分叉 PR 不获得 SSH、Cloudflare 或生产环境凭据。
+CI 按变更范围选择检查：文档/工作流只做静态和策略回归，小 UI 做相关类型/布局回归，普通前端不触发 macOS/云端/扩展套件；`validation:release` PR 标签、v* tag 或手动 `full_validation=true` 才运行全量。开发者本地目录只编辑与同步，提交前在指定服务器做相关验证。外部分叉 PR 不获得 SSH、Cloudflare 或生产环境凭据。
 
 ## 生产运行配置
 
@@ -28,7 +36,7 @@ CI 在 GitHub 临时 Linux/macOS runner 运行；开发者的本地目录只编�
 
 `Cloudflare production` 自动处理通过 CI 的 main push；手动 bootstrap/重试必须在 main 发起，填写当前完整 SHA，并已有该 SHA 的成功 push CI。首次勾选 bootstrap，核验旧 Worker 版本不漂移；成功后由维护 agent 开启仓库自动部署变量。
 
-按上次成功发布 SHA 计算累计差异，文档/测试证据单独更新不发布，未知路径保守发布。两个 Worker 都成功且边界 smoke 通过后，才原子更新 `last-success.json`。上游 CI 失败、过时 SHA、版本漂移、缺失签名包或失败迁移都阻断发布。
+按上次成功发布 SHA 计算累计差异，文档/测试证据单独更新不发布，未知路径保守发布。普通部署复用已通过的精确 SHA CI，只重新构建必要发布资产并核验签名、源版本、迁移和绑定；显式 `full_validation=true` 才重跑全量。两个 Worker 都成功且边界 smoke 通过后，才原子更新 `last-success.json`。上游 CI 失败、过时 SHA、版本漂移、缺失签名包或失败迁移都阻断发布。
 
 新 SQL 须声明 `-- deployment: compatible` 或 `-- deployment: manual`。自动兼容分类仅支持新增表/索引和新增可空标量列；复杂 SQL 即使作者认为兼容，也使用 manual 审批并补足旧数据/新旧代码验证。既有 SQL 永不修改；`published.json` 旧摘要不变，只可在后续证据 PR 登记已合并、成功应用 SQL 的准确摘要。
 
@@ -38,7 +46,7 @@ manual 迁移执行前持久化 `schema-risk.json`；发布或迁移失败后，
 
 运行摘要与 90 天 artifact 是部署证据原件。agent 后续以文档 PR 回写 Cloudflare/发布证据，禁止部署任务直接推 main。Access 拒绝、扩展无 Origin/无令牌拒绝仅证明边界；登录态读写、真实配对剪藏、图片及签名包实际下载另行验收。
 
-**当前启用状态：生产 Environment、专用账号/密钥和共享锁已配置；自动部署仍为 false，尚未 bootstrap。GitHub 初次实跑的 Linux 浏览器与既有依赖审计阻塞正在修复。**
+**当前启用状态：生产 Environment、专用账号/密钥和共享锁已配置；自动部署仍为 false，尚未 bootstrap。GitHub Linux sandbox 已通过；全量发布发现的依赖审计问题保留为大版本发布前维护项，日常检查已按用户要求分级。**
 
 ## 第一阶段证据（2026-10-08，Asia/Singapore）
 
@@ -49,7 +57,14 @@ manual 迁移执行前持久化 `schema-risk.json`；发布或迁移失败后，
 
 ## 第二阶段证据（2026-10-08，Asia/Singapore）
 
-- 独立镜像 `/root/dev/zhiye-agent-delivery-stage2`，锁定工具链：类型、217 单元/集成通过/1 既有跳过、构建、cloud 45/45、例子与正式双 Worker dry-run、许可证及 Firefox AMO 通过。无产品路径或 SQL 变更，完整浏览器沿用本阶段前同一产品源码的 109/109；正式发布仍会在非 root 账号重新跑完整门禁。
+- 独立镜像 `/root/dev/zhiye-agent-delivery-stage2`，锁定工具链：类型、217 单元/集成通过/1 既有跳过、构建、cloud 45/45、例子与正式双 Worker dry-run、许可证及 Firefox AMO 通过。无产品路径或 SQL 变更，完整浏览器沿用本阶段前同一产品源码的 109/109；这是优化前的全量证据；新版普通发布复用已通过 CI，只有显式大版本发布重跑全量验收。
 - 策略/部署回归 18/18、actionlint 1.7.12 通过；覆盖过时 SHA、无审批迁移、迁移失败不发布、第二 Worker 上传后失败、smoke 失败、回退失败、manual-schema 已应用后重试和早期门禁失败证据。生产实际六种绑定 JSON 已用于校验回归。
 - 独立 agent 审查发现并修复跨重试 schema 风险丢失、跨账号锁权限、早期失败无证据三项问题，复审无剩余发现。服务器 root/部署账号共同持锁与争锁检查通过；已配置 main 严格保护与高风险迁移审批环境。
 - 首轮 GitHub CI 的 policy 通过，required 正确阻断 Linux 浏览器与 macOS 已有 npm 审计失败；Linux runner 改为兼容的 Ubuntu 22 并保留真实 Chromium sandbox probe。现有锁文件 16 high 告警将以聚焦的依赖修复阶段处理，未取消审计或跳过失败。自动部署仍未启用。
+
+## 轻量优化证据（2026-10-08，Asia/Singapore）
+
+- 按用户最新要求取消正在运行的旧全量 PR 流程，改为文档静态、小 UI 定向、模块定向与显式完整发布四种实际检查范围；保持自动合并和云端自动部署授权。普通发布只构建必需资产并执行发布安全守卫，不重复全套 CI。
+- 本轮只运行规范/迁移静态检查、分级策略 12 项、部署守卫 12 项及 actionlint；未运行全量应用类型、单元、E2E、macOS 或扩展发版套件。图标条件最后仅重跑受影响的 12 项策略。
+- 独立审查提出 E2E-only 必要产物、云端实际模块测试、Firefox 校验器遗漏三个问题，均修复并增加回归；最后复核无剩余问题。小改动审查只做一次，源树未变时可复用于提交、PR 和合并。
+- GitHub 当前 PR 新配置的实际结果随后记录；生产自动部署仍待成功 main CI 和 bootstrap。旧全量审计告警仍保留为大版本发布前维护项，没有宣称已修复。

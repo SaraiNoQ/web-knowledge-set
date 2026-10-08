@@ -11,6 +11,10 @@ on:
         description: Exact current main SHA with successful push CI
         required: true
         type: string
+      full_validation:
+        description: Explicit major-release full server acceptance (routine deployment reuses CI)
+        default: false
+        type: boolean
       bootstrap:
         description: First production rehearsal (requires recorded previous Worker versions)
         default: false
@@ -87,6 +91,7 @@ jobs:
           DEPLOY_USER: ${{ vars.DEPLOY_USER }}
           BOOTSTRAP: ${{ inputs.bootstrap || false }}
           REQUEST_MANUAL: ${{ inputs.request_manual_approval || false }}
+          FULL_VALIDATION: ${{ inputs.full_validation || false }}
         run: |
           set -euo pipefail
           [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9._-]+$ && "$DEPLOY_USER" =~ ^[a-zA-Z0-9_-]+$ ]]
@@ -111,7 +116,7 @@ jobs:
           const paths = state ? execFileSync('git', ['diff', '--name-only', state.sha, sha], { encoding: 'utf8' }).trim().split('\n').filter(Boolean) : ['bootstrap'];
           const manual = Boolean(schemaRisk) || process.env.REQUEST_MANUAL === 'true' || checkMigrations(process.cwd()).some((m) => m.policy === 'manual' && (!state || paths.includes(`cloud/migrations/${m.name}`)));
           const release = process.env.BOOTSTRAP === 'true' || needsCloudRelease(paths);
-          writeFileSync('deployment-plan.json', JSON.stringify({ sha, previousSha: state?.sha ?? null, paths, manual, bootstrap: process.env.BOOTSTRAP === 'true' }));
+          writeFileSync('deployment-plan.json', JSON.stringify({ sha, previousSha: state?.sha ?? null, paths, manual, fullValidation: process.env.FULL_VALIDATION === 'true', bootstrap: process.env.BOOTSTRAP === 'true' }));
           appendFileSync(process.env.GITHUB_OUTPUT, `release=${release}\nmanual=${manual}\n`);
           appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Source: ${sha}\n\nBaseline: ${state?.sha ?? 'first bootstrap'}\n\nProduction required: ${release}; protected migration approval: ${manual}\n`);
           JS

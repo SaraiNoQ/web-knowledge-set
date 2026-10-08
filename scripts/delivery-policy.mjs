@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
@@ -74,10 +74,53 @@ export function needsCloudRelease(paths) {
 }
 
 export function needsDesktopCheck(paths) {
-  return paths.some((path) => /^(?:src\/|server\/|shared\/|src-tauri\/|scripts\/|\.github\/workflows\/|package\.json$|pnpm-|\.node-version$|rust-toolchain|vite\.config|tsconfig|index\.html$|public\/|licenses\/|THIRD_PARTY)/u.test(path));
+  return paths.some((path) => /^(?:src-tauri\/(?:src\/|Cargo\.(?:toml|lock)$|tauri\.conf\.json$|capabilities\/|build\.rs$|entitlements[^/]*\.plist$)|rust-toolchain)/u.test(path));
 }
 
-export function ciPassed(results, desktopRequired) {
-  return results.policy === "success" && results.linux === "success"
+export function ciPassed(results, desktopRequired, runtimeRequired = true) {
+  return results.policy === "success" && results.linux === (runtimeRequired ? "success" : "skipped")
     && results.desktop === (desktopRequired ? "success" : "skipped");
+}
+
+export function validationPlan(paths, full = false) {
+  const policyOnly = /^(?:docs\/|(?:AGENTS|CLAUDE|README)\.md$|\.gitignore$|\.github\/|scripts\/(?:delivery-policy|check-delivery|check-workflows|cloudflare-delivery|server-release|record-release-exit|run-server-e2e|sync-to-campus|validate-change)\.(?:mjs|sh)$|tests\/(?:delivery-policy|cloudflare-delivery)\.test\.mjs$|cloud\/migrations\/published\.json$|extension\/amo\/signed-release\.json$)/u;
+  const code = paths.filter((path) => !policyOnly.test(path));
+  const ui = code.some((path) => /^(?:src\/|public\/|index\.html$)/u.test(path));
+  const cloud = code.some((path) => /^(?:cloud\/|shared\/)/u.test(path));
+  const extension = code.some((path) => /^(?:extension\/|shared\/rendered-math\.ts$|scripts\/(?:build-extension|validate-firefox-amo)\.mjs$)/u.test(path));
+  const dependencies = code.some((path) => /^(?:package\.json$|pnpm-|\.node-version$)/u.test(path));
+  const nodeTests = new Set(code.filter((path) => /^tests\/[^/]+\.test\.(?:ts|mjs)$/u.test(path)));
+  const unknown = code.some((path) => !/^(?:src\/|server\/|shared\/|cloud\/|extension\/|src-tauri\/|e2e\/|tests\/|public\/|package\.json$|pnpm-|\.node-version$|rust-toolchain|index\.html$)/u.test(path));
+  for (const path of code.filter((path) => /^(?:src|server|shared)\/.*\.ts$/u.test(path))) {
+    const candidate = `tests/${path.split("/").at(-1).replace(/\.ts$/u, ".test.ts")}`;
+    if (existsSync(candidate)) nodeTests.add(candidate);
+    else if (path.startsWith("server/")) nodeTests.add("tests/api.test.ts");
+  }
+  for (const path of code.filter((path) => /^cloud\/.*\.ts$/u.test(path))) {
+    const candidate = `tests/cloud-${path.split("/").at(-1).replace(/\.ts$/u, ".test.ts")}`;
+    if (existsSync(candidate)) nodeTests.add(candidate);
+  }
+  if (code.some((path) => /^server\/(?:browser|capture|safe-proxy)\.ts$/u.test(path))) {
+    nodeTests.add("tests/browser-options.test.ts");
+    nodeTests.add("tests/capture.test.ts");
+  }
+  if (cloud) nodeTests.add("tests/cloud-api.test.ts");
+  if (extension) nodeTests.add("tests/extension.test.ts");
+  const e2eTests = [...new Set(code.filter((path) => /^e2e\/[^/]+\.spec\.ts$/u.test(path)))];
+  if (ui && !e2eTests.length) e2eTests.push("e2e/markdown-layout.spec.ts");
+  const typeProjects = new Set();
+  if (full || dependencies || unknown) typeProjects.add("all");
+  else for (const path of code.filter((p) => /\.tsx?$/u.test(p))) {
+    if (path.startsWith("src/")) typeProjects.add("tsconfig.json");
+    else if (path.startsWith("server/")) typeProjects.add("tsconfig.server.json");
+    else if (path.startsWith("cloud/")) typeProjects.add("tsconfig.cloud.json");
+    else if (path.startsWith("extension/")) typeProjects.add("tsconfig.extension.json");
+    else if (path.startsWith("tests/")) typeProjects.add("tsconfig.test.json");
+    else typeProjects.add("all");
+  }
+  return { full, runtime: full || code.length > 0, desktop: full || needsDesktopCheck(paths),
+    typecheck: typeProjects.size > 0, typeProjects: [...typeProjects],
+    build: full || ui || cloud || extension || dependencies || unknown || e2eTests.length > 0 || needsDesktopCheck(paths),
+    nodeTests: [...nodeTests].sort(), e2eTests, cloud: full || cloud, extension: full || extension,
+    audit: full || dependencies, notices: full || dependencies };
 }

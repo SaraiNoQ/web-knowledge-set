@@ -11,6 +11,11 @@ const pkg = JSON.parse(read("package.json"));
 assert.equal(pkg.engines.node, "24.19.0");
 assert.equal(pkg.packageManager, "pnpm@11.7.0");
 assert.equal(read(".node-version").trim(), pkg.engines.node);
+const firefox = JSON.parse(read("extension/manifest.firefox.json"));
+assert.equal(firefox.version, JSON.parse(read("extension/manifest.chrome.json")).version, "Extension versions must match");
+const signed = JSON.parse(read("extension/amo/signed-release.json"));
+assert.equal(signed.version, firefox.version, "Signed release metadata must match manifest");
+assert(/^[a-zA-Z0-9._-]+\.xpi$/u.test(signed.filename) && /^[a-f0-9]{64}$/u.test(signed.sha256), "Invalid signed XPI metadata");
 for (const name of readdirSync(resolve(root, ".github/workflows"))) {
   const workflow = read(`.github/workflows/${name}`);
   assert(!/^\s*pull_request_target:/mu.test(workflow), "Never execute PR code with privileged trigger");
@@ -19,7 +24,7 @@ for (const name of readdirSync(resolve(root, ".github/workflows"))) {
   }
 }
 const base = process.env.BASE_SHA;
-if (base) {
+if (base && !/^0+$/u.test(base)) {
   assert(validSha(base), "Invalid BASE_SHA");
   const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
   const names = git("ls-tree", "-r", "--name-only", base, "cloud/migrations").trim().split("\n").filter(Boolean);
