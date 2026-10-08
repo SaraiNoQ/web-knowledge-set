@@ -1,0 +1,28 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "account_id": "5241ddb10b7a40275e9e3cf7a4ce3689",
+  "name": "zhiye-clip",
+  "main": "clip.ts",
+  "compatibility_date": "2026-08-16",
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "clip.sarainoq.cn",
+      "custom_domain": true
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "zhiye-cloud",
+      "database_id": "b3ac6ecc-dcf1-4bc7-a269-35c889b2ebe6",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "IMAGES",
+      "bucket_name": "zhiye-cloud-images"
+    }
+  ]
+}

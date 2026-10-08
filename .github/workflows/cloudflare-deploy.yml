@@ -1,0 +1,237 @@
+name: Cloudflare production
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact current main SHA with successful push CI
+        required: true
+        type: string
+      full_validation:
+        description: Explicit major-release full server acceptance (routine deployment reuses CI)
+        default: false
+        type: boolean
+      bootstrap:
+        description: First production rehearsal (requires recorded previous Worker versions)
+        default: false
+        type: boolean
+      request_manual_approval:
+        description: Request protected approval for uncertain/destructive pending migrations
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: cloudflare-production
+  cancel-in-progress: false
+
+jobs:
+  source:
+    if: >-
+      github.repository == 'SaraiNoQ/web-knowledge-set' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+       (vars.CLOUDFLARE_AUTO_DEPLOY == 'true' && github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.repository.full_name == github.repository))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Require latest main and successful push CI for its exact SHA
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha || inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$(gh api repos/$GITHUB_REPOSITORY/git/ref/heads/main --jq .object.sha)" = "$SOURCE_SHA"
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=push&branch=main&head_sha=$SOURCE_SHA&status=success")
+          test "$(jq '.workflow_runs | length' <<< "$runs")" -gt 0
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+  prepare:
+    needs: source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: cloudflare-production
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      manual: ${{ steps.plan.outputs.manual }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.19.0
+      - name: Configure dedicated SSH identity
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+      - name: Read last successful source and plan cumulative changes
+        id: plan
+        env:
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          BOOTSTRAP: ${{ inputs.bootstrap || false }}
+          REQUEST_MANUAL: ${{ inputs.request_manual_approval || false }}
+          FULL_VALIDATION: ${{ inputs.full_validation || false }}
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9._-]+$ && "$DEPLOY_USER" =~ ^[a-zA-Z0-9_-]+$ ]]
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" node > "$RUNNER_TEMP/last-success.json" <<'JS'
+          const fs = require('node:fs');
+          const read = (name) => fs.existsSync(name) ? JSON.parse(fs.readFileSync(name, 'utf8')) : null;
+          console.log(JSON.stringify({ state: read('/srv/zhiye-delivery/state/last-success.json'), schemaRisk: read('/srv/zhiye-delivery/state/schema-risk.json') }));
+          JS
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { execFileSync } from 'node:child_process';
+          import { readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+          import { checkMigrations, needsCloudRelease, validSha } from './scripts/delivery-policy.mjs';
+          const sha = process.env.SOURCE_SHA;
+          assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), sha);
+          const { state, schemaRisk } = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/last-success.json`));
+          assert(state || process.env.BOOTSTRAP === 'true', 'First release requires explicit bootstrap');
+          if (state) {
+            assert(validSha(state.sha));
+            execFileSync('git', ['merge-base', '--is-ancestor', state.sha, sha]);
+          }
+          const paths = state ? execFileSync('git', ['diff', '--name-only', state.sha, sha], { encoding: 'utf8' }).trim().split('\n').filter(Boolean) : ['bootstrap'];
+          const manual = Boolean(schemaRisk) || process.env.REQUEST_MANUAL === 'true' || checkMigrations(process.cwd()).some((m) => m.policy === 'manual' && (!state || paths.includes(`cloud/migrations/${m.name}`)));
+          const release = process.env.BOOTSTRAP === 'true' || needsCloudRelease(paths);
+          writeFileSync('deployment-plan.json', JSON.stringify({ sha, previousSha: state?.sha ?? null, paths, manual, fullValidation: process.env.FULL_VALIDATION === 'true', bootstrap: process.env.BOOTSTRAP === 'true' }));
+          appendFileSync(process.env.GITHUB_OUTPUT, `release=${release}\nmanual=${manual}\n`);
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Source: ${sha}\n\nBaseline: ${state?.sha ?? 'first bootstrap'}\n\nProduction required: ${release}; protected migration approval: ${manual}\n`);
+          JS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: deployment-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: deployment-plan.json
+          retention-days: 30
+  migration-approval:
+    needs: [source, prepare]
+    if: needs.prepare.outputs.release == 'true' && needs.prepare.outputs.manual == 'true'
+    runs-on: ubuntu-24.04
+    environment: cloudflare-manual-migration
+    timeout-minutes: 5
+    steps:
+      - name: Record protected approval for this exact source
+        env:
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
+        run: echo "Protected migration approval for $SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+  deploy:
+    needs: [source, prepare, migration-approval]
+    if: >-
+      always() && needs.source.result == 'success' && needs.prepare.result == 'success' &&
+      needs.prepare.outputs.release == 'true' &&
+      ((needs.prepare.outputs.manual == 'true' && needs.migration-approval.result == 'success') ||
+       (needs.prepare.outputs.manual == 'false' && needs.migration-approval.result == 'skipped'))
+    runs-on: ubuntu-24.04
+    environment: cloudflare-production
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.19.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: deployment-plan-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Transfer immutable source and private release request
+        env:
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          BOOTSTRAP_VERSIONS: ${{ vars.CLOUDFLARE_BOOTSTRAP_VERSIONS }}
+          APPROVED_MANUAL: ${{ needs.migration-approval.result == 'success' }}
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9._-]+$ && "$DEPLOY_USER" =~ ^[a-zA-Z0-9_-]+$ ]]
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(gh api repos/$GITHUB_REPOSITORY/git/ref/heads/main --jq .object.sha)" = "$SOURCE_SHA"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          remote="/srv/zhiye-delivery/runs/$SOURCE_SHA/$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT"
+          echo "REMOTE_RUN=$remote" >> "$GITHUB_ENV"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "umask 077; mkdir -p '$remote/source'"
+          # Only tracked checkout files; no Git metadata, dependencies, data or runner credentials.
+          git archive HEAD | ssh -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "tar -x -C '$remote/source'"
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const plan = JSON.parse(readFileSync('deployment-plan.json'));
+          assert.equal(plan.sha, process.env.SOURCE_SHA);
+          assert(process.env.CLOUDFLARE_API_TOKEN && process.env.GH_TOKEN, 'Missing deployment secret');
+          writeFileSync(`${process.env.RUNNER_TEMP}/request.json`, JSON.stringify({ ...plan,
+            run: `${process.env.GITHUB_RUN_ID}/${process.env.GITHUB_RUN_ATTEMPT}`,
+            approvedManual: process.env.APPROVED_MANUAL === 'true',
+            bootstrapVersions: plan.bootstrap ? JSON.parse(process.env.BOOTSTRAP_VERSIONS) : null,
+            githubToken: process.env.GH_TOKEN, cloudflareToken: process.env.CLOUDFLARE_API_TOKEN,
+          }), { mode: 0o600 });
+          JS
+          trap 'rm -f "$RUNNER_TEMP/request.json"' EXIT
+          scp -o StrictHostKeyChecking=yes "$RUNNER_TEMP/request.json" "$DEPLOY_USER@$DEPLOY_HOST:$remote/request.json"
+          rm -f "$RUNNER_TEMP/request.json"
+      - name: Run locked server gates and publish both Workers
+        id: server
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
+        run: |
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$REMOTE_RUN/source' && npx --yes --package=node@24.19.0 --package=pnpm@11.7.0 -- bash scripts/server-release.sh '$REMOTE_RUN/request.json'"
+      - name: Collect evidence and remove private request even on failure
+        if: always() && env.REMOTE_RUN != ''
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
+        run: |
+          cleanup_failed=false
+          ssh -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "rm -f '$REMOTE_RUN/request.json'" || cleanup_failed=true
+          if ! scp -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST:$REMOTE_RUN/evidence.json" evidence.json; then
+            node --input-type=module <<'JS'
+          import { writeFileSync } from 'node:fs';
+          writeFileSync('evidence.json', JSON.stringify({ sha: process.env.SOURCE_SHA, status: 'evidence-unavailable', stage: 'server-start-or-evidence-collection', authenticatedBusinessAcceptance: 'not-verified' }, null, 2));
+          JS
+            exit 1
+          fi
+          node --input-type=module <<'JS'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, '```json\n' + readFileSync('evidence.json', 'utf8') + '\n```\n');
+          JS
+          test "$cleanup_failed" = false
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: production-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence.json
+          retention-days: 90
+          if-no-files-found: warn

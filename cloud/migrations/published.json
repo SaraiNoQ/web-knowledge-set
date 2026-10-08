@@ -1,0 +1,14 @@
+{
+  "0001_cloud_core.sql": "edb8a99d4d103fce9077d8f8b8f5cde47f0e22a3d53a7bac05e1c87a347ea1a5",
+  "0002_browser_extension.sql": "0bf60eeada1a73c3792953eef0c5034e1ac3b24edc23ebbbae6bbe953a4fc6bc",
+  "0003_cloud_ai.sql": "0fd768515e338ee693de4fb50eaedb889f17eea3d8bf13aab4aae528be4ea6de",
+  "0004_cloud_backups.sql": "479ec802648b5f4af406ffb66ce0aec36ba2e09e7c91b311b06a8fd0d126d388",
+  "0005_cloud_capture.sql": "4c0009a0838603a03360d5160b7ffe8d337b0e2a405d6d5d905c09af9b713e55",
+  "0006_cloud_folders.sql": "38999ceb172aac260b5d04f5281a11e73e184044b7e71c0de136f10e17687e51",
+  "0007_cloud_trash.sql": "d80a2d23506c9f4540eb1c74a75901bb5951b4ede93176b81c3377c48e53018b",
+  "0008_cloud_favorites.sql": "641164da6efbd8b724cd4a61996b18991b625428306393ef29aeaed83e96c284",
+  "0009_cloud_papers.sql": "8d3787a84afebe6584d860cf3dc02df668ea1d5f3bd8e15ff67a11b11609210c",
+  "0010_cloud_paper_content_mode.sql": "1ec6cabbcc9dd77b17393420019db2a7ced1af5cdee2126c3f90287055bf9c67",
+  "0011_semantic_indexes.sql": "a852a7b7cd5708511a845f6158fe79a732fb180c18a91371f03ddeca0498c675",
+  "0012_cloud_imports.sql": "731188fe892f4ff2af63f1edb20da82e43e424b2d0836f6fec940d21253d0573"
+}

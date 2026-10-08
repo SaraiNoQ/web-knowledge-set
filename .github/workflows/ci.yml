@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      full_validation:
+        description: Explicit major-release acceptance (all suites and platforms)
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      desktop: ${{ steps.paths.outputs.desktop }}
+      runtime: ${{ steps.paths.outputs.runtime }}
+      full: ${{ steps.paths.outputs.full }}
+      plan: ${{ steps.paths.outputs.plan }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.19.0
+      - name: Select minimum sufficient validation
+        id: paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          FULL_REQUESTED: ${{ inputs.full_validation == true || startsWith(github.ref, 'refs/tags/') || contains(github.event.pull_request.labels.*.name, 'validation:release') }}
+        run: |
+          node --input-type=module <<'JS'
+          import { execFileSync } from 'node:child_process';
+          import { appendFileSync } from 'node:fs';
+          import { validationPlan, validSha } from './scripts/delivery-policy.mjs';
+          const base = process.env.BASE_SHA;
+          const paths = validSha(base) && !/^0+$/.test(base)
+            ? execFileSync('git', ['diff', '--name-only', base, 'HEAD'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean)
+            : process.env.FULL_REQUESTED === 'true' ? [] : execFileSync('git', ['diff', '--name-only', 'HEAD^', 'HEAD'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+          const plan = validationPlan(paths, process.env.FULL_REQUESTED === 'true');
+          appendFileSync(process.env.GITHUB_OUTPUT, `desktop=${plan.desktop}\nruntime=${plan.runtime}\nfull=${plan.full}\nplan=${JSON.stringify(plan)}\nworkflow=${plan.full || paths.some(p => p.startsWith('.github/workflows/') || p === 'scripts/check-workflows.sh')}\n`);
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Validation level: ${plan.full ? 'full release' : 'targeted'}\n\n\`\`\`json\n${JSON.stringify(plan, null, 2)}\n\`\`\`\n`);
+          JS
+      - name: Validate policy, mirrored docs and immutable migrations
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          node scripts/check-delivery.mjs
+          node --test tests/delivery-policy.test.mjs tests/cloudflare-delivery.test.mjs
+      - name: Workflow syntax (only when affected or releasing)
+        if: steps.paths.outputs.workflow == 'true'
+        run: bash scripts/check-workflows.sh
+  linux:
+    needs: policy
+    if: needs.policy.outputs.runtime == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: ${{ needs.policy.outputs.full == 'true' && 45 || 15 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Execute only the selected checks
+        env:
+          VALIDATION_PLAN: ${{ needs.policy.outputs.plan }}
+        run: node scripts/validate-change.mjs
+      - name: Preserve failure evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: linux-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
+  desktop:
+    needs: policy
+    if: needs.policy.outputs.desktop == 'true'
+    uses: ./.github/workflows/macos-desktop-smoke.yml
+    with:
+      full_validation: ${{ needs.policy.outputs.full == 'true' }}
+  required:
+    name: ci-required
+    if: always()
+    needs: [policy, linux, desktop]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require successful applicable checks and intentional skips
+        env:
+          POLICY: ${{ needs.policy.result }}
+          LINUX: ${{ needs.linux.result }}
+          DESKTOP: ${{ needs.desktop.result }}
+          RUNTIME_REQUIRED: ${{ needs.policy.outputs.runtime }}
+          DESKTOP_REQUIRED: ${{ needs.policy.outputs.desktop }}
+        run: |
+          test "$POLICY" = success
+          if [ "$RUNTIME_REQUIRED" = true ]; then
+            test "$LINUX" = success
+          else
+            test "$RUNTIME_REQUIRED" = false
+            test "$LINUX" = skipped
+          fi
+          if [ "$DESKTOP_REQUIRED" = true ]; then
+            test "$DESKTOP" = success
+          else
+            test "$DESKTOP_REQUIRED" = false
+            test "$DESKTOP" = skipped
+          fi
