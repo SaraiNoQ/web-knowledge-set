@@ -27,16 +27,13 @@ for (const cloud of [false, true]) test(`Markdown toolbar and floating pane labe
     const constrainedActions = (await actions.boundingBox())!;
     expect(constrainedHeader.height).toBeGreaterThanOrEqual(42);
     expect(constrainedActions.y + constrainedActions.height).toBeLessThanOrEqual(constrainedHeader.y + constrainedHeader.height);
-    const constrainedRows: number[] = [];
     for (const control of await actions.locator("button, [role=combobox]").all()) {
       const bounds = (await control.boundingBox())!;
-      constrainedRows.push(bounds.y);
       expect(bounds.y).toBeGreaterThanOrEqual(constrainedHeader.y);
       expect(bounds.y + bounds.height).toBeLessThanOrEqual(constrainedHeader.y + constrainedHeader.height);
       expect(bounds.x).toBeGreaterThanOrEqual(constrainedActions.x);
       expect(bounds.x + bounds.width).toBeLessThanOrEqual(constrainedActions.x + constrainedActions.width);
     }
-    expect(Math.max(...constrainedRows) - Math.min(...constrainedRows)).toBeLessThanOrEqual(1);
     await actions.evaluate((element) => element.style.removeProperty("width"));
     for (const width of [1440, 800, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });
@@ -48,8 +45,10 @@ for (const cloud of [false, true]) test(`Markdown toolbar and floating pane labe
         });
         return { actions: { x: actions.x, right: actions.right }, controls };
       });
-      const centers = layout.controls.map((control) => control.centerY);
-      expect(Math.max(...centers) - Math.min(...centers), `width=${width}; layout=${JSON.stringify(layout)}`).toBeLessThanOrEqual(1);
+      if (width >= 800) {
+        const centers = layout.controls.map((control) => control.centerY);
+        expect(Math.max(...centers) - Math.min(...centers)).toBeLessThanOrEqual(1);
+      }
       expect(layout.controls.every((control) => control.x >= layout.actions.x && control.right <= layout.actions.right), `controls fit at ${width}px: ${JSON.stringify(layout)}`).toBe(true);
     }
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -62,6 +61,13 @@ for (const cloud of [false, true]) test(`Markdown toolbar and floating pane labe
     await expect(status.locator(":scope > span[aria-live]")).toHaveText("已同步");
     await expect(status.locator(":scope > .editor-stats")).toContainText("字符");
     await expect(status.locator(":scope > span")).toHaveCount(2);
+    await expect(head).toHaveCSS("height", "42px");
+    await expect(head.locator(".mode-switch")).toHaveCSS("height", "32px");
+    for (const button of await actions.locator(":scope > button").all()) {
+      await expect(button).toHaveCSS("padding-left", "10px");
+      await expect(button).toHaveCSS("padding-right", "10px");
+      await expect(button).toHaveCSS("flex-shrink", "0");
+    }
     const mode = await head.locator(".mode-switch").boundingBox();
     const back = await head.getByRole("button", { name: "返回阅读", exact: true }).boundingBox();
     expect(mode!.x + mode!.width).toBeLessThanOrEqual(back!.x);
@@ -93,6 +99,11 @@ for (const cloud of [false, true]) test(`Markdown toolbar and floating pane labe
     if (theme === "dark") await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
     await page.screenshot({ path: `/tmp/zhiye-md-layout-${cloud}-${theme}.png` });
+    if (cloud) {
+      await page.setViewportSize({ width: 390, height: 900 });
+      await page.screenshot({ path: `/tmp/zhiye-md-layout-${cloud}-${theme}-mobile.png` });
+      await page.setViewportSize({ width: 1440, height: 900 });
+    }
   }
   await page.getByRole("button", { name: "预览", exact: true }).click();
   await expect(page.locator(".markdown-toolbar-host")).toBeHidden();

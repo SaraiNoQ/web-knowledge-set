@@ -37,13 +37,14 @@
 .markdown-toolbar-host { flex: 0 1 auto; min-width: 0; }
 .markdown-toolbar-host:empty { display: none; }
 .markdown-toolbar-host .markdown-format-toolbar { padding: 0; border: 0; background: transparent; }
-.editor-shell .compact-document-head .document-actions { flex-wrap: nowrap; gap: 2px; }
-.editor-shell .compact-document-head:has(.mode-switch) .document-actions { flex-wrap: wrap; }
-.editor-shell .compact-document-head .document-actions > button { padding-inline: 1px; gap: 2px; font-size: 11px; }
+.editor-shell .compact-document-head .document-actions { flex: 0 1 auto; max-width: 100%; flex-wrap: wrap; gap: 8px; }
+.editor-shell .compact-document-head .document-actions > button { flex: 0 0 auto; padding-inline: 10px; gap: 6px; font-size: 12px; }
 .editor-shell .compact-document-head .markdown-style-select { width: 70px; min-width: 70px; max-width: 70px; flex: 0 0 70px; }
 .save-indicator .editor-stats { margin-left: 0; color: var(--ink-faint); letter-spacing: 0; }
 .compact-document-head .document-actions > * { order: 0; }
-.compact-document-head .mode-switch.ui-segmented { width: 180px; }
+.compact-document-head .mode-switch.ui-segmented { flex: 0 0 180px; width: 180px; height: var(--control-height-compact); padding: 2px; }
+.editor-shell .compact-document-head .mode-switch.ui-segmented > button.ui-button { height: 28px; min-height: 28px; padding-block: 0; }
+.compact-document-head .mode-switch .ui-segmented-surface { inset: 2px auto 2px 2px; width: calc((100% - 4px) / var(--segment-count)); }
 .pane-label-overlay { position: sticky; top: 0; z-index: 2; height: 0; flex: 0 0 0; pointer-events: none; }
 .pane-label-overlay > .pane-label { position: absolute; top: 0; right: 0; margin: 0; }
 [data-scrolled] > .pane-label-overlay > .pane-label { opacity: .5; }
@@ -77,7 +78,7 @@
   .editor-shell .editor-toolbar { padding: 8px 12px; }
   .editor-shell .editor-toolbar .mode-switch { width: auto; flex: 1 1 150px; }
   .editor-toolbar .markdown-toolbar-host { order: 1; flex-basis: 100%; }
-  .editor-shell .compact-document-head .document-actions { width: 100%; gap: 2px; }
+  .editor-shell .compact-document-head .document-actions { width: 100%; }
   .editor-shell .compact-document-head { height: auto; overflow: visible; }
   .compact-document-head .mode-switch.ui-segmented { flex: 0 0 100%; width: 100%; }
   [data-reading-style="editorial"] .markdown-preview h1 { font-size: 2em; }
