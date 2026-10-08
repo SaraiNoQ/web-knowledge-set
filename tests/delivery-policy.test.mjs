@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
-import { ciPassed, checkMigrations, checkMigrationData, migrationPolicy, needsCloudRelease, needsDesktopCheck, validSha, validationPlan } from "../scripts/delivery-policy.mjs";
+import { ciPassed, checkMigrations, checkMigrationData, desktopReleaseVersion, migrationPolicy, needsCloudRelease, needsDesktopCheck, validSha, validationPlan } from "../scripts/delivery-policy.mjs";
 
 test("required CI rejects failures, cancellations and unexpected skips", () => {
   const passing = { policy: "success", linux: "success", desktop: "success" };
@@ -13,6 +13,7 @@ test("required CI rejects failures, cancellations and unexpected skips", () => {
 });
 test("release checks include cumulative unknown/runtime changes but skip evidence", () => {
   assert(!needsCloudRelease(["docs/CLOUDFLARE.md", "CLAUDE.md"]));
+  assert(!needsCloudRelease([".github/workflows/macos-dmg.yml", ".github/workflows/cloudflare-deploy.yml", "scripts/delivery-policy.mjs", "scripts/check-delivery.mjs"]));
   assert(needsCloudRelease(["docs/CLOUDFLARE.md", "src/App.tsx"]));
   assert(needsCloudRelease(["unknown-file"]));
   assert(!needsDesktopCheck([".github/workflows/ci.yml", "src/App.tsx", "src/ui-system.css", "src-tauri/icons/zhiye.svg"]));
@@ -61,6 +62,14 @@ test("cloud module and extension validator edits run the actual affected checks"
   assert(extension.extension && !extension.full && !extension.desktop);
   const browser = validationPlan(["server/browser.ts"]);
   assert(browser.nodeTests.includes("tests/capture.test.ts"));
+});
+test("desktop release derives source version and preserves existing bundle numbering", () => {
+  const source = { version: "2.3.4", cargo: 'version = "2.3.4"', tauri: { version: "2.3.4" },
+    info: '<key>CFBundleShortVersionString</key><string>2.3.4</string>', lock: '[[package]]\nname = "zhiye"\nversion = "2.3.4"' };
+  assert.deepEqual(desktopReleaseVersion(source, "v2.3.4"), { version: "2.3.4", bundleVersion: "20304" });
+  assert.throws(() => desktopReleaseVersion(source, "v1.0.6"));
+  assert.throws(() => desktopReleaseVersion({ ...source, tauri: { version: "1.0.6" } }));
+  assert.throws(() => desktopReleaseVersion({ ...source, version: "2.3.4-rc.1" }));
 });
 test("migration classification defaults closed and only accepts conservative additions", () => {
   assert.equal(migrationPolicy("-- deployment: compatible\nCREATE TABLE sample (id TEXT PRIMARY KEY); CREATE INDEX sample_id ON sample(id);"), "compatible");

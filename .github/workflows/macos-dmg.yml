@@ -2,7 +2,7 @@ name: macOS DMG build
 
 on:
   push:
-    tags: ["v1.0.6"]
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       source_sha:
@@ -11,23 +11,39 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
+  actions: read
 
 jobs:
   build:
     runs-on: macos-15
     timeout-minutes: 90
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
     steps:
+      - name: Validate exact current main source before checkout
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            SOURCE_SHA=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)
+          else
+            test "$GITHUB_REF" = refs/heads/main
+            [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          fi
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$SOURCE_SHA"
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ inputs.source_sha || github.ref }}
+          ref: ${{ steps.source.outputs.sha }}
           fetch-depth: 1
           persist-credentials: false
-      - name: Verify release tag is the main tip
-        if: github.event_name == 'push'
-        run: |
-          git fetch --no-tags origin main --depth=1
-          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
         with:
           version: 11.7.0
@@ -35,13 +51,41 @@ jobs:
         with:
           node-version: 24.19.0
           cache: pnpm
-      - name: Verify application version
+      - name: Derive and validate all source versions
+        id: version
         run: |
-          test "$(node -p "require('./package.json').version")" = "1.0.6"
-          test "$(sed -n 's/^version = \"\(.*\)\"/\1/p' src-tauri/Cargo.toml | head -1)" = "1.0.6"
-          test "$(node -p "require('./src-tauri/tauri.conf.json').version")" = "1.0.6"
-          test "$(plutil -extract CFBundleShortVersionString raw -o - src-tauri/Info.rc.plist)" = "1.0.6"
-          test "$(grep -A1 '^name = \"zhiye\"$' src-tauri/Cargo.lock | tail -1 | sed -E 's/.*\"([^\"]+)\".*/\1/')" = "1.0.6"
+          node --input-type=module <<'JS'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          import { desktopReleaseVersion } from './scripts/delivery-policy.mjs';
+          const read = name => readFileSync(name, 'utf8');
+          const value = desktopReleaseVersion({ version: JSON.parse(read('package.json')).version,
+            cargo: read('src-tauri/Cargo.toml'), tauri: JSON.parse(read('src-tauri/tauri.conf.json')),
+            info: read('src-tauri/Info.rc.plist'), lock: read('src-tauri/Cargo.lock') },
+            process.env.GITHUB_EVENT_NAME === 'push' ? process.env.GITHUB_REF_NAME : undefined);
+          const config = JSON.stringify({ bundle: { macOS: { infoPlist: 'Info.rc.plist', bundleVersion: value.bundleVersion } } });
+          appendFileSync(process.env.GITHUB_ENV, `VERSION=${value.version}\nBUNDLE_VERSION=${value.bundleVersion}\nTAURI_RELEASE_CONFIG=${config}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `version=${value.version}\n`);
+          JS
+      - name: Reuse exact-source CI, requiring the full tag run before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            run_id=''
+            for attempt in $(seq 1 30); do
+              runs=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$SOURCE_SHA" --event push --limit 20 --json databaseId,headBranch)
+              run_id=$(jq -r --arg tag "$GITHUB_REF_NAME" '[.[] | select(.headBranch == $tag)][0].databaseId // empty' <<< "$runs")
+              if [ -n "$run_id" ]; then break; fi
+              sleep 10
+            done
+            test -n "$run_id"
+            gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status --interval 30
+          else
+            run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$SOURCE_SHA" --branch main --event push --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+            test -n "$run_id"
+          fi
       - name: Install Rust toolchain
         run: |
           rustup toolchain install 1.97.1 --profile minimal --no-self-update
@@ -53,15 +97,15 @@ jobs:
       - name: Prepare desktop runtime
         run: pnpm desktop:prepare
       - name: Build application
-        run: pnpm tauri build --ci --no-sign --config '{"bundle":{"macOS":{"infoPlist":"Info.rc.plist","bundleVersion":"10006"}}}' --bundles app
+        run: pnpm tauri build --ci --no-sign --config "$TAURI_RELEASE_CONFIG" --bundles app
       - name: Ad-hoc sign application and build DMG
         shell: bash
         run: |
           set -euo pipefail
           APP=$(find src-tauri/target/release/bundle/macos -maxdepth 1 -type d -name '*.app' -print -quit)
           test -n "$APP"
-          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "1.0.6"
-          test "$(plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")" = "10006"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
+          test "$(plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_VERSION"
           test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "io.github.sarainoq.zhiye"
           while IFS= read -r -d '' PATHNAME; do
             if [[ -f "$PATHNAME" ]] && file -b "$PATHNAME" | grep -q Mach-O; then
@@ -76,28 +120,58 @@ jobs:
           ditto "$APP" "dmg-root/织页.app"
           ln -s /Applications dmg-root/Applications
           hdiutil create -volname "织页" -srcfolder dmg-root -ov -format UDZO \
-            src-tauri/target/release/bundle/dmg/Zhiye_1.0.6_aarch64.dmg
-      - name: Upload DMG
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: zhiye-dmg-${{ inputs.source_sha || github.sha }}
-          path: src-tauri/target/release/bundle/dmg/*.dmg
-          if-no-files-found: error
-          retention-days: 7
-      - name: Create checksum manifest
-        shell: bash
+            "src-tauri/target/release/bundle/dmg/Zhiye_${VERSION}_aarch64.dmg"
+      - name: Stage release assets and checksums
         run: |
           set -euo pipefail
-          cd src-tauri/target/release/bundle/dmg
-          shasum -a 256 *.dmg > SHA256SUMS
-      - name: Publish GitHub Release
-        if: github.event_name == 'push' && github.ref_name == 'v1.0.6'
+          mkdir release-assets
+          cp "src-tauri/target/release/bundle/dmg/Zhiye_${VERSION}_aarch64.dmg" release-assets/
+          cp "docs/RELEASE_NOTES_${VERSION}.md" release-assets/RELEASE_NOTES.md
+          (cd release-assets && shasum -a 256 *.dmg RELEASE_NOTES.md > SHA256SUMS)
+      - name: Upload verified source artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: zhiye-dmg-${{ steps.source.outputs.sha }}
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: zhiye-dmg-${{ needs.build.outputs.sha }}
+          path: release-assets
+      - name: Verify, create draft, download-check and publish immutable release
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.build.outputs.sha }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --verify-tag \
-            --title "织页 1.0.6（Apple Silicon DMG）" \
-            --notes-file docs/RELEASE_NOTES_1.0.6.md \
-            "src-tauri/target/release/bundle/dmg/Zhiye_1.0.6_aarch64.dmg" \
-            "src-tauri/target/release/bundle/dmg/SHA256SUMS"
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = "v$VERSION"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$SOURCE_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)" = "$SOURCE_SHA"
+          (cd release-assets && sha256sum --check SHA256SUMS)
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'Release already exists; do not replace tags/assets blindly' >&2
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "织页 $VERSION（Apple Silicon，ad-hoc，未公证）" \
+            --notes-file release-assets/RELEASE_NOTES.md release-assets/*
+          mkdir downloaded-assets
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir downloaded-assets
+          cmp release-assets/SHA256SUMS downloaded-assets/SHA256SUMS
+          (cd downloaded-assets && sha256sum --check SHA256SUMS)
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$SOURCE_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)" = "$SOURCE_SHA"
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+          test "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = false

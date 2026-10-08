@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { checkMigrations, checkMigrationData, sha256, validSha } from "./delivery-policy.mjs";
+import { checkMigrations, checkMigrationData, desktopReleaseVersion, sha256, validSha } from "./delivery-policy.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const read = (name) => readFileSync(resolve(root, name), "utf8");
@@ -11,6 +11,8 @@ const pkg = JSON.parse(read("package.json"));
 assert.equal(pkg.engines.node, "24.19.0");
 assert.equal(pkg.packageManager, "pnpm@11.7.0");
 assert.equal(read(".node-version").trim(), pkg.engines.node);
+desktopReleaseVersion({ version: pkg.version, cargo: read("src-tauri/Cargo.toml"), tauri: JSON.parse(read("src-tauri/tauri.conf.json")), info: read("src-tauri/Info.rc.plist"), lock: read("src-tauri/Cargo.lock") },
+  /^refs\/tags\/v\d+\.\d+\.\d+$/u.test(process.env.GITHUB_REF ?? "") ? process.env.GITHUB_REF_NAME : undefined);
 const firefox = JSON.parse(read("extension/manifest.firefox.json"));
 assert.equal(firefox.version, JSON.parse(read("extension/manifest.chrome.json")).version, "Extension versions must match");
 const signed = JSON.parse(read("extension/amo/signed-release.json"));
