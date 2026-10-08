@@ -1,11 +1,17 @@
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 
 export const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 export const validSha = (value) => /^[a-f0-9]{40}$/u.test(value ?? "");
+export function writeJsonAtomic(path, value) {
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = `${path}.${process.pid}.tmp`;
+  writeFileSync(temporary, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
+  renameSync(temporary, path);
+}
 
 export function migrationPolicy(sql) {
   const policy = /^-- deployment: (compatible|manual)\r?$/mu.exec(sql)?.[1];

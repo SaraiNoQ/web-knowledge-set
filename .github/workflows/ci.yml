@@ -34,6 +34,7 @@ jobs:
         run: |
           node scripts/check-delivery.mjs
           node --test tests/delivery-policy.test.mjs
+          node --test tests/cloudflare-delivery.test.mjs
           bash scripts/check-workflows.sh
       - name: Detect desktop runtime changes
         id: paths
@@ -50,7 +51,7 @@ jobs:
           appendFileSync(process.env.GITHUB_OUTPUT, `desktop=${needsDesktopCheck(paths)}\n`);
           JS
   linux:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -65,6 +66,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium firefox --only-shell
+      - name: Verify Chromium sandbox on the runner
+        run: pnpm exec tsx -e 'import { chromium } from "playwright"; chromium.launch({ chromiumSandbox:true }).then(async browser => { await browser.close(); });'
       - run: pnpm check
       - run: pnpm test
       - run: pnpm build
