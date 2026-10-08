@@ -125,7 +125,7 @@ async function main() {
   const configs = Object.fromEntries(workers.map((worker) => [worker, JSON.parse(readFileSync(resolve(root, `cloud/wrangler.${worker}.jsonc`), "utf8"))]));
   const account = configs.web.account_id;
   assert(/^[a-f0-9]{32}$/u.test(account) && configs.clip.account_id === account, "Mismatched production accounts");
-  const wrangler = (...args) => execFileSync("pnpm", ["exec", "wrangler", ...args], {
+  const wrangler = (...args) => execFileSync(resolve(root, "node_modules/.bin/wrangler"), args, {
     cwd: root, encoding: "utf8", timeout: 600_000,
     env: { ...process.env, CLOUDFLARE_API_TOKEN: request.cloudflareToken, CLOUDFLARE_ACCOUNT_ID: account, CI: "true" },
     maxBuffer: 16 * 1024 * 1024,

@@ -7,7 +7,7 @@
 - [x] ~~**贡献规范与 PR CI**：统一短期分支、阶段提交、独立审查、PR、merge commit 和 main 保护要求；固定工具链，服务器门禁、策略回归、工作流静态检查与独立审查通过，必需检查不可因跳过而误通过。GitHub 实际运行和仓库保护启用另记第三阶段。~~
 - [x] ~~**自动生产部署实现**：隔离目录、非 root 专用 SSH、main 精确 SHA、累计差异、兼容迁移、签名 XPI、双 Worker 发布、失败恢复和证据留存均经过服务器检查与独立审查；实际 bootstrap 与启用另记第三阶段。~~
 - [ ] **大版本安全基线**：首轮全量验收发现现有锁文件 16 high 告警；作为正式大版本发布前的独立依赖维护处理，不捆绑日常 UI 修复。发布全量审计不得忽略这些告警。
-- [ ] **桌面通用发布工作流**：移除固定 1.0.6/tag/bundleVersion，校验源版本、main、成功 CI 与实际 macOS 产物；保留明确 ad-hoc/未公证边界，不在本任务创建 release tag。
+- [x] ~~**桌面通用发布工作流实现**：移除固定 1.0.6/tag/bundleVersion，源版本与 main/tag 护栏、完整 tag CI 复用、产物版本/摘要校验和 draft 发布守卫已实现并经轻量策略与静态审查；实际 macOS 构建留待显式发版。本任务未创建 release tag，保留 ad-hoc/未公证边界。~~
 - [ ] **仓库启用与发布验收**：main 保护、GitHub Environment 与专用凭据配置完成；首次 main 手动部署成功后开启持续部署。登录态业务验证与边界 smoke 分开记录。
 
 ## 日常变更分级（本轮优化）
@@ -68,3 +68,17 @@ manual 迁移执行前持久化 `schema-risk.json`；发布或迁移失败后，
 - 本轮只运行规范/迁移静态检查、分级策略 12 项、部署守卫 12 项及 actionlint；未运行全量应用类型、单元、E2E、macOS 或扩展发版套件。图标条件最后仅重跑受影响的 12 项策略。
 - 独立审查提出 E2E-only 必要产物、云端实际模块测试、Firefox 校验器遗漏三个问题，均修复并增加回归；最后复核无剩余问题。小改动审查只做一次，源树未变时可复用于提交、PR 和合并。
 - GitHub 当前 PR 新配置的实际结果随后记录；生产自动部署仍待成功 main CI 和 bootstrap。旧全量审计告警仍保留为大版本发布前维护项，没有宣称已修复。
+
+## 大版本桌面入口
+
+日常 PR 不调用此入口。显式稳定 `vX.Y.Z` tag 发布时，从精确 main 源码读取 package/Cargo/Tauri/Info.plist/Cargo.lock 一致版本并推导现有 bundle 编号；等待同 SHA、同 tag 的完整 CI 成功后才构建。手动 source_sha 预演只接受当前 main 且已有该 SHA 的成功 main CI，只上传 artifact，不发布 Release。
+
+构建 job 只读，只有 tag 发布 job 可写 Release；DMG 与说明先生成 SHA256SUMS，再上传 artifact，发布时重新校验 main/tag、创建 draft、下载校验后公开。现有产物仍明确 ad-hoc、未公证，不新增 Apple/AMO 发布或凭据。
+
+## Bootstrap 初次验收与收尾
+
+- PR #8 已合并为 `e2b63355079266553ebc568bdaa1e30aa55a2d4b`，该 SHA 的 main 定向 CI 成功；PR 定向 Linux 35–45 秒、policy 10–14 秒，macOS 有意跳过。
+- 首次手动 bootstrap run `37787093220` 在 production-plan 阶段退出 1：pnpm 11 首次 exec 的供应链提示污染 Wrangler JSON。未进入构建/迁移/发布，私有 request 已删除，未写 last-success/schema-risk。修复为直接执行冻结安装的本地 Wrangler，保持相同 Node/PATH/token/timeout；真实双 Worker 只读 JSON 已验证，独立审查通过。
+- 首次跨境未压缩源码传输约 6 分钟，新账号依赖首次安装约 4 分钟；后续源传输启用 SSH 压缩，并复用该账号已有 pnpm 内容缓存，不以新增测试或跳过冻结安装解决网络准备成本。
+- 并行任务已上线 `e654698` 的文档标签左对齐，生产为 Web `8db62adf-a5bb-4d86-9f7e-28c3621523ea` / Clip `a6bb5605-9a61-4501-9ea0-6574615a072c`，此前尚未 main；首次自动发布前先保留原提交整合进 main，再刷新 bootstrap 期望版本，避免回退已上线 UI。
+- 大版本入口本轮只跑 13 项版本/分级策略及 actionlint，不跑 macOS 或完整发布验收；审查指出的公开前 tag 再校验已补齐。已有 CI/原生发版脚本更新不重发 Worker，未知输入仍保守准备发布。

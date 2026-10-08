@@ -70,7 +70,7 @@ export function checkMigrationData(migrations) {
 }
 
 export function needsCloudRelease(paths) {
-  return paths.some((path) => !/^(?:docs\/|AGENTS\.md$|CLAUDE\.md$|README\.md$|e2e\/|tests\/|cloud\/migrations\/published\.json$|\.github\/pull_request_template\.md$)/u.test(path));
+  return paths.some((path) => !/^(?:docs\/|AGENTS\.md$|CLAUDE\.md$|README\.md$|e2e\/|tests\/|cloud\/migrations\/published\.json$|\.github\/pull_request_template\.md$|\.github\/workflows\/(?:ci|cloudflare-deploy|macos[^/]*|deepseek-acceptance)\.yml$|scripts\/(?:delivery-policy|check-delivery|check-workflows|validate-change)\.(?:mjs|sh)$)/u.test(path));
 }
 
 export function needsDesktopCheck(paths) {
@@ -123,4 +123,17 @@ export function validationPlan(paths, full = false) {
     build: full || ui || cloud || extension || dependencies || unknown || e2eTests.length > 0 || needsDesktopCheck(paths),
     nodeTests: [...nodeTests].sort(), e2eTests, cloud: full || cloud, extension: full || extension,
     audit: full || dependencies, notices: full || dependencies };
+}
+
+export function desktopReleaseVersion({ version, cargo, tauri, info, lock }, tag) {
+  assert(/^\d+\.\d+\.\d+$/u.test(version), "Stable desktop version required");
+  const versions = [cargo.match(/^version\s*=\s*"([^"]+)"/mu)?.[1], tauri.version,
+    info.match(/<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/u)?.[1],
+    lock.match(/\[\[package\]\]\s+name = "zhiye"\s+version = "([^"]+)"/u)?.[1]];
+  assert(versions.every((value) => value === version), "Package/Cargo/Tauri/Info.plist/Cargo.lock versions must match");
+  if (tag) assert.equal(tag, `v${version}`, "Release tag differs from source version");
+  const [major, minor, patch] = version.split(".").map(Number);
+  // ponytail: existing base-100 bundle numbering; revise when minor/patch reaches 100.
+  assert(minor < 100 && patch < 100 && Number.isSafeInteger(major * 10_000 + minor * 100 + patch), "Revise bundle numbering before minor/patch reaches 100");
+  return { version, bundleVersion: String(major * 10_000 + minor * 100 + patch) };
 }

@@ -181,7 +181,7 @@ jobs:
           echo "REMOTE_RUN=$remote" >> "$GITHUB_ENV"
           ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "umask 077; mkdir -p '$remote/source'"
           # Only tracked checkout files; no Git metadata, dependencies, data or runner credentials.
-          git archive HEAD | ssh -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "tar -x -C '$remote/source'"
+          git archive HEAD | ssh -C -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "tar -x -C '$remote/source'"
           node --input-type=module <<'JS'
           import assert from 'node:assert/strict';
           import { readFileSync, writeFileSync } from 'node:fs';
