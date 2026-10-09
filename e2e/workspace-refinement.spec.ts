@@ -130,7 +130,7 @@ for (const cloud of [false, true]) {
 
 test("breadcrumb uses a capped content width and keeps the complete saved title", async ({ page }) => {
   await page.goto("/");
-  await expect(page.locator(".panel-heading h2")).toHaveText("目录");
+  await expect(page.locator(".panel-heading h2")).toHaveText("资料目录");
   await expect(page.locator(".library-toggle")).toHaveCount(0);
   await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷查找", exact: true }).click();
   await page.getByRole("dialog", { name: "快捷查找", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
