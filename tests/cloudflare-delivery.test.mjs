@@ -106,10 +106,16 @@ test("early gate failures get evidence and existing recovery evidence is retaine
   } finally { rmSync(temporary, { recursive: true, force: true }); }
 });
 test("boundary smoke does not claim authenticated business acceptance", async () => {
-  const fake = async (url, options) => url.includes("zhiye.sarainoq.cn")
-    ? new Response(null, { status: 302, headers: { location: "https://team.cloudflareaccess.com/cdn-cgi/access/login" } })
-    : new Response("{}", { status: options.headers.Origin ? 401 : 403 });
+  let transientFailures = 2;
+  const fake = async (url, options) => {
+    if (url.endsWith("/health") && transientFailures > 0) { transientFailures--; throw new TypeError("fetch failed"); }
+    return url.includes("zhiye.sarainoq.cn")
+      ? new Response(null, { status: 302, headers: { location: "https://team.cloudflareaccess.com/cdn-cgi/access/login" } })
+      : new Response("{}", { status: options.headers.Origin ? 401 : 403 });
+  };
   const result = await checkBoundarySmoke(fake);
+  assert.equal(transientFailures, 0);
   assert.equal(result.authenticatedBusinessAcceptance, "not-verified");
+  await assert.rejects(checkBoundarySmoke(async () => { throw new TypeError("fetch failed"); }), /Access smoke failed for \/: fetch failed/u);
   await assert.rejects(checkBoundarySmoke(async () => new Response("public", { status: 200 })));
 });

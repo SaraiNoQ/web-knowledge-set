@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
-request_path=${1:?Pass private request file}
+mode=full
+if [[ "${1:-}" == "--publish-only" ]]; then mode=publish-only; shift; fi
+request_path=${1:?Pass a private request file}
 stage=starting
 finish() {
   result=$?
@@ -19,35 +21,43 @@ exec 9>/srv/zhiye-delivery/production.lock
 flock -x 9
 
 # Only immutable main source reaches this account. No production token is exported to builds.
-stage=install
-pnpm install --frozen-lockfile
-stage=policy
-node scripts/check-delivery.mjs
+if [[ "$mode" == full ]]; then
+  stage=install
+  pnpm install --frozen-lockfile
+  stage=policy
+  node scripts/check-delivery.mjs
+fi
 stage=production-plan
 node scripts/cloudflare-delivery.mjs plan "$request_path"
 full_validation=$(node -e 'try { console.log(JSON.parse(require("node:fs").readFileSync(process.argv[1])).fullValidation === true ? "true" : "false"); } catch { process.exit(1); }' "$request_path")
-if [ "$full_validation" = true ]; then
-  stage=full-release-types
-  pnpm check
-  stage=full-release-audit
-  pnpm audit --registry=https://registry.npmjs.org --audit-level high
-  stage=full-release-browsers
-  pnpm exec playwright install chromium firefox --only-shell
-  stage=full-release-unit-integration
-  node --test tests/delivery-policy.test.mjs tests/cloudflare-delivery.test.mjs
-  pnpm test
-fi
-# A production build creates required publishable assets; routine releases reuse CI tests.
-stage=build
-pnpm build
-if [ "$full_validation" = true ]; then
-  stage=full-release-notices
-  pnpm notices:check
-  stage=full-release-e2e
-  bash scripts/run-server-e2e.sh
-  stage=full-release-extension
-  pnpm firefox:amo
-  pnpm cloud:bundle
+if [[ "$mode" == publish-only ]]; then
+  test "$full_validation" = false
+  test -s dist/index.html || { echo "No existing production build; run the full release path." >&2; exit 1; }
+  echo "Reusing the existing build; skipping install, product checks, and rebuild."
+else
+  if [ "$full_validation" = true ]; then
+    stage=full-release-types
+    pnpm check
+    stage=full-release-audit
+    pnpm audit --registry=https://registry.npmjs.org --audit-level high
+    stage=full-release-browsers
+    pnpm exec playwright install chromium firefox --only-shell
+    stage=full-release-unit-integration
+    node --test tests/delivery-policy.test.mjs tests/cloudflare-delivery.test.mjs
+    pnpm test
+  fi
+  # A production build creates required publishable assets; routine releases reuse CI tests.
+  stage=build
+  pnpm build
+  if [ "$full_validation" = true ]; then
+    stage=full-release-notices
+    pnpm notices:check
+    stage=full-release-e2e
+    bash scripts/run-server-e2e.sh
+    stage=full-release-extension
+    pnpm firefox:amo
+    pnpm cloud:bundle
+  fi
 fi
 stage=firefox-signature
 node --input-type=module <<'JS'
@@ -60,9 +70,11 @@ assert.equal(release.version, manifest.version, 'Update the reviewed AMO signed-
 assert(/^[a-zA-Z0-9._-]+\.xpi$/.test(release.filename));
 execFileSync(process.execPath, ['scripts/stage-firefox-xpi.mjs', `/srv/zhiye-delivery/signed/${release.filename}`, release.sha256], { stdio: 'inherit' });
 JS
-stage=production-config-dry-run
-# Also validate the actual production configuration; example dry-runs cannot prove it.
-pnpm exec wrangler deploy --dry-run --config cloud/wrangler.web.jsonc
-pnpm exec wrangler deploy --dry-run --config cloud/wrangler.clip.jsonc
+if [[ "$mode" == full ]]; then
+  stage=production-config-dry-run
+  # Also validate the actual production configuration; example dry-runs cannot prove it.
+  pnpm exec wrangler deploy --dry-run --config cloud/wrangler.web.jsonc
+  pnpm exec wrangler deploy --dry-run --config cloud/wrangler.clip.jsonc
+fi
 stage=publish
 node scripts/cloudflare-delivery.mjs publish "$request_path"
