@@ -4,7 +4,22 @@ if [[ "$(uname -s)" == Darwin ]]; then
   need_chromium=false
   need_firefox=false
   scoped=false
+  explicit_project=false
+  project_selected=false
   project_value=false
+  file_chromium=false
+  file_firefox=false
+
+  mark_project() {
+    project_selected=true
+    case "$1" in
+      all|firefox-scrollbar*) need_chromium=true; need_firefox=true ;;
+      chromium*|auth*) need_chromium=true ;;
+      firefox*) need_firefox=true ;;
+      *) need_chromium=true; need_firefox=true ;;
+    esac
+  }
+
   if (($# == 0)); then
     need_chromium=true
     need_firefox=true
@@ -12,25 +27,24 @@ if [[ "$(uname -s)" == Darwin ]]; then
     for argument in "$@"; do
       if [[ "$project_value" == true ]]; then
         case "$argument" in
-          firefox*) need_firefox=true ;;
-          chromium*|auth*) need_chromium=true ;;
-          all) need_chromium=true; need_firefox=true ;;
-          *) need_chromium=true; need_firefox=true ;;
+          -*|*.spec.ts) project_value=false ;;
+          *) mark_project "$argument"; scoped=true; continue ;;
         esac
-        project_value=false
-        scoped=true
-        continue
       fi
       case "$argument" in
-        --project) project_value=true; scoped=true ;;
-        --project=firefox*) need_firefox=true; scoped=true ;;
-        --project=chromium*|--project=auth*) need_chromium=true; scoped=true ;;
-        --project=all) need_chromium=true; need_firefox=true; scoped=true ;;
-        *extension-popup.spec.ts|*extension-x-article.spec.ts|*scrollbar-firefox.spec.ts) need_firefox=true; scoped=true ;;
-        *auth.setup.ts|*.spec.ts) need_chromium=true; scoped=true ;;
+        --project) project_value=true; explicit_project=true; scoped=true ;;
+        --project=*) mark_project "${argument#--project=}"; explicit_project=true; scoped=true ;;
+        *extension-popup.spec.ts|*extension-x-article.spec.ts|*scrollbar-firefox.spec.ts) file_chromium=true; file_firefox=true; scoped=true ;;
+        *auth.setup.ts|*.spec.ts) file_chromium=true; scoped=true ;;
       esac
     done
-    if [[ "$scoped" == false || "$project_value" == true ]]; then need_chromium=true; need_firefox=true; fi
+    if [[ "$explicit_project" == true ]]; then
+      if [[ "$project_value" == true || "$project_selected" == false ]]; then need_chromium=true; need_firefox=true; fi
+    else
+      need_chromium=$file_chromium
+      need_firefox=$file_firefox
+      if [[ "$scoped" == false ]]; then need_chromium=true; need_firefox=true; fi
+    fi
   fi
   for browser in chromium firefox; do
     if [[ "$browser" == chromium && "$need_chromium" == true || "$browser" == firefox && "$need_firefox" == true ]]; then
