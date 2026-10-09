@@ -389,14 +389,14 @@ test("returns home from the logo and toggles the knowledge sidebar", async ({ pa
   await expect(title).toHaveJSProperty("tagName", "INPUT");
   await expect(title).toHaveValue("远端测试文章", { timeout: 8_000 });
   await title.fill("保留这次未保存修改");
-  await page.getByRole("button", { name: "返回列表主界面" }).click();
+  await page.getByRole("button", { name: "返回首页" }).click();
   const discardDialog = page.getByRole("alertdialog", { name: "存在未保存修改" });
   await expect(discardDialog).toContainText("当前修改尚未保存");
   await discardDialog.getByRole("button", { name: "取消" }).click();
   await expect(title).toHaveValue("保留这次未保存修改");
 
   await title.fill("确认离开未保存修改");
-  await page.getByRole("button", { name: "返回列表主界面" }).click();
+  await page.getByRole("button", { name: "返回首页" }).click();
   await page.getByRole("alertdialog", { name: "存在未保存修改" }).getByRole("button", { name: "继续并放弃" }).click();
   await expect(page.getByLabel("网页链接")).toBeVisible();
 

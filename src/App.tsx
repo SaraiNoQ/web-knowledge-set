@@ -3573,7 +3573,7 @@ export default function App() {
     <div className={`app-shell editor-shell${immersiveActive ? " is-immersive" : ""}`} data-reading-style={readingText.style} style={{ "--reading-margin": readingMargin, "--reading-font": `var(--font-${readingText.font})`, "--reading-font-size": `${readingText.fontSize}px`, "--reading-line-height": readingText.lineHeight, "--reading-letter-spacing": `${readingText.letterSpacing}em` } as import("react").CSSProperties}>
       <a className="skip-link" href="#library-panel">跳到资料库</a>
       <nav className="workspace-rail" aria-label="工作台导航">
-        <Button type="button" className="rail-brand" aria-label="返回列表主界面" disabled={closing} onClick={() => void returnToLibrary()}>织</Button>
+        <Button type="button" className="rail-brand" aria-label="返回首页" disabled={closing} onClick={() => void returnToLibrary()}>织</Button>
         <IconButton label="资料库" ref={libraryRailRef} aria-expanded={workspaceVisible && !libraryCollapsed} aria-controls={workspaceVisible ? "library-panel" : undefined} aria-pressed={!libraryCollapsed && !sidebarSearch && !graphMode && libraryView === "all" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing} onClick={() => void toggleDirectory()}><WorkspaceIcon name="document" /></IconButton>
         <IconButton label="快捷查找" aria-haspopup="dialog" aria-expanded={quickActionsOpen} disabled={closing} onClick={openQuickActions}><WorkspaceIcon name="quickSearch" /></IconButton>
         <IconButton label="知识地图" aria-pressed={graphMode} disabled={closing} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); void openKnowledgeMap(); }}><WorkspaceIcon name="map" /></IconButton>
