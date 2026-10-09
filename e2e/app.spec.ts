@@ -1098,7 +1098,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   expect(await page.evaluate(() => (window as typeof window & { __zhiyeXss?: boolean }).__zhiyeXss)).toBeUndefined();
 
   await page.getByRole("button", { name: "内容检查" }).click();
-  const quality = page.getByRole("complementary", { name: "内容检查检查" });
+  const quality = page.getByRole("complementary", { name: "内容检查" });
   await expect(quality.getByText("正文待确认")).toBeVisible();
   await expect(quality.getByText("1 张图片未能离线保存")).toBeVisible();
   await quality.getByRole("button", { name: "查看记录" }).click();
