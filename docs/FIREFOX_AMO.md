@@ -2,7 +2,7 @@
 
 ## 产物
 
-当前修复源码版本为 `0.3.9`，增加 X 原生阅读器与 Draft.js 只读富文本兼容；与当前构建一致的签名 XPI 已包含在 2026-10-04 的 Cloudflare 部署中，分发地址为 `https://zhiye.sarainoq.cn/extensions/zhiye-clipper-firefox.xpi?v=0.3.9`，登录态实际下载待复验。`0.3.8` 已由所有者完成签名并下载，但不含本次修复，旧签名 XPI 不可替代当前构建。
+当前 Firefox / Chrome 发布版本为 `0.3.10`，仅更新扩展弹窗文案；权限、数据声明和剪藏逻辑不变。AMO unlisted XPI 已签名并通过逐文件校验；Cloudflare 部署前，帮助页和线上文件仍为 `0.3.9`。
 
 `0.3.9` 原因与回归：0.3.8 的容器判定只接受 `.x-article-body`，会在 Defuddle 已有的 `XArticleExtractor` 运行之前拒绝原生 `twitterArticleReadView` / `twitterArticleRichTextView`。仅放行容器仍不够：后续公式/控件清理会删除 `contenteditable="false"` 的 Draft.js 阅读正文。服务器 Firefox 与 Chromium 均复现原“正文尚未加载”错误；单独修正识别后，Firefox 复现提取结果仅剩封面图片。修复仅在选定 X 正文克隆内保留只读内容，继续删除可编辑输入、表单和按钮；在清理之后验证真实正文，再复用 Defuddle 原生解析器。回归覆盖帖子/文章 ID 不同、独立阅读视图、推荐与回复隔离以及只有表单/控件的空正文。
 
@@ -20,6 +20,8 @@
 pnpm install --frozen-lockfile
 pnpm firefox:amo
 ```
+
+发布当前新版本时，在干净、已提交的源码工作区运行 `bash scripts/sign-firefox-unlisted.sh`。若本机版本不同，脚本会先用 npm 临时启动锁定的 Node 24.19.0 / pnpm 11.7.0，再安装依赖、构建并校验扩展。随后它会在终端中隐藏地提示 AMO API Key 与 Secret，使用 `web-ext 10.6.0` 执行 unlisted 签名。Mozilla [web-ext 指南](https://extensionworkshop.com/documentation/develop/getting-started-with-web-ext/)说明该工具从 `WEB_EXT_API_KEY` / `WEB_EXT_API_SECRET` 读取凭据。脚本不将密钥写入文件、命令行参数或 Git；`web-ext` 使用离线缓存运行。完成后脚本会核对 XPI 的 AMO 签名和包内容，并输出签名文件路径、SHA-256 与 Chrome ZIP 路径。将 SHA-256 写入 `extension/amo/signed-release.json`，再按发布门禁提交；签名 XPI 放在 `/tmp` 等 Git 与 `dist/` 之外的位置。
 
 提交 AMO 的安装包是 `dist/extensions/zhiye-clipper-firefox.zip`；选择“需要提交源代码”，同时上传 `dist/extensions/zhiye-clipper-firefox-source.zip`。源代码包根目录的 `README.txt` 给出审核者可重复执行的构建步骤。
 
@@ -40,6 +42,7 @@ pnpm firefox:amo
 
 ## 签名记录
 
+- `0.3.10` · 扩展源码 `3ae6f94542af93da9438feddb19522e545eadab0` · 本机运行 `scripts/sign-firefox-unlisted.sh` 完成 AMO unlisted 签名。产物 `3058733-0.3.10.xpi`，SHA-256 `d736367ca5b3b9dcfb22f551740d11d8d5e604dfebf06298d865fdefc4fa368e`；签名 XPI 的 AMO 签名条目、manifest 版本/固定 ID 与五个编译文件均已校验。签名文件存于服务器 `/srv/zhiye-delivery/signed/3058733-0.3.10.xpi`，未进入 Git。待 Cloudflare 部署后再补 Worker Version ID 与下载复验。
 - `0.3.9` · 扩展源码 `bc1e2ba` · 2026-10-04 核验服务器既有 `/root/amo-signed/3058733-0.3.9.xpi`，SHA-256 `7fbe7aec14ec030fa46c7abe77b3442aa402dfbdd83643a5b64d04eee2e24b54`。在整合沉浸模式与 favicon、完成最终 `build` 和 `firefox:amo` 后，`scripts/stage-firefox-xpi.mjs` 已严格通过整包摘要、当前 manifest、Mozilla 签名条目及五个扩展文件的逐字节一致校验；签名文件未进入 Git。本条记录现有产物核验，不表示重新签名；生产分发状态以 Cloudflare 部署记录为准。
 
 - 固定 ID `clipper@zhiye.sarainoq.cn`；自签名产物按 `<加载项编号>-<版本>.xpi` 命名，文件名里的 `3058733` 是 AMO 加载项编号，实际版本以包内 `manifest.json` 为准。每次以 `web-ext 10.6.0` 对编译目录 `dist/extensions/zhiye-clipper-firefox`（而非源代码 ZIP）执行 **unlisted** 自签名。
