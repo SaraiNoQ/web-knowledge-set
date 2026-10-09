@@ -42,6 +42,8 @@ Cloudflare Web 的正式文档和抓取任务均支持 revision 保护的回收�
 
 ## 部署记录
 
+- 2026-10-09 · 扩展 `0.3.10` 及当前主线 `6000b1ccf4952c99283f2a5d1f79c9c86a13fe61` 直接部署成功。Web Version ID `49017d19-b892-4307-8467-bced219c7632`，Clip Version ID `a05305f4-3c62-41c3-94f7-b0e768b309ee`；部署前版本分别为 `8db62adf-a5bb-4d86-9f7e-28c3621523ea` 和 `a6bb5605-9a61-4501-9ea0-6574615a072c`。无待执行迁移，恢复状态 `not-needed`。上线烟测确认 Web 首页、文档 API、health、XPI 路径均为 Access 302；剪藏接口无扩展 Origin 返回 403，有扩展 Origin 无令牌返回 401。未验证登录态业务读写、真实扩展配对/剪藏及登录态 XPI 下载。
+
 - 2026-10-08（Asia/Singapore）· 文章动作尺寸与模式栏高度修复 `b1b3dfdc5b938015247fce17cbe0fc50f0cedf79`（`codex/article-actions-sizing`）按用户既有自动提交部署授权发布。冻结安装、类型、完整串行单元/集成217通过/1跳过、生产构建、云端45/45、Firefox AMO0.3.9、头部布局3/3、浅深色桌面/手机截图及独立审查通过；并行生命周期退出超时经独立4项和全套串行复验通过，未放宽阈值。最终构建后按既有SHA-256严格暂存签名XPI，双Worker dry-run通过。Web版本`3e4fc649-cb20-49de-b00a-3e24274f9f18`、Clip版本`f6168bdf-df9b-49c6-b198-267342a04e88`均由生产配置成功部署，现有绑定未改，无迁移或资源重建。上线后Web首页/health保持302，Clip首页403；登录态生产读写、实际AI、图片交付及扩展配对剪藏未复验，不据此宣称线上业务全流程验收。
 
 - 2026-09-26 · `6bf46a2` · 修复 favicon 主线遗漏。旧修复 `969f41b` 只存在于 `codex/web-favicon`，最新 main `045c12c` 不包含该提交，源码缺少图标声明和 `public/favicon.svg`。现恢复两者，并为扩展 Vite 构建设置 `publicDir:false`，避免 Web 图标进入 Firefox 安装包。Node 24.19.0 冻结安装、类型检查、测试（204 通过、1 跳过）、构建、Cloudflare 检查（42 通过）、favicon Playwright（含鉴权 setup 共 2 项）、Firefox AMO lint 与双 Worker dry-run 通过；已有签名 0.3.7 XPI 按记录摘要重新暂存且内容一致。Web Version ID `786e709c-078c-407c-88a7-cb2c93052bb3`，clip Version ID `a5cb43fe-db2f-45d3-b3d7-937f818d1755`。无 D1 迁移。登录态生产 favicon 和业务读写仍待所有者会话验证。
