@@ -70,7 +70,7 @@ export function checkMigrationData(migrations) {
 }
 
 export function needsCloudRelease(paths) {
-  return paths.some((path) => !/^(?:docs\/|AGENTS\.md$|CLAUDE\.md$|README\.md$|e2e\/|tests\/|cloud\/migrations\/published\.json$|\.github\/pull_request_template\.md$|\.github\/workflows\/(?:ci|cloudflare-deploy|macos[^/]*|deepseek-acceptance)\.yml$|scripts\/(?:delivery-policy|check-delivery|check-workflows|validate-change|cloudflare-delivery|server-release|record-release-exit|run-server-e2e|sync-to-campus)\.(?:mjs|sh)$)/u.test(path));
+  return paths.some((path) => !/^(?:docs\/|AGENTS\.md$|CLAUDE\.md$|README(?:\.en)?\.md$|e2e\/|tests\/|cloud\/migrations\/published\.json$|\.github\/pull_request_template\.md$|\.github\/workflows\/(?:ci|cloudflare-deploy|macos[^/]*|deepseek-acceptance)\.yml$|scripts\/(?:delivery-policy|check-delivery|check-workflows|validate-change|cloudflare-delivery|server-release|record-release-exit|run-server-e2e|sync-to-campus)\.(?:mjs|sh)$)/u.test(path));
 }
 
 export function needsDesktopCheck(paths) {
@@ -83,7 +83,7 @@ export function ciPassed(results, desktopRequired, runtimeRequired = true) {
 }
 
 export function validationPlan(paths, full = false) {
-  const policyOnly = /^(?:docs\/|(?:AGENTS|CLAUDE|README)\.md$|\.gitignore$|\.github\/|scripts\/(?:delivery-policy|check-delivery|check-workflows|cloudflare-delivery|server-release|record-release-exit|run-server-e2e|sync-to-campus|validate-change)\.(?:mjs|sh)$|tests\/(?:delivery-policy|cloudflare-delivery)\.test\.mjs$|cloud\/migrations\/published\.json$|extension\/amo\/signed-release\.json$)/u;
+  const policyOnly = /^(?:docs\/|(?:AGENTS|CLAUDE|README(?:\.en)?)\.md$|\.gitignore$|\.github\/|scripts\/(?:delivery-policy|check-delivery|check-workflows|cloudflare-delivery|server-release|record-release-exit|run-server-e2e|sync-to-campus|validate-change)\.(?:mjs|sh)$|tests\/(?:delivery-policy|cloudflare-delivery)\.test\.mjs$|cloud\/migrations\/published\.json$|extension\/amo\/signed-release\.json$)/u;
   const code = paths.filter((path) => !policyOnly.test(path));
   const ui = code.some((path) => /^(?:src\/|public\/|index\.html$)/u.test(path));
   const cloud = code.some((path) => /^(?:cloud\/|shared\/)/u.test(path));
