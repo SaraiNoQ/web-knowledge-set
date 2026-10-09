@@ -6,6 +6,18 @@ import { fileURLToPath } from "node:url";
 import { checkMigrations, validSha, writeJsonAtomic } from "./delivery-policy.mjs";
 
 const workers = ["web", "clip"];
+const fetchWithRetry = async (fetcher, url, options, context, timeoutMs) => {
+  let failure;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try { return await fetcher(url, { ...options, redirect: "manual", signal: AbortSignal.timeout(timeoutMs) }); }
+    catch (error) {
+      failure = error;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, (attempt + 1) * 500));
+    }
+  }
+  throw new Error(`${context} failed for ${new URL(url).pathname}: ${failure?.cause?.code ?? failure?.message ?? "unknown network error"}`);
+};
+
 export function currentVersion(deployments) {
   const current = [...deployments].sort((a, b) => a.created_on.localeCompare(b.created_on)).at(-1);
   assert(current?.versions?.length === 1 && current.versions[0].percentage === 100, "Refuse unknown/split production deployment");
@@ -82,23 +94,15 @@ export async function publishPair({ before, migrate, deploy, rollback, version, 
 
 export async function checkBoundarySmoke(fetcher = fetch) {
   const evidence = [];
-  const get = async (url, options = {}) => {
-    let failure;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try { return await fetcher(url, { ...options, redirect: "manual", signal: AbortSignal.timeout(20_000) }); }
-      catch (error) { failure = error; }
-    }
-    throw failure;
-  };
   for (const path of ["/", "/api/documents", "/health", "/health", "/extensions/zhiye-clipper-firefox.xpi"]) {
-    const response = await get(`https://zhiye.sarainoq.cn${path}`);
+    const response = await fetchWithRetry(fetcher, `https://zhiye.sarainoq.cn${path}`, {}, "Access smoke", 20_000);
     const location = response.headers.get("location");
     assert(response.status === 302 && location && new URL(location).hostname.endsWith(".cloudflareaccess.com"), `Access boundary changed: ${path} (${response.status})`);
     evidence.push({ path, status: response.status });
   }
   const url = "https://clip.sarainoq.cn/api/browser-extension/clips";
   for (const [headers, expected] of [[{}, 403], [{ Origin: "moz-extension://00000000-0000-4000-8000-000000000000" }, 401]]) {
-    const response = await get(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: "{}" });
+    const response = await fetchWithRetry(fetcher, url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: "{}" }, "Clip smoke", 20_000);
     assert.equal(response.status, expected, "Extension origin/token boundary changed");
     evidence.push({ path: "/api/browser-extension/clips", status: response.status });
   }
@@ -131,15 +135,17 @@ async function main() {
     maxBuffer: 16 * 1024 * 1024,
   });
   const cf = async (path, options = {}) => {
-    const response = await fetch(`https://api.cloudflare.com/client/v4${path}`, { ...options,
-      headers: { Authorization: `Bearer ${request.cloudflareToken}`, "Content-Type": "application/json" }, signal: AbortSignal.timeout(30_000) });
+    const response = await fetchWithRetry(fetch, `https://api.cloudflare.com/client/v4${path}`, {
+      ...options, headers: { Authorization: `Bearer ${request.cloudflareToken}`, "Content-Type": "application/json" },
+    }, "Cloudflare API", 30_000);
     const body = await response.json();
     assert(response.ok && body.success, `Cloudflare API ${response.status}: ${JSON.stringify(body.errors)}`);
     return body.result;
   };
   const assertLatest = async () => {
-    const response = await fetch("https://api.github.com/repos/SaraiNoQ/web-knowledge-set/git/ref/heads/main", {
-      headers: { Authorization: `Bearer ${request.githubToken}`, "X-GitHub-Api-Version": "2022-11-28" }, signal: AbortSignal.timeout(30_000) });
+    const response = await fetchWithRetry(fetch, "https://api.github.com/repos/SaraiNoQ/web-knowledge-set/git/ref/heads/main", {
+      headers: { Authorization: `Bearer ${request.githubToken}`, "X-GitHub-Api-Version": "2022-11-28" },
+    }, "GitHub main request", 30_000);
     assert(response.ok, `Cannot confirm main: ${response.status}`);
     assertCurrentSource(request.sha, (await response.json()).object.sha);
   };
