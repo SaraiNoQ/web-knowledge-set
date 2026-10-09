@@ -47,9 +47,9 @@ if [[ ! -r /dev/tty ]]; then
   echo "Run this script from an interactive Terminal so the AMO credentials stay hidden." >&2
   exit 1
 fi
-printf 'AMO API Key (hidden): ' > /dev/tty
+printf '请输入 AMO API Key（输入不回显）: ' > /dev/tty
 IFS= read -r -s api_key < /dev/tty
-printf '\nAMO API Secret (hidden): ' > /dev/tty
+printf '\n请输入 AMO API Secret（输入不回显）: ' > /dev/tty
 IFS= read -r -s api_secret < /dev/tty
 printf '\n' > /dev/tty
 if [[ -z "$api_key" || -z "$api_secret" ]]; then
@@ -62,7 +62,7 @@ export WEB_EXT_API_KEY="$api_key" WEB_EXT_API_SECRET="$api_secret"
 unset api_key api_secret
 trap 'unset WEB_EXT_API_KEY WEB_EXT_API_SECRET' EXIT
 
-npm exec --yes --package=web-ext@10.6.0 -- web-ext sign --channel=unlisted --source-dir "$root/dist/extensions/zhiye-clipper-firefox" --artifacts-dir "$output_dir"
+npm exec --offline --yes --package=web-ext@10.6.0 -- web-ext sign --channel=unlisted --source-dir "$root/dist/extensions/zhiye-clipper-firefox" --artifacts-dir "$output_dir"
 
 xpis=("$output_dir"/*.xpi)
 if [[ ${#xpis[@]} -ne 1 ]]; then
