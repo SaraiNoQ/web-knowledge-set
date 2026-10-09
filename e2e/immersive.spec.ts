@@ -17,8 +17,8 @@ test.beforeEach(async ({ page, request }) => {
 test.afterEach(async ({ request }) => resetAppearance(request));
 
 async function enter(page: Page) {
-  await page.getByRole("button", { name: "进入沉浸模式" }).click();
-  const exit = page.getByRole("button", { name: "退出沉浸模式" });
+  await page.getByRole("button", { name: "专注阅读" }).click();
+  const exit = page.getByRole("button", { name: "退出专注" });
   await expect(exit).toBeVisible();
   await expect(exit).toHaveAttribute("aria-disabled", "false");
 }
@@ -27,11 +27,11 @@ test("immersive layout fills the viewport and restores chrome at desktop and sma
   for (const width of [1440, 800, 320]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto("/");
-    await expect(page.getByLabel("网页地址")).toBeVisible();
+    await expect(page.getByLabel("网页链接")).toBeVisible();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`ordinary-${width}.png`) });
     await enter(page);
-    await expect(page.getByRole("button", { name: "退出沉浸模式" })).toBeFocused();
+    await expect(page.getByRole("button", { name: "退出专注" })).toBeFocused();
     await expect(page.locator(".masthead")).toBeHidden();
     await expect(page.locator(".capture-band")).toBeHidden();
     await expect(page.getByRole("navigation", { name: "工作台导航" })).toBeVisible();
@@ -47,24 +47,24 @@ test("immersive layout fills the viewport and restores chrome at desktop and sma
     expect(layout.height).toBeGreaterThanOrEqual(layout.viewport);
     expect(layout.overflow).toBe(false);
     if (width > 820) {
-      await page.getByRole("button", { name: "文档资料库" }).click();
+      await page.getByRole("button", { name: "资料库" }).click();
       await expect(page.locator(".workspace")).toHaveClass(/library-collapsed/u);
-      await expect(page.getByRole("button", { name: "退出沉浸模式" })).toBeVisible();
-      await page.getByRole("button", { name: "文档资料库" }).click();
+      await expect(page.getByRole("button", { name: "退出专注" })).toBeVisible();
+      await page.getByRole("button", { name: "资料库" }).click();
     }
     await page.screenshot({ path: info.outputPath(`immersive-${width}.png`) });
     await page.keyboard.press("Escape");
     await expect(page.locator(".app-shell")).toHaveClass(/is-immersive/u);
-    await page.getByRole("button", { name: "退出沉浸模式" }).click();
-    await expect(page.getByRole("button", { name: "进入沉浸模式" })).toBeFocused();
-    await expect(page.getByLabel("网页地址")).toBeVisible();
+    await page.getByRole("button", { name: "退出专注" }).click();
+    await expect(page.getByRole("button", { name: "专注阅读" })).toBeFocused();
+    await expect(page.getByLabel("网页链接")).toBeVisible();
   }
 });
 
 test("switching preserves the editor instance, dirty content, selection and scroll", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "新建", exact: true }).click();
-  await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文章" }).click();
+  await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "新建文章" }).click();
   const editor = page.getByRole("textbox", { name: "Markdown 编辑器" });
   await editor.fill(Array.from({ length: 100 }, (_, i) => `段落 ${i} 尚未保存。`).join("\n"));
   await page.keyboard.press("Control+Home");
@@ -84,12 +84,12 @@ test("switching preserves the editor instance, dirty content, selection and scro
   // selection must be restored when focus returns to the same editor.
   await editor.focus();
   expect(await page.evaluate(() => ({ anchor: getSelection()?.anchorOffset, focus: getSelection()?.focusOffset }))).toEqual(selection);
-  await page.getByRole("button", { name: "退出沉浸模式" }).focus();
+  await page.getByRole("button", { name: "退出专注" }).focus();
   await page.locator(".reader-main").evaluate((element) => element.scrollTo(0, 700));
   const toolbar = await page.locator(".editor-toolbar").boundingBox();
   expect(toolbar!.y).toBeGreaterThanOrEqual(42);
   expect(await page.locator(".editor-toolbar").evaluate((element) => getComputedStyle(element).top)).toBe("0px");
-  await page.getByRole("button", { name: "退出沉浸模式" }).click();
+  await page.getByRole("button", { name: "退出专注" }).click();
   await expect(page.locator(".cm-editor")).toHaveAttribute("data-preserved", "yes");
   await expect(editor).toContainText("尚未保存。");
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
@@ -99,16 +99,16 @@ test("local preference survives refresh and settings remain accessible", async (
   await page.goto("/");
   await enter(page);
   await page.reload();
-  await expect(page.getByRole("button", { name: "退出沉浸模式" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "退出专注" })).toBeVisible();
   await page.keyboard.press("?");
-  await page.getByRole("button", { name: "重新打开使用指南" }).click();
-  await expect(page.getByRole("dialog", { name: /你的知识/u })).toBeVisible();
+  await page.getByRole("button", { name: "使用指南" }).click();
+  await expect(page.getByRole("dialog", { name: "使用指南" })).toBeVisible();
   await expect(page.locator(".masthead")).toHaveCount(0);
   await expect(page.locator(".immersive-bar")).toBeHidden();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("button", { name: "退出沉浸模式" })).toBeVisible();
-  await page.getByRole("button", { name: "退出沉浸模式" }).click();
-  await page.getByRole("button", { name: "打开设置", exact: true }).click();
+  await expect(page.getByRole("button", { name: "退出专注" })).toBeVisible();
+  await page.getByRole("button", { name: "退出专注" }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
   await expect(page.locator(".masthead")).toHaveCount(0);
   await expect(page.locator(".immersive-bar")).toBeHidden();
 });
@@ -125,7 +125,7 @@ test("recovery mode keeps its full navigation even with a saved immersive prefer
     await route.fulfill({ response, json: { ...body, mode: "recovery", recoveryError: { code: "DATABASE_CORRUPT", message: "recovery" } } });
   });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "数据安全" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "备份恢复" })).toBeVisible();
   await expect(page.locator(".masthead")).toHaveCount(0);
   await expect(page.locator(".immersive-bar")).toBeHidden();
 });
@@ -133,11 +133,11 @@ test("recovery mode keeps its full navigation even with a saved immersive prefer
 test("failed preference reads default to ordinary mode and failed writes keep the new mode", async ({ page }) => {
   await page.route("**/api/settings/appearance", (route) => route.fulfill({ status: 503, json: { error: { code: "DATA_UNAVAILABLE", message: "unavailable" } } }));
   await page.goto("/");
-  await expect(page.getByLabel("网页地址")).toBeVisible();
+  await expect(page.getByLabel("网页链接")).toBeVisible();
   await enter(page);
   await expect(page.getByText("显示模式已切换，但未能记住选择。请稍后重新切换以保存。")).toBeVisible();
-  await page.getByRole("button", { name: "退出沉浸模式" }).click();
-  await expect(page.getByLabel("网页地址")).toBeVisible();
+  await page.getByRole("button", { name: "退出专注" }).click();
+  await expect(page.getByLabel("网页链接")).toBeVisible();
 });
 
 test("preference writes disable repeated toggles while keeping keyboard focus", async ({ page }) => {
@@ -151,8 +151,8 @@ test("preference writes disable repeated toggles while keeping keyboard focus", 
     await route.fulfill({ json: { immersiveMode: true } });
   });
   await page.goto("/");
-  await page.getByRole("button", { name: "进入沉浸模式" }).click();
-  const exit = page.getByRole("button", { name: "退出沉浸模式" });
+  await page.getByRole("button", { name: "专注阅读" }).click();
+  const exit = page.getByRole("button", { name: "退出专注" });
   try {
     await expect(exit).toHaveAttribute("aria-disabled", "true");
     await expect(exit).toBeFocused();
@@ -171,9 +171,9 @@ test("cloud preference uses browser storage and survives refresh without the loc
   await enter(page);
   expect(await page.evaluate(() => localStorage.getItem("zhiye:immersive-mode"))).toBe("true");
   await page.reload();
-  await expect(page.getByRole("button", { name: "退出沉浸模式" })).toBeVisible();
-  await page.getByRole("button", { name: "退出沉浸模式" }).click();
-  await expect(page.getByRole("button", { name: "进入沉浸模式" })).toHaveAttribute("aria-disabled", "false");
+  await expect(page.getByRole("button", { name: "退出专注" })).toBeVisible();
+  await page.getByRole("button", { name: "退出专注" }).click();
+  await expect(page.getByRole("button", { name: "专注阅读" })).toHaveAttribute("aria-disabled", "false");
   expect(await page.evaluate(() => localStorage.getItem("zhiye:immersive-mode"))).toBe("false");
   expect(appearanceRequests).toBe(0);
 });
@@ -184,7 +184,7 @@ test("unavailable cloud storage still allows entering and exiting", async ({ pag
   await page.goto("/");
   await enter(page);
   await expect(page.getByText("显示模式已切换，但未能记住选择。请稍后重新切换以保存。")).toBeVisible();
-  await page.getByRole("button", { name: "退出沉浸模式" }).click();
+  await page.getByRole("button", { name: "退出专注" }).click();
   await expect(page.locator(".masthead")).toHaveCount(0);
 });
 
@@ -192,7 +192,7 @@ test("immersive knowledge map keeps its canvas mounted and fills the viewport", 
   const listing = await request.get("/api/documents");
   expect((await request.post("/api/documents", { headers: { Origin: "http://127.0.0.1:4174", "X-Zhiye-Data-Epoch": listing.headers()["x-zhiye-data-epoch"] }, data: { title: "地图布局验收" } })).ok()).toBe(true);
   await page.goto("/");
-  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "查看知识地图", exact: true }).click();
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "知识地图", exact: true }).click();
   const canvas = page.locator(".map-canvas-inner canvas");
   await expect(canvas).toBeVisible();
   await canvas.evaluate((element) => element.setAttribute("data-preserved", "yes"));
@@ -209,7 +209,7 @@ test("immersive knowledge map keeps its canvas mounted and fills the viewport", 
     expect(Math.round(bounds.top)).toBe(Math.round(bounds.viewportTop));
     await expect.poll(() => page.locator(".knowledge-map-host.is-active").evaluate((element) => Math.round(element.getBoundingClientRect().bottom))).toBe(900);
     expect(bounds.overflow).toBe(false);
-    await expect(page.getByRole("button", { name: "退出沉浸模式" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "退出专注" })).toBeVisible();
   }
 });
 
@@ -225,14 +225,14 @@ test("paper translation drafts and reader state survive immersive switching", as
   await page.getByRole("button", { name: "导入", exact: true }).click();
   await page.getByRole("button", { name: "论文 PDF", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "导入" });
-  await dialog.getByRole("button", { name: "上传 PDF" }).click();
+  await dialog.getByRole("button", { name: "上传文件" }).click();
   await dialog.locator('input[type="file"]').setInputFiles({ name: "immersive.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7\nE2E fixture\n", "ascii") });
   const upload = page.waitForResponse((response) => response.url().endsWith("/api/papers/upload") && response.request().method() === "POST");
-  await dialog.getByRole("button", { name: "创建论文" }).click();
+  await dialog.getByRole("button", { name: "添加论文" }).click();
   const { paper } = await (await upload).json();
   try {
     await expect(page.getByText("一篇 E2E 论文。", { exact: true })).toBeVisible({ timeout: 15_000 });
-    await page.getByRole("button", { name: "重命名文章", exact: true }).dblclick();
+    await page.getByRole("button", { name: "修改标题", exact: true }).dblclick();
     await page.getByRole("textbox", { name: "文章标题", exact: true }).fill("论文标题同步测试");
     await page.getByRole("textbox", { name: "文章标题", exact: true }).press("Enter");
     await expect(page.locator(".paper-reader-header h1")).toHaveText("论文标题同步测试");
@@ -260,13 +260,13 @@ test("paper translation drafts and reader state survive immersive switching", as
       expect(stacked.overflow).toBe(false);
       await page.locator("textarea").scrollIntoViewIfNeeded();
       await expect(page.locator("textarea")).toBeVisible();
-      await expect(page.getByRole("button", { name: "退出沉浸模式" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "退出专注" })).toBeVisible();
       expect(await page.locator(".paper-reader-translation-scroll").evaluate((element) => getComputedStyle(element).overflowY)).toBe("auto");
     }
-    await page.getByRole("button", { name: "退出沉浸模式" }).click();
+    await page.getByRole("button", { name: "退出专注" }).click();
     await expect(page.locator("textarea")).toHaveValue("沉浸模式中的未保存译文。");
     await page.setViewportSize({ width: 1440, height: 900 });
-    const mapButton = page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "查看知识地图", exact: true });
+    const mapButton = page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "知识地图", exact: true });
     await mapButton.click();
     const discard = page.getByRole("alertdialog", { name: "存在未保存修改" });
     await expect(discard).toBeVisible();
@@ -275,7 +275,7 @@ test("paper translation drafts and reader state survive immersive switching", as
     await mapButton.click();
     await discard.getByRole("button", { name: "继续并放弃" }).click();
     await expect(page.locator(".knowledge-map-host.is-active")).toBeVisible();
-    await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "文档资料库", exact: true }).click();
+    await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "资料库", exact: true }).click();
     await expect(page.getByRole("complementary", { name: "知识列表" })).toBeVisible();
   } finally {
     const document = await request.get(`/api/documents/${paper.id}`);

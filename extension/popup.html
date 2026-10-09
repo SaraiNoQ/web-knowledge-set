@@ -1,26 +1,26 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>织页剪藏</title><link rel="stylesheet" href="popup.css"></head>
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>织页助手</title><link rel="stylesheet" href="popup.css"></head>
   <body>
-    <header><span>织</span><div><strong>织页剪藏</strong><small>当前登录页面 → Markdown</small></div></header>
+    <header><span>织</span><div><strong>织页助手</strong><small>保存当前网页正文</small></div></header>
     <main>
       <section id="pair-panel">
         <h1>连接织页</h1>
-        <p>先在织页“帮助 → 浏览器扩展”生成 5 分钟配对码。</p>
-        <form id="pairing-form"><label>配对码<input id="pairing-code" maxlength="10" pattern="[A-Z2-9]{10}" autocomplete="one-time-code" required></label><button>配对</button></form>
+        <p>在织页“使用帮助”中获取连接码。</p>
+        <form id="pairing-form"><label>连接码<input id="pairing-code" maxlength="10" pattern="[A-Z2-9]{10}" autocomplete="one-time-code" required></label><button>连接</button></form>
       </section>
       <section id="clip-panel" hidden>
-        <button id="extract" type="button">提取当前页面</button>
+        <button id="extract" type="button">读取网页</button>
         <form id="clip-form" hidden>
           <label>标题<input id="title" maxlength="1000" required></label>
           <label>来源<input id="source" type="url" required></label>
           <label>Markdown <span id="count"></span><textarea id="markdown" required></textarea></label>
-          <button>确认并保存新副本</button>
+          <button>保存副本</button>
         </form>
         <details id="ai-panel">
           <summary>AI 标题</summary>
-          <p>保存时用织页“AI 设置”里的模型读一遍正文，换成 20 字以内的中文标题；失败会保留原标题。</p>
-          <label class="inline"><input id="ai-title" type="checkbox"> 保存时生成中文标题</label>
+          <p>正文会发给所选模型。生成最多20字的中文标题。失败时保留原标题。</p>
+          <label class="inline"><input id="ai-title" type="checkbox"> 生成标题</label>
           <label id="ai-key-row">云端 AI 密钥<input id="ai-key" type="password" autocomplete="off" spellcheck="false"></label>
         </details>
       </section>

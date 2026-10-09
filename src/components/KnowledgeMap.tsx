@@ -280,20 +280,20 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
           if (controller.signal.aborted) return;
           total = page.total;
           if (page.items.some((item) => !allowed.has(item.id) || !sameVectorVersion(item, batchVersions.get(item.id)!))) {
-            throw new Error("语义索引已更新，请重新载入地图后再查看关联。");
+            throw new Error("推荐处理已更新，请重新载入地图后再查看关联。");
           }
           groupEntries.push(...page.items);
           cursor = page.nextCursor ?? undefined;
         } while (cursor);
         if (groupEntries.length !== total || groupEntries.length !== ids.length || new Set(groupEntries.map(({ id }) => id)).size !== ids.length) {
-          throw new Error("部分语义索引刚刚失效，请重新载入地图。");
+          throw new Error("部分推荐处理刚刚失效，请重新载入地图。");
         }
         for (const entry of groupEntries) vectorCache.current.set(entry.id, entry);
       }
       if (!controller.signal.aborted) {
         const entries = readyVectorRefs.map(({ id }) => vectorCache.current.get(id))
           .filter((entry): entry is SemanticVectorEntry => Boolean(entry));
-        if (entries.length !== readyVectorRefs.length) throw new Error("部分语义索引刚刚失效，请重新载入地图。");
+        if (entries.length !== readyVectorRefs.length) throw new Error("部分推荐处理刚刚失效，请重新载入地图。");
         setSemanticVectors(entries);
       }
     })().catch((cause) => {
@@ -301,7 +301,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
         setSemanticVectors([]);
         setSemanticGraph(EMPTY_SEMANTIC_GRAPH);
         setSemanticGraphKey("");
-        setSemanticError((cause as Error).message || "无法载入语义向量；文件夹地图仍可使用。");
+        setSemanticError((cause as Error).message || "推荐暂不可用，分组地图仍可查看。");
       }
     }).finally(() => { if (!controller.signal.aborted) setSemanticLoading(false); });
     return () => controller.abort();
@@ -327,7 +327,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
       if (message.error) {
         setSemanticGraph(EMPTY_SEMANTIC_GRAPH);
         setSemanticGraphKey("");
-        setSemanticError("语义向量无法比较；文件夹地图仍可使用。");
+        setSemanticError("暂时无法比较内容，分组地图仍可用。");
       } else if (message.result) {
         setSemanticGraph(message.result);
         setSemanticGraphKey(message.graphKey ?? "");
@@ -337,7 +337,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
     worker.onerror = () => {
       setSemanticGraph(EMPTY_SEMANTIC_GRAPH);
       setSemanticGraphKey("");
-      setSemanticError("语义关联计算失败；文件夹地图仍可使用。");
+      setSemanticError("查找相近织片失败，分组地图仍可用。");
     };
     return () => {
       worker.terminate();
@@ -468,31 +468,31 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
   return (
     <section className="knowledge-map" aria-label="知识地图">
       <header className="knowledge-map-head">
-        <div className="knowledge-map-heading"><h2>知识地图</h2><p>实线表示文件夹归属；虚线是模型语义推荐。</p></div>
+        <div className="knowledge-map-heading"><h2>知识地图</h2><p>实线表示分组，虚线表示内容相近。</p></div>
         <div className="knowledge-map-head-actions"><span className="map-total">{total.toLocaleString("zh-CN")} 篇</span></div>
       </header>
       <div className="knowledge-map-layout">
         <aside className="knowledge-map-filters" aria-label="地图筛选">
           <label className="map-search"><span>搜索标题</span><input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="输入关键词" /></label>
           <label><span>资料类型</span><select value={kind} onChange={(event) => setKind(event.target.value as LibraryItemKind | "")}><option value="">文章与论文</option><option value="article">文章</option><option value="paper">论文</option></select></label>
-          <label><span>文件夹</span><select value={folderId} onChange={(event) => setFolderId(event.target.value)}><option value="">全部文件夹</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select></label>
-          <label><span>收藏</span><select value={favorite === undefined ? "all" : String(favorite)} onChange={(event) => setFavorite(event.target.value === "all" ? undefined : event.target.value === "true")}><option value="all">全部</option><option value="true">仅收藏</option><option value="false">排除收藏</option></select></label>
+          <label><span>分组</span><select value={folderId} onChange={(event) => setFolderId(event.target.value)}><option value="">全部分组</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select></label>
+          <label><span>收藏</span><select value={favorite === undefined ? "all" : String(favorite)} onChange={(event) => setFavorite(event.target.value === "all" ? undefined : event.target.value === "true")}><option value="all">全部</option><option value="true">只看收藏</option><option value="false">排除收藏</option></select></label>
           {!cloud && <label className="map-check"><input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} /><span>显示归档</span></label>}
-          <label className="map-check"><input type="checkbox" checked={showFolders} onChange={(event) => setShowFolders(event.target.checked)} /><span>显示文件夹关系</span></label>
-          <label className="map-threshold"><span>语义阈值 · {semanticThreshold.toFixed(2)}</span><input aria-label="语义推荐阈值" type="range" min="0.3" max="0.9" step="0.01" value={semanticThreshold} disabled={!semanticEnabled || semanticLoading || items.length > SEMANTIC_GRAPH_MAX_NODES} onChange={(event) => setSemanticThreshold(Number(event.target.value))} /></label>
-          <SegmentedControl label="图谱范围" className="map-view-switch" value={localMode ? "local" : "all"} options={[{ value: "all", label: "全库" }, { value: "local", label: "单篇关联", disabled: !selected }]} onChange={(value) => setLocalMode(value === "local")} />
-          <div className="map-key"><span><i className="map-key-article" />文章</span><span><i className="map-key-paper" />论文</span><span><i className="map-key-folder" />文件夹</span><span><i className="map-key-line" />文件夹归属</span><span><i className="map-key-semantic" />语义推荐</span></div>
-          <p className="map-privacy-note">语义分数是模型相似度，不是正确率；连线不表示引用或事实关系。</p>
-          {semanticEnabled && items.length > SEMANTIC_GRAPH_MAX_NODES && <p className="map-semantic-status" role="status">当前包含 {items.length.toLocaleString("zh-CN")} 篇，超过首版 1,000 篇语义计算规模；全部节点仍会显示，请搜索或筛选后查看语义推荐。</p>}
-          {semanticCalculationPending && <p className="map-semantic-status" role="status">正在加载向量并计算语义关联…</p>}
-          {semanticEnabled && items.length <= SEMANTIC_GRAPH_MAX_NODES && !semanticCalculationPending && !readyVectorIds.length && !semanticError && <p className="map-semantic-status" role="status">资料索引完成后会显示语义推荐。</p>}
+          <label className="map-check"><input type="checkbox" checked={showFolders} onChange={(event) => setShowFolders(event.target.checked)} /><span>显示分组</span></label>
+          <label className="map-threshold"><span>相似要求 · {semanticThreshold.toFixed(2)}</span><input aria-label="相似要求" type="range" min="0.3" max="0.9" step="0.01" value={semanticThreshold} disabled={!semanticEnabled || semanticLoading || items.length > SEMANTIC_GRAPH_MAX_NODES} onChange={(event) => setSemanticThreshold(Number(event.target.value))} /></label>
+          <SegmentedControl label="查看范围" className="map-view-switch" value={localMode ? "local" : "all"} options={[{ value: "all", label: "全部资料" }, { value: "local", label: "当前关联", disabled: !selected }]} onChange={(value) => setLocalMode(value === "local")} />
+          <div className="map-key"><span><i className="map-key-article" />文章</span><span><i className="map-key-paper" />论文</span><span><i className="map-key-folder" />分组</span><span><i className="map-key-line" />所属分组</span><span><i className="map-key-semantic" />内容相近</span></div>
+          <p className="map-privacy-note">分数表示内容相似，不代表正确。<br />连线不表示引用或事实关系。</p>
+          {semanticEnabled && items.length > SEMANTIC_GRAPH_MAX_NODES && <p className="map-semantic-status" role="status">当前有 {items.length.toLocaleString("zh-CN")} 篇，推荐限1,000篇。地图仍显示全部资料，请筛选后查看。</p>}
+          {semanticCalculationPending && <p className="map-semantic-status" role="status">正在查找相近织片…</p>}
+          {semanticEnabled && items.length <= SEMANTIC_GRAPH_MAX_NODES && !semanticCalculationPending && !readyVectorIds.length && !semanticError && <p className="map-semantic-status" role="status">处理完成后，会显示相近织片。</p>}
           {semanticError && <p className="map-semantic-status is-error" role="status">{semanticError}</p>}
-          <details className="map-accessible-list"><summary>节点列表（{documents.length}）</summary><ul>{documents.map((item) => <li key={item.id}><Button type="button" aria-pressed={selectedId === item.id} onClick={() => { setSelectedId(item.id); setLocalMode(true); }}>{item.title || "未命名资料"}<small>{item.kind === "paper" ? "论文" : "文章"}</small></Button></li>)}</ul></details>
+          <details className="map-accessible-list"><summary>资料列表（{documents.length}）</summary><ul>{documents.map((item) => <li key={item.id}><Button type="button" aria-pressed={selectedId === item.id} onClick={() => { setSelectedId(item.id); setLocalMode(true); }}>{item.title || "未命名资料"}<small>{item.kind === "paper" ? "论文" : "文章"}</small></Button></li>)}</ul></details>
         </aside>
         <div className="knowledge-map-canvas" role="region" aria-label="资料关联画布">
-          {loading && <p className="map-loading" role="status">正在展开资料节点…</p>}
-          {error ? <div className="map-state"><span className="eyebrow">MAP · ERROR</span><h3>无法载入知识地图</h3><p>{error}</p><Button type="button" onClick={() => setRetryCount((value) => value + 1)}>重试</Button></div>
-            : !loading && !documents.length ? <div className="map-state"><span className="eyebrow">MAP · EMPTY</span><h3>{query || kind || folderId || favorite !== undefined ? "没有匹配的资料" : "知识地图还是空的"}</h3><p>保存文章或论文后，它们会在这里出现。</p></div>
+          {loading && <p className="map-loading" role="status">正在加载资料地图…</p>}
+          {error ? <div className="map-state"><span className="eyebrow">MAP · ERROR</span><h3>加载失败</h3><p>{error}</p><Button type="button" onClick={() => setRetryCount((value) => value + 1)}>重试</Button></div>
+            : !loading && !documents.length ? <div className="map-state"><span className="eyebrow">MAP · EMPTY</span><h3>{query || kind || folderId || favorite !== undefined ? "没有匹配的资料" : "知识地图还是空的"}</h3><p>添加文章或论文后，这里会显示。</p></div>
               : <div className="map-canvas-inner" ref={observeHost}>
                 {width > 0 && height > 0 && <ForceGraph2D
                   ref={graph as never}
@@ -501,7 +501,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
                   graphData={graphData}
                   backgroundColor="rgba(0,0,0,0)"
                   nodeId="id"
-                  nodeLabel={(node: object) => { const item = node as MapNode; return item.type === "folder" ? "文件夹：" + item.name : (item.kind === "paper" ? "论文：" : "文章：") + item.title; }}
+                  nodeLabel={(node: object) => { const item = node as MapNode; return item.type === "folder" ? "分组：" + item.name : (item.kind === "paper" ? "论文：" : "文章：") + item.title; }}
                   nodeCanvasObject={drawNode}
                   nodePointerAreaPaint={(raw: object, color: string, ctx: CanvasRenderingContext2D) => {
                     const node = raw as MapNode & { x?: number; y?: number };
@@ -553,8 +553,8 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
                     else graph.current?.pauseAnimation();
                   }}
                 />}
-                <div className="map-canvas-toolbar"><Button type="button" onClick={fit} aria-label="适应画布">适应画布</Button><Button type="button" onClick={togglePause} aria-pressed={paused}>{paused ? "继续布局" : "暂停布局"}</Button></div>
-                <span className="map-coordinate-note">{draggingNode ? "拖动时暂时隐藏连线，松开后恢复。" : "位置仅用于排布，不代表相似度。"}</span>
+                <div className="map-canvas-toolbar"><Button type="button" onClick={fit} aria-label="显示全图">显示全图</Button><Button type="button" onClick={togglePause} aria-pressed={paused}>{paused ? "继续移动" : "暂停移动"}</Button></div>
+                <span className="map-coordinate-note">{draggingNode ? "拖动时暂时隐藏连线，松开后恢复。" : "位置远近不表示内容相似程度。"}</span>
               </div>}
         </div>
         <aside className={"knowledge-map-detail " + (selected ? "is-open" : "")} aria-label="资料详情">
@@ -562,11 +562,11 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
           {selected ? <>
             <span className={"map-kind-mark " + selected.kind} aria-hidden="true" />
             <h3>{selected.title || "未命名资料"}</h3>
-            <dl className="map-metadata"><div><dt>类型</dt><dd>{selected.kind === "paper" ? "论文" : "文章"}</dd></div><div><dt>文件夹</dt><dd>{selected.folderName || "未分类"}</dd></div><div><dt>状态</dt><dd>{statusLabel(selected)}</dd></div><div><dt>语义索引</dt><dd>{semanticStateLabel(selected)}</dd></div></dl>
-            <section className="map-detail-related"><h4>语义推荐</h4>{selectedSemanticPeers.length ? <ul>{selectedSemanticPeers.map(({ item, score }) => <li key={item.id}><Button type="button" onClick={() => { setSelectedId(item.id); setLocalMode(true); }}>{item.title || "未命名资料"}<small>{item.kind === "paper" ? "论文" : "文章"} · 模型分数 {score.toFixed(2)}</small></Button></li>)}</ul> : <p>{selected.semanticState === "ready" ? "当前阈值下没有语义推荐。" : "索引建立后会显示语义推荐。"}</p>}<small className="map-model-score-note">模型分数不代表正确率。</small></section>
-            <section className="map-detail-related"><h4>文件夹中的其他资料</h4>{selectedFolderPeers.length ? <ul>{selectedFolderPeers.map((peer) => <li key={peer.id}><Button type="button" onClick={() => setSelectedId(peer.id)}>{peer.title || "未命名资料"}<small>{peer.kind === "paper" ? "论文" : "文章"}</small></Button></li>)}</ul> : <p>目前没有其他同文件夹资料。</p>}</section>
-            <Button className="map-open-reader" type="button" onClick={openSelected}>打开阅读 <span aria-hidden="true">↗</span></Button>
-          </> : <p className="map-empty-detail">选择一个节点查看资料信息。</p>}
+            <dl className="map-metadata"><div><dt>类型</dt><dd>{selected.kind === "paper" ? "论文" : "文章"}</dd></div><div><dt>分组</dt><dd>{selected.folderName || "未分类"}</dd></div><div><dt>状态</dt><dd>{statusLabel(selected)}</dd></div><div><dt>推荐处理</dt><dd>{semanticStateLabel(selected)}</dd></div></dl>
+            <section className="map-detail-related"><h4>内容相近</h4>{selectedSemanticPeers.length ? <ul>{selectedSemanticPeers.map(({ item, score }) => <li key={item.id}><Button type="button" onClick={() => { setSelectedId(item.id); setLocalMode(true); }}>{item.title || "未命名资料"}<small>{item.kind === "paper" ? "论文" : "文章"} · 相似分数 {score.toFixed(2)}</small></Button></li>)}</ul> : <p>{selected.semanticState === "ready" ? "暂无符合相似要求的织片。" : "处理完成后，会显示相近织片。"}</p>}<small className="map-model-score-note">相似分数不代表内容正确。</small></section>
+            <section className="map-detail-related"><h4>同组资料</h4>{selectedFolderPeers.length ? <ul>{selectedFolderPeers.map((peer) => <li key={peer.id}><Button type="button" onClick={() => setSelectedId(peer.id)}>{peer.title || "未命名资料"}<small>{peer.kind === "paper" ? "论文" : "文章"}</small></Button></li>)}</ul> : <p>目前没有其他同分组资料。</p>}</section>
+            <Button className="map-open-reader" type="button" onClick={openSelected}>打开资料 <span aria-hidden="true">↗</span></Button>
+          </> : <p className="map-empty-detail">选择一张织片，查看详情。</p>}
         </aside>
       </div>
     </section>

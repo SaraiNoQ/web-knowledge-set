@@ -32,13 +32,13 @@ test("imports a paper and opens the bilingual page reader", async ({ page }) => 
   await page.getByRole("button", { name: "论文 PDF", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "导入" });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "上传 PDF" }).click();
+  await dialog.getByRole("button", { name: "上传文件" }).click();
   await dialog.locator('input[type="file"]').setInputFiles({
     name: "e2e-paper.pdf",
     mimeType: "application/pdf",
     buffer: Buffer.from("%PDF-1.7\nE2E fixture\n", "ascii"),
   });
-  await dialog.getByRole("button", { name: "创建论文" }).click();
+  await dialog.getByRole("button", { name: "添加论文" }).click();
 
   await expect(page.getByRole("heading", { name: "E2E 论文" })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText("一篇 E2E 论文。", { exact: true })).toBeVisible({ timeout: 10_000 });
@@ -50,14 +50,14 @@ test("imports a paper and opens the bilingual page reader", async ({ page }) => 
   await expect(page.locator(".paper-reader-notice")).toContainText("本页译文已保存。");
 
   await page.getByRole("button", { name: "更多操作：E2E 论文" }).click();
-  await page.getByRole("dialog", { name: "操作：E2E 论文" }).getByRole("button", { name: "删除（移入回收站）" }).click();
+  await page.getByRole("dialog", { name: "操作：E2E 论文" }).getByRole("button", { name: "删除资料" }).click();
   const trashResponse = page.waitForResponse((response) => response.request().method() === "DELETE" && /^\/api\/documents\/[^/]+$/u.test(new URL(response.url()).pathname));
-  await page.getByRole("alertdialog", { name: "移入回收站" }).getByRole("button", { name: "移入回收站" }).click();
+  await page.getByRole("alertdialog", { name: "删除资料" }).getByRole("button", { name: "删除资料" }).click();
   expect((await trashResponse).status()).toBe(200);
   await expect(page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "回收站", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("button", { name: "永久删除：E2E 论文" })).toBeVisible();
   await page.getByRole("button", { name: "永久删除：E2E 论文" }).click();
-  await page.getByRole("alertdialog", { name: "永久删除知识" }).getByRole("button", { name: "永久删除" }).click();
+  await page.getByRole("alertdialog", { name: "永久删除" }).getByRole("button", { name: "永久删除" }).click();
   await expect(page.getByRole("button", { name: "E2E 论文", exact: true })).toHaveCount(0);
 });
 
@@ -92,9 +92,9 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
   await page.getByRole("button", { name: "导入", exact: true }).click();
   await page.getByRole("button", { name: "论文 PDF", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "导入" });
-  await dialog.getByRole("button", { name: "上传 PDF" }).click();
+  await dialog.getByRole("button", { name: "上传文件" }).click();
   await dialog.locator('input[type="file"]').setInputFiles({ name: "layout.pdf", mimeType: "application/pdf", buffer: minimalPdf() });
-  await dialog.getByRole("button", { name: "创建论文" }).click();
+  await dialog.getByRole("button", { name: "添加论文" }).click();
   await expect(page.getByRole("heading", { name: "E2E 论文" })).toBeVisible({ timeout: 10_000 });
 
   // Registering a page count is the same call the renderer makes; asking for 60
@@ -159,15 +159,15 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
   const canvasWidth = () => page.locator(".paper-reader-pdf-scroll canvas").evaluate((element) => Math.round(element.getBoundingClientRect().width));
   const fitted = await canvasWidth();
   expect(fitted).toBeGreaterThan(0);
-  await page.getByRole("button", { name: "放大原始 PDF" }).click();
-  await page.getByRole("button", { name: "放大原始 PDF" }).click();
-  await page.getByRole("button", { name: "放大原始 PDF" }).click();
+  await page.getByRole("button", { name: "放大" }).click();
+  await page.getByRole("button", { name: "放大" }).click();
+  await page.getByRole("button", { name: "放大" }).click();
   await expect(page.locator(".paper-reader-zoom span")).toHaveText("160%");
   await expect.poll(canvasWidth).toBeGreaterThan(fitted + 50);
   const pane = await page.locator(".paper-reader-pdf-scroll").evaluate((element) => ({ client: element.clientHeight, scroll: element.scrollHeight, overflowY: getComputedStyle(element).overflowY }));
   expect(pane.overflowY).toBe("auto");
   expect(pane.scroll).toBeGreaterThan(pane.client);
-  await page.getByRole("button", { name: "恢复原始 PDF 缩放" }).click();
+  await page.getByRole("button", { name: "重置大小" }).click();
   await expect(page.locator(".paper-reader-zoom span")).toHaveText("100%");
 
   // The divider drags to a new split, and the arrow keys nudge it for keyboards.
@@ -222,9 +222,9 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
   await expect(page.getByRole("heading", { name: "E2E 论文" })).toBeVisible({ timeout: 15_000 });
 
   await page.getByRole("button", { name: "更多操作：E2E 论文" }).click();
-  await page.getByRole("dialog", { name: "操作：E2E 论文" }).getByRole("button", { name: "删除（移入回收站）" }).click();
-  await page.getByRole("alertdialog", { name: "移入回收站" }).getByRole("button", { name: "移入回收站" }).click();
+  await page.getByRole("dialog", { name: "操作：E2E 论文" }).getByRole("button", { name: "删除资料" }).click();
+  await page.getByRole("alertdialog", { name: "删除资料" }).getByRole("button", { name: "删除资料" }).click();
   await page.getByRole("button", { name: "永久删除：E2E 论文" }).click();
-  await page.getByRole("alertdialog", { name: "永久删除知识" }).getByRole("button", { name: "永久删除" }).click();
+  await page.getByRole("alertdialog", { name: "永久删除" }).getByRole("button", { name: "永久删除" }).click();
   await expect(page.getByRole("button", { name: "E2E 论文", exact: true })).toHaveCount(0);
 });

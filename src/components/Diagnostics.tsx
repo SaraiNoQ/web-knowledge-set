@@ -64,7 +64,7 @@ export function Diagnostics({ onClose }: { onClose: () => void }) {
       <main className="safety-page diagnostics-page">
         <div className="safety-loading" role={error ? "alert" : "status"}>
           <p>{error || "正在整理本机诊断信息…"}</p>
-          {error && <Button type="button" onClick={onClose}>返回数据安全</Button>}
+          {error && <Button type="button" onClick={onClose}>返回备份</Button>}
         </div>
       </main>
     );
@@ -79,10 +79,10 @@ export function Diagnostics({ onClose }: { onClose: () => void }) {
       <header className="safety-head">
         <div>
           <span className="eyebrow">LOCAL DIAGNOSTICS · 不上传</span>
-          <h1 id="diagnostics-title">诊断台</h1>
-          <p>只整理版本、队列、完整性计数与稳定错误码。</p>
+          <h1 id="diagnostics-title">问题排查</h1>
+          <p>查看运行状态和错误记录。</p>
         </div>
-        <Button type="button" className="safety-close" onClick={onClose}>返回数据安全</Button>
+        <Button type="button" className="safety-close" onClick={onClose}>返回备份</Button>
       </header>
 
       {(error || notice) && (
@@ -100,8 +100,8 @@ export function Diagnostics({ onClose }: { onClose: () => void }) {
 
       <div className="diagnostics-grid">
         <section className="safety-card diagnostics-ledger">
-          <header><div><span className="eyebrow">ERROR LEDGER</span><h2>最近错误码</h2></div><small>不包含错误 message</small></header>
-          {!recent.length ? <p className="safety-empty">没有可报告的近期错误。</p> : (
+          <header><div><span className="eyebrow">ERROR LEDGER</span><h2>错误记录</h2></div><small>不含错误详情</small></header>
+          {!recent.length ? <p className="safety-empty">最近没有错误记录。</p> : (
             <ol className="diagnostics-list">
               {recent.map((entry, index) => <li key={`${entry.occurredAt}-${entry.source}-${index}`}><time dateTime={entry.occurredAt}>{dateTime(entry.occurredAt)}</time><strong>{entry.code}</strong><span>{entry.source}</span></li>)}
             </ol>
@@ -110,20 +110,20 @@ export function Diagnostics({ onClose }: { onClose: () => void }) {
 
         <aside className="safety-card diagnostics-export">
           <span className="eyebrow">PRIVACY ENVELOPE</span>
-          <h2>导出前先知道边界</h2>
-          <p>诊断包默认不含正文、标题、标签、URL、查询参数、Cookie、密钥、快照、绝对路径或 AI 输入输出。</p>
+          <h2>分享须知</h2>
+          <p>报告不含正文、标题、标签和链接。<br />不含网址参数、登录凭证和密钥。<br />不含网页存档、完整路径或助手输入输出。</p>
           <dl>
-            <div><dt>本地存储</dt><dd>{bytes(report.health?.storageBytes)}</dd></div>
-            <div><dt>文件异常</dt><dd>{report.health ? report.health.missingSnapshots + report.health.missingAssets + report.health.unsafeSnapshotEntries + report.health.unsafeAssetEntries : "—"}</dd></div>
-            <div><dt>本地日志</dt><dd>{report.logs.length} 条</dd></div>
+            <div><dt>占用空间</dt><dd>{bytes(report.health?.storageBytes)}</dd></div>
+            <div><dt>文件问题</dt><dd>{report.health ? report.health.missingSnapshots + report.health.missingAssets + report.health.unsafeSnapshotEntries + report.health.unsafeAssetEntries : "—"}</dd></div>
+            <div><dt>运行记录</dt><dd>{report.logs.length} 条</dd></div>
           </dl>
-          <Button type="button" className="primary-button" onClick={() => void download()} disabled={exporting}>{exporting ? "正在整理…" : "导出诊断包"}</Button>
-          <small>包内仍可能反映运行时间与错误类型；与他人分享前请人工检查。</small>
+          <Button type="button" className="primary-button" onClick={() => void download()} disabled={exporting}>{exporting ? "正在整理…" : "导出报告"}</Button>
+          <small>报告含运行时间和错误类型。分享前，请先检查内容。</small>
         </aside>
 
         <section className="safety-card diagnostics-ledger diagnostics-runtime">
-          <header><div><span className="eyebrow">RUNTIME THREAD</span><h2>本地运行记录</h2></div><small>最近 {logs.length} 条</small></header>
-          {!logs.length ? <p className="safety-empty">暂无运行记录。</p> : (
+          <header><div><span className="eyebrow">RUNTIME THREAD</span><h2>运行记录</h2></div><small>最近 {logs.length} 条</small></header>
+          {!logs.length ? <p className="safety-empty">还没有运行记录。</p> : (
             <ol className="diagnostics-list">
               {logs.map((entry, index) => <li key={`${entry.timestamp}-${entry.event}-${index}`}><time dateTime={entry.timestamp}>{dateTime(entry.timestamp)}</time><strong>{entry.event}</strong><span>{entry.code || entry.level}</span></li>)}
             </ol>

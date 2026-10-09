@@ -43,11 +43,11 @@ test("one Markdown upload accepts files, drops, directories and shows import res
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: "/tmp/zhiye-import-mobile.png" });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await modal.getByRole("button", { name: "检查导入内容", exact: true }).click();
-    await expect(modal.getByRole("button", { name: "确认导入", exact: true })).toBeEnabled();
+    await modal.getByRole("button", { name: "检查内容", exact: true }).click();
+    await expect(modal.getByRole("button", { name: "开始导入", exact: true })).toBeEnabled();
     await expect(modal.locator(".bulk-preview-list li")).toHaveCount(4);
     await expect(modal.locator(".bulk-preview-list")).toContainText("dropped.md");
-    await modal.getByRole("button", { name: "确认导入", exact: true }).click();
+    await modal.getByRole("button", { name: "开始导入", exact: true }).click();
     await expect(modal.locator(".bulk-result-summary")).toContainText("新增 4");
     await modal.getByRole("button", { name: "完成", exact: true }).click();
     await page.setViewportSize({ width: 1440, height: 1000 });
@@ -55,7 +55,7 @@ test("one Markdown upload accepts files, drops, directories and shows import res
     await page.getByRole("button", { name: "论文 PDF", exact: true }).click();
     const paper = page.getByRole("dialog", { name: "导入", exact: true });
     await expect(paper.getByRole("button", { name: "论文 PDF", exact: true })).toHaveAttribute("aria-pressed", "true");
-    await expect(paper.getByRole("button", { name: "上传 PDF", exact: true })).toBeVisible();
+    await expect(paper.getByRole("button", { name: "上传文件", exact: true })).toBeVisible();
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -67,9 +67,9 @@ test("quick actions reveal and scroll to documents from settings with mouse and 
   expect((await request.patch(`/api/documents/${document.id}`, { headers, data: { markdown: `# ${title}\n\n${"用于验证阅读页面滚动的段落。\n\n".repeat(100)}`, revision: document.revision } })).ok()).toBe(true);
   await page.goto("/");
   for (const mouse of [true, false]) {
-    await page.getByRole("button", { name: "打开设置", exact: true }).click();
-    await page.getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
-    const panel = page.getByRole("dialog", { name: "快捷搜索与新建", exact: true });
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await page.getByRole("button", { name: "快捷查找", exact: true }).click();
+    const panel = page.getByRole("dialog", { name: "快捷查找", exact: true });
     await expect(panel.getByRole("option", { name: /新建空白文章/ })).toBeVisible();
     const input = panel.getByRole("combobox"); await input.fill(title);
     const result = panel.getByRole("option", { name: new RegExp(title) }); await expect(result).toBeVisible();
@@ -90,7 +90,7 @@ for (const reducedMotion of ["reduce", "no-preference"] as const) {
     await page.goto("/");
     await expect(page.locator(".workspace-rail")).toHaveCSS("width", "48px");
     await expect(page.locator(".sidebar-tabbar")).toHaveCSS("height", "42px");
-    await page.getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
+    await page.getByRole("button", { name: "快捷查找", exact: true }).click();
     await page.getByRole("option", { name: /新建空白文章/ }).click();
     await expect(page.locator(".document-tabs")).toHaveCSS("height", "42px");
     const compactHead = page.locator(".compact-document-head");
@@ -108,10 +108,10 @@ for (const reducedMotion of ["reduce", "no-preference"] as const) {
     await dialog.getByRole("button", { name: "论文 PDF", exact: true }).click();
     await expect(dialog).toHaveAttribute("data-surface-identity", "same");
     expect(await dialog.locator(".bulk-import-card").evaluate((element) => element.clientWidth)).toBe(initialWidth);
-    await expect(dialog.getByRole("button", { name: "公开链接", exact: true })).toBeVisible();
-    await dialog.getByRole("button", { name: "上传 PDF", exact: true }).click();
+    await expect(dialog.getByRole("button", { name: "论文链接", exact: true })).toBeVisible();
+    await dialog.getByRole("button", { name: "上传文件", exact: true }).click();
     await expect(dialog.locator('input[type="file"]')).toHaveCount(1);
-    await expect(dialog.getByText("选择 PDF 文件", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("选择文件", { exact: true })).toBeVisible();
     expect((await new AxeBuilder({ page }).include(".bulk-import-card").analyze()).violations).toEqual([]);
     if (reducedMotion === "no-preference") await page.screenshot({ path: "/tmp/zhiye-material-paper-desktop.png" });
     await page.setViewportSize({ width: 390, height: 844 });
@@ -123,13 +123,13 @@ for (const reducedMotion of ["reduce", "no-preference"] as const) {
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.getByRole("button", { name: "打开设置", exact: true }).click();
-    const reading = page.getByRole("button", { name: "阅读与显示", exact: true });
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    const reading = page.getByRole("button", { name: "阅读外观", exact: true });
     await reading.focus();
     await page.keyboard.down(" ");
     await expect.poll(() => reading.evaluate((element) => getComputedStyle(element).transform)).toMatch(reducedMotion === "reduce" ? /^none$/ : /^matrix/);
     await page.keyboard.up(" ");
-    await expect(page.getByRole("spinbutton", { name: "正文字号", exact: true })).toBeVisible();
+    await expect(page.getByRole("spinbutton", { name: "字号", exact: true })).toBeVisible();
     await expect.poll(() => reading.evaluate((element) => getComputedStyle(element).transform)).toBe("none");
     const bounds = (await reading.boundingBox())!;
     await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
@@ -138,7 +138,7 @@ for (const reducedMotion of ["reduce", "no-preference"] as const) {
     await page.mouse.move(0, 0);
     await page.mouse.up();
     await expect.poll(() => reading.evaluate((element) => getComputedStyle(element).transform)).toBe("none");
-    const size = page.getByRole("spinbutton", { name: "正文字号", exact: true });
+    const size = page.getByRole("spinbutton", { name: "字号", exact: true });
     await expect(size).toHaveCSS("appearance", "textfield");
     await size.fill("16");
     await size.press("ArrowUp");

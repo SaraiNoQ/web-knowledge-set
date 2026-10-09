@@ -31,24 +31,24 @@ test("root and expanded folders show every document while the reader scrolls bel
   await expect(page.locator(".directory-kind-badge")).toHaveCount(0);
   await expect(page.locator(".root-contents .directory-document-label").filter({ hasText: prefix })).toHaveCount(61);
   await expect(page.locator(".library-directory .panel-heading").getByRole("button", { name: "新建", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "文件夹", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "分组", exact: true })).toHaveCount(0);
   await page.locator(".folder-node > button[aria-expanded]").filter({ hasText: prefix }).click();
   await expect(page.locator(".folder-contents .directory-document-label").filter({ hasText: prefix })).toHaveCount(35);
   const folderButton = page.locator(".folder-node > button[aria-expanded]").filter({ hasText: prefix });
   await folderButton.hover();
   await expect(folderButton).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  const renameFolder = page.getByRole("button", { name: `重命名 ${prefix}`, exact: true });
+  const renameFolder = page.getByRole("button", { name: `改名 ${prefix}`, exact: true });
   await renameFolder.hover();
   await expect(renameFolder).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   expect(await renameFolder.evaluate((element) => getComputedStyle(element).color)).toBe(await folderButton.evaluate((element) => getComputedStyle(element).color));
   await expect(page.locator(".folder-contents")).toHaveCSS("overflow-y", "visible");
   await expect(page.locator(".folder-contents")).toHaveCSS("max-height", "none");
   await folderButton.locator("..").screenshot({ path: "/tmp/zhiye-folder-flat-light.png" });
-  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await page.getByRole("button", { name: "深色外观", exact: true }).click();
   await renameFolder.hover();
   await expect(renameFolder).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await folderButton.locator("..").screenshot({ path: "/tmp/zhiye-folder-flat-dark.png" });
-  await page.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
+  await page.getByRole("button", { name: "浅色外观", exact: true }).click();
   await expect(page.locator(".folder-pagination")).toHaveCount(0);
   expect(await page.locator(".reader-main").evaluate((element) => element.scrollHeight <= element.clientHeight)).toBe(true);
   await page.screenshot({ path: "/tmp/zhiye-reader-empty.png" });
@@ -60,7 +60,7 @@ test("root and expanded folders show every document while the reader scrolls bel
   expect(Math.abs(location.y - tabs!.y - tabs!.height)).toBeLessThanOrEqual(1);
   expect(Math.abs(scroll!.y - location.y - location.height)).toBeLessThanOrEqual(1);
   expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(true);
-  await page.getByRole("button", { name: "展开右侧功能区", exact: true }).click();
+  await page.getByRole("button", { name: "展开侧栏", exact: true }).click();
   const outline = page.locator(".document-tools");
   expect((await outline.boundingBox())!.height).toBeLessThanOrEqual(scroll!.height + 1);
   const outlineTop = (await outline.boundingBox())!.y;
@@ -79,12 +79,12 @@ test("root and expanded folders show every document while the reader scrolls bel
   await outline.getByRole("button", { name: "最后章节", exact: true }).click();
   await expect(page.locator(".markdown-preview h2").last()).toBeInViewport();
   expect(Math.abs((await outline.boundingBox())!.y - outlineTop)).toBeLessThanOrEqual(1);
-  await page.getByRole("button", { name: "收起右侧功能区", exact: true }).first().click();
+  await page.getByRole("button", { name: "收起侧栏", exact: true }).first().click();
   expect((await page.locator(".document-tabbar").boundingBox())!.y).toBe(tabs!.y);
   await page.screenshot({ path: "/tmp/zhiye-reader-desktop.png" });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator(".document-tabbar")).toBeVisible();
-  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await page.getByRole("button", { name: "深色外观", exact: true }).click();
   await page.screenshot({ path: "/tmp/zhiye-reader-mobile-dark.png" });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
@@ -107,17 +107,17 @@ test("leaving the reader before a preview completes prevents the send", async ({
   await page.route("**/derived-preview", async (route) => { const response = await route.fetch(); arrived(); await held; await route.fulfill({ response }); });
   await page.goto("/");
   await page.locator(".root-contents").getByRole("button", { name: title, exact: true }).click();
-  await page.getByRole("button", { name: "AI 派生", exact: true }).click();
-  await page.getByRole("button", { name: "AI 对话", exact: true }).click();
-  await page.getByLabel("AI 对话 Prompt").fill("分析正文");
-  await page.getByRole("button", { name: "发送并生成", exact: true }).click();
+  await page.getByRole("button", { name: "智能助手", exact: true }).click();
+  await page.getByRole("button", { name: "提问分析", exact: true }).click();
+  await page.getByLabel("提问分析 Prompt").fill("分析正文");
+  await page.getByRole("button", { name: "发送生成", exact: true }).click();
   await received;
-  await page.getByRole("button", { name: "打开设置", exact: true }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
   const finished = page.waitForResponse((response) => response.url().endsWith("/derived-preview"));
   release();
   await (await finished).finished();
-  await page.getByRole("button", { name: "返回资料库", exact: true }).click();
-  await page.getByRole("button", { name: "AI 派生", exact: true }).click();
+  await page.getByRole("button", { name: "返回列表", exact: true }).click();
+  await page.getByRole("button", { name: "智能助手", exact: true }).click();
   await expect(page.locator(".derived-empty")).toBeVisible();
   expect(starts).toEqual([]);
 });
@@ -135,8 +135,8 @@ test("shared controls keep the same upload design, focus, widths and theme", asy
   const markdownButton = modal.getByRole("button", { name: "选择文件", exact: true });
   const markdownStyle = await markdownButton.evaluate((element) => { const style = getComputedStyle(element); return [style.height, style.borderRadius, style.boxShadow, style.fontFamily]; });
   await modal.getByRole("button", { name: "论文 PDF", exact: true }).click();
-  await modal.getByRole("button", { name: "上传 PDF", exact: true }).click();
-  const pdf = modal.getByRole("button", { name: "选择 PDF 文件", exact: true });
+  await modal.getByRole("button", { name: "上传文件", exact: true }).click();
+  const pdf = modal.getByRole("button", { name: "选择文件", exact: true });
   expect(await pdf.evaluate((element) => { const style = getComputedStyle(element); return [style.height, style.borderRadius, style.boxShadow, style.fontFamily]; })).toEqual(markdownStyle);
   expect((await new AxeBuilder({ page }).include(".bulk-import-card").analyze()).violations).toEqual([]);
   await page.screenshot({ path: "/tmp/zhiye-unified-upload-desktop.png" });
@@ -145,25 +145,25 @@ test("shared controls keep the same upload design, focus, widths and theme", asy
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.getByRole("button", { name: "打开设置", exact: true }).click();
-  await page.getByRole("button", { name: "阅读与显示", exact: true }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "阅读外观", exact: true }).click();
   const select = await page.locator(".reading-control > .ui-select-wrap:not(.markdown-style-select)").boundingBox();
   for (const number of await page.locator(".reading-number").all()) expect((await number.boundingBox())!.width).toBe(select!.width);
-  const size = page.getByRole("spinbutton", { name: "正文字号", exact: true });
+  const size = page.getByRole("spinbutton", { name: "字号", exact: true });
   await size.fill("16"); await size.focus();
   const box = (await size.boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.wheel(0, -100);
   await expect(size).toHaveValue("17");
   await expect(page.locator(".reading-text-preview")).toHaveCSS("font-size", "17px");
-  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await page.getByRole("button", { name: "深色外观", exact: true }).click();
   expect((await new AxeBuilder({ page }).include(".workspace-settings").analyze()).violations).toEqual([]);
   await page.screenshot({ path: "/tmp/zhiye-unified-settings-dark.png" });
-  await page.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
-  await page.getByRole("button", { name: "返回资料库", exact: true }).click();
-  await page.getByRole("button", { name: "AI 派生", exact: true }).click();
-  await page.getByRole("button", { name: "AI 对话", exact: true }).click();
-  await expect(page.getByRole("button", { name: "发送并生成", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "浅色外观", exact: true }).click();
+  await page.getByRole("button", { name: "返回列表", exact: true }).click();
+  await page.getByRole("button", { name: "智能助手", exact: true }).click();
+  await page.getByRole("button", { name: "提问分析", exact: true }).click();
+  await expect(page.getByRole("button", { name: "发送生成", exact: true })).toBeVisible();
   await expect(page.locator(".derived-panel").getByText("01 · GENERATE", { exact: true })).toHaveCount(0);
   expect((await new AxeBuilder({ page }).include(".derived-panel").analyze()).violations).toEqual([]);
   await page.screenshot({ path: "/tmp/zhiye-unified-ai-desktop.png" });
@@ -179,7 +179,7 @@ test("sidebar rows align left and composite controls keep a single focus surface
   for (const title of titles) expect((await request.post("/api/documents", { headers, data: { title } })).ok()).toBe(true);
   await page.goto("/");
   for (const theme of ["light", "dark"] as const) {
-    if (theme === "dark") await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    if (theme === "dark") await page.getByRole("button", { name: "深色外观", exact: true }).click();
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 900 });
       const rows = titles.map((title) => page.locator(".root-contents").getByRole("button", { name: title, exact: true }));
@@ -193,7 +193,7 @@ test("sidebar rows align left and composite controls keep a single focus surface
         await expect(row).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
         await expect(row).toHaveCSS("box-shadow", "none");
         await row.click();
-        if (width < 821) await page.getByRole("button", { name: "返回文档目录", exact: true }).click();
+        if (width < 821) await page.getByRole("button", { name: "返回目录", exact: true }).click();
         await expect(row).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
         expect((await row.locator("svg").boundingBox())!.x).toBe(icon.x);
       }
@@ -219,7 +219,7 @@ test("sidebar rows align left and composite controls keep a single focus surface
       const caseButton = page.getByRole("button", { name: "区分大小写", exact: true });
       await expect(caseButton).toBeFocused();
       await expect(caseButton).toHaveCSS("outline-style", "solid");
-      await page.locator(".sidebar-category-toggle").getByRole("button", { name: "列表", exact: true }).click();
+      await page.locator(".sidebar-category-toggle").getByRole("button", { name: "全部资料", exact: true }).click();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     }
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -239,7 +239,7 @@ test("flat controls reserve material depth for interaction and directory menus s
   expect((await request.post("/api/documents", { headers, data: { title } })).ok()).toBe(true);
   await page.goto("/");
   for (const theme of ["light", "dark"]) {
-    if (theme === "dark") await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    if (theme === "dark") await page.getByRole("button", { name: "深色外观", exact: true }).click();
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 900 });
       await expect(page.locator(".sidebar-category-toggle")).toHaveCSS("box-shadow", "none");
@@ -249,7 +249,7 @@ test("flat controls reserve material depth for interaction and directory menus s
       const menu = page.getByRole("dialog", { name: `操作：${title}`, exact: true });
       await expect(menu).toHaveCSS("box-shadow", "none");
       for (const button of await menu.getByRole("button").all()) await expect(button).toHaveCSS("box-shadow", "none");
-      const move = menu.getByRole("button", { name: "移动到文件夹…", exact: true });
+      const move = menu.getByRole("button", { name: "移动资料", exact: true });
       await expect(move).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       await expect(move).toHaveCSS("font-weight", "500");
       await move.hover();
@@ -272,8 +272,8 @@ test("flat controls reserve material depth for interaction and directory menus s
   await page.mouse.move(1, 1);
   await page.mouse.up();
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
-  const quick = page.getByRole("dialog", { name: "快捷搜索与新建", exact: true });
+  await page.getByRole("button", { name: "快捷查找", exact: true }).click();
+  const quick = page.getByRole("dialog", { name: "快捷查找", exact: true });
   await expect(quick.locator(".quick-actions-header > button, .quick-actions-header > svg")).toHaveCount(0);
   await page.screenshot({ path: "/tmp/zhiye-flat-quick-desktop.png" });
   await page.setViewportSize({ width: 390, height: 900 });
@@ -307,17 +307,17 @@ test("derived controls adapt to their inputs without a top gap and success expir
   });
   await page.goto("/");
   await page.locator(".root-contents").getByRole("button", { name: title, exact: true }).click();
-  await page.getByRole("button", { name: "AI 派生", exact: true }).click();
-  const panel = page.getByRole("complementary", { name: "AI 派生知识", exact: true });
+  await page.getByRole("button", { name: "智能助手", exact: true }).click();
+  const panel = page.getByRole("complementary", { name: "智能助手", exact: true });
   await expect(panel.getByText("选择生成内容", { exact: true })).toHaveCount(0);
   for (const theme of ["light", "dark"]) {
-    if (theme === "dark") await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    if (theme === "dark") await page.getByRole("button", { name: "深色外观", exact: true }).click();
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 900 });
-      for (const type of ["摘要", "分层提纲", "关键词", "翻译"]) {
+      for (const type of ["内容摘要", "文章提纲", "关键词", "翻译"]) {
         await panel.getByRole("button", { name: type, exact: true }).click();
         const tabs = (await panel.locator(".ui-segmented").boundingBox())!;
-        const get = (await panel.getByRole("button", { name: "获取", exact: true }).boundingBox())!;
+        const get = (await panel.getByRole("button", { name: "开始生成", exact: true }).boundingBox())!;
         const readingTop = (await page.locator(".cloud-reader").boundingBox())!.y;
         expect(Math.abs((await panel.boundingBox())!.y - readingTop)).toBeLessThanOrEqual(1);
         if (type === "翻译") {
@@ -332,18 +332,18 @@ test("derived controls adapt to their inputs without a top gap and success expir
           expect(Math.abs(get.x - tabs.x)).toBeLessThanOrEqual(1);
           expect(Math.abs(get.width - tabs.width)).toBeLessThanOrEqual(1);
         }
-        if (type === "摘要") await page.screenshot({ path: `/tmp/zhiye-derived-inline-${theme}-${width}.png` });
+        if (type === "内容摘要") await page.screenshot({ path: `/tmp/zhiye-derived-inline-${theme}-${width}.png` });
         if (type === "翻译") await page.screenshot({ path: `/tmp/zhiye-derived-translation-${width}.png` });
       }
     }
   }
   await page.setViewportSize({ width: 1440, height: 900 });
-  await panel.getByRole("button", { name: "摘要", exact: true }).click();
+  await panel.getByRole("button", { name: "内容摘要", exact: true }).click();
   await page.screenshot({ path: "/tmp/zhiye-derived-fullwidth.png" });
-  await panel.getByRole("button", { name: "获取", exact: true }).click();
+  await panel.getByRole("button", { name: "开始生成", exact: true }).click();
   await receivedPoll;
-  await panel.getByRole("navigation", { name: "派生历史分页" }).getByRole("button", { name: "下一页", exact: true }).click();
-  await expect(panel.getByRole("navigation", { name: "派生历史分页" })).toContainText("2 / 2");
+  await panel.getByRole("navigation", { name: "生成记录分页" }).getByRole("button", { name: "下一页", exact: true }).click();
+  await expect(panel.getByRole("navigation", { name: "生成记录分页" })).toContainText("2 / 2");
   const toast = page.locator(".ui-toast--success").filter({ hasText: "摘要已生成" });
   await expect(toast).toHaveCount(1, { timeout: 12_000 });
   const retiredResponse = page.waitForResponse((response) => response.url().includes("/api/derived-tasks/"));
@@ -353,7 +353,7 @@ test("derived controls adapt to their inputs without a top gap and success expir
   await expect(toast).toHaveCount(1);
   await expect(panel.locator(".derived-message")).toHaveCount(0);
   await expect(toast).toHaveCount(0, { timeout: 6_000 });
-  await panel.getByRole("button", { name: "获取", exact: true }).click();
+  await panel.getByRole("button", { name: "开始生成", exact: true }).click();
   await expect(toast).toHaveCount(1);
   await expect(toast).toHaveCount(0, { timeout: 6_000 });
 });

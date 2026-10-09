@@ -10,7 +10,7 @@ test.beforeEach(async ({ page }) => {
 test("category tabs replace duplicate rail entries and collapsed directory leaves no strip", async ({ page }) => {
   await page.goto("/");
   const rail = page.getByRole("navigation", { name: "工作台导航" });
-  const documents = rail.getByRole("button", { name: "文档资料库", exact: true });
+  const documents = rail.getByRole("button", { name: "资料库", exact: true });
   await expect(documents).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".library-tabs")).toHaveCount(0);
   const toggleWidth = await page.locator(".sidebar-category-toggle").evaluate((el) => el.getBoundingClientRect().width / (el.parentElement!.clientWidth - parseFloat(getComputedStyle(el.parentElement!).paddingLeft) - parseFloat(getComputedStyle(el.parentElement!).paddingRight)));
@@ -19,7 +19,7 @@ test("category tabs replace duplicate rail entries and collapsed directory leave
   for (const name of ["查看收藏", "查看回收站", "查看论文"]) {
     await expect(rail.getByRole("button", { name, exact: true })).toHaveCount(0);
   }
-  for (const name of ["列表", "收藏", "论文", "回收站", "搜索"]) {
+  for (const name of ["全部资料", "收藏", "论文", "回收站", "搜索"]) {
     const entry = categories.getByRole("button", { name, exact: true });
     await expect(entry.locator("svg")).toHaveCount(1);
     await expect(entry).toHaveAttribute("title", name);
@@ -27,9 +27,9 @@ test("category tabs replace duplicate rail entries and collapsed directory leave
     await entry.click();
     await expect(entry).toHaveAttribute("aria-pressed", "true");
   }
-  await page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "列表", exact: true }).click();
+  await page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "全部资料", exact: true }).click();
   await expect(documents).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "文档资料库", exact: true }).click();
+  await page.getByRole("button", { name: "资料库", exact: true }).click();
   await expect(page.locator(".library-panel")).toBeHidden();
   await expect(documents).toHaveAttribute("aria-pressed", "false");
   await expect(page.getByRole("button", { name: "展开知识织片", exact: true })).toHaveCount(0);
@@ -43,9 +43,9 @@ test("category tabs replace duplicate rail entries and collapsed directory leave
 
 test("compact reader exposes safe title editing from breadcrumb and directory", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
-  await page.getByRole("dialog", { name: "快捷搜索与新建", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
-  const title = page.getByRole("button", { name: "重命名文章", exact: true });
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷查找", exact: true }).click();
+  await page.getByRole("dialog", { name: "快捷查找", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
+  const title = page.getByRole("button", { name: "修改标题", exact: true });
   await expect(title).toHaveText("未命名文章");
   await expect(page.locator(".document-head h2")).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^(显示|隐藏)文档侧栏$/ })).toHaveCount(0);
@@ -65,8 +65,8 @@ test("compact reader exposes safe title editing from breadcrumb and directory", 
   await expect(tabs.getByRole("button", { name: "面包屑改名测试", exact: true })).toBeVisible();
   const row = page.locator(".directory-document-row.is-selected");
   await row.getByRole("button", { name: "更多操作：面包屑改名测试" }).click();
-  await page.getByRole("dialog", { name: "操作：面包屑改名测试" }).getByRole("button", { name: "重命名", exact: true }).click();
-  const rename = page.getByRole("dialog", { name: "重命名文章", exact: true });
+  await page.getByRole("dialog", { name: "操作：面包屑改名测试" }).getByRole("button", { name: "改名", exact: true }).click();
+  const rename = page.getByRole("dialog", { name: "修改标题", exact: true });
   await rename.getByLabel("文章标题", { exact: true }).fill("目录改名测试");
   await rename.getByRole("button", { name: "保存", exact: true }).click();
   await expect(title).toHaveText("目录改名测试");
@@ -80,13 +80,13 @@ test("compact reader exposes safe title editing from breadcrumb and directory", 
 test("immersive control stays in the rail and removes the old top bar", async ({ page }) => {
   await page.goto("/");
   const rail = page.getByRole("navigation", { name: "工作台导航" });
-  await rail.getByRole("button", { name: "进入沉浸模式", exact: true }).click();
+  await rail.getByRole("button", { name: "专注阅读", exact: true }).click();
   await expect(page.locator(".immersive-bar")).toHaveCount(0);
   await expect(page.locator(".masthead")).toBeHidden();
-  const exit = rail.getByRole("button", { name: "退出沉浸模式", exact: true });
+  const exit = rail.getByRole("button", { name: "退出专注", exact: true });
   await expect(exit).toBeFocused();
   const exitBounds = await exit.boundingBox();
-  const settingsBounds = await rail.getByRole("button", { name: "打开设置", exact: true }).boundingBox();
+  const settingsBounds = await rail.getByRole("button", { name: "设置", exact: true }).boundingBox();
   expect(exitBounds!.y + exitBounds!.height).toBeLessThanOrEqual(settingsBounds!.y);
   expect((await page.locator(".workspace").boundingBox())!.y).toBe(0);
   await exit.click();
@@ -100,12 +100,12 @@ for (const cloud of [false, true]) {
     const rail = page.getByRole("navigation", { name: "工作台导航" });
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
     const initialBackground = await page.locator("body").evaluate((element) => getComputedStyle(element).backgroundColor);
-    await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
-  await page.getByRole("dialog", { name: "快捷搜索与新建", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
+    await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷查找", exact: true }).click();
+  await page.getByRole("dialog", { name: "快捷查找", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
     if (cloud) await page.getByRole("button", { name: "编辑", exact: true }).click();
     const editor = page.getByRole("textbox", { name: "Markdown 编辑器" });
     await editor.fill("主题切换保留未保存正文。");
-    await rail.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    await rail.getByRole("button", { name: "深色外观", exact: true }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await expect(editor).toHaveText("主题切换保留未保存正文。");
     await expect.poll(() => page.locator("body").evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe(initialBackground);
@@ -121,7 +121,7 @@ for (const cloud of [false, true]) {
     await expect(page.getByText("已保存", { exact: true })).toBeVisible();
     await page.reload();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-    await rail.getByRole("button", { name: "切换到浅色模式", exact: true }).click();
+    await rail.getByRole("button", { name: "浅色外观", exact: true }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
     await page.reload();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
@@ -130,11 +130,11 @@ for (const cloud of [false, true]) {
 
 test("breadcrumb uses a capped content width and keeps the complete saved title", async ({ page }) => {
   await page.goto("/");
-  await expect(page.locator(".panel-heading h2")).toHaveText("目录");
+  await expect(page.locator(".panel-heading h2")).toHaveText("资料目录");
   await expect(page.locator(".library-toggle")).toHaveCount(0);
-  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
-  await page.getByRole("dialog", { name: "快捷搜索与新建", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
-  const title = page.getByRole("button", { name: "重命名文章", exact: true });
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷查找", exact: true }).click();
+  await page.getByRole("dialog", { name: "快捷查找", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
+  const title = page.getByRole("button", { name: "修改标题", exact: true });
   await title.dblclick();
   const input = page.getByRole("textbox", { name: "文章标题", exact: true });
   await input.fill("短标题");
@@ -152,21 +152,21 @@ test("breadcrumb uses a capped content width and keeps the complete saved title"
 
 test("editor fills the remaining viewport and can reveal the complete last line", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
-  await page.getByRole("dialog", { name: "快捷搜索与新建", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷查找", exact: true }).click();
+  await page.getByRole("dialog", { name: "快捷查找", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
   await page.getByRole("button", { name: "编辑", exact: true }).click();
   await expect(page.locator(".document-head .title-field")).toHaveCount(0);
   const editor = page.getByRole("textbox", { name: "Markdown 编辑器" });
   await editor.fill(Array.from({ length: 100 }, (_, index) => `段落 ${index}：正文回归。`).join("\n\n") + "\n\n最后一行完整可见");
-  await page.getByRole("button", { name: "打开设置", exact: true }).click();
-  await page.getByRole("button", { name: "返回资料库", exact: true }).click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "返回列表", exact: true }).click();
   await expect.poll(() => page.locator(".editor-grid").evaluate((element) => Math.abs(element.getBoundingClientRect().bottom - innerHeight))).toBeLessThanOrEqual(2);
   for (const immersive of [false, true]) {
-    if (immersive) await page.getByRole("button", { name: "进入沉浸模式", exact: true }).click();
+    if (immersive) await page.getByRole("button", { name: "专注阅读", exact: true }).click();
     for (const width of [1440, 1000]) {
       await page.setViewportSize({ width, height: 900 });
       for (let collapsed = 0; collapsed < 2; collapsed += 1) {
-        if (collapsed) await page.getByRole("button", { name: "文档资料库", exact: true }).click();
+        if (collapsed) await page.getByRole("button", { name: "资料库", exact: true }).click();
         await expect.poll(() => page.locator(".editor-grid").evaluate((element) => Math.abs(element.getBoundingClientRect().bottom - innerHeight))).toBeLessThanOrEqual(2);
         // Width changes reflow CodeMirror and the preview asynchronously. Scroll
         // their final layout, then require the complete last line in both panes.
@@ -186,7 +186,7 @@ test("editor fills the remaining viewport and can reveal the complete last line"
           return Math.max(...overflow);
         }).toBeLessThanOrEqual(1);
         await expect(page.locator(".cm-line").filter({ hasText: "最后一行完整可见" })).toBeVisible();
-        if (collapsed) await page.getByRole("button", { name: "文档资料库", exact: true }).click();
+        if (collapsed) await page.getByRole("button", { name: "资料库", exact: true }).click();
       }
     }
   }

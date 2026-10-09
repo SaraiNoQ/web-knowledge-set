@@ -3,11 +3,11 @@ import { expect, test } from "@playwright/test";
 test("keeps the editor scroll position while read-only state changes", async ({ page }) => {
   await page.goto("/");
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
-  await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
+  await expect(deferSetup.or(page.getByLabel("网页链接"))).toBeVisible();
   if (await deferSetup.isVisible()) await deferSetup.click();
 
-  await page.getByLabel("网页地址").fill(`https://example.com/editor-scroll-${Date.now()}`);
-  await page.getByRole("button", { name: "收取网页" }).click();
+  await page.getByLabel("网页链接").fill(`https://example.com/editor-scroll-${Date.now()}`);
+  await page.getByRole("button", { name: "保存网页" }).click();
   await expect(page.getByLabel("文档标题")).toHaveValue("远端测试文章", { timeout: 8_000 });
 
   const editor = page.getByLabel("Markdown 编辑器");

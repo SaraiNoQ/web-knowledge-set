@@ -47,11 +47,11 @@ export function MarkdownUpload({ files, onChange, disabled, onPreparingChange }:
       }
     };
     try { for (const entry of entries) await walk(entry); if (generation.current === ticket) addFiles(selected); }
-    catch (cause) { if (generation.current === ticket) setError(cause instanceof Error ? cause.message : "无法读取目录，请使用“选择目录”。"); }
+    catch (cause) { if (generation.current === ticket) setError(cause instanceof Error ? cause.message : "无法读取目录，请使用“选择文件夹”。"); }
     finally { if (generation.current === ticket) { setPreparing(false); onPreparingChange(false); } }
   };
   return <div className="markdown-upload">
-    <UploadZone className={`markdown-dropzone${dragging ? " is-dragging" : ""}`} aria-label="Markdown 上传区" title={preparing ? "正在读取目录…" : "拖放 Markdown 文件或目录"} hint="支持 .md、.markdown · 最多 100 个文件 · 总计 10 MiB" actions={<><Button disabled={disabled || preparing} onClick={() => fileInput.current?.click()}>选择文件</Button><Button disabled={disabled || preparing} onClick={() => directoryInput.current?.click()}>选择目录</Button></>}
+    <UploadZone className={`markdown-dropzone${dragging ? " is-dragging" : ""}`} aria-label="Markdown 上传区" title={preparing ? "正在读取目录…" : "拖放 Markdown 文件或目录"} hint="支持 .md、.markdown · 最多 100 个文件 · 总计 10 MiB" actions={<><Button disabled={disabled || preparing} onClick={() => fileInput.current?.click()}>选择文件</Button><Button disabled={disabled || preparing} onClick={() => directoryInput.current?.click()}>选择文件夹</Button></>}
       onDragOver={(event) => { event.preventDefault(); if (!disabled && !preparing) { setDragging(true); event.dataTransfer.dropEffect = "copy"; } }}
       onDragLeave={(event) => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDragging(false); }}
       onDrop={(event) => { event.preventDefault(); setDragging(false); void drop(event.dataTransfer.items, Array.from(event.dataTransfer.files)); }}>

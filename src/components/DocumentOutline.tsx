@@ -18,6 +18,6 @@ export function DocumentOutline({ markdown, onNavigate, onClose }: { markdown: s
         {hasChildren && <Button type="button" className="outline-fold" aria-label={`${collapsed.has(heading.offset) ? "展开" : "折叠"} ${heading.title}`} aria-expanded={!collapsed.has(heading.offset)} onClick={() => setCollapsed((previous) => { const next = new Set(previous); if (next.has(heading.offset)) next.delete(heading.offset); else next.add(heading.offset); return next; })}><WorkspaceIcon name="chevron" size={13} /></Button>}
         <Button type="button" className="outline-heading" aria-current={active === heading.offset ? "location" : undefined} title={heading.title} onClick={() => { setActive(heading.offset); onNavigate(heading.offset); }}>{heading.title}</Button>
       </li>;
-    })}</ul></nav> : <p className="outline-empty">当前文档没有 Markdown 标题。</p>}
+    })}</ul></nav> : <p className="outline-empty">添加文章标题后，这里会显示大纲。</p>}
   </aside>;
 }

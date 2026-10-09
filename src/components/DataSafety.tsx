@@ -9,17 +9,17 @@ import { userErrorMessage } from "../error-messages";
 import { useDialogs } from "./ui/Feedback";
 
 const reasonLabels: Record<BackupReason, string> = {
-  manual: "手动留档",
-  automatic: "每日留档",
-  "pre-migration": "升级前留档",
-  "pre-restore": "恢复前留档",
+  manual: "手动备份",
+  automatic: "每日备份",
+  "pre-migration": "升级备份",
+  "pre-restore": "恢复前副本",
 };
 
 const statusLabels: Record<BackupStatus, string> = {
   creating: "创建中",
-  verified: "校验通过",
+  verified: "检查通过",
   failed: "创建失败",
-  invalid: "校验失败",
+  invalid: "检查失败",
   missing: "文件缺失",
 };
 
@@ -77,10 +77,10 @@ function BackupRow({
       </div>
       {(backup.errorCode || backup.errorMessage) && <p className="backup-error">{userErrorMessage(backup.errorCode ?? "BACKUP_FAILED")}</p>}
       <div className="backup-actions">
-        <Button type="button" onClick={onVerify} disabled={busy || recovery || !backup.directoryName}>重新校验</Button>
-        <Button type="button" onClick={onExport} disabled={busy || !restorable}>导出文件</Button>
-        <Button className="restore-button" type="button" onClick={onRestore} disabled={busy || !restorable}>恢复此留档</Button>
-        <Button className="delete-button" type="button" onClick={onDelete} disabled={busy}>删除此留档</Button>
+        <Button type="button" onClick={onVerify} disabled={busy || recovery || !backup.directoryName}>检查备份</Button>
+        <Button type="button" onClick={onExport} disabled={busy || !restorable}>下载备份</Button>
+        <Button className="restore-button" type="button" onClick={onRestore} disabled={busy || !restorable}>恢复备份</Button>
+        <Button className="delete-button" type="button" onClick={onDelete} disabled={busy}>删除备份</Button>
       </div>
     </li>
   );
@@ -167,7 +167,7 @@ export function DataSafety({
   const createBackup = () => perform("create", async () => {
     await beforeOperation();
     await api.createBackup();
-  }, "完整留档已创建并校验。");
+  }, "备份已完成，并通过检查。");
 
   const importBackup = async (event: ChangeEvent<HTMLInputElement>) => {
     const input = event.currentTarget;
@@ -176,27 +176,27 @@ export function DataSafety({
     if (!file) return;
     const accepted = cloud ? [".zhiye-cloud-backup"] : [".zhiye-backup", ".zhiye-cloud-backup"];
     if (!accepted.some((extension) => file.name.toLocaleLowerCase().endsWith(extension))) {
-      setError(`请选择 ${accepted.join(" / ")} 完整留档文件。`);
+      setError(`请选择 ${accepted.join(" / ")} 完整备份文件。`);
       return;
     }
     const maxBytes = cloud ? 8 * 1024 * 1024 : 2 * 1024 * 1024 * 1024;
     if (file.size > maxBytes) {
-      setError(`留档文件超过 ${cloud ? "8 MiB" : "2 GiB"} 安全上限，无法导入。`);
+      setError(`备份文件超过 ${cloud ? "8 MiB" : "2 GiB"} 安全上限，无法导入。`);
       return;
     }
     if (!await dialogs.confirm(
-      "所选文件未加密，可能包含完整知识数据。导入只会创建已校验留档，不会覆盖当前资料或自动恢复。确定继续吗？",
-      { title: "导入完整留档", confirmLabel: "继续导入", tone: "warning" },
+      "备份文件未加密，可能含完整资料。导入不替换当前资料，也不会自动恢复。继续吗？",
+      { title: "导入备份", confirmLabel: "继续导入", tone: "warning" },
     ) || busyRef.current) return;
-    await perform("import", () => api.importBackup(file), "留档文件已导入并校验；当前资料未更改。如需切换数据，请再选择“恢复此留档”。");
+    await perform("import", () => api.importBackup(file), "备份已导入并检查，当前资料未改动。需要恢复时，请选择“恢复备份”。");
   };
 
-  const verify = (backup: BackupRecord) => perform(`verify:${backup.id}`, () => api.verifyBackup(backup.id), "留档校验完成。");
+  const verify = (backup: BackupRecord) => perform(`verify:${backup.id}`, () => api.verifyBackup(backup.id), "备份校验完成。");
 
   const exportBackup = async (backup: BackupRecord) => {
     if (busyRef.current || !await dialogs.confirm(
-      "导出文件未加密，包含完整知识数据。确定继续下载吗？",
-      { title: "导出完整留档", confirmLabel: "继续下载", tone: "warning" },
+      "备份未加密，包含完整资料。确定下载吗？",
+      { title: "下载备份", confirmLabel: "继续下载", tone: "warning" },
     )) return;
     const current = statusRef.current?.backups.find((value) => value.id === backup.id);
     if (busyRef.current || statusRef.current?.maintenance || current?.status !== "verified" || !current.directoryName) return;
@@ -211,8 +211,8 @@ export function DataSafety({
 
   const restore = async (backup: BackupRecord) => {
     if (busyRef.current || !await dialogs.confirm(
-      `恢复 ${dateTime(backup.createdAt)} 的留档？当前数据会先另行留档，随后应用将重新载入。`,
-      { title: "恢复完整留档", confirmLabel: "开始恢复", tone: "danger" },
+      `恢复 ${dateTime(backup.createdAt)} 的备份？当前数据会先另行备份，随后应用将重新载入。`,
+      { title: "恢复备份", confirmLabel: "开始恢复", tone: "danger" },
     )) return;
     const current = statusRef.current?.backups.find((value) => value.id === backup.id);
     if (busyRef.current || !current || current.status !== "verified" || !current.directoryName) return;
@@ -229,8 +229,8 @@ export function DataSafety({
       } catch (cause) {
         if (!(cause instanceof ApiRequestError) || cause.code !== "QUARANTINE_REQUIRED") throw cause;
         if (!await dialogs.confirm(
-          "当前数据无法完成恢复前留档。继续会把当前数据完整隔离保存，再启用所选留档。仍要继续吗？",
-          { title: "隔离当前数据", confirmLabel: "隔离并恢复", tone: "danger" },
+          "当前数据无法备份。继续会单独保留全部旧数据，再恢复备份。仍要继续吗？",
+          { title: "保留旧库", confirmLabel: "保留恢复", tone: "danger" },
         ) || busyRef.current !== operation || !statusRef.current?.backups.some((value) => value.id === current.id)) return;
         result = await api.restoreBackup(current.id, true);
       }
@@ -251,26 +251,26 @@ export function DataSafety({
 
   const deleteBackup = async (backup: BackupRecord) => {
     if (busyRef.current || !await dialogs.confirm(
-      `删除 ${dateTime(backup.createdAt)} 的留档？删除后无法恢复。`,
-      { title: "删除完整留档", confirmLabel: "删除留档", tone: "danger" },
+      `删除 ${dateTime(backup.createdAt)} 的备份？删除后无法恢复。`,
+      { title: "删除备份", confirmLabel: "删除备份", tone: "danger" },
     )) return;
-    await perform(`delete:${backup.id}`, () => api.deleteBackup(backup.id), "留档已删除。");
+    await perform(`delete:${backup.id}`, () => api.deleteBackup(backup.id), "备份已删除。");
   };
 
   const saveRetention = (event: FormEvent) => {
     event.preventDefault();
     if (!Number.isInteger(retention) || retention < 1 || retention > 100) {
-      setError("自动留档保留数量必须在 1 到 100 之间。");
+      setError("自动备份保留数量必须在 1 到 100 之间。");
       return;
     }
-    void perform("settings", () => api.updateBackupSettings(retention), "自动留档数量已更新。");
+    void perform("settings", () => api.updateBackupSettings(retention), "自动备份数量已更新。");
   };
 
   const changeDataDirectory = async () => {
     if (cloud || !desktop || busyRef.current || statusRef.current?.maintenance || statusRef.current?.mode === "recovery") return;
     if (!await dialogs.confirm(
-      "织页会先保存当前修改，然后安全关闭并把数据库、快照、离线资源、留档和诊断目录迁移到你选择的空文件夹。迁移完成后应用会自动重新启动。确定继续吗？",
-      { title: "更改知识库位置", confirmLabel: "选择新位置", tone: "warning" },
+      "请选择一个空文件夹。保存修改后，会迁移全部数据并重启。迁移失败会保留原位置。继续吗？",
+      { title: "更换位置", confirmLabel: "选择新位置", tone: "warning" },
     ) || busyRef.current) return;
     busyRef.current = "location";
     setBusy("location");
@@ -290,8 +290,8 @@ export function DataSafety({
 
   const cleanup = async () => {
     if (busyRef.current || !await dialogs.confirm(
-      "清理未被数据库引用的网页快照与离线资源？仍在使用的文件不会被删除。",
-      { title: "清理未引用文件", confirmLabel: "开始清理", tone: "warning" },
+      "清理资料库不再使用的文件？仍在使用的文件会保留。",
+      { title: "清理余留", confirmLabel: "开始清理", tone: "warning" },
     ) || busyRef.current || statusRef.current?.maintenance || statusRef.current?.mode === "recovery") return;
     busyRef.current = "cleanup";
     setBusy("cleanup");
@@ -326,9 +326,9 @@ export function DataSafety({
           <div className="safety-loading" role="alert">
             <p>{error}</p>
             <Button type="button" onClick={() => { setError(""); void refresh().catch((cause) => setError((cause as Error).message)); }}>重试</Button>
-            <Button type="button" onClick={onClose}>返回资料库</Button>
+            <Button type="button" onClick={onClose}>返回列表</Button>
           </div>
-        ) : <div className="safety-loading" role="status">正在核对本地数据…</div>}
+        ) : <div className="safety-loading" role="status">正在检查本机数据…</div>}
       </main>
     );
   }
@@ -350,16 +350,16 @@ export function DataSafety({
       <header className="safety-head">
         <div>
           <span className="eyebrow">DATA STEWARDSHIP · {cloud ? "R2 CLOUD" : "本机"}</span>
-          <h1>数据安全</h1>
-          <p>{cloud ? "将 D1 文档、AI 设置与派生结果写入私有 R2，创建可恢复的云端留档。" : "校验数据库、网页快照与离线资源，创建可恢复的完整留档。"}</p>
+          <h1>备份恢复</h1>
+          <p>{cloud ? "备份云端文章、智能设置和生成结果。" : "检查本机资料，创建可恢复的备份。"}</p>
         </div>
-        <div className="safety-head-actions">{!cloud && <Button type="button" className="safety-close" onClick={onDiagnostics} disabled={Boolean(busy)}>诊断台</Button>}{!recovery && <Button type="button" className="safety-close" onClick={onClose} disabled={Boolean(busy)}>返回资料库</Button>}</div>
+        <div className="safety-head-actions">{!cloud && <Button type="button" className="safety-close" onClick={onDiagnostics} disabled={Boolean(busy)}>问题排查</Button>}{!recovery && <Button type="button" className="safety-close" onClick={onClose} disabled={Boolean(busy)}>返回列表</Button>}</div>
       </header>
 
       {recovery && (
         <section className="recovery-banner" role="alert">
           <strong>织页已进入恢复模式</strong>
-          <p>{status.recoveryError ? userErrorMessage(status.recoveryError.code) : "当前数据库无法安全打开。请选择一份已校验留档进行恢复。"}</p>
+          <p>{status.recoveryError ? userErrorMessage(status.recoveryError.code) : "当前资料无法打开。请选择已检查的备份恢复。"}</p>
           {status.recoveryError?.code && <code>{status.recoveryError.code}</code>}
         </section>
       )}
@@ -382,12 +382,12 @@ export function DataSafety({
         <article>
           <span>STORAGE</span>
           <strong>{bytes(status.health?.storageBytes)}</strong>
-          <small>数据库、网页快照与离线资源</small>
+          <small>数据库、网页存档与离线资源</small>
         </article>
         <article>
           <span>LAST BACKUP</span>
           <strong>{status.health?.recentBackup ? dateTime(status.health.recentBackup.createdAt) : "尚无"}</strong>
-          <small>{status.health?.recentBackup ? statusLabels[status.health.recentBackup.status] : "建议立即创建第一份留档"}</small>
+          <small>{status.health?.recentBackup ? statusLabels[status.health.recentBackup.status] : "建议立即创建第一份备份"}</small>
         </article>
       </section>
 
@@ -396,17 +396,17 @@ export function DataSafety({
           <header>
             <div>
               <span className="eyebrow">ARCHIVE LEDGER</span>
-              <h2>完整留档</h2>
-              <p>{cloud ? ".zhiye-cloud-backup 未加密，包含云端文档与 AI 结果，不包含 API Key；导入不会自动恢复。" : ".zhiye-backup / .zhiye-cloud-backup 均可；本机导入会把云端留档转成 .zhiye-backup，只新增已校验留档，不会自动恢复。云端不含网页快照与离线图片。"}</p>
+              <h2>完整备份</h2>
+              <p>{cloud ? ".zhiye-cloud-backup 未加密，包含云端文档与 AI 结果，不包含 API Key；导入不会自动恢复。" : ".zhiye-backup / .zhiye-cloud-backup 均可；本机导入会把云端备份转成 .zhiye-backup，只新增已校验备份，不会自动恢复。云端不含网页存档与离线图片。"}</p>
             </div>
             <div className="backup-ledger-actions">
-              <FileSelectButton label={busy === "import" ? "正在导入…" : "导入留档文件"} inputLabel="导入完整留档文件" accept={cloud ? ".zhiye-cloud-backup,application/vnd.zhiye.cloud-backup+json" : ".zhiye-backup,.zhiye-cloud-backup,application/vnd.zhiye.backup+zip,application/vnd.zhiye.cloud-backup+json"} disabled={Boolean(busy) || status.maintenance} onChange={(event) => void importBackup(event)} />
+              <FileSelectButton label={busy === "import" ? "正在导入…" : "导入备份"} inputLabel="导入备份文件" accept={cloud ? ".zhiye-cloud-backup,application/vnd.zhiye.cloud-backup+json" : ".zhiye-backup,.zhiye-cloud-backup,application/vnd.zhiye.backup+zip,application/vnd.zhiye.cloud-backup+json"} disabled={Boolean(busy) || status.maintenance} onChange={(event) => void importBackup(event)} />
               <Button className="primary-button" type="button" onClick={() => void createBackup()} disabled={Boolean(busy) || recovery || status.maintenance}>
-                {busy === "create" ? "正在留档…" : "创建留档"}
+                {busy === "create" ? "正在备份…" : "立即备份"}
               </Button>
             </div>
           </header>
-          {!status.backups.length ? <p className="safety-empty">还没有完整留档。</p> : (
+          {!status.backups.length ? <p className="safety-empty">还没有备份，建议先备份一次。</p> : (
             <ol className="backup-list">
               {status.backups.map((backup) => (
                 <BackupRow
@@ -426,26 +426,26 @@ export function DataSafety({
 
         {!cloud && <aside className="safety-card safety-controls">
           {desktop && <>
-            <div><span className="eyebrow">KNOWLEDGE BASE</span><h2>知识库位置</h2></div>
+            <div><span className="eyebrow">KNOWLEDGE BASE</span><h2>存放位置</h2></div>
             <div className="safety-location-current" aria-live="polite">
-              <span>当前路径</span>
+              <span>当前位置</span>
               {dataDirectory ? <code title={dataDirectory} aria-label={`当前知识库路径：${dataDirectory}`}>{dataDirectory}</code> : dataDirectoryError ? <p role="alert">{dataDirectoryError}</p> : <span>正在读取…</span>}
             </div>
-            <p>选择新的空文件夹后，织页会在安全重启期间迁移当前数据；迁移失败会保留原位置。</p>
-            <Button type="button" onClick={() => void changeDataDirectory()} disabled={Boolean(busy) || recovery || status.maintenance}>{busy === "location" ? "正在准备迁移…" : "更改知识库位置"}</Button>
+            <p>选择空文件夹后，会迁移资料并重启。<br />失败时保留原位置。</p>
+            <Button type="button" onClick={() => void changeDataDirectory()} disabled={Boolean(busy) || recovery || status.maintenance}>{busy === "location" ? "正在准备迁移…" : "更换位置"}</Button>
             <hr />
           </>}
-          <div><span className="eyebrow">HOUSEKEEPING</span><h2>自动留档</h2></div>
-          <p>每日首次启动保留一份完整副本。只自动轮换每日留档，不触及手动、升级前或恢复前留档。</p>
+          <div><span className="eyebrow">HOUSEKEEPING</span><h2>自动备份</h2></div>
+          <p>每日首次启动时备份一次。<br />只轮换每日备份，其他备份保留。</p>
           <form onSubmit={saveRetention}>
-            <label htmlFor="backup-retention">保留每日留档</label>
+            <label htmlFor="backup-retention">保留份数</label>
             <div><input id="backup-retention" type="number" min="1" max="100" step="1" value={retention} onChange={(event) => setRetention(Number(event.target.value))} disabled={Boolean(busy) || recovery || status.maintenance} /><span>份</span></div>
             <Button type="submit" disabled={Boolean(busy) || recovery || status.maintenance}>保存设置</Button>
           </form>
           <hr />
           <h3>文件清理</h3>
-          <p>只删除没有任何数据库记录引用的网页快照与离线资源；失败项会留待下次重试。</p>
-          <Button type="button" onClick={() => void cleanup()} disabled={Boolean(busy) || recovery || status.maintenance}>{busy === "cleanup" ? "正在清理…" : "清理未引用文件"}</Button>
+          <p>只清理不再使用的文件。<br />失败项下次重试。</p>
+          <Button type="button" onClick={() => void cleanup()} disabled={Boolean(busy) || recovery || status.maintenance}>{busy === "cleanup" ? "正在清理…" : "清理余留"}</Button>
         </aside>}
       </div>
     </main>
