@@ -13,6 +13,21 @@ finish() {
 trap finish EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
+if [[ "$mode" == publish-only ]]; then
+  stage=publish-only-preflight
+  node --input-type=module - "$request_path" <<'JS'
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+const requestPath = resolve(process.argv[2]);
+const request = JSON.parse(readFileSync(requestPath, "utf8"));
+const evidence = JSON.parse(readFileSync(resolve(dirname(requestPath), "evidence.json"), "utf8"));
+assert.equal(evidence.sha, request.sha, "Retry must reuse the source from the failed run");
+assert.equal(evidence.stage, "publish", "Retry is only for a release that reached publish");
+assert(["failed", "gate-failed"].includes(evidence.status), "There is no failed publish to retry");
+assert(evidence.recovery === undefined || evidence.recovery === "previous-pair-restored", "Manual recovery blocks publish-only retry");
+JS
+fi
 node scripts/record-release-exit.mjs "$request_path"
 test "$(node --version)" = v24.19.0
 test "$(pnpm --version)" = 11.7.0
