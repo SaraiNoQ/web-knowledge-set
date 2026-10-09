@@ -49,8 +49,8 @@ export function BrowserExtension({ onPairingCountChange }: { onPairingCountChang
     <h3 id="extension-title">浏览助手</h3>
     <p>点击读取后，才读取当前网页。<br />可保存已登录网页的可见正文。<br />不申请登录凭证、历史或全部网页权限。</p>
     <div className="extension-downloads">
-      <a href="/extensions/zhiye-clipper-chrome.zip?v=0.3.9" download>下载 Chrome 扩展 0.3.9</a>
-      <a href="/extensions/zhiye-clipper-firefox.xpi?v=0.3.9" download>下载 Firefox 扩展 0.3.9</a>
+      <a href="/extensions/zhiye-clipper-chrome.zip?v=0.3.10" download>下载 Chrome 扩展 0.3.10</a>
+      <a href="/extensions/zhiye-clipper-firefox.xpi?v=0.3.10" download>下载 Firefox 扩展 0.3.10</a>
     </div>
     <p>Chrome：覆盖旧文件夹，重新加载扩展。</p>
     <p>Firefox：下载 XPI，在扩展管理页安装。</p>
