@@ -1494,7 +1494,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
 
   await page.getByRole("button", { name: "分类管理" }).click();
   const collectionManager = page.getByRole("complementary", { name: "专题管理" });
-  await collectionManager.getByLabel("专题名称").fill("阅读清单");
+  await collectionManager.getByLabel("新专题名").fill("阅读清单");
   await collectionManager.getByRole("button", { name: "新建专题" }).click();
   await expect(collectionManager.getByText("阅读清单", { exact: true })).toBeVisible();
   await page.getByRole("group", { name: "专题" }).getByLabel("阅读清单").click();
@@ -1516,7 +1516,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
 
   await page.getByRole("button", { name: "分类管理" }).click();
   const reloadedCollectionManager = page.getByRole("complementary", { name: "专题管理" });
-  await reloadedCollectionManager.getByLabel("专题名称").fill("临时专题");
+  await reloadedCollectionManager.getByLabel("新专题名").fill("临时专题");
   await reloadedCollectionManager.getByRole("button", { name: "新建专题" }).click();
   await page.getByRole("group", { name: "专题" }).getByLabel("临时专题").click();
   await expect(page.getByText("已加入专题。")).toBeVisible();
@@ -1556,7 +1556,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await page.getByRole("button", { name: "返回列表" }).click();
   await expect.poll(() => staleCollectionsReady).toBe(true);
   const delayedCollectionManager = page.getByRole("complementary", { name: "专题管理" });
-  await delayedCollectionManager.getByLabel("专题名称").fill("延迟响应专题");
+  await delayedCollectionManager.getByLabel("新专题名").fill("延迟响应专题");
   await delayedCollectionManager.getByRole("button", { name: "新建专题" }).click();
   await expect(delayedCollectionManager.getByText("延迟响应专题", { exact: true })).toBeVisible();
   releaseStaleCollections();

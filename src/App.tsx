@@ -3987,7 +3987,7 @@ export default function App() {
                   <header><div><span className="eyebrow">CLASSIFICATION INDEX</span><h3>专题标签</h3></div><Button type="button" onClick={() => setCollectionsOpen(false)} aria-label="关闭分类管理">×</Button></header>
                   <h4>专题</h4>
                   <form className="collection-create" onSubmit={createCollection}>
-                    <label><span className="sr-only">专题名称</span><input aria-label="专题名称" maxLength={100} value={collectionName} onChange={(event) => setCollectionName(event.target.value)} placeholder="专题名称" disabled={organizationLocked || metadataDirty} /></label>
+                    <label><span className="sr-only">新专题名</span><input aria-label="新专题名" maxLength={100} value={collectionName} onChange={(event) => setCollectionName(event.target.value)} placeholder="新专题名" disabled={organizationLocked || metadataDirty} /></label>
                     <Button type="submit" className="primary-button" disabled={organizationLocked || metadataDirty || !collectionName.trim()}>{collectionAction === "create" ? "创建中…" : "新建专题"}</Button>
                   </form>
                   {collectionsLoading && !collections.length ? <StatePanel kind="loading" title="正在读取专题" /> : !collections.length ? <p className="collection-empty">将同一主题的织片放在一起。</p> : (
