@@ -95,7 +95,7 @@ export function SemanticSettingsPanel({ cloud, refreshKey }: { cloud: boolean; r
     const next = !settings.enabled;
     if (next) {
       if (model.trim() !== settings.model) { setError("请先保存模型，再测试并开启。"); return; }
-      if (!settings.apiKeyConfigured) { setError("请先保存向量 API 密钥。"); return; }
+      if (!settings.apiKeyConfigured) { setError("请先保存推荐密钥。"); return; }
       if (testedModel !== model.trim()) { setError("请先测试当前模型连接。"); return; }
       const confirmed = await dialogs.confirm(
         "文章正文和已提取的论文原文将发送给 SiliconFlow " + model.trim() +
@@ -138,12 +138,12 @@ export function SemanticSettingsPanel({ cloud, refreshKey }: { cloud: boolean; r
       {!settings ? <p role={error ? "alert" : "status"}>{error || "正在读取推荐处理状态…"}</p> : <>
         <div className="semantic-settings-grid">
           <div className="semantic-settings-card">
-            <label><span>向量模型</span><input aria-label="向量模型" value={model} onChange={(event) => { setModel(event.target.value); setTestedModel(""); setDimension(null); }} maxLength={200} disabled={busy} /></label>
+            <label><span>推荐模型</span><input aria-label="推荐模型" value={model} onChange={(event) => { setModel(event.target.value); setTestedModel(""); setDimension(null); }} maxLength={200} disabled={busy} /></label>
             <small>默认 BAAI/bge-m3。发送地址：https://api.siliconflow.cn/v1/embeddings。</small>
             <Button type="button" onClick={() => void saveModel()} disabled={busy || !model.trim() || model.trim() === settings.model}>保存模型</Button>
           </div>
           <div className="semantic-settings-card">
-            <label><span>SiliconFlow API 密钥</span><input aria-label="向量 API 密钥" type="password" autoComplete="new-password" spellCheck={false} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={settings.apiKeyConfigured ? "已保存，输入新密钥可替换" : "粘贴向量 API Key"} disabled={busy} /></label>
+            <label><span>SiliconFlow API 密钥</span><input aria-label="推荐密钥" type="password" autoComplete="new-password" spellCheck={false} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={settings.apiKeyConfigured ? "已保存，输入新密钥可替换" : "粘贴 SiliconFlow API Key"} disabled={busy} /></label>
             <small>{cloud ? "密钥只存当前浏览器。不写入云端数据库、备份或导出。" : "密钥暂存服务内存。服务重启后需重新填写。"}</small>
             <div><Button type="button" onClick={() => void storeKey()} disabled={busy || !apiKey.trim()}>保存密钥</Button>{settings.apiKeyConfigured && <Button type="button" onClick={() => void removeKey()} disabled={busy}>删除密钥</Button>}</div>
           </div>
