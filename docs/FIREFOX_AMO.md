@@ -21,6 +21,8 @@ pnpm install --frozen-lockfile
 pnpm firefox:amo
 ```
 
+发布当前新版本时，在干净、已提交的源码工作区运行 `bash scripts/sign-firefox-unlisted.sh`。脚本会安装锁定依赖、构建并校验扩展，然后在终端中隐藏地提示 AMO API Key 与 Secret，使用 `web-ext 10.6.0` 执行 unlisted 签名。密钥只在脚本进程环境中使用，不写入文件、命令行参数或 Git。完成后脚本会核对 XPI 的 AMO 签名和包内容，并输出签名文件路径、SHA-256 与 Chrome ZIP 路径。将 SHA-256 写入 `extension/amo/signed-release.json`，再按发布门禁提交；签名 XPI 放在 `/tmp` 等 Git 与 `dist/` 之外的位置。
+
 提交 AMO 的安装包是 `dist/extensions/zhiye-clipper-firefox.zip`；选择“需要提交源代码”，同时上传 `dist/extensions/zhiye-clipper-firefox-source.zip`。源代码包根目录的 `README.txt` 给出审核者可重复执行的构建步骤。
 
 ## AMO 页面资料
