@@ -5,7 +5,11 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
 
 if [[ $(node --version) != v24.19.0 || $(pnpm --version) != 11.7.0 ]]; then
-  echo "Use Node 24.19.0 and pnpm 11.7.0 (see .node-version)." >&2
+  if [[ ${ZHIYE_SIGN_TOOLCHAIN_BOOTSTRAPPED:-0} != 1 ]] && command -v npm >/dev/null 2>&1; then
+    export ZHIYE_SIGN_TOOLCHAIN_BOOTSTRAPPED=1
+    exec npm exec --yes --package=node@24.19.0 --package=pnpm@11.7.0 -- bash "$0" "$@"
+  fi
+  echo "Could not start the locked Node 24.19.0 / pnpm 11.7.0 toolchain." >&2
   exit 1
 fi
 if [[ -n $(git status --porcelain) ]]; then
