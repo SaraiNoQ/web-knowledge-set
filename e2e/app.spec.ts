@@ -677,9 +677,22 @@ test("opens one keyboard-accessible help and about dialog in normal and recovery
   await helpButton.click();
   const help = page.getByRole("dialog", { name: "使用帮助" });
   await expect(help).toBeVisible();
-  await expect(help.getByRole("heading", { name: "快速上手" })).toBeVisible();
-  await expect(help.getByText(/^v\d+\.\d+\.\d+(?:-[\w.]+)?$/u)).toBeVisible();
-  await expect(help.getByText("本地 Web", { exact: true })).toBeVisible();
+  await expect(help.getByRole("heading", { name: "快速上手" })).toHaveCount(0);
+  await expect(help.getByText(/^v\d+\.\d+\.\d+(?:-[\w.]+)?$/u)).toHaveCount(0);
+  await expect(help.getByText("本地 Web", { exact: true })).toHaveCount(0);
+  await expect(help.getByText("MIT", { exact: true })).toHaveCount(0);
+  await expect(help.getByText("点击读取后", { exact: false })).toHaveCount(0);
+  const singleLineNotes = help.locator(".extension-help__single-line");
+  await expect(singleLineNotes).toHaveCount(3);
+  for (const note of await singleLineNotes.all()) await expect(note).toHaveCSS("white-space", "nowrap");
+  await expect(singleLineNotes.nth(0)).toHaveText("Chrome：覆盖旧文件夹，重新加载扩展。");
+  await expect(singleLineNotes.nth(1)).toHaveText("Firefox：下载 XPI，在扩展管理页安装。");
+  await page.setViewportSize({ width: 390, height: 844 });
+  const privacyNote = singleLineNotes.nth(2);
+  await expect(privacyNote).toHaveCSS("overflow-x", "auto");
+  const privacySize = await privacyNote.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }));
+  expect(privacySize.scrollWidth).toBeGreaterThan(privacySize.clientWidth);
+  await page.setViewportSize({ width: 1280, height: 720 });
   await help.getByRole("button", { name: "连接码" }).click();
   await expect(help.getByRole("status")).toContainText(/[A-Z2-9]{10}/u);
   for (const link of await help.getByRole("navigation", { name: "项目帮助链接" }).getByRole("link").all()) {
@@ -706,7 +719,7 @@ test("opens one keyboard-accessible help and about dialog in normal and recovery
   await page.reload();
   await expect(page.getByRole("heading", { name: "备份恢复", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "使用帮助", exact: true }).click();
-  await expect(help.getByText("本地 Web · 恢复模式", { exact: true })).toBeVisible();
+  await expect(help.getByText("恢复资料后才能生成扩展连接码。", { exact: true })).toBeVisible();
   await expect(help.getByRole("button", { name: "恢复资料后可打开指南" })).toBeDisabled();
 });
 

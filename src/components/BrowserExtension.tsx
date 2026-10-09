@@ -47,13 +47,12 @@ export function BrowserExtension({ onPairingCountChange }: { onPairingCountChang
   return <section className="extension-help" aria-labelledby="extension-title">
     <span>02 · BROWSER CLIPPER</span>
     <h3 id="extension-title">浏览助手</h3>
-    <p>点击读取后，才读取当前网页。<br />可保存已登录网页的可见正文。<br />不申请登录凭证、历史或全部网页权限。</p>
     <div className="extension-downloads">
       <a href="/extensions/zhiye-clipper-chrome.zip?v=0.3.10" download>下载 Chrome 扩展 0.3.10</a>
       <a href="/extensions/zhiye-clipper-firefox.xpi?v=0.3.10" download>下载 Firefox 扩展 0.3.10</a>
     </div>
-    <p>Chrome：覆盖旧文件夹，重新加载扩展。</p>
-    <p>Firefox：下载 XPI，在扩展管理页安装。</p>
+    <p className="extension-help__single-line" tabIndex={0}>Chrome：覆盖旧文件夹，重新加载扩展。</p>
+    <p className="extension-help__single-line" tabIndex={0}>Firefox：下载 XPI，在扩展管理页安装。</p>
     <div className="extension-actions">
       <Button type="button" className="primary-button" onClick={() => void generate()} disabled={busy}>{busy ? "生成中…" : "连接码"}</Button>
       <Button type="button" className="guide-button" onClick={() => void load().catch((cause) => setError((cause as Error).message))} disabled={busy}>刷新连接</Button>
@@ -63,7 +62,7 @@ export function BrowserExtension({ onPairingCountChange }: { onPairingCountChang
       <span>{pairing.browser === "chrome" ? "Chrome" : "Firefox"} · {new Date(pairing.createdAt).toLocaleDateString()}</span>
       <Button type="button" onClick={() => void revoke(pairing)} disabled={busy}>断开连接</Button>
     </li>)}</ul>}
-    <p>仅向 clip.sarainoq.cn 保存新织片。<br />保存后会通知已打开的织页刷新列表。<br />图片会尝试缓存，失败时保留链接。<br />不上传登录凭证、完整网页结构。<br />不上传需登录才能读取的图片内容。</p>
+    <p className="extension-help__single-line" tabIndex={0}>仅向 clip.sarainoq.cn 保存新织片。保存后会通知已打开的织页刷新列表。图片会尝试缓存，失败时保留链接。不上传登录凭证、完整网页结构。不上传需登录才能读取的图片内容。</p>
     {error && <p className="form-error" role="alert">{error}</p>}
   </section>;
 }

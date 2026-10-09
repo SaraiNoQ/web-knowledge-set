@@ -44,7 +44,7 @@
 ) { background: var(--paper); }
 :root[data-theme="dark"] :is(
   .library-panel, .source-metadata-form, .collection-manager, .revision-panel,
-  .editor-toolbar, .pane-label, .help-overview, .trash-callout, .ui-modal-footer, .derived-panel,
+  .editor-toolbar, .pane-label, .trash-callout, .ui-modal-footer, .derived-panel,
   .derived-preview dl > div, .ai-privacy-note, .knowledge-map-filters, .semantic-progress > div,
   .paper-reader-pages, .paper-wireframe-filmstrip, .paper-wireframe-sidebar,
   .paper-wireframe-inspector, .paper-wireframe-summary, .paper-wireframe-sync-divider span

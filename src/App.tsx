@@ -3600,19 +3600,6 @@ export default function App() {
       {shortcutHelp && <Modal open panel={false} className="shortcut-backdrop" title="使用帮助" onClose={() => setShortcutHelp(false)}>
         <section className="shortcut-card help-card">
           <header><div><span className="eyebrow">HELP DESK · 本机</span><h2 id="help-title">使用帮助</h2></div><Button type="button" autoFocus onClick={() => setShortcutHelp(false)} aria-label="关闭帮助">×</Button></header>
-          <div className="help-overview">
-            <section aria-labelledby="quick-start-title">
-              <span>01 · START HERE</span>
-              <h3 id="quick-start-title">快速上手</h3>
-              <p>{cloudMode ? "用浏览助手保存网页，或粘贴公开链接。搜索、编辑和翻译织片。重要修改前，请先备份。" : "粘贴链接保存网页，搜索和整理织片。正文可以编辑和预览。重要修改前，请先备份。"}</p>
-              {!cloudMode && <Button type="button" className="guide-button" disabled={onboarding === "unavailable"} onClick={() => { setShortcutHelp(false); setGuideOpen(true); }}>{onboarding === "unavailable" ? "恢复资料后可打开指南" : "使用指南"}</Button>}
-            </section>
-            <dl className="help-meta">
-              <div><dt>版本</dt><dd>v{__APP_VERSION__}</dd></div>
-              <div><dt>使用方式</dt><dd>{"__TAURI_INTERNALS__" in window ? "macOS 桌面" : cloudMode ? "Cloudflare Web" : "本地 Web"}{safetyRecovery ? " · 恢复模式" : ""}</dd></div>
-              <div><dt>许可</dt><dd>MIT</dd></div>
-            </dl>
-          </div>
           {safetyRecovery ? <p className="notice warning">恢复资料后才能生成扩展连接码。</p> : <BrowserExtension onPairingCountChange={setBrowserPairingCount} />}
           <section className="help-shortcuts" aria-labelledby="shortcut-title">
             <h3 id="shortcut-title">快捷键</h3>
@@ -3620,6 +3607,7 @@ export default function App() {
           </section>
           {"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}
           <nav className="help-links" aria-label="项目帮助链接">
+            {!cloudMode && <Button type="button" className="guide-button" disabled={onboarding === "unavailable"} onClick={() => { setShortcutHelp(false); setGuideOpen(true); }}>{onboarding === "unavailable" ? "恢复资料后可打开指南" : "使用指南"}</Button>}
             <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/LICENSE" target="_blank" rel="noreferrer noopener">开源许可</a>
             <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/docs/PRIVACY.md" target="_blank" rel="noreferrer noopener">隐私说明</a>
             <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/docs/SUPPORT.md" target="_blank" rel="noreferrer noopener">获取帮助</a>
