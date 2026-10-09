@@ -4,23 +4,37 @@ if [[ "$(uname -s)" == Darwin ]]; then
   need_chromium=false
   need_firefox=false
   scoped=false
+  project_value=false
   if (($# == 0)); then
     need_chromium=true
     need_firefox=true
   else
     for argument in "$@"; do
+      if [[ "$project_value" == true ]]; then
+        case "$argument" in
+          firefox*) need_firefox=true ;;
+          chromium*|auth*) need_chromium=true ;;
+          all) need_chromium=true; need_firefox=true ;;
+          *) need_chromium=true; need_firefox=true ;;
+        esac
+        project_value=false
+        scoped=true
+        continue
+      fi
       case "$argument" in
+        --project) project_value=true; scoped=true ;;
+        --project=firefox*) need_firefox=true; scoped=true ;;
+        --project=chromium*|--project=auth*) need_chromium=true; scoped=true ;;
         --project=all) need_chromium=true; need_firefox=true; scoped=true ;;
-        --project=firefox*|*extension-popup.spec.ts|*extension-x-article.spec.ts|*scrollbar-firefox.spec.ts) need_firefox=true; scoped=true ;;
-        --project=chromium*|*auth.setup.ts|*.spec.ts) need_chromium=true; scoped=true ;;
+        *extension-popup.spec.ts|*extension-x-article.spec.ts|*scrollbar-firefox.spec.ts) need_firefox=true; scoped=true ;;
+        *auth.setup.ts|*.spec.ts) need_chromium=true; scoped=true ;;
       esac
     done
-    if [[ "$scoped" == false ]]; then need_chromium=true; need_firefox=true; fi
+    if [[ "$scoped" == false || "$project_value" == true ]]; then need_chromium=true; need_firefox=true; fi
   fi
   for browser in chromium firefox; do
     if [[ "$browser" == chromium && "$need_chromium" == true || "$browser" == firefox && "$need_firefox" == true ]]; then
-      executable=$(pnpm exec node --input-type=module -e "import { ${browser} } from '@playwright/test'; process.stdout.write(${browser}.executablePath())")
-      if [[ ! -x "$executable" ]]; then
+      if ! pnpm exec node --input-type=module -e "import { ${browser} } from '@playwright/test'; const browser = await ${browser}.launch(); await browser.close();" >/dev/null 2>&1; then
         printf 'Playwright %s is not installed locally; run this check in PR CI or on the Linux developer server. No browser download was started.\n' "$browser" >&2
         exit 2
       fi
