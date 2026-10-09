@@ -34,6 +34,8 @@ Reuse CI for unchanged code. Do not broaden a targeted check because more tests 
 ## Environment and release tools
 
 - Run local checks when the required dependencies are already available. If not, rely on relevant CI; use the developer server only when a needed build or release cannot run locally. Reuse the locked Node `24.19.0` / pnpm `11.7.0` environment and existing caches.
+- Developer server access: `ssh -i /Users/sarainoq/Documents/settings/key1.pem root@123.207.203.208`. Run checks in a fresh `/root/dev/zhiye-<task>` mirror; sync with `bash scripts/sync-to-campus.sh <user@host> <isolated-directory>` (for example, `root@123.207.203.208 /root/dev/zhiye-<task>`). Exclude Git metadata, credentials, dependencies, build artifacts, and local data; never reuse another active task's mirror. Production publishing uses `zhiye-ci`, not root.
+- Server browser tests: `bash scripts/run-server-e2e.sh <spec> [-g <test>]`. The shared `/run/lock/zhiye-e2e.lock` is managed by the project; do not remove or replace it.
 - For an AMO unlisted Firefox XPI, run `bash scripts/sign-firefox-unlisted.sh` from the repository root. It prompts for the AMO credentials and creates the signed package. Use it only for an explicit extension release; do not sign in through a browser or repackage an unsigned ZIP as XPI. Keep signed artifacts and credentials out of Git and logs.
 - Use a browser for relevant UI verification unless the user says not to. Do not open one for unrelated checks.
 
