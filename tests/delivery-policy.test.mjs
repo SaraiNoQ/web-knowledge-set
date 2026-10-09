@@ -12,7 +12,7 @@ test("required CI rejects failures, cancellations and unexpected skips", () => {
   assert(!ciPassed(passing, false));
 });
 test("release checks include cumulative unknown/runtime changes but skip evidence", () => {
-  assert(!needsCloudRelease(["docs/CLOUDFLARE.md", "CLAUDE.md"]));
+  assert(!needsCloudRelease(["docs/CLOUDFLARE.md", "CLAUDE.md", "README.en.md"]));
   assert(!needsCloudRelease([".github/workflows/macos-dmg.yml", ".github/workflows/cloudflare-deploy.yml", "scripts/delivery-policy.mjs", "scripts/check-delivery.mjs", "scripts/server-release.sh", "scripts/cloudflare-delivery.mjs"]));
   assert(needsCloudRelease(["docs/CLOUDFLARE.md", "src/App.tsx"]));
   assert(needsCloudRelease(["unknown-file"]));
@@ -21,7 +21,7 @@ test("release checks include cumulative unknown/runtime changes but skip evidenc
   assert(!needsDesktopCheck(["docs/README.md", "cloud/worker.ts"]));
 });
 test("documentation/workflow edits skip product jobs without weakening required checks", () => {
-  const plan = validationPlan(["AGENTS.md", "CLAUDE.md", "docs/DEVELOPMENT_WORKFLOW.md", ".github/workflows/ci.yml", "scripts/validate-change.mjs"]);
+  const plan = validationPlan(["AGENTS.md", "CLAUDE.md", "README.en.md", "docs/DEVELOPMENT_WORKFLOW.md", ".github/workflows/ci.yml", "scripts/validate-change.mjs"]);
   assert(!plan.runtime && !plan.desktop && !plan.build);
   assert(ciPassed({ policy: "success", linux: "skipped", desktop: "skipped" }, false, false));
   assert(!ciPassed({ policy: "failure", linux: "skipped", desktop: "skipped" }, false, false));
