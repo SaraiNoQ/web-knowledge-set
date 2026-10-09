@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
 
 async function finishSetup(page: Page) {
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
-  await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
+  await expect(deferSetup.or(page.getByLabel("网页链接"))).toBeVisible();
   if (await deferSetup.isVisible()) await deferSetup.click();
 }
 
@@ -15,8 +15,8 @@ test("the rail opens the map and returns to the directory without view toggles",
   await page.goto("/");
   await finishSetup(page);
   const rail = page.getByRole("navigation", { name: "工作台导航" });
-  const mapButton = rail.getByRole("button", { name: "查看知识地图", exact: true });
-  const directoryButton = rail.getByRole("button", { name: "文档资料库", exact: true });
+  const mapButton = rail.getByRole("button", { name: "知识地图", exact: true });
+  const directoryButton = rail.getByRole("button", { name: "资料库", exact: true });
   await expect(page.locator(".library-view-toggle")).toHaveCount(0);
 
   for (const width of [1440, 800, 320]) {
@@ -37,11 +37,11 @@ test("opening the map keeps the unsaved edit guard", async ({ page }) => {
   await page.goto("/");
   await finishSetup(page);
   await page.getByRole("button", { name: "新建", exact: true }).click();
-  await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "创建文章" }).click();
+  await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "新建文章" }).click();
   const editor = page.getByRole("textbox", { name: "Markdown 编辑器" });
   await editor.fill("地图打开前的未保存正文");
   const rail = page.getByRole("navigation", { name: "工作台导航" });
-  const mapButton = rail.getByRole("button", { name: "查看知识地图", exact: true });
+  const mapButton = rail.getByRole("button", { name: "知识地图", exact: true });
   await mapButton.click();
   const discard = page.getByRole("alertdialog", { name: "存在未保存修改" });
   await expect(discard).toBeVisible();

@@ -43,7 +43,7 @@ test("knowledge map stays responsive with 1000 documents and 1024-dimension vect
 
   await page.goto("/");
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
-  await expect(deferSetup.or(page.getByLabel("网页地址"))).toBeVisible();
+  await expect(deferSetup.or(page.getByLabel("网页链接"))).toBeVisible();
   if (await deferSetup.isVisible()) await deferSetup.click();
   const firstMetadataPage = page.waitForResponse((response) => {
     const url = new URL(response.url());
@@ -59,7 +59,7 @@ test("knowledge map stays responsive with 1000 documents and 1024-dimension vect
     return (JSON.parse(url.searchParams.get("ids") ?? "[]") as string[]).includes("perf-0999");
   });
   const metadataStart = await page.evaluate(() => performance.now());
-  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "查看知识地图", exact: true }).click();
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "知识地图", exact: true }).click();
   await Promise.all([firstMetadataPage, lastMetadataPage]);
   const metadataMs = await page.evaluate((start) => performance.now() - start, metadataStart);
   expect(metadataMs, `1000-node metadata took ${metadataMs.toFixed(1)}ms`).toBeLessThan(2_000);
@@ -186,7 +186,7 @@ test("knowledge map stays responsive with 1000 documents and 1024-dimension vect
   expect(await canvasFrame()).not.toBe(frameAtDrag);
   expect(await nodeFrame(otherNodePoint!)).toBe(otherNodeFrame);
   await page.mouse.up();
-  await expect(page.locator(".map-coordinate-note")).toHaveText("位置仅用于排布，不代表相似度。");
+  await expect(page.locator(".map-coordinate-note")).toHaveText("位置远近不表示内容相似程度。");
   await expect.poll(relationPixels).toBeGreaterThan(0);
   console.log(JSON.stringify({ browser: page.context().browser()?.version(), documents: count, folders: folders.length, dimensions: dimension, metadataMs: Number(metadataMs.toFixed(1)), graphMs: Number(graphMs.toFixed(1)), dragFps: Number(fps.toFixed(1)) }));
   expect(fps, `drag animation produced ${fps.toFixed(1)} frames/s`).toBeGreaterThanOrEqual(30);

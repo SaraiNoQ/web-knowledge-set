@@ -19,7 +19,7 @@ export async function renderPaperPages(
     const loaded = await loadingTask.promise;
     const total = loaded.numPages;
     if (!Number.isSafeInteger(total) || total < 1) throw new Error("无法读取论文页数");
-    if (total > PAPER_MAX_PAGES) throw new Error(`论文共 ${total} 页，超过 ${PAPER_MAX_PAGES} 页的提取上限`);
+    if (total > PAPER_MAX_PAGES) throw new Error(`论文共 ${total} 页，超过 ${PAPER_MAX_PAGES} 页的处理上限`);
     const plan = await api.registerPaperPageCount(paperId, total, signal);
     const rendered = new Set(plan.rendered);
     let done = rendered.size;
@@ -36,7 +36,7 @@ export async function renderPaperPages(
       canvas.width = Math.max(1, Math.round(viewport.width));
       canvas.height = Math.max(1, Math.round(viewport.height));
       const context = canvas.getContext("2d");
-      if (!context) throw new Error("浏览器无法创建画布");
+      if (!context) throw new Error("浏览器无法准备页面图片");
       // PDF pages are transparent; fill white so the model does not read dark
       // text on an unpredictable background.
       context.fillStyle = "#ffffff";
@@ -44,7 +44,7 @@ export async function renderPaperPages(
       await pdfPage.render({ canvas, canvasContext: context, viewport }).promise;
       pdfPage.cleanup();
       const image = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, PAPER_PAGE_IMAGE_TYPE, 0.85));
-      if (!image) throw new Error(`第 ${page} 页渲染失败`);
+      if (!image) throw new Error(`第 ${page} 页图片生成失败`);
       await api.uploadPaperPageImage(paperId, page, image, signal);
       done += 1;
       onProgress?.(done, total);

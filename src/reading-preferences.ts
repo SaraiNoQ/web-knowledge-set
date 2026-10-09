@@ -18,10 +18,10 @@ export function saveReadingMargin(value: number) {
 }
 export const READING_FONTS = { serif: "衬线字体", sans: "无衬线字体", mono: "等宽字体" } as const;
 export const READING_STYLES = {
-  paper: { label: "纸页", description: "温润衬线，适合日常阅读", font: "serif", lineHeight: 1.95 },
-  minimal: { label: "极简", description: "清晰留白，适合笔记与清单", font: "sans", lineHeight: 1.8 },
-  editorial: { label: "书刊", description: "鲜明标题，适合长文与随笔", font: "serif", lineHeight: 2.1 },
-  technical: { label: "技术", description: "紧凑层级，适合说明与代码", font: "sans", lineHeight: 1.7 },
+  paper: { label: "纸页", description: "柔和排版，适合日常阅读", font: "serif", lineHeight: 1.95 },
+  minimal: { label: "极简", description: "清爽排版，适合笔记清单", font: "sans", lineHeight: 1.8 },
+  editorial: { label: "书刊", description: "突出标题，适合长篇文章", font: "serif", lineHeight: 2.1 },
+  technical: { label: "技术", description: "紧凑排版，适合说明和代码", font: "sans", lineHeight: 1.7 },
 } as const;
 export type ReadingStyle = keyof typeof READING_STYLES;
 export interface ReadingTextSettings { style: ReadingStyle; font: keyof typeof READING_FONTS; fontSize: number; lineHeight: number; letterSpacing: number }

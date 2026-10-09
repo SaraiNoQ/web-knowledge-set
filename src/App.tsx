@@ -128,11 +128,11 @@ interface NavigationGuard {
 const ACTIVE_STATUSES = new Set<CaptureStatus>(["queued", "fetching", "extracting"]);
 const EMPTY_DOCUMENT_ASSETS: DocumentAsset[] = [];
 const STATUS_LABEL: Record<CaptureStatus, string> = {
-  queued: "等待抓取",
-  fetching: "正在读取网页",
-  extracting: "正在织理正文",
-  ready: "已就绪",
-  failed: "抓取失败",
+  queued: "等待收取",
+  fetching: "正在读取网页…",
+  extracting: "正在整理正文…",
+  ready: "可以阅读",
+  failed: "收取失败",
 };
 
 const IMPORT_PREVIEW_LABEL = { valid: "可导入", duplicate: "重复", invalid: "无效" } as const;
@@ -145,7 +145,7 @@ function importFileLimitError(kind: ImportKind, files: File[]) {
   if (kind === "markdown" && files.length > MAX_MARKDOWN_FILES) return `最多选择 ${MAX_MARKDOWN_FILES} 个 Markdown 文件。`;
   const maxBytes = kind === "bundle" ? MAX_BUNDLE_BYTES : MAX_IMPORT_BYTES;
   if (kind !== "urls" && files.reduce((total, file) => total + file.size, 0) > maxBytes) {
-    return kind === "bundle" ? "织页知识包不能超过 100 MiB。" : "导入文件合计不能超过 10 MiB。";
+    return kind === "bundle" ? "资料包不能超过 100 MiB。" : "导入文件合计不能超过 10 MiB。";
   }
   return "";
 }
@@ -158,7 +158,7 @@ function acceptedImportFiles(kind: ImportKind, selected: File[]) {
 }
 
 function unsupportedImportFileMessage(kind: ImportKind) {
-  if (kind === "bundle") return "请选择 .zip 格式的织页知识包。";
+  if (kind === "bundle") return "请选择 .zip 格式的资料包。";
   if (kind === "bookmarks") return "请选择 bookmarks.html。";
   return "没有找到 Markdown 文件。";
 }
@@ -455,7 +455,7 @@ function CaptureHistoryPanel({
       setPreview(next);
       setApplyTitle(false);
       setApplyMarkdown(false);
-      setNotice("已从本地 HTML 快照生成候选，尚未修改正文。");
+      setNotice("已从本地 网页存档生成候选，尚未修改正文。");
       requestAnimationFrame(() => previewHeading.current?.focus());
     } catch (cause) {
       setError((cause as Error).message);
@@ -472,7 +472,7 @@ function CaptureHistoryPanel({
     try {
       await onApply(preview, applyTitle, applyMarkdown);
       setPreview(null);
-      setNotice("已采纳选中内容，原修订仍保留在历史中。");
+      setNotice("已确认替换，原修订仍保留在历史中。");
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
@@ -484,10 +484,10 @@ function CaptureHistoryPanel({
   const markdownChanged = Boolean(preview && preview.before.markdown !== preview.after.markdown);
 
   return (
-    <aside id="capture-history" className="revision-panel capture-history-panel" aria-label="采集历史">
+    <aside id="capture-history" className="revision-panel capture-history-panel" aria-label="收取记录">
       <header>
-        <div><span className="eyebrow">SOURCE LEDGER</span><h3>采集历史</h3></div>
-        <Button type="button" onClick={onClose} aria-label="关闭采集历史">×</Button>
+        <div><span className="eyebrow">SOURCE LEDGER</span><h3>收取记录</h3></div>
+        <Button type="button" onClick={onClose} aria-label="关闭收取记录">×</Button>
       </header>
 
       {(error || notice) && <div className={`capture-ledger-message ${error ? "is-error" : "is-notice"}`} role={error ? "alert" : "status"}>{error || notice}</div>}
@@ -495,39 +495,39 @@ function CaptureHistoryPanel({
       {preview && (
         <section className="reextract-preview" aria-labelledby="reextract-title">
           <div className="reextract-head">
-            <div><span className="eyebrow">LOCAL SNAPSHOT · {preview.extractorVersion}</span><h4 id="reextract-title" ref={previewHeading} tabIndex={-1}>重新提取候选</h4></div>
+            <div><span className="eyebrow">LOCAL SNAPSHOT · {preview.extractorVersion}</span><h4 id="reextract-title" ref={previewHeading} tabIndex={-1}>整理预览</h4></div>
             <time dateTime={preview.createdAt}>{formatDateTime(preview.createdAt)}</time>
           </div>
           <div className="reextract-grid">
-            <article><span>当前内容</span><strong>{preview.before.title || "未命名网页"}</strong><pre>{preview.before.markdown || "空白正文"}</pre></article>
-            <article><span>快照候选</span><strong>{preview.after.title || "未命名网页"}</strong><pre>{preview.after.markdown || "空白正文"}</pre></article>
+            <article><span>当前内容</span><strong>{preview.before.title || "未命名织片"}</strong><pre>{preview.before.markdown || "空白正文"}</pre></article>
+            <article><span>整理结果</span><strong>{preview.after.title || "未命名织片"}</strong><pre>{preview.after.markdown || "空白正文"}</pre></article>
           </div>
           <fieldset disabled={applying || Boolean(blockedReason)}>
-            <legend>只采纳你明确选中的部分</legend>
+            <legend>只替换勾选的内容。</legend>
             <label><input type="checkbox" checked={applyTitle} onChange={(event) => setApplyTitle(event.target.checked)} disabled={!titleChanged} />替换标题 {!titleChanged && <small>无变化</small>}</label>
-            <label><input type="checkbox" checked={applyMarkdown} onChange={(event) => setApplyMarkdown(event.target.checked)} disabled={!markdownChanged} />替换 Markdown 正文 {!markdownChanged && <small>无变化</small>}</label>
-            <Button type="button" className="primary-button" onClick={() => void apply()} disabled={!applyTitle && !applyMarkdown}>{applying ? "采纳中…" : "采纳选中内容"}</Button>
+            <label><input type="checkbox" checked={applyMarkdown} onChange={(event) => setApplyMarkdown(event.target.checked)} disabled={!markdownChanged} />替换正文 {!markdownChanged && <small>无变化</small>}</label>
+            <Button type="button" className="primary-button" onClick={() => void apply()} disabled={!applyTitle && !applyMarkdown}>{applying ? "采纳中…" : "确认替换"}</Button>
           </fieldset>
           {blockedReason && <p className="reextract-blocked" role="note">{blockedReason}</p>}
         </section>
       )}
 
-      {loading ? <StatePanel kind="loading" title="正在翻阅采集记录" /> : error && !captures.length ? <div className="capture-load-error"><StatePanel kind="error" title="无法读取采集历史">{error}</StatePanel><Button type="button" onClick={() => void load()}>重试</Button></div> : !captures.length ? <StatePanel kind="empty" title="还没有采集记录">网页开始读取后，每次尝试都会出现在这里。</StatePanel> : (
+      {loading ? <StatePanel kind="loading" title="正在读取收取记录…" /> : error && !captures.length ? <div className="capture-load-error"><StatePanel kind="error" title="无法读取收取记录">{error}</StatePanel><Button type="button" onClick={() => void load()}>重试</Button></div> : !captures.length ? <StatePanel kind="empty" title="暂无收取记录">网页开始读取后，每次尝试都会出现在这里。</StatePanel> : (
         <ol className="capture-ledger">
           {captures.map((capture) => {
             const source = resolveLink(capture.finalUrl || capture.requestUrl || undefined, document.sourceUrl);
-            const snapshotLabel = capture.snapshotStored === "available" ? "HTML 快照可用" : capture.snapshotStored === "missing" ? "HTML 快照缺失" : "无 HTML 快照";
+            const snapshotLabel = capture.snapshotStored === "available" ? "网页存档可用" : capture.snapshotStored === "missing" ? "网页存档缺失" : "无网页存档";
             return (
               <li key={capture.id}>
                 <div className="capture-ledger-main">
                   <div><DocumentStatus status={capture.status} /><time dateTime={capture.startedAt}>{formatDateTime(capture.startedAt)}</time></div>
-                  <strong>{capture.mode === "browser" ? "浏览器采集" : capture.mode === "http" ? "直接读取" : "未进入提取"}</strong>
+                  <strong>{capture.mode === "browser" ? "浏览器读取" : capture.mode === "http" ? "直接读取" : "尚未读取"}</strong>
                   <p>{source ? <a href={source} target="_blank" rel="noreferrer noopener">{source}</a> : "未记录最终地址"}</p>
                   {capture.warning && <p className="capture-ledger-warning">警告 · {capture.warning}</p>}
                   {(capture.errorCode || capture.errorMessage) && <p className="capture-ledger-error">{capture.errorCode || "CAPTURE_FAILED"} · {userErrorMessage(capture.errorCode ?? "CAPTURE_FAILED")}</p>}
                 </div>
                 <dl><div><dt>耗时</dt><dd>{captureDuration(capture.durationMs)}</dd></div><div><dt>HTTP</dt><dd>{capture.httpStatus ?? "—"}</dd></div><div><dt>提取器</dt><dd>{capture.extractorVersion || "旧版"}</dd></div><div><dt>快照</dt><dd>{snapshotLabel}</dd></div></dl>
-                <Button type="button" onClick={() => void reextract(capture)} disabled={capture.snapshotStored !== "available" || Boolean(reextracting) || applying || Boolean(document.deletedAt)} title={capture.snapshotStored !== "available" ? snapshotLabel : document.deletedAt ? "恢复文档后可重新提取" : undefined}>{reextracting === capture.id ? "提取中…" : "从快照重新提取"}</Button>
+                <Button type="button" onClick={() => void reextract(capture)} disabled={capture.snapshotStored !== "available" || Boolean(reextracting) || applying || Boolean(document.deletedAt)} title={capture.snapshotStored !== "available" ? snapshotLabel : document.deletedAt ? "恢复文档后可重新处理" : undefined}>{reextracting === capture.id ? "提取中…" : "重新整理"}</Button>
               </li>
             );
           })}
@@ -864,7 +864,7 @@ export default function App() {
     const refresh = (event: Event) => {
       if (typeof (event as CustomEvent<unknown>).detail !== "string") return;
       setListRefresh((value) => value + 1);
-      toast.success("浏览器扩展已保存新知识，目录已刷新。");
+      toast.success("浏览助手已保存新织片，目录已刷新。");
     };
     window.addEventListener("zhiye:extension-saved", refresh);
     return () => window.removeEventListener("zhiye:extension-saved", refresh);
@@ -1176,7 +1176,7 @@ export default function App() {
     if (target.folderId === folderId) return;
     const movingCurrent = selectedIdRef.current === target.id;
     if (movingCurrent && (currentDirtyDraft() || currentDirtySourceMetadata())) {
-      toast.error("请先保存或放弃当前修改，再移动这篇知识。");
+      toast.error("请先保存或放弃当前修改，再移动这张织片。");
       return;
     }
     const guard = movingCurrent ? beginNavigation() : null;
@@ -1186,7 +1186,7 @@ export default function App() {
       if (guard && selectedIdRef.current === updated.id && canApplyNavigation(guard)) installCurrentDocument(updated);
       setListRefresh((value) => value + 1);
       await loadFolders();
-      toast.success(`已移到“${folders.find(({ id }) => id === folderId)?.name ?? "根目录"}”。`);
+      toast.success(`已移到“${folders.find(({ id }) => id === folderId)?.name ?? "未分组"}”。`);
     } catch (error) {
       if (error instanceof ApiRequestError && error.document) {
         updateListItem(error.document);
@@ -1196,7 +1196,7 @@ export default function App() {
           setTagText(error.document.tags.join(", "));
         }
       }
-      toast.error(error instanceof ApiRequestError && error.status === 409 ? "知识已在别处变化，未移动；请刷新后重试。" : (error as Error).message);
+      toast.error(error instanceof ApiRequestError && error.status === 409 ? "织片已在别处变化，未移动；请刷新后重试。" : (error as Error).message);
     }
   };
 
@@ -1205,7 +1205,7 @@ export default function App() {
     if (!title || title.length > 1000) { toast.error("标题不能为空，且最多 1000 个字符。"); return; }
     if (closing || organizationInFlight.current || saveInFlight.current || navigationMutationLocked ||
       (selectedIdRef.current === target.id && (currentDirtyDraft() || currentDirtySourceMetadata() || paperDirty || conflict || remoteDraftConflict || organizationConflict))) {
-      toast.error("请先保存或处理当前修改，再重命名。"); return;
+      toast.error("请先保存或处理当前修改，再改名。"); return;
     }
     setOrganizationSaving(true);
     try {
@@ -1224,7 +1224,7 @@ export default function App() {
   };
 
   const promptRenameDocument = async (document: DocumentSummary) => {
-    const title = await dialogs.prompt("输入新的文章标题。", { title: "重命名文章", label: "文章标题", initialValue: document.title, confirmLabel: "保存", maxLength: 1000 });
+    const title = await dialogs.prompt("输入新的文章标题。", { title: "修改标题", label: "文章标题", initialValue: document.title, confirmLabel: "保存", maxLength: 1000 });
     if (title !== null && title !== undefined) await renameDocument(document, title);
   };
 
@@ -1853,9 +1853,9 @@ export default function App() {
       setClosing(true);
       void (async () => {
         try {
-          if (organizationConflictRef.current) throw new Error("请先处理来源信息的版本冲突。");
+          if (organizationConflictRef.current) throw new Error("请先处理来源信息的版本有变。");
           if (organizationPromiseRef.current) await organizationPromiseRef.current;
-          if (organizationConflictRef.current) throw new Error("请先处理来源信息的版本冲突。");
+          if (organizationConflictRef.current) throw new Error("请先处理来源信息的版本有变。");
           await draftSaveChain.current;
           if (closeAttemptRef.current !== attemptId) return;
           let document = currentDocRef.current;
@@ -1955,7 +1955,7 @@ export default function App() {
       if (cloudMode) queueAutoTitle(result.document.id);
       if (force) keptDuplicateIdsRef.current.add(result.document.id);
       if (!await revealDocument(result.document, guard)) return;
-      setImportNotice(force ? "已保留为另一篇知识，两篇内容都不会被删除。" : "");
+      setImportNotice(force ? "已保留为另一张织片，两篇内容都不会被删除。" : "");
       void loadCaptureQueue();
     } catch (error) {
       if (canApplyNavigation(guard)) setImportError((error as Error).message);
@@ -1975,7 +1975,7 @@ export default function App() {
     try {
       normalized = normalizeCaptureUrl(value);
     } catch {
-      setImportError("请输入完整的 http(s) 网页地址。");
+      setImportError("请输入完整的 http(s) 网页链接。");
       return;
     }
     await importDocument(normalized, false, beginNavigation());
@@ -1997,7 +1997,7 @@ export default function App() {
         const result = await api.createArticle(title?.trim() || undefined);
         if (!await revealDocument(result.document, guard)) return false;
         setMode("edit");
-        toast.success("已在根目录创建文章。");
+        toast.success("已在未分组新建文章。");
         return true;
       } catch (error) {
         if (canApplyNavigation(guard)) toast.error((error as Error).message);
@@ -2035,7 +2035,7 @@ export default function App() {
       !importDuplicate || importDuplicate.kind !== "resolved" || closeAttemptRef.current ||
       lifecycleAction || restoringRevision !== null
     ) return;
-    if (!await confirmDiscardChanges("当前修改尚未保存，仍要保留为另一篇知识吗？")) return;
+    if (!await confirmDiscardChanges("当前修改尚未保存，仍要保留为另一张织片吗？")) return;
     if (!importDuplicate || importDuplicate.kind !== "resolved" || closeAttemptRef.current || lifecycleAction || restoringRevision !== null) return;
     await importDocument(importDuplicate.url, true, beginNavigation());
   };
@@ -2098,7 +2098,7 @@ export default function App() {
     if (kind === "paper") { setBulkImportOpen(false); setPaperImportOpen(true); setPaperImportError(""); }
     else { setPaperImportOpen(false); setBulkImportOpen(true); setBulkImportKind(kind); setBulkImportStrategy("skip"); setBulkImportFiles([]); setBulkImportText(""); setBulkImportError(""); setBulkImportNotice(""); }
   };
-  const importTabs = (active: ImportKind | "paper", disabled: boolean) => <SegmentedControl label="导入格式" className="import-format-tabs" value={active} disabled={disabled} options={([["urls", "网址列表"], ["bookmarks", "浏览器书签"], ["markdown", "Markdown"], ["bundle", "织页知识包"], ["paper", "论文 PDF"]] as const).map(([value, label]) => ({ value, label, disabled: cloudMode && ["urls", "bookmarks", "bundle"].includes(value) }))} onChange={switchImportFormat} />;
+  const importTabs = (active: ImportKind | "paper", disabled: boolean) => <SegmentedControl label="导入格式" className="import-format-tabs" value={active} disabled={disabled} options={([["urls", "网页链接"], ["bookmarks", "浏览书签"], ["markdown", "Markdown"], ["bundle", "资料包"], ["paper", "论文 PDF"]] as const).map(([value, label]) => ({ value, label, disabled: cloudMode && ["urls", "bookmarks", "bundle"].includes(value) }))} onChange={switchImportFormat} />;
 
   externalIntentHandlerRef.current = async (intents) => {
     const externalError = intents.find((intent): intent is Extract<ExternalIntent, { kind: "error" }> => intent.kind === "error");
@@ -2122,7 +2122,7 @@ export default function App() {
     try {
       const kind = fileIntents[0]!.kind;
       if (fileIntents.some((intent) => intent.kind !== kind)) throw new Error("一次只能打开一种导入文件。");
-      if (safetyOpen) throw new Error("请先退出数据安全界面，再重新打开或拖入文件。");
+      if (safetyOpen) throw new Error("请先退出备份恢复界面，再重新打开或拖入文件。");
       if (bulkImportBusy) throw new Error("当前导入完成后，请重新打开或拖入文件。");
       const files: File[] = [];
       for (const intent of fileIntents) {
@@ -2280,7 +2280,7 @@ export default function App() {
       }
     } catch (error) {
       if ((error as Error).name === "AbortError") {
-        setBulkImportNotice("已停止等待导入结果；服务端可能已完成，可再次确认导入以同步结果。");
+        setBulkImportNotice("已停止等待导入结果；服务端可能已完成，可再次开始导入以同步结果。");
         setListRefresh((value) => value + 1);
       } else setBulkImportError((error as Error).message);
     } finally {
@@ -2343,7 +2343,7 @@ export default function App() {
           selectedIdRef.current === baseDocument.id
         ) {
           updateOrganizationConflict({ server: error.document, patch, successMessage, rebase });
-          setOrganizationError("这篇知识已在别处更新，请基于最新版本重试或放弃这次更改。");
+          setOrganizationError("这张织片已在别处更新，请基于最新版本重试或放弃这次更改。");
         } else if (selectedIdRef.current === baseDocument.id) {
           setOrganizationError((error as Error).message);
         }
@@ -2411,7 +2411,7 @@ export default function App() {
     };
     await commitOrganization(
       { collectionIds: next },
-      checked ? "已加入集合。" : "已移出集合。",
+      checked ? "已加入专题。" : "已移出专题。",
       currentDoc,
       false,
       rebase,
@@ -2440,7 +2440,7 @@ export default function App() {
       invalidateCollectionsLoad();
       setCollections((previous) => [...previous, created].sort((a, b) => a.name.localeCompare(b.name, "zh-CN")));
       setCollectionName("");
-      setOrganizationNotice(`已创建集合“${created.name}”。`);
+      setOrganizationNotice(`已新建专题“${created.name}”。`);
     } catch (error) {
       setOrganizationError((error as Error).message);
     } finally {
@@ -2473,7 +2473,7 @@ export default function App() {
         updateListItem(renamed);
       }
       setRenamingCollection(null);
-      setOrganizationNotice(`集合已更名为“${updated.name}”。`);
+      setOrganizationNotice(`专题已更名为“${updated.name}”。`);
     } catch (error) {
       setOrganizationError((error as Error).message);
     } finally {
@@ -2483,8 +2483,8 @@ export default function App() {
 
   const deleteCollection = async (collection: KnowledgeCollection) => {
     if (organizationInFlight.current || closeAttemptRef.current || !await dialogs.confirm(
-      `删除集合“${collection.name}”？它将从 ${collection.documentCount} 篇知识中移除，文档本身不会删除。`,
-      { title: "删除集合", confirmLabel: "删除集合", tone: "danger" },
+      `删除专题“${collection.name}”？它将从 ${collection.documentCount} 张织片中移除，文档本身不会删除。`,
+      { title: "删除专题", confirmLabel: "删除专题", tone: "danger" },
     )) return;
     if (organizationInFlight.current || closeAttemptRef.current) return;
     setCollectionAction(collection.id);
@@ -2509,7 +2509,7 @@ export default function App() {
         setTagText(refreshed.tags.join(", "));
         updateListItem(refreshed);
       }
-      setOrganizationNotice(`已删除集合“${collection.name}”，从 ${result.affectedDocuments} 篇知识中移除。`);
+      setOrganizationNotice(`已删除专题“${collection.name}”，从 ${result.affectedDocuments} 张织片中移除。`);
     } catch (error) {
       setOrganizationError((error as Error).message);
       void loadCollections();
@@ -2535,8 +2535,8 @@ export default function App() {
   };
 
   const renameTag = async (tagValue: KnowledgeTag) => {
-    const name = (await dialogs.prompt(`将标签“${tagValue.name}”重命名为`, {
-      title: "重命名标签", label: "新标签名称", initialValue: tagValue.name, confirmLabel: "保存名称", maxLength: 100,
+    const name = (await dialogs.prompt(`将标签“${tagValue.name}”改名为`, {
+      title: "修改标签", label: "标签名称", initialValue: tagValue.name, confirmLabel: "保存名称", maxLength: 100,
     }))?.trim();
     if (!name || name === tagValue.name || tagAction || organizationInFlight.current) return;
     setTagAction(tagValue.name);
@@ -2547,7 +2547,7 @@ export default function App() {
         await refreshClassificationData();
         return response;
       })());
-      setOrganizationNotice(`已在 ${result.affectedDocuments} 篇知识中将标签更名为“${name}”。`);
+      setOrganizationNotice(`已在 ${result.affectedDocuments} 张织片中将标签更名为“${name}”。`);
     } catch (error) {
       setOrganizationError((error as Error).message);
     } finally {
@@ -2557,10 +2557,10 @@ export default function App() {
 
   const mergeTag = async (tagValue: KnowledgeTag) => {
     const targetName = (await dialogs.prompt(`将标签“${tagValue.name}”合并到哪个标签？`, {
-      title: "合并标签", label: "目标标签名称", confirmLabel: "继续", maxLength: 100,
+      title: "合并标签", label: "目标标签", confirmLabel: "继续", maxLength: 100,
     }))?.trim();
     if (!targetName || targetName === tagValue.name || tagAction || organizationInFlight.current) return;
-    if (!await dialogs.confirm(`将影响 ${tagValue.documentCount} 篇知识，源标签将被删除。继续？`, {
+    if (!await dialogs.confirm(`将影响 ${tagValue.documentCount} 张织片，源标签将被删除。继续？`, {
       title: "确认合并标签", confirmLabel: "合并标签", tone: "danger",
     })) return;
     if (tagAction || organizationInFlight.current) return;
@@ -2572,7 +2572,7 @@ export default function App() {
         await refreshClassificationData();
         return response;
       })());
-      setOrganizationNotice(`已合并 ${result.affectedDocuments} 篇知识的标签。`);
+      setOrganizationNotice(`已合并 ${result.affectedDocuments} 张织片的标签。`);
     } catch (error) {
       setOrganizationError((error as Error).message);
     } finally {
@@ -2582,7 +2582,7 @@ export default function App() {
 
   const deleteTag = async (tagValue: KnowledgeTag) => {
     if (tagAction || organizationInFlight.current || !await dialogs.confirm(
-      `从 ${tagValue.documentCount} 篇知识中移除标签“${tagValue.name}”？文档本身不会删除。`,
+      `从 ${tagValue.documentCount} 张织片中移除标签“${tagValue.name}”？文档本身不会删除。`,
       { title: "删除标签", confirmLabel: "删除标签", tone: "danger" },
     )) return;
     if (tagAction || organizationInFlight.current) return;
@@ -2594,7 +2594,7 @@ export default function App() {
         await refreshClassificationData();
         return response;
       })());
-      setOrganizationNotice(`已从 ${result.affectedDocuments} 篇知识中移除标签。`);
+      setOrganizationNotice(`已从 ${result.affectedDocuments} 张织片中移除标签。`);
     } catch (error) {
       setOrganizationError((error as Error).message);
     } finally {
@@ -2603,16 +2603,16 @@ export default function App() {
   };
 
   const mergeCollection = async (collection: KnowledgeCollection) => {
-    const targetName = (await dialogs.prompt(`将集合“${collection.name}”合并到哪个集合？`, {
-      title: "合并集合", label: "目标集合名称", confirmLabel: "继续", maxLength: 100,
+    const targetName = (await dialogs.prompt(`将专题“${collection.name}”合并到哪个专题？`, {
+      title: "合并专题", label: "目标专题", confirmLabel: "继续", maxLength: 100,
     }))?.trim();
     const target = collections.find((value) => value.name.toLocaleLowerCase() === targetName?.toLocaleLowerCase());
     if (!targetName || !target || target.id === collection.id) {
-      if (targetName) setOrganizationError("请输入另一个已有集合的完整名称。");
+      if (targetName) setOrganizationError("请输入另一个已有专题的完整名称。");
       return;
     }
-    if (!await dialogs.confirm(`将影响 ${collection.documentCount} 篇知识，源集合将被删除。继续？`, {
-      title: "确认合并集合", confirmLabel: "合并集合", tone: "danger",
+    if (!await dialogs.confirm(`将影响 ${collection.documentCount} 张织片，源专题将被删除。继续？`, {
+      title: "确认合并专题", confirmLabel: "合并专题", tone: "danger",
     })) return;
     if (collectionAction || organizationInFlight.current) return;
     setCollectionAction(collection.id);
@@ -2623,7 +2623,7 @@ export default function App() {
         await refreshClassificationData();
         return response;
       })());
-      setOrganizationNotice(`已合并 ${result.affectedDocuments} 篇知识的集合。`);
+      setOrganizationNotice(`已合并 ${result.affectedDocuments} 张织片的专题。`);
     } catch (error) {
       setOrganizationError((error as Error).message);
     } finally {
@@ -2660,7 +2660,7 @@ export default function App() {
   const keepResolvedDuplicate = () => {
     if (currentDoc) keptDuplicateIdsRef.current.add(currentDoc.id);
     setResolvedDuplicate(null);
-    setDuplicateNotice("已保留两篇知识，当前条目没有被删除。");
+    setDuplicateNotice("已保留两张织片，当前条目没有被删除。");
   };
 
   const selectDocument = async (id: string) => {
@@ -2820,8 +2820,8 @@ export default function App() {
       value = batchCollectionId;
       if (!value) return;
     }
-    if (batchAction === "trash" && !await dialogs.confirm(`将当前页选中的 ${selectedIds.size} 篇知识移入回收站？`, {
-      title: "批量移入回收站", confirmLabel: "移入回收站", tone: "danger",
+    if (batchAction === "trash" && !await dialogs.confirm(`将当前页选中的 ${selectedIds.size} 张织片移入回收站？之后可以恢复。`, {
+      title: "批量删除", confirmLabel: "删除资料", tone: "danger",
     })) return;
     if (batchBusy || (inTrash && listLoading) || organizationInFlight.current || (inTrash && itemsContextRef.current !== listContextKey)) return;
     const documents = [...selectedIds].flatMap((id) => {
@@ -2840,7 +2840,7 @@ export default function App() {
           value,
         });
         if (listContextRef.current === requestContext) {
-          setBatchNotice(`已处理当前页选中的 ${result.affectedDocuments} 篇知识。`);
+          setBatchNotice(`已处理当前页选中的 ${result.affectedDocuments} 张织片。`);
           if (selectedIdRef.current && (batchAction === "trash" || batchAction === "restore")) {
             invalidateNavigation();
             dismissSelectedDocument();
@@ -2884,7 +2884,7 @@ export default function App() {
     const controller = new AbortController();
     portableExportAbortRef.current = controller;
     setPortableExporting(scope);
-    setPortableNotice(scope === "all" ? "正在导出全部知识包…" : `正在导出所选 ${documentIds.length} 篇知识…`);
+    setPortableNotice(scope === "all" ? "正在导出全部知识包…" : `正在导出所选 ${documentIds.length} 张织片…`);
     setPortableError("");
     try {
       const { blob, fileName } = await api.exportPortable(scope, documentIds, controller.signal);
@@ -3001,7 +3001,7 @@ export default function App() {
       updateListItem(updated);
       setDraft(draftOf(updated));
       setMode("edit");
-      setDraftNotice("已保留原链接。请粘贴正文并保存；自动抓取失败记录仍可在采集历史中查看。");
+      setDraftNotice("已保留原链接。请粘贴正文并保存；自动收取失败记录仍可在收取记录中查看。");
       setListRefresh((value) => value + 1);
     } catch (error) {
       setDetailError((error as Error).message);
@@ -3033,8 +3033,8 @@ export default function App() {
   const moveToTrash = async () => {
     if (closeAttemptRef.current || organizationInFlight.current || remoteDraftConflict || organizationConflict || !currentDoc || hasUnsavedChanges) return;
     const document = currentDoc;
-    if (!await dialogs.confirm(`把“${document.title || "未命名网页"}”移入回收站？之后可以恢复。`, {
-      title: "移入回收站", confirmLabel: "移入回收站", tone: "danger",
+    if (!await dialogs.confirm(`把“${document.title || "未命名织片"}”移入回收站？之后可以恢复。`, {
+      title: "删除资料", confirmLabel: "删除资料", tone: "danger",
     })) return;
     if (closeAttemptRef.current || organizationInFlight.current || currentDocRef.current?.id !== document.id || remoteDraftConflict || organizationConflict || hasUnsavedChanges) return;
     setLifecycleAction("delete");
@@ -3065,7 +3065,7 @@ export default function App() {
   const trashDirectoryDocument = async (document: DocumentSummary) => {
     if (currentDocRef.current?.id === document.id) {
       if (currentDirtyDraft() || currentDirtySourceMetadata() || remoteDraftConflict || organizationConflict) {
-        toast.error("请先保存或放弃当前修改，再删除这篇知识。");
+        toast.error("请先保存或放弃当前修改，再删除这张织片。");
         return;
       }
       await moveToTrash();
@@ -3073,20 +3073,20 @@ export default function App() {
       void loadFolders();
       return;
     }
-    if (closeAttemptRef.current || !await dialogs.confirm(`把“${document.title || "未命名网页"}”移入回收站？之后可以恢复。`, {
-      title: "移入回收站", confirmLabel: "移入回收站", tone: "danger",
+    if (closeAttemptRef.current || !await dialogs.confirm(`把“${document.title || "未命名织片"}”移入回收站？之后可以恢复。`, {
+      title: "删除资料", confirmLabel: "删除资料", tone: "danger",
     })) return;
     try {
       const deleted = await api.deleteDocument(document.id, document.revision);
       updateListItem(deleted);
       setListRefresh((value) => value + 1);
       await loadFolders();
-      toast.success("已移入回收站。");
+      toast.success("已删除资料。");
     } catch (error) {
       if (error instanceof ApiRequestError && error.document) updateListItem(error.document);
       setListRefresh((value) => value + 1);
       void loadFolders();
-      toast.error(error instanceof ApiRequestError && error.status === 409 ? "知识已在别处变化，未删除；请刷新后重试。" : (error as Error).message);
+      toast.error(error instanceof ApiRequestError && error.status === 409 ? "织片已在别处变化，未删除；请刷新后重试。" : (error as Error).message);
     }
   };
 
@@ -3138,8 +3138,8 @@ export default function App() {
   const permanentlyDelete = async () => {
     if (closeAttemptRef.current || organizationInFlight.current || !currentDoc || hasUnsavedChanges || conflict || organizationConflict || remoteDraftConflict) return;
     const document = currentDoc;
-    if (!await dialogs.confirm(`永久删除“${document.title || "未命名网页"}”？抓取快照和历史版本也会被删除，此操作无法撤销。`, {
-      title: "永久删除知识", confirmLabel: "永久删除", tone: "danger",
+    if (!await dialogs.confirm(`永久删除“${document.title || "未命名织片"}”？网页存档和历史版本也会被删除，删除后无法恢复。`, {
+      title: "永久删除", confirmLabel: "永久删除", tone: "danger",
     })) return;
     if (closeAttemptRef.current || organizationInFlight.current || currentDocRef.current?.id !== document.id || hasUnsavedChanges || conflict || organizationConflict || remoteDraftConflict) return;
     setLifecycleAction("permanent");
@@ -3195,8 +3195,8 @@ export default function App() {
     setBatchError("");
     try {
       const stored = cloudMode ? null : await api.getDocumentDraft(document.id);
-      if (!await dialogs.confirm(`永久删除“${document.title || "未命名网页"}”？${stored ? "检测到未保存草稿；草稿、" : ""}抓取快照和历史版本也会被删除，此操作无法撤销。`, {
-        title: "永久删除知识", confirmLabel: "永久删除", tone: "danger",
+      if (!await dialogs.confirm(`永久删除“${document.title || "未命名织片"}”？${stored ? "检测到未保存草稿；草稿、" : ""}网页存档和历史版本也会被删除，删除后无法恢复。`, {
+        title: "永久删除", confirmLabel: "永久删除", tone: "danger",
       })) return;
       await api.permanentlyDeleteDocument(document.id, document.revision, stored?.draftRevision ?? null);
       setOpenDocuments((tabs) => tabs.filter((tab) => tab.id !== document.id));
@@ -3304,7 +3304,7 @@ export default function App() {
       const current = currentDocRef.current;
       const value = draftRef.current;
       if (!current || !value || current.id !== currentDoc.id || !draftsEqual(value, draftOf(current))) {
-        throw new Error("请先保存或放弃当前编辑，再采纳快照候选。");
+        throw new Error("请先保存或放弃当前编辑，再采纳整理结果。");
       }
       if (current.revision !== preview.baseRevision) {
         throw new Error("文档已变化，请重新从快照生成对比。");
@@ -3393,7 +3393,7 @@ export default function App() {
       persistedDraftRef.current = null;
       setDraft(draftOf(currentDoc));
       setTagText(currentDoc.tags.join(", "));
-      setDraftNotice("另一窗口已放弃草稿，已恢复正式版本。");
+      setDraftNotice("另一窗口已放弃草稿，已恢复上次保存的内容。");
     }
     setRemoteDraftConflict(null);
     setDraftError("");
@@ -3515,12 +3515,12 @@ export default function App() {
     : captureQueue.paused
       ? `队列已暂停${captureQueue.active ? ` · ${captureQueue.active} 篇仍在完成` : ""} · ${captureQueue.queued} 篇等待`
       : captureQueue.active
-        ? `正在采集 ${captureQueue.active} 篇 · ${captureQueue.queued} 篇等待`
+        ? `正在收取 ${captureQueue.active} 篇 · ${captureQueue.queued} 篇等待`
         : captureQueue.queued
-          ? `${captureQueue.queued} 篇等待采集`
-          : "采集队列空闲";
+          ? `${captureQueue.queued} 篇等待收取`
+          : "暂无等待网页";
   const captureBlockedReason = !currentDoc || currentDoc.status !== "ready"
-    ? "只能从已就绪的文档采纳候选。"
+    ? "只能从可以阅读的文档采纳候选。"
     : currentDoc.deletedAt
       ? "先从回收站恢复文档，再采纳候选。"
       : hasUnsavedChanges || saveState === "saving" || organizationSaving
@@ -3529,7 +3529,7 @@ export default function App() {
           ? "请先处理当前的版本或草稿冲突。"
           : null;
   const derivedBlockedReason = !currentDoc || currentDoc.status !== "ready"
-    ? "只能为已就绪的文档生成派生知识。"
+    ? "只能为可以阅读的文档生成内容。"
     : currentDoc.deletedAt
       ? "请先从回收站恢复文档。"
       : hasUnsavedChanges || saveState === "saving" || organizationSaving
@@ -3542,14 +3542,14 @@ export default function App() {
     const bodyLength = currentDoc.markdown.replace(/\s/gu, "").length;
     if (bodyLength < 200) {
       qualityIssues.push({
-        title: "正文可能不完整",
-        detail: `当前正文约 ${bodyLength} 个非空白字符。可在采集历史中比较 HTML 快照的重新提取结果。`,
+        title: "正文待确认",
+        detail: `当前正文约 ${bodyLength} 个非空白字符。可在收取记录中比较 网页存档的重新处理结果。`,
       });
     }
     if (!currentDoc.title.trim() || currentDoc.title.trim().toLowerCase() === sourceName(currentDoc.sourceUrl).toLowerCase()) {
       qualityIssues.push({
-        title: "未可靠识别标题",
-        detail: "当前标题仍像来源域名。可直接在上方标题框中补充，保存后不会被后续采集静默覆盖。",
+        title: "标题待确认",
+        detail: "标题可能不准确。可在标题框修改并保存。",
       });
     }
     const failedAssets = assets.filter((asset) => asset.status === "failed").length;
@@ -3573,17 +3573,17 @@ export default function App() {
     <div className={`app-shell editor-shell${immersiveActive ? " is-immersive" : ""}`} data-reading-style={readingText.style} style={{ "--reading-margin": readingMargin, "--reading-font": `var(--font-${readingText.font})`, "--reading-font-size": `${readingText.fontSize}px`, "--reading-line-height": readingText.lineHeight, "--reading-letter-spacing": `${readingText.letterSpacing}em` } as import("react").CSSProperties}>
       <a className="skip-link" href="#library-panel">跳到资料库</a>
       <nav className="workspace-rail" aria-label="工作台导航">
-        <Button type="button" className="rail-brand" aria-label="返回知识库主界面" disabled={closing} onClick={() => void returnToLibrary()}>织</Button>
-        <IconButton label="文档资料库" ref={libraryRailRef} aria-expanded={workspaceVisible && !libraryCollapsed} aria-controls={workspaceVisible ? "library-panel" : undefined} aria-pressed={!libraryCollapsed && !sidebarSearch && !graphMode && libraryView === "all" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing} onClick={() => void toggleDirectory()}><WorkspaceIcon name="document" /></IconButton>
-        <IconButton label="快捷搜索与新建文章" aria-haspopup="dialog" aria-expanded={quickActionsOpen} disabled={closing} onClick={openQuickActions}><WorkspaceIcon name="quickSearch" /></IconButton>
-        <IconButton label="查看知识地图" aria-pressed={graphMode} disabled={closing} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); void openKnowledgeMap(); }}><WorkspaceIcon name="map" /></IconButton>
+        <Button type="button" className="rail-brand" aria-label="返回列表主界面" disabled={closing} onClick={() => void returnToLibrary()}>织</Button>
+        <IconButton label="资料库" ref={libraryRailRef} aria-expanded={workspaceVisible && !libraryCollapsed} aria-controls={workspaceVisible ? "library-panel" : undefined} aria-pressed={!libraryCollapsed && !sidebarSearch && !graphMode && libraryView === "all" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing} onClick={() => void toggleDirectory()}><WorkspaceIcon name="document" /></IconButton>
+        <IconButton label="快捷查找" aria-haspopup="dialog" aria-expanded={quickActionsOpen} disabled={closing} onClick={openQuickActions}><WorkspaceIcon name="quickSearch" /></IconButton>
+        <IconButton label="知识地图" aria-pressed={graphMode} disabled={closing} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); void openKnowledgeMap(); }}><WorkspaceIcon name="map" /></IconButton>
         <IconButton label="导入" disabled={closing} onClick={() => { if (!bulkImportPreview) setBulkImportKind(cloudMode ? "markdown" : "urls"); setBulkImportOpen(true); }}><WorkspaceIcon name="import" /></IconButton>
         <div className="rail-spacer" />
-        <IconButton label="帮助与关于" disabled={closing} onClick={() => setShortcutHelp(true)}><WorkspaceIcon name="help" /></IconButton>
-        <IconButton label="管理数据安全" aria-pressed={safetyOpen} disabled={closing} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }}><WorkspaceIcon name="shield" /></IconButton>
+        <IconButton label="使用帮助" disabled={closing} onClick={() => setShortcutHelp(true)}><WorkspaceIcon name="help" /></IconButton>
+        <IconButton label="备份恢复" aria-pressed={safetyOpen} disabled={closing} onClick={() => { setAiSettingsOpen(false); setDiagnosticsOpen(false); setSafetyOpen(true); }}><WorkspaceIcon name="shield" /></IconButton>
         <ThemeToggle />
-        <IconButton ref={immersiveToggleRef} label={immersiveMode ? "退出沉浸模式" : "进入沉浸模式"} aria-pressed={immersiveMode} aria-disabled={appearanceSaving || closing} onClick={() => void toggleImmersive()}><WorkspaceIcon name="immersive" /></IconButton>
-        <IconButton label="打开设置" aria-pressed={aiSettingsOpen} disabled={closing} onClick={() => { setDerivedOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); setAiSettingsOpen(true); }}><WorkspaceIcon name="settings" /></IconButton>
+        <IconButton ref={immersiveToggleRef} label={immersiveMode ? "退出专注" : "专注阅读"} aria-pressed={immersiveMode} aria-disabled={appearanceSaving || closing} onClick={() => void toggleImmersive()}><WorkspaceIcon name="immersive" /></IconButton>
+        <IconButton label="设置" aria-pressed={aiSettingsOpen} disabled={closing} onClick={() => { setDerivedOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); setAiSettingsOpen(true); }}><WorkspaceIcon name="settings" /></IconButton>
       </nav>
 
       {offline && <div className="offline-banner" role="status">{cloudMode ? "云端服务当前不可达，请恢复网络后继续。" : "系统报告当前离线；本地阅读、编辑与搜索仍可使用，网页抓取和远程 AI 可能失败。"}</div>}
@@ -3597,33 +3597,33 @@ export default function App() {
         />
       )}
 
-      {shortcutHelp && <Modal open panel={false} className="shortcut-backdrop" title="帮助与关于" onClose={() => setShortcutHelp(false)}>
+      {shortcutHelp && <Modal open panel={false} className="shortcut-backdrop" title="使用帮助" onClose={() => setShortcutHelp(false)}>
         <section className="shortcut-card help-card">
-          <header><div><span className="eyebrow">HELP DESK · 本机</span><h2 id="help-title">帮助与关于</h2></div><Button type="button" autoFocus onClick={() => setShortcutHelp(false)} aria-label="关闭帮助">×</Button></header>
+          <header><div><span className="eyebrow">HELP DESK · 本机</span><h2 id="help-title">使用帮助</h2></div><Button type="button" autoFocus onClick={() => setShortcutHelp(false)} aria-label="关闭帮助">×</Button></header>
           <div className="help-overview">
             <section aria-labelledby="quick-start-title">
               <span>01 · START HERE</span>
               <h3 id="quick-start-title">快速上手</h3>
-              <p>{cloudMode ? "安装浏览器扩展剪藏登录页，或直接抓取公开网页；再搜索、编辑 Markdown、生成 AI 派生内容，并用 R2 留档保护数据。" : "粘贴公开网页地址完成采集，在资料库中搜索整理，再用 Markdown 编辑与预览；重要变更前先到“数据安全”创建留档。"}</p>
-              {!cloudMode && <Button type="button" className="guide-button" disabled={onboarding === "unavailable"} onClick={() => { setShortcutHelp(false); setGuideOpen(true); }}>{onboarding === "unavailable" ? "恢复资料后可打开指南" : "重新打开使用指南"}</Button>}
+              <p>{cloudMode ? "用浏览助手保存网页，或粘贴公开链接。搜索、编辑和翻译织片。重要修改前，请先备份。" : "粘贴链接保存网页，搜索和整理织片。正文可以编辑和预览。重要修改前，请先备份。"}</p>
+              {!cloudMode && <Button type="button" className="guide-button" disabled={onboarding === "unavailable"} onClick={() => { setShortcutHelp(false); setGuideOpen(true); }}>{onboarding === "unavailable" ? "恢复资料后可打开指南" : "使用指南"}</Button>}
             </section>
             <dl className="help-meta">
               <div><dt>版本</dt><dd>v{__APP_VERSION__}</dd></div>
-              <div><dt>运行模式</dt><dd>{"__TAURI_INTERNALS__" in window ? "macOS 桌面" : cloudMode ? "Cloudflare Web" : "本地 Web"}{safetyRecovery ? " · 恢复模式" : ""}</dd></div>
+              <div><dt>使用方式</dt><dd>{"__TAURI_INTERNALS__" in window ? "macOS 桌面" : cloudMode ? "Cloudflare Web" : "本地 Web"}{safetyRecovery ? " · 恢复模式" : ""}</dd></div>
               <div><dt>许可</dt><dd>MIT</dd></div>
             </dl>
           </div>
-          {safetyRecovery ? <p className="notice warning">恢复资料后才能生成扩展配对码。</p> : <BrowserExtension onPairingCountChange={setBrowserPairingCount} />}
+          {safetyRecovery ? <p className="notice warning">恢复资料后才能生成扩展连接码。</p> : <BrowserExtension onPairingCountChange={setBrowserPairingCount} />}
           <section className="help-shortcuts" aria-labelledby="shortcut-title">
             <h3 id="shortcut-title">快捷键</h3>
             <dl className="shortcut-list"><div><dt><kbd>⌘</kbd><kbd>K</kbd></dt><dd>打开快捷搜索</dd></div><div><dt><kbd>/</kbd></dt><dd>打开快捷搜索</dd></div><div><dt><kbd>J</kbd> / <kbd>K</kbd></dt><dd>在列表中移动</dd></div>{!cloudMode && <div><dt><kbd>X</kbd></dt><dd>选中或取消当前行</dd></div>}<div><dt><kbd>↵</kbd></dt><dd>打开当前行</dd></div>{!cloudMode && <div><dt><kbd>⌘</kbd><kbd>S</kbd></dt><dd>立即保存</dd></div>}<div><dt><kbd>Esc</kbd></dt><dd>关闭面板或返回列表</dd></div><div><dt><kbd>?</kbd></dt><dd>显示本帮助</dd></div></dl>
           </section>
           {"__TAURI_INTERNALS__" in window && <AppUpdater beforeOperation={prepareDataSafetyOperation} disabled={closing || safetyRecovery} />}
           <nav className="help-links" aria-label="项目帮助链接">
-            <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/LICENSE" target="_blank" rel="noreferrer noopener">MIT 许可</a>
-            <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/docs/PRIVACY.md" target="_blank" rel="noreferrer noopener">隐私</a>
-            <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/docs/SUPPORT.md" target="_blank" rel="noreferrer noopener">支持</a>
-            <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/docs/SECURITY.md" target="_blank" rel="noreferrer noopener">安全</a>
+            <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/LICENSE" target="_blank" rel="noreferrer noopener">开源许可</a>
+            <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/docs/PRIVACY.md" target="_blank" rel="noreferrer noopener">隐私说明</a>
+            <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/docs/SUPPORT.md" target="_blank" rel="noreferrer noopener">获取帮助</a>
+            <a href="https://github.com/SaraiNoQ/web-knowledge-set/blob/main/docs/SECURITY.md" target="_blank" rel="noreferrer noopener">安全说明</a>
           </nav>
         </section>
       </Modal>}
@@ -3645,7 +3645,7 @@ export default function App() {
         >
           <section className="bulk-import-card">
             <header>
-              <div><h2 id="bulk-import-title">导入</h2><p>{paperImportOpen ? "导入论文 PDF，保存原文并生成分页对照。" : bulkImportKind === "bundle" ? "恢复便携知识包；完整留档仍在“数据安全”中管理。" : "先检查，再一次写入资料库。"}</p></div>
+              <div><h2 id="bulk-import-title">导入</h2><p>{paperImportOpen ? "保存论文，生成分页中文对照。" : bulkImportKind === "bundle" ? "导入资料包；完整备份请到“备份恢复”。" : "检查后，批量添加到资料库。"}</p></div>
               {bulkImportTask
                 ? <Button className="bulk-cancel-task" type="button" autoFocus onClick={cancelBulkImportTask}>{bulkImportTask === "validating" ? "取消校验" : "取消导入"}</Button>
                 : <Button type="button" autoFocus onClick={() => { if (paperImportOpen) setPaperImportOpen(false); else void closeBulkImport(); }} disabled={bulkImportBusy || paperImportBusy} aria-label="关闭导入">×</Button>}
@@ -3653,23 +3653,23 @@ export default function App() {
 
             {!bulkImportPreview && importTabs(paperImportOpen ? "paper" : bulkImportKind, bulkImportBusy || paperImportBusy || uploadPreparing)}
             {paperImportOpen ? <div className="paper-import-content">
-              <SegmentedControl label="论文来源类型" className="paper-import-tabs" value={paperImportMode} disabled={paperImportBusy} options={[{ value: "url", label: "公开链接" }, { value: "pdf", label: "上传 PDF" }]} onChange={setPaperImportMode} />
-              {paperImportMode === "url" ? <label className="paper-import-field"><span>论文链接</span><input type="url" value={paperImportUrl} onChange={(event) => setPaperImportUrl(event.target.value)} placeholder="https://arxiv.org/abs/..." disabled={paperImportBusy} /><small>支持 arXiv 页面和直接 PDF；IEEE / ACM 等请上传 PDF。</small></label> : <FilePicker title="拖放 PDF 文件或选择上传" label="选择 PDF 文件" icon="paper" accept="application/pdf,.pdf" file={paperImportFile} disabled={paperImportBusy} onFile={setPaperImportFile} hint="单文件上限 50 MiB；原始文件不会被 AI 改写。" />}
+              <SegmentedControl label="论文来源类型" className="paper-import-tabs" value={paperImportMode} disabled={paperImportBusy} options={[{ value: "url", label: "论文链接" }, { value: "pdf", label: "上传文件" }]} onChange={setPaperImportMode} />
+              {paperImportMode === "url" ? <label className="paper-import-field"><span>论文链接</span><input type="url" value={paperImportUrl} onChange={(event) => setPaperImportUrl(event.target.value)} placeholder="https://arxiv.org/abs/..." disabled={paperImportBusy} /><small>支持 arXiv 页面和直接 PDF；IEEE / ACM 等请上传文件。</small></label> : <FilePicker title="拖入论文文件，或点击选择。" label="选择文件" icon="paper" accept="application/pdf,.pdf" file={paperImportFile} disabled={paperImportBusy} onFile={setPaperImportFile} hint="每份限 50 MiB，保留原始文件。" />}
               {paperImportError && <p className="paper-import-error" role="alert">{paperImportError}</p>}
-              <footer className="bulk-dialog-actions paper-import-actions"><Button type="button" onClick={() => setPaperImportOpen(false)} disabled={paperImportBusy}>取消</Button><Button type="button" className="primary-button" onClick={() => void importPaper()} disabled={paperImportBusy || (paperImportMode === "url" ? !paperImportUrl.trim() : !paperImportFile)}>{paperImportBusy ? <><Spinner />处理中…</> : "创建论文"}</Button></footer>
+              <footer className="bulk-dialog-actions paper-import-actions"><Button type="button" onClick={() => setPaperImportOpen(false)} disabled={paperImportBusy}>取消</Button><Button type="button" className="primary-button" onClick={() => void importPaper()} disabled={paperImportBusy || (paperImportMode === "url" ? !paperImportUrl.trim() : !paperImportFile)}>{paperImportBusy ? <><Spinner />处理中…</> : "添加论文"}</Button></footer>
             </div> : !bulkImportPreview ? <>
 
               {bulkImportKind === "urls" ? (
-                <label className="bulk-text"><span>每行一个公开网页地址</span><textarea value={bulkImportText} onChange={(event) => { setBulkImportText(event.target.value); setBulkImportError(""); }} rows={10} placeholder={'https://example.com/article-one\nhttps://example.com/article-two'} disabled={bulkImportBusy} /></label>
+                <label className="bulk-text"><span>每行一个公开网页链接</span><textarea value={bulkImportText} onChange={(event) => { setBulkImportText(event.target.value); setBulkImportError(""); }} rows={10} placeholder={'https://example.com/article-one\nhttps://example.com/article-two'} disabled={bulkImportBusy} /></label>
               ) : bulkImportKind === "bookmarks" ? (
-                <FilePicker title="导入浏览器书签" hint="选择浏览器导出的 bookmarks.html" accept=".html,text/html" file={bulkImportFiles[0]} disabled={bulkImportBusy} onFile={(file) => chooseBulkFiles(file ? [file] : [])} />
+                <FilePicker title="导入浏览书签" hint="选择浏览器导出的 bookmarks.html" accept=".html,text/html" file={bulkImportFiles[0]} disabled={bulkImportBusy} onFile={(file) => chooseBulkFiles(file ? [file] : [])} />
               ) : bulkImportKind === "markdown" ? (
                 <MarkdownUpload files={bulkImportFiles} onChange={chooseBulkFiles} disabled={bulkImportBusy} onPreparingChange={setUploadPreparing} />
               ) : (
-                <FilePicker title="导入织页知识包" hint="选择 .zip 知识包，文件上限 100 MiB" accept=".zip,application/zip" file={bulkImportFiles[0]} disabled={bulkImportBusy} onFile={(file) => chooseBulkFiles(file ? [file] : [])} />
+                <FilePicker title="导入资料包" hint="选择 .zip 知识包，文件上限 100 MiB" accept=".zip,application/zip" file={bulkImportFiles[0]} disabled={bulkImportBusy} onFile={(file) => chooseBulkFiles(file ? [file] : [])} />
               )}
 
-              <div className="bulk-dialog-actions"><Button className="primary-button" type="button" onClick={() => void previewBulkImport()} disabled={bulkImportBusy || uploadPreparing || !bulkImportReady}>{bulkImportBusy ? <><Spinner />检查中</> : "检查导入内容"}</Button></div>
+              <div className="bulk-dialog-actions"><Button className="primary-button" type="button" onClick={() => void previewBulkImport()} disabled={bulkImportBusy || uploadPreparing || !bulkImportReady}>{bulkImportBusy ? <><Spinner />检查中</> : "检查内容"}</Button></div>
             </> : <>
               <div className={`bulk-counts ${bulkImportPreview.kind === "bundle" ? "has-assets" : ""}`} aria-label="导入检查统计">
                 <span><strong>{bulkImportPreview.counts.total}</strong>{bulkImportPreview.kind === "bundle" ? "文档" : "总计"}</span>
@@ -3686,11 +3686,11 @@ export default function App() {
                   const result = bulkResultById.get(item.id);
                   const status = result ? IMPORT_RESULT_LABEL[result.status] : IMPORT_PREVIEW_LABEL[item.status];
                   const detail = result?.error
-                    ? result.status === "conflict" ? "预检后原知识发生了变化，请重新检查导入内容。" : "此项导入失败，请检查文件内容后重试。"
+                    ? result.status === "conflict" ? "预检后原织片发生了变化，请重新检查内容。" : "此项导入失败，请检查文件内容后重试。"
                     : item.error
-                      ? "此项格式无效，请检查 URL、文本编码或 Front Matter。"
+                      ? "格式无效，请检查链接、编码和文件头。"
                       : item.warnings.length
-                        ? "存在未识别的 Front Matter 字段，原内容已保留。"
+                        ? "文件头有未知字段，原内容已保留。"
                         : item.sourceUrl || "准备就绪";
                   return <li key={item.id} className={`is-${result?.status || item.status}`}><span className="bulk-item-index">{item.index + 1}</span><div><strong>{item.label}</strong><small>{item.error || detail}</small>{bulkImportPreview.kind === "markdown" && bulkImportFiles[item.index] && <small>{bulkImportFiles[item.index].webkitRelativePath || bulkImportFiles[item.index].name} · {(bulkImportFiles[item.index].size / 1024).toFixed(1)} KB</small>}</div><em>{status}</em></li>;
                 })}
@@ -3699,8 +3699,8 @@ export default function App() {
 
               <footer className="bulk-dialog-footer">
                 {!bulkImportResult ? <>
-                  <label><span>遇到重复项</span><Select value={bulkImportStrategy} onChange={(event) => setBulkImportStrategy(event.target.value as ImportStrategy)} disabled={bulkImportBusy}><option value="skip">跳过已有（推荐）</option><option value="copy">保留副本</option><option value="update">更新已有（替换内容）</option></Select>{bulkImportStrategy === "update" && <small>{bulkImportTouchesDirtyDocument ? "当前打开的重复条目有未保存修改，请先保存或改用其他策略。" : "会用导入内容替换已有正文与组织信息；预检后发生变化的条目会报告冲突。"}</small>}</label>
-                  <div><Button type="button" onClick={() => void restartBulkImport()} disabled={bulkImportBusy}>重新选择</Button><Button className="primary-button" type="button" onClick={() => void applyBulkImport()} disabled={bulkImportBusy || bulkImportTouchesDirtyDocument || bulkImportPreview.counts.valid + bulkImportPreview.counts.duplicate === 0}>{bulkImportBusy ? <><Spinner />导入中</> : "确认导入"}</Button></div>
+                  <label><span>重复处理</span><Select value={bulkImportStrategy} onChange={(event) => setBulkImportStrategy(event.target.value as ImportStrategy)} disabled={bulkImportBusy}><option value="skip">跳过重复</option><option value="copy">保留副本</option><option value="update">替换已有</option></Select>{bulkImportStrategy === "update" && <small>{bulkImportTouchesDirtyDocument ? "当前打开的重复条目有未保存修改，请先保存或改用其他策略。" : "会用导入内容替换已有正文与组织信息；预检后发生变化的条目会报告冲突。"}</small>}</label>
+                  <div><Button type="button" onClick={() => void restartBulkImport()} disabled={bulkImportBusy}>重新选择</Button><Button className="primary-button" type="button" onClick={() => void applyBulkImport()} disabled={bulkImportBusy || bulkImportTouchesDirtyDocument || bulkImportPreview.counts.valid + bulkImportPreview.counts.duplicate === 0}>{bulkImportBusy ? <><Spinner />导入中</> : "开始导入"}</Button></div>
                 </> : <Button className="primary-button" type="button" onClick={() => void closeBulkImport()}>完成</Button>}
               </footer>
             </>}
@@ -3727,49 +3727,49 @@ export default function App() {
         {cloudMode ? browserPairingCount === 0 ? <>
           <div className="capture-index" aria-hidden="true">01</div>
           <div className="capture-copy">
-            <h1 id="capture-title">从浏览器剪藏网页</h1>
-            <p>云端版当前通过 Chrome / Firefox 扩展收取已登录网页；在“帮助”中下载并生成配对码。</p>
+            <h1 id="capture-title">网页助手</h1>
+            <p>用浏览助手保存登录网页；请在帮助中连接。</p>
           </div>
-          <Button type="button" className="primary-button" onClick={() => setShortcutHelp(true)}>打开扩展与配对</Button>
+          <Button type="button" className="primary-button" onClick={() => setShortcutHelp(true)}>连接助手</Button>
         </> : <>
           <div className="capture-index" aria-hidden="true">01</div>
           <div className="capture-copy">
-            <h1 id="capture-title">抓取公开网页</h1>
-            <p>公开 HTTP(S) 网址会进入 Cloudflare Queue，再由 Browser Run 转为 Markdown；需要登录的网页仍使用扩展。</p>
+            <h1 id="capture-title">保存网页</h1>
+            <p>输入公开网页链接；登录网页请用浏览助手。</p>
           </div>
           <form className="capture-form" onSubmit={handleImport}>
-            <label className="sr-only" htmlFor="capture-url">网页地址</label>
+            <label className="sr-only" htmlFor="capture-url">网页链接</label>
             <span className="url-prefix" aria-hidden="true">URL</span>
             <input id="capture-url" value={importUrl} onChange={(event) => { setImportUrl(event.target.value); setImportError(""); setImportNotice(""); }} placeholder="https://example.com/article" inputMode="url" autoComplete="url" disabled={importing || closing} />
-            <Button className="primary-button" type="submit" disabled={importing || closing || !importUrl.trim()}>{importing ? <><Spinner />入队中</> : "开始抓取"}</Button>
+            <Button className="primary-button" type="submit" disabled={importing || closing || !importUrl.trim()}>{importing ? <><Spinner />入队中</> : "保存网页"}</Button>
           </form>
           <div className="form-message" aria-live="polite">{importError ? <span className="error-text">{importError}</span> : importNotice && <span className="notice-text">{importNotice}</span>}</div>
         </> : <>
         <div className="capture-index" aria-hidden="true">01</div>
         <div className="capture-copy">
-          <h1 id="capture-title">收藏一张网页</h1>
-          <p>输入链接，织页会留下正文、来源与可编辑的 Markdown。</p>
+          <h1 id="capture-title">保存网页</h1>
+          <p>输入网址，保存正文和来源。</p>
           <div className={`queue-control ${captureQueue?.paused ? "is-paused" : ""}`}>
             <span role="status"><i />{queueLabel}</span>
             <Button type="button" aria-pressed={captureQueue?.paused || false} onClick={() => void toggleCaptureQueue()} disabled={!captureQueue || queueUpdating || closing}>
-              {queueUpdating ? "调整中…" : captureQueue?.paused ? "继续采集" : "暂停采集"}
+              {queueUpdating ? "调整中…" : captureQueue?.paused ? "继续收取" : "暂停收取"}
             </Button>
             <Button type="button" onClick={() => setBulkImportOpen(true)} disabled={closing || importing}>批量导入</Button>
           </div>
           {queueError && <span className="queue-error" role="alert">队列状态不可用：{queueError}</span>}
         </div>
         <form className="capture-form" onSubmit={handleImport}>
-          <label className="sr-only" htmlFor="capture-url">网页地址</label>
+          <label className="sr-only" htmlFor="capture-url">网页链接</label>
           <span className="url-prefix" aria-hidden="true">URL</span>
           <input id="capture-url" value={importUrl} onChange={(event) => { setImportUrl(event.target.value); setImportDuplicate(null); setImportError(""); setImportNotice(""); }} placeholder="https://example.com/an-article" inputMode="url" autoComplete="url" disabled={importing || closing || navigationMutationLocked} />
           <Button className="primary-button" type="submit" disabled={closing || importing || navigationMutationLocked || !importUrl.trim()}>
-            {importing ? <><Spinner />收取中</> : <><span>收取网页</span><Icon><path d="M5 12h14M13 6l6 6-6 6" /></Icon></>}
+            {importing ? <><Spinner />收取中</> : <><span>保存网页</span><Icon><path d="M5 12h14M13 6l6 6-6 6" /></Icon></>}
           </Button>
         </form>
         <div className="form-message" aria-live="polite">
           {importError ? <span className="error-text">{importError}</span> : importDuplicate ? (
             <div className="import-duplicate" role="status">
-              <span>{importDuplicate.kind === "source" ? "这个网址已经收藏过。" : "这个网址指向已有知识。"}{importDuplicate.document.deletedAt ? " 已有条目在回收站。" : ""}</span>
+              <span>{importDuplicate.kind === "source" ? "这个网页已经保存过。" : "这个链接对应的织片已存在。"}{importDuplicate.document.deletedAt ? " 已有织片在回收站中。" : ""}</span>
               <span className="import-duplicate-actions">
                 <Button type="button" onClick={() => void openImportedDuplicate()} disabled={importing || closing || navigationMutationLocked}>打开已有</Button>
                 {importDuplicate.kind === "resolved" && <Button type="button" onClick={() => void keepImportedDuplicate()} disabled={importing || closing || navigationMutationLocked}>保留两篇</Button>}
@@ -3783,7 +3783,7 @@ export default function App() {
       <main className={workspaceClassName}>
         <aside id="library-panel" className={`library-panel ${libraryCollapsed ? "is-collapsed" : ""}`} aria-label="知识列表">
           <nav className="sidebar-tabbar" aria-label="目录分类">
-            <SegmentedControl label="目录视图切换" className="sidebar-category-toggle" value={sidebarSearch ? "search" : libraryView} disabled={closing || batchBusy} options={([["all", "列表"], ["favorites", "收藏"], ["paper", "论文"], ["trash", "回收站"], ["search", "搜索"]] as const).map(([value, label]) => ({ value, label, icon: <WorkspaceIcon name={({ all: "list", favorites: "star", paper: "paper", trash: "trash", search: "search" } as const)[value]} size={18} /> }))} onChange={(value) => { if (value === "search") void openSidebarSearch(); else void applyLibraryView(value); }} />
+            <SegmentedControl label="目录视图切换" className="sidebar-category-toggle" value={sidebarSearch ? "search" : libraryView} disabled={closing || batchBusy} options={([["all", "全部资料"], ["favorites", "收藏"], ["paper", "论文"], ["trash", "回收站"], ["search", "搜索"]] as const).map(([value, label]) => ({ value, label, icon: <WorkspaceIcon name={({ all: "list", favorites: "star", paper: "paper", trash: "trash", search: "search" } as const)[value]} size={18} /> }))} onChange={(value) => { if (value === "search") void openSidebarSearch(); else void applyLibraryView(value); }} />
           </nav>
           <div className="sidebar-scroll-region">
           <div className="sidebar-search-host" hidden={!sidebarSearch}><LibrarySearch folders={folders} refreshKey={listRefresh} inputRef={sidebarSearchRef} onOpen={selectDocument} active={sidebarSearch && !libraryCollapsed} /></div>
@@ -3822,18 +3822,18 @@ export default function App() {
           />
             {!!selectedIds.size && selectionEnabled && <div className="bulk-toolbar" aria-label="选中知识批量操作">
               <span className="batch-selection-summary">已选 <strong>{selectedIds.size}</strong> 篇</span>
-              <Select density="compact" aria-label="批量操作" disabled={batchBusy} value={batchAction} onChange={(event) => setBatchAction(event.target.value as BatchDocumentAction | "")}><option value="">选择操作</option><option value="add-tag">添加标签</option><option value="remove-tag">移除标签</option><option value="add-collection">加入集合</option><option value="remove-collection">移出集合</option><option value="archive">归档</option><option value="unarchive">取消归档</option><option value="trash">删除（移入回收站）</option></Select>
-              {(batchAction === "add-collection" || batchAction === "remove-collection") && <Select density="compact" aria-label="批量操作集合" disabled={batchBusy} value={batchCollectionId} onChange={(event) => setBatchCollectionId(event.target.value)}><option value="">选择集合</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</Select>}
+              <Select density="compact" aria-label="批量操作" disabled={batchBusy} value={batchAction} onChange={(event) => setBatchAction(event.target.value as BatchDocumentAction | "")}><option value="">批量操作</option><option value="add-tag">添加标签</option><option value="remove-tag">移除标签</option><option value="add-collection">加入专题</option><option value="remove-collection">移出专题</option><option value="archive">归档</option><option value="unarchive">取消归档</option><option value="trash">删除资料</option></Select>
+              {(batchAction === "add-collection" || batchAction === "remove-collection") && <Select density="compact" aria-label="批量操作专题" disabled={batchBusy} value={batchCollectionId} onChange={(event) => setBatchCollectionId(event.target.value)}><option value="">选择专题</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</Select>}
               <Button type="button" onClick={() => void runBatchAction()} disabled={batchBusy || !batchAction}>{batchBusy ? "处理中…" : "应用"}</Button>
             </div>}
           </> : <>
             <div className="result-caption"><span>{filteredDescription}</span>{items.some(needsCapturePolling) && <span className="polling-mark"><i />更新中</span>}</div>
             {!!items.length && selectionEnabled && <div className="bulk-toolbar" aria-label="当前页批量操作">
-              <label><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={items.length > 0 && items.every((item) => selectedIds.has(item.id))} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds(event.target.checked ? new Set(items.map((item) => item.id)) : new Set()); }} />选中当前页 <strong>{selectedIds.size}</strong> 篇</label>
-              {!!selectedIds.size && <><Select density="compact" aria-label="批量操作" disabled={listLoading || batchBusy} value={batchAction} onChange={(event) => setBatchAction(event.target.value as BatchDocumentAction | "")}><option value="">选择操作</option><option value="add-tag">添加标签</option><option value="remove-tag">移除标签</option><option value="add-collection">加入集合</option><option value="remove-collection">移出集合</option><option value="restore">恢复</option></Select>{(batchAction === "add-collection" || batchAction === "remove-collection") && <Select density="compact" aria-label="批量操作集合" disabled={listLoading || batchBusy} value={batchCollectionId} onChange={(event) => setBatchCollectionId(event.target.value)}><option value="">选择集合</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</Select>}<Button type="button" onClick={() => void runBatchAction()} disabled={listLoading || batchBusy || !batchAction}>{batchBusy ? "处理中…" : "应用"}</Button></>}
+              <label><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={items.length > 0 && items.every((item) => selectedIds.has(item.id))} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds(event.target.checked ? new Set(items.map((item) => item.id)) : new Set()); }} />本页全选 <strong>{selectedIds.size}</strong> 篇</label>
+              {!!selectedIds.size && <><Select density="compact" aria-label="批量操作" disabled={listLoading || batchBusy} value={batchAction} onChange={(event) => setBatchAction(event.target.value as BatchDocumentAction | "")}><option value="">批量操作</option><option value="add-tag">添加标签</option><option value="remove-tag">移除标签</option><option value="add-collection">加入专题</option><option value="remove-collection">移出专题</option><option value="restore">恢复</option></Select>{(batchAction === "add-collection" || batchAction === "remove-collection") && <Select density="compact" aria-label="批量操作专题" disabled={listLoading || batchBusy} value={batchCollectionId} onChange={(event) => setBatchCollectionId(event.target.value)}><option value="">选择专题</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</Select>}<Button type="button" onClick={() => void runBatchAction()} disabled={listLoading || batchBusy || !batchAction}>{batchBusy ? "处理中…" : "应用"}</Button></>}
             </div>}
             <div ref={libraryListRef} className="document-list" onKeyDown={handleListKeyDown}>
-              {listLoading && !items.length ? <StatePanel kind="loading" title="正在翻阅知识库" /> : listError ? <StatePanel kind="error" title="无法读取列表">{listError}</StatePanel> : !items.length ? <StatePanel kind="empty" title={hasActiveFilters ? "没有符合筛选条件的知识" : "回收站是空的"}>{hasActiveFilters ? "试试放宽筛选条件。" : "移除的网页会暂存在这里。"}</StatePanel> : items.map((item) => (
+              {listLoading && !items.length ? <StatePanel kind="loading" title="正在翻阅知识库" /> : listError ? <StatePanel kind="error" title="无法读取列表">{listError}</StatePanel> : !items.length ? <StatePanel kind="empty" title={hasActiveFilters ? "没有符合筛选条件的知识" : "回收站是空的"}>{hasActiveFilters ? "试试放宽筛选条件。" : "删除的织片会放在这里。"}</StatePanel> : items.map((item) => (
                 <DocumentDirectoryRow
                   key={item.id}
                   document={item}
@@ -3842,14 +3842,14 @@ export default function App() {
                   onOpen={(id) => void selectDocument(id)}
                   onMove={moveDocumentToFolder}
                   onPermanentDelete={permanentlyDeleteListItem}
-                  checkbox={selectionEnabled ? <label className="row-select"><span className="sr-only">选择 {item.title || "未命名网页"}</span><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={selectedIds.has(item.id)} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds((previous) => { const next = new Set(previous); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; }); }} /></label> : undefined}
+                  checkbox={selectionEnabled ? <label className="row-select"><span className="sr-only">选择 {item.title || "未命名织片"}</span><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={selectedIds.has(item.id)} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds((previous) => { const next = new Set(previous); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; }); }} /></label> : undefined}
                 />
               ))}
             </div>
             {pageCount > 1 && <nav className="pagination" aria-label="知识列表分页"><Button type="button" disabled={listLoading || batchBusy || page <= 1} onClick={() => setPage((value) => value - 1)}>上一页</Button><span>{page} / {pageCount}</span><Button type="button" disabled={listLoading || batchBusy || page >= pageCount} onClick={() => setPage((value) => value + 1)}>下一页</Button></nav>}
           </>}
-          {selectionEnabled && (!inTrash || portableExporting) && <div className="portable-toolbar" aria-label="便携知识包导出">
-            <div><strong>便携知识包</strong><span>用于迁移与分享，不等同于可恢复数据库的完整留档。</span><Button type="button" onClick={() => setSafetyOpen(true)} disabled={Boolean(portableExporting)}>前往完整留档</Button></div>
+          {selectionEnabled && (!inTrash || portableExporting) && <div className="portable-toolbar" aria-label="资料包导出">
+            <div><strong>资料包</strong><span>用于分享或搬移资料，不能代替完整备份。</span><Button type="button" onClick={() => setSafetyOpen(true)} disabled={Boolean(portableExporting)}>查看备份</Button></div>
             <div>
               <Button type="button" onClick={() => void exportPortable("selected")} disabled={(portableExporting !== null && portableExporting !== "selected") || (!selectedIds.size && portableExporting !== "selected")}>{portableExporting === "selected" ? "取消所选导出" : `导出所选${selectedIds.size ? ` ${selectedIds.size} 篇` : ""}`}</Button>
               <Button type="button" onClick={() => void exportPortable("all")} disabled={((listLoading || closing) && portableExporting !== "all") || (inTrash && portableExporting !== "all") || (portableExporting !== null && portableExporting !== "all")}>{portableExporting === "all" ? "取消全部导出" : "导出全部"}</Button>
@@ -3867,8 +3867,8 @@ export default function App() {
         <section id="reader-panel" ref={readerPanelRef} className="reader-panel" aria-label="文档工作台" tabIndex={-1}>
           <DocumentTabs documents={openDocuments} selectedId={selectedId} dirty={hasUnsavedChanges} disabled={closing || organizationSaving || batchBusy || captureApplying || Boolean(collectionAction) || Boolean(tagAction) || Boolean(lifecycleAction) || restoringRevision !== null} onSelect={async (id) => { const opened = await selectDocument(id); if (opened) { graphReturnRef.current = false; setGraphMode(false); } return opened; }} onClose={closeDocumentTab} toolsOpen={toolsOpen} onToggleTools={() => setToolsOpen((value) => !value)} />
           {selectedId && <div className="workspace-location">
-            <IconButton label="返回文档目录" disabled={closing} onClick={() => void closeDocument()}><Icon size={18}><path d="M20 12H4m6-6-6 6 6 6" /></Icon></IconButton>
-            <span>{folders.find((folder) => folder.id === currentDoc?.folderId)?.name ?? "目录"}</span><WorkspaceIcon name="chevron" size={13} />{titleEdit?.id === currentDoc?.id && titleEdit ? <input autoFocus className="breadcrumb-title-input" aria-label="文章标题" maxLength={1000} size={Math.max(1, Math.min(20, Array.from(titleEdit.title).length))} value={titleEdit.title} onChange={(event) => setTitleEdit({ ...titleEdit, title: event.target.value })} onBlur={() => setTitleEdit(null)} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); setTitleEdit(null); } if (event.key === "Enter") { event.preventDefault(); const edit = titleEdit; setTitleEdit(null); void renameDocument(edit, edit.title); } }} /> : <Button type="button" className="breadcrumb-title" aria-label="重命名文章" title={currentDoc?.title || "双击重命名文章"} disabled={!currentDoc || organizationLocked || metadataDirty || paperDirty} onDoubleClick={() => { if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "F2") { event.preventDefault(); if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); } }}>{Array.from(currentDoc?.title || "正在打开…").slice(0, 20).join("")}{Array.from(currentDoc?.title || "").length > 20 ? "…" : ""}</Button>}
+            <IconButton label="返回目录" disabled={closing} onClick={() => void closeDocument()}><Icon size={18}><path d="M20 12H4m6-6-6 6 6 6" /></Icon></IconButton>
+            <span>{folders.find((folder) => folder.id === currentDoc?.folderId)?.name ?? "目录"}</span><WorkspaceIcon name="chevron" size={13} />{titleEdit?.id === currentDoc?.id && titleEdit ? <input autoFocus className="breadcrumb-title-input" aria-label="文章标题" maxLength={1000} size={Math.max(1, Math.min(20, Array.from(titleEdit.title).length))} value={titleEdit.title} onChange={(event) => setTitleEdit({ ...titleEdit, title: event.target.value })} onBlur={() => setTitleEdit(null)} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); setTitleEdit(null); } if (event.key === "Enter") { event.preventDefault(); const edit = titleEdit; setTitleEdit(null); void renameDocument(edit, edit.title); } }} /> : <Button type="button" className="breadcrumb-title" aria-label="修改标题" title={currentDoc?.title || "双击修改标题"} disabled={!currentDoc || organizationLocked || metadataDirty || paperDirty} onDoubleClick={() => { if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "F2") { event.preventDefault(); if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); } }}>{Array.from(currentDoc?.title || "正在打开…").slice(0, 20).join("")}{Array.from(currentDoc?.title || "").length > 20 ? "…" : ""}</Button>}
 
           </div>}
 
@@ -3878,18 +3878,18 @@ export default function App() {
             <div className="welcome-state">
               <div className="weave-mark" aria-hidden="true"><i /><i /><i /><i /></div>
               <span className="eyebrow">QUIET WORKBENCH</span>
-              <h2>在左侧选一张织片</h2>
-              <p>{cloudMode ? <>选择一篇知识后可阅读、编辑 Markdown、翻译或生成 AI 派生内容。<br />重要变更前可在“数据安全”创建 R2 留档。</> : <>阅读原文、整理标签，或直接修改 Markdown。<br />你的文字会留在本地。</>}</p>
+              <h2>选择织片</h2>
+              <p>{cloudMode ? <>选择织片，开始阅读、编辑或使用助手。<br />重要修改前，请先到“备份恢复”备份。</> : <>阅读原文、整理标签，或直接修改 Markdown。<br />你的文字会留在本地。</>}</p>
             </div>
           ) : detailLoading && (!currentDoc || (currentDoc.kind === "paper" && !currentPaper)) ? (
-            <StatePanel kind="loading" title="正在展开织片" />
+            <StatePanel kind="loading" title="正在打开织片…" />
           ) : detailError && (!currentDoc || (currentDoc.kind === "paper" && !currentPaper)) ? (
-            <StatePanel kind="error" title="无法打开这篇知识">{detailError}</StatePanel>
+            <StatePanel kind="error" title="无法打开织片">{detailError}</StatePanel>
           ) : currentPaper && currentDoc ? (
             <PaperReader paperId={currentPaper.id} title={currentDoc.title} autoStart={paperAutoStart === currentPaper.id} onClose={closeDocument} onRevisionChange={updateCurrentPaperRevision} onDirtyChange={setPaperDirty} />
           ) : currentDoc && draft && webArticleMode ? (
             <>
-              <Button type="button" className="mobile-back" onClick={closeDocument}><Icon size={16}><path d="m15 18-6-6 6-6" /></Icon>返回知识库</Button>
+              <Button type="button" className="mobile-back" onClick={closeDocument}><Icon size={16}><path d="m15 18-6-6 6-6" /></Icon>返回列表</Button>
               <header ref={documentHeadRef} className="document-head compact-document-head">
                 <div className="document-kicker">
                   <DocumentStatus status={currentDoc.status} favorite={currentDoc.favorite} />
@@ -3899,36 +3899,36 @@ export default function App() {
 
                 <div className="document-actions">
                   <MarkdownStyleSelect value={readingText} onChange={changeMarkdownStyle} />
-                  {cloudEditing && <SegmentedControl label="编辑器显示模式" className="mode-switch" value={mode} options={(["edit", "split", "preview"] as EditorMode[]).map((value) => ({ value, label: value === "edit" ? "编辑" : value === "split" ? "对照" : "预览" }))} onChange={(value) => { if (longArticle && value !== "edit") setLongPreviewDocumentId(currentDoc.id); setMode(value); }} />}
+                  {cloudEditing && <SegmentedControl label="编辑器显示模式" className="mode-switch" value={mode} options={(["edit", "split", "preview"] as EditorMode[]).map((value) => ({ value, label: value === "edit" ? "编辑" : value === "split" ? "边写边看" : "预览" }))} onChange={(value) => { if (longArticle && value !== "edit") setLongPreviewDocumentId(currentDoc.id); setMode(value); }} />}
                   <Button type="button" className="primary-button" onClick={() => void toggleCloudEditing()} disabled={currentDoc.status !== "ready" || saveState === "saving"}>{cloudEditing ? "返回阅读" : "编辑"}</Button>
                   <Button type="button" className={`favorite-button ${currentDoc.favorite ? "is-active" : ""}`} aria-pressed={currentDoc.favorite} onClick={() => void toggleFavorite()} disabled={organizationLocked || metadataDirty}><WorkspaceIcon name="star" size={17} />{currentDoc.favorite ? "取消收藏" : "收藏"}</Button>
-                  <Button type="button" className="history-button" onClick={toggleDerived} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen} aria-controls="derived-knowledge">AI 派生</Button>
+                  <Button type="button" className="history-button" onClick={toggleDerived} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen} aria-controls="derived-knowledge">智能助手</Button>
                   <Button type="button" className="history-button translation-button" onClick={openTranslation} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen && derivedPreferredType === "translation"} aria-controls="derived-knowledge">翻译</Button>
                 </div>
               </header>
               <section className={cloudEditing ? "cloud-article-body" : "preview-pane cloud-reader"} aria-label={cloudEditing ? "文章编辑区域" : "Markdown 预览"}>
               <DerivedKnowledge cloud={cloudMode} hideTagSuggestions={desktopRuntime} document={currentDoc} open={derivedOpen} preferredType={derivedPreferredType} onTypeChange={setDerivedPreferredType} onClose={() => setDerivedOpen(false)} generationBlockedReason={derivedBlockedReason} onAdoptTags={desktopRuntime ? adoptDerivedTags : async () => undefined} />
-              {needsCapturePolling(currentDoc) ? <div className="capture-progress" aria-live="polite"><div className="progress-orbit"><i /><i /><span>织</span></div><h3>{STATUS_LABEL[currentDoc.status]}</h3><p>{cloudMode ? "Cloudflare Queue 与 Browser Run 正在处理，完成后会自动刷新。" : "本地服务正在处理，完成后会自动刷新。"}</p></div> : currentDoc.status === "failed" ? <div className="capture-failed" role="alert"><span className="failure-code">{currentDoc.errorCode || "BROWSER_FAILED"}</span><h3>这张网页没有抓取成功</h3><p>{userErrorMessage(currentDoc.errorCode ?? "BROWSER_FAILED")}</p><Button type="button" className="primary-button" onClick={() => void retryCapture()} disabled={retrying}>{retrying ? "重试中…" : "重新抓取"}</Button></div> : cloudEditing ? <div className="editor-workbench">
+              {needsCapturePolling(currentDoc) ? <div className="capture-progress" aria-live="polite"><div className="progress-orbit"><i /><i /><span>织</span></div><h3>{STATUS_LABEL[currentDoc.status]}</h3><p>{cloudMode ? "正在处理网页，完成后会自动刷新。" : "本地服务正在处理，完成后会自动刷新。"}</p></div> : currentDoc.status === "failed" ? <div className="capture-failed" role="alert"><span className="failure-code">{currentDoc.errorCode || "BROWSER_FAILED"}</span><h3>保存失败</h3><p>{userErrorMessage(currentDoc.errorCode ?? "BROWSER_FAILED")}</p><Button type="button" className="primary-button" onClick={() => void retryCapture()} disabled={retrying}>{retrying ? "重试中…" : "重新收取"}</Button></div> : cloudEditing ? <div className="editor-workbench">
                 <div className="editor-toolbar">
                   <div className="markdown-toolbar-host" ref={setMarkdownToolbarHost} />
-                  <div className={`save-indicator save-${saveState}`}><span aria-live="polite">{saveState === "saving" ? <><Spinner />正在保存</> : saveState === "saved" ? "已保存" : saveState === "error" ? "保存失败" : saveState === "conflict" ? "版本冲突" : dirty ? "未保存" : "已同步"}</span><span className="editor-stats">{draft.markdown.length.toLocaleString("zh-CN")} 字符</span></div>
+                  <div className={`save-indicator save-${saveState}`}><span aria-live="polite">{saveState === "saving" ? <><Spinner />正在保存</> : saveState === "saved" ? "已保存" : saveState === "error" ? "保存失败" : saveState === "conflict" ? "版本有变" : dirty ? "未保存" : "已同步"}</span><span className="editor-stats">{draft.markdown.length.toLocaleString("zh-CN")} 字符</span></div>
                   <Button type="button" className="text-button save-button" aria-keyshortcuts="Meta+S Control+S" onClick={() => void saveNow()} disabled={!dirty || saveState === "saving" || saveState === "conflict"}>保存</Button>
                 </div>
                 {saveState === "error" && <div className="inline-error" role="alert">{saveError}</div>}
-                {conflict && <div className="conflict-banner" role="alert"><div><strong>这篇知识已在别处更新</strong><span>你的文字仍保留在编辑器中。请复制需要保留的内容，然后载入最新版。</span></div><Button type="button" onClick={() => { installCurrentDocument(conflict); updateListItem(conflict); setDraft(draftOf(conflict)); setConflict(null); setSaveState("idle"); }}>载入最新版</Button></div>}
+                {conflict && <div className="conflict-banner" role="alert"><div><strong>这张织片已在别处更新</strong><span>你的文字仍保留在编辑器中。请复制需要保留的内容，然后载入最新版。</span></div><Button type="button" onClick={() => { installCurrentDocument(conflict); updateListItem(conflict); setDraft(draftOf(conflict)); setConflict(null); setSaveState("idle"); }}>载入最新版</Button></div>}
                 <div ref={editorGridRef} className={`editor-grid mode-${mode}`} onScrollCapture={markPaneScroll}>
                   {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><PaneLabel>MARKDOWN</PaneLabel><MarkdownEditor ref={markdownEditorRef} toolbarHost={markdownToolbarHost} value={draft.markdown} onChange={(markdown) => setDraft((value) => value ? { ...value, markdown } : value)} readOnly={saveState === "saving" || organizationSaving} /></section>}
-                  {mode !== "edit" && <section className="preview-pane" aria-label="Markdown 预览" tabIndex={0}><PaneLabel>PREVIEW</PaneLabel>{draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : EMPTY_DOCUMENT_ASSETS} /> : <StatePanel kind="empty" title="这里还没有文字" />}</section>}
+                  {mode !== "edit" && <section className="preview-pane" aria-label="Markdown 预览" tabIndex={0}><PaneLabel>PREVIEW</PaneLabel>{draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : EMPTY_DOCUMENT_ASSETS} /> : <StatePanel kind="empty" title="暂无正文" />}</section>}
                 </div>
               </div> : <>
                 <div className="pane-label">READ ONLY · MARKDOWN</div>
-                {currentDoc.markdown.trim() ? <MarkdownPreview markdown={currentDoc.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : EMPTY_DOCUMENT_ASSETS} /> : <StatePanel kind="empty" title="这张织片没有正文" />}
+                {currentDoc.markdown.trim() ? <MarkdownPreview markdown={currentDoc.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : EMPTY_DOCUMENT_ASSETS} /> : <StatePanel kind="empty" title="暂无正文" />}
               </>}
               </section>
             </>
           ) : currentDoc && draft ? (
             <>
-              <Button type="button" className="mobile-back" onClick={closeDocument}><Icon size={16}><path d="m15 18-6-6 6-6" /></Icon>返回知识库</Button>
+              <Button type="button" className="mobile-back" onClick={closeDocument}><Icon size={16}><path d="m15 18-6-6 6-6" /></Icon>返回列表</Button>
               <header ref={documentHeadRef} className="document-head">
                 <div className="document-kicker">
                   <DocumentStatus status={currentDoc.status} favorite={currentDoc.favorite} />
@@ -3940,7 +3940,7 @@ export default function App() {
                 <div className="document-meta">
                   <label className="tag-field"><span>标签</span><input value={tagText} onChange={(event) => { if (!closeAttemptRef.current) { setTagText(event.target.value); setDraft({ ...draft, tags: parseTags(event.target.value) }); } }} placeholder="用逗号分隔" disabled={Boolean(currentDoc.deletedAt) || currentDoc.status !== "ready" || editorLocked} /></label>
                   <fieldset className="collection-picker" disabled={organizationLocked || metadataDirty}>
-                    <legend>集合</legend>
+                    <legend>专题</legend>
                     <div>
                       {collectionsLoading && !collections.length ? <span>读取中…</span> : !collections.length ? <span>尚未创建</span> : collections.map((collection) => (
                         <label key={collection.id}>
@@ -3962,76 +3962,76 @@ export default function App() {
                     <label className="source-note-field"><span>来源备注</span><textarea aria-label="来源备注" maxLength={50_000} rows={2} value={sourceMetadata.sourceNote} onChange={(event) => { setSourceMetadata({ ...sourceMetadata, sourceNote: event.target.value }); setOrganizationNotice(""); setOrganizationError(""); }} placeholder="记下收录背景、可信度或阅读线索" disabled={organizationLocked} /></label>
                     <div className="source-metadata-save">
                       <span>收取·{currentDoc.captureMode === "browser" ? "浏览器" : currentDoc.captureMode === "http" ? "直接读取" : "—"}</span>
-                      <Button type="submit" disabled={organizationLocked || !metadataDirty}>{organizationSaving ? "保存中…" : "保存来源信息"}</Button>
+                      <Button type="submit" disabled={organizationLocked || !metadataDirty}>{organizationSaving ? "保存中…" : "保存来源"}</Button>
                     </div>
                   </form>
                 )}
                 <div className="document-actions">
                   <Button type="button" className={`favorite-button ${currentDoc.favorite ? "is-active" : ""}`} aria-pressed={currentDoc.favorite} onClick={() => void toggleFavorite()} disabled={organizationLocked || metadataDirty}><WorkspaceIcon name="star" size={17} />{currentDoc.favorite ? "取消收藏" : "收藏"}</Button>
                   <Button type="button" className="history-button" onClick={() => void toggleArchive()} disabled={organizationLocked || metadataDirty}>{currentDoc.archivedAt ? "取消归档" : "归档"}</Button>
-                  <Button type="button" className="history-button" onClick={toggleCollectionManager} disabled={closing} aria-expanded={collectionsOpen} aria-controls="collection-manager">管理分类</Button>
-                  <Button type="button" className="history-button" onClick={toggleQuality} disabled={closing || currentDoc.status !== "ready"} aria-expanded={qualityOpen} aria-controls="capture-quality">质量检查</Button>
-                  <Button type="button" className="history-button" onClick={toggleCaptureHistory} disabled={closing} aria-expanded={captureHistoryOpen} aria-controls="capture-history">采集历史</Button>
-                  <Button type="button" className="history-button" onClick={toggleDerived} disabled={closing} aria-expanded={derivedOpen} aria-controls="derived-knowledge">AI 派生</Button>
+                  <Button type="button" className="history-button" onClick={toggleCollectionManager} disabled={closing} aria-expanded={collectionsOpen} aria-controls="collection-manager">分类管理</Button>
+                  <Button type="button" className="history-button" onClick={toggleQuality} disabled={closing || currentDoc.status !== "ready"} aria-expanded={qualityOpen} aria-controls="capture-quality">内容检查</Button>
+                  <Button type="button" className="history-button" onClick={toggleCaptureHistory} disabled={closing} aria-expanded={captureHistoryOpen} aria-controls="capture-history">收取记录</Button>
+                  <Button type="button" className="history-button" onClick={toggleDerived} disabled={closing} aria-expanded={derivedOpen} aria-controls="derived-knowledge">智能助手</Button>
                   <Button type="button" className="history-button translation-button" onClick={openTranslation} disabled={closing} aria-expanded={derivedOpen && derivedPreferredType === "translation"} aria-controls="derived-knowledge">翻译</Button>
                   {!currentDoc.deletedAt && (
                     <Button type="button" className="text-button danger" onClick={() => void moveToTrash()} disabled={closing || organizationSaving || Boolean(organizationConflict) || Boolean(remoteDraftConflict) || Boolean(lifecycleAction) || hasUnsavedChanges || saveState === "saving"} title={hasUnsavedChanges || remoteDraftConflict || organizationConflict ? "请先处理当前更改" : undefined}>
-                      {lifecycleAction === "delete" ? "正在移除…" : "移入回收站"}
+                      {lifecycleAction === "delete" ? "正在移除…" : "删除资料"}
                     </Button>
                   )}
                 </div>
               </header>
 
               {collectionsOpen && (
-                <aside id="collection-manager" className="collection-manager" aria-label="集合管理">
-                  <header><div><span className="eyebrow">CLASSIFICATION INDEX</span><h3>管理集合与标签</h3></div><Button type="button" onClick={() => setCollectionsOpen(false)} aria-label="关闭分类管理">×</Button></header>
-                  <h4>集合</h4>
+                <aside id="collection-manager" className="collection-manager" aria-label="专题管理">
+                  <header><div><span className="eyebrow">CLASSIFICATION INDEX</span><h3>专题标签</h3></div><Button type="button" onClick={() => setCollectionsOpen(false)} aria-label="关闭分类管理">×</Button></header>
+                  <h4>专题</h4>
                   <form className="collection-create" onSubmit={createCollection}>
-                    <label><span className="sr-only">新集合名称</span><input aria-label="新集合名称" maxLength={100} value={collectionName} onChange={(event) => setCollectionName(event.target.value)} placeholder="新集合名称" disabled={organizationLocked || metadataDirty} /></label>
-                    <Button type="submit" className="primary-button" disabled={organizationLocked || metadataDirty || !collectionName.trim()}>{collectionAction === "create" ? "创建中…" : "创建集合"}</Button>
+                    <label><span className="sr-only">专题名称</span><input aria-label="专题名称" maxLength={100} value={collectionName} onChange={(event) => setCollectionName(event.target.value)} placeholder="专题名称" disabled={organizationLocked || metadataDirty} /></label>
+                    <Button type="submit" className="primary-button" disabled={organizationLocked || metadataDirty || !collectionName.trim()}>{collectionAction === "create" ? "创建中…" : "新建专题"}</Button>
                   </form>
-                  {collectionsLoading && !collections.length ? <StatePanel kind="loading" title="正在读取集合" /> : !collections.length ? <p className="collection-empty">用集合把不同来源的知识放进同一个主题。</p> : (
+                  {collectionsLoading && !collections.length ? <StatePanel kind="loading" title="正在读取专题" /> : !collections.length ? <p className="collection-empty">将同一主题的织片放在一起。</p> : (
                     <ul>
                       {collections.map((collection) => (
                         <li key={collection.id}>
                           {renamingCollection?.id === collection.id ? (
                             <form className="collection-rename" onSubmit={renameCollection}>
-                              <label><span className="sr-only">集合名称</span><input aria-label="集合名称" maxLength={100} value={renamingCollection.name} onChange={(event) => setRenamingCollection({ id: collection.id, name: event.target.value })} autoFocus /></label>
+                              <label><span className="sr-only">专题名称</span><input aria-label="专题名称" maxLength={100} value={renamingCollection.name} onChange={(event) => setRenamingCollection({ id: collection.id, name: event.target.value })} autoFocus /></label>
                               <Button type="submit" disabled={Boolean(collectionAction) || !renamingCollection.name.trim()}>保存名称</Button>
                               <Button type="button" onClick={() => setRenamingCollection(null)}>取消</Button>
                             </form>
                           ) : (
-                            <><div><strong>{collection.name}</strong><span>{collection.documentCount} 篇知识</span></div><div><Button type="button" onClick={() => setRenamingCollection({ id: collection.id, name: collection.name })} disabled={organizationLocked || metadataDirty} aria-label={`重命名 ${collection.name}`}>重命名</Button><Button type="button" onClick={() => void mergeCollection(collection)} disabled={organizationLocked || metadataDirty} aria-label={`合并 ${collection.name}`}>合并</Button><Button type="button" className="danger" onClick={() => void deleteCollection(collection)} disabled={organizationLocked || metadataDirty} aria-label={`删除 ${collection.name}`}>删除</Button></div></>
+                            <><div><strong>{collection.name}</strong><span>{collection.documentCount} 张织片</span></div><div><Button type="button" onClick={() => setRenamingCollection({ id: collection.id, name: collection.name })} disabled={organizationLocked || metadataDirty} aria-label={`改名 ${collection.name}`}>改名</Button><Button type="button" onClick={() => void mergeCollection(collection)} disabled={organizationLocked || metadataDirty} aria-label={`合并 ${collection.name}`}>合并</Button><Button type="button" className="danger" onClick={() => void deleteCollection(collection)} disabled={organizationLocked || metadataDirty} aria-label={`删除 ${collection.name}`}>删除</Button></div></>
                           )}
                         </li>
                       ))}
                     </ul>
                   )}
                   <h4>标签</h4>
-                  {!managedTags.length ? <p className="collection-empty">还没有标签。</p> : <ul className="tag-manager-list">{managedTags.map((tagValue) => <li key={tagValue.name}><div><strong>#{tagValue.name}</strong><span>{tagValue.documentCount} 篇知识</span></div><div><Button type="button" onClick={() => void renameTag(tagValue)} disabled={Boolean(tagAction) || organizationLocked}>重命名</Button><Button type="button" onClick={() => void mergeTag(tagValue)} disabled={Boolean(tagAction) || organizationLocked}>合并</Button><Button type="button" className="danger" onClick={() => void deleteTag(tagValue)} disabled={Boolean(tagAction) || organizationLocked}>删除</Button></div></li>)}</ul>}
+                  {!managedTags.length ? <p className="collection-empty">还没有标签。</p> : <ul className="tag-manager-list">{managedTags.map((tagValue) => <li key={tagValue.name}><div><strong>#{tagValue.name}</strong><span>{tagValue.documentCount} 张织片</span></div><div><Button type="button" onClick={() => void renameTag(tagValue)} disabled={Boolean(tagAction) || organizationLocked}>改名</Button><Button type="button" onClick={() => void mergeTag(tagValue)} disabled={Boolean(tagAction) || organizationLocked}>合并</Button><Button type="button" className="danger" onClick={() => void deleteTag(tagValue)} disabled={Boolean(tagAction) || organizationLocked}>删除</Button></div></li>)}</ul>}
                 </aside>
               )}
 
               {currentDoc.warning && <div className="notice warning" role="status"><strong>注意</strong><span>{currentDoc.warning}</span></div>}
               {organizationNotice && <div className="notice organization-notice" role="status"><strong>已更新</strong><span>{organizationNotice}</span></div>}
-              {organizationError && !organizationConflict && <div className="notice error" role="alert"><strong>组织信息未保存</strong><span>{organizationError}</span></div>}
+              {organizationError && !organizationConflict && <div className="notice error" role="alert"><strong>分类未保存</strong><span>{organizationError}</span></div>}
               {assetError && <div className="notice error" role="alert"><strong>离线图片状态不可用</strong><span>{assetError}。预览不会连接原站。</span></div>}
               {draftNotice && <div className="notice warning" role="status"><strong>草稿恢复</strong><span>{draftNotice}</span></div>}
               {draftError && <div className="notice error" role="alert"><strong>草稿未保存</strong><span>{draftError}</span></div>}
               {detailError && <div className="notice error" role="alert"><strong>请求失败</strong><span>{detailError}</span></div>}
               {duplicateError && <div className="notice error" role="alert"><strong>重复检测不可用</strong><span>{duplicateError}</span></div>}
               {duplicateNotice && <div className="notice warning" role="status"><strong>重复知识</strong><span>{duplicateNotice}</span></div>}
-              {resolvedDuplicate && <div className="conflict-banner duplicate-banner" role="alert"><div><strong>发现另一篇相同来源的知识</strong><span>已有条目“{resolvedDuplicate.title || "未命名网页"}”{resolvedDuplicate.deletedAt ? "在回收站中" : "仍在资料库中"}。你可以打开已有条目，或明确保留两篇；当前条目不会自动删除。</span></div><div><Button type="button" onClick={() => void openResolvedDuplicate()} disabled={closing || navigationMutationLocked}>打开已有</Button><Button type="button" className="primary-button" onClick={keepResolvedDuplicate} disabled={closing || navigationMutationLocked}>保留两篇</Button></div></div>}
-              {organizationConflict && <div className="conflict-banner" role="alert"><div><strong>来源或组织信息已在别处更新</strong><span>你的这次操作尚未覆盖服务端数据。可基于最新修订重试，或放弃这次更改。</span></div><div><Button type="button" onClick={discardOrganizationUpdate} disabled={closing || organizationSaving}>放弃更改</Button><Button type="button" className="primary-button" onClick={() => void retryOrganizationUpdate()} disabled={closing || organizationSaving}>{organizationSaving ? "重试中…" : "基于新版重试"}</Button></div></div>}
+              {resolvedDuplicate && <div className="conflict-banner duplicate-banner" role="alert"><div><strong>发现另一篇相同来源的知识</strong><span>已有条目“{resolvedDuplicate.title || "未命名织片"}”{resolvedDuplicate.deletedAt ? "在回收站中" : "仍在资料库中"}。你可以打开已有条目，或明确保留两篇；当前条目不会自动删除。</span></div><div><Button type="button" onClick={() => void openResolvedDuplicate()} disabled={closing || navigationMutationLocked}>打开已有</Button><Button type="button" className="primary-button" onClick={keepResolvedDuplicate} disabled={closing || navigationMutationLocked}>保留两篇</Button></div></div>}
+              {organizationConflict && <div className="conflict-banner" role="alert"><div><strong>来源分类已改</strong><span>本次修改尚未保存。可按新版重试，或放弃修改。</span></div><div><Button type="button" onClick={discardOrganizationUpdate} disabled={closing || organizationSaving}>放弃修改</Button><Button type="button" className="primary-button" onClick={() => void retryOrganizationUpdate()} disabled={closing || organizationSaving}>{organizationSaving ? "重试中…" : "按新版重试"}</Button></div></div>}
               {qualityOpen && (
-                <aside id="capture-quality" className="quality-panel" aria-label="提取质量检查">
-                  <header><div><span className="eyebrow">CAPTURE QUALITY</span><h3>提取质量</h3></div><Button type="button" onClick={() => setQualityOpen(false)} aria-label="关闭提取质量">×</Button></header>
-                  {qualityIssues.length ? <ul>{qualityIssues.map((issue) => <li key={issue.title}><strong>{issue.title}</strong><span>{issue.detail}</span></li>)}</ul> : <div className="quality-ok"><i aria-hidden="true">✓</i><div><strong>未发现明显问题</strong><span>标题、正文长度与离线图片状态均通过基础检查。</span></div></div>}
-                  <Button type="button" className="history-button" onClick={toggleCaptureHistory}>查看采集历史与本地快照</Button>
+                <aside id="capture-quality" className="quality-panel" aria-label="内容检查检查">
+                  <header><div><span className="eyebrow">CAPTURE QUALITY</span><h3>内容检查</h3></div><Button type="button" onClick={() => setQualityOpen(false)} aria-label="关闭内容检查">×</Button></header>
+                  {qualityIssues.length ? <ul>{qualityIssues.map((issue) => <li key={issue.title}><strong>{issue.title}</strong><span>{issue.detail}</span></li>)}</ul> : <div className="quality-ok"><i aria-hidden="true">✓</i><div><strong>未发现明显问题</strong><span>标题、正文长度和本机图片检查通过。</span></div></div>}
+                  <Button type="button" className="history-button" onClick={toggleCaptureHistory}>查看记录</Button>
                 </aside>
               )}
-              {remoteDraftConflict && <div className="conflict-banner" role="alert"><div><strong>草稿在另一窗口发生了变化</strong><span>{remoteDraftConflict.remote ? "你的当前编辑仍在内存中，可以显式保留，或切换到另一窗口的草稿。" : "另一窗口已放弃草稿；你可保留当前编辑，或恢复正式版本。"}</span></div><div><Button type="button" onClick={useRemoteDraft} disabled={closing || saveState === "saving"}>{remoteDraftConflict.remote ? "使用另一窗口草稿" : "恢复正式版本"}</Button><Button type="button" className="primary-button" onClick={() => void keepLocalDraft()} disabled={closing || saveState === "saving"}>{saveState === "saving" ? "处理中…" : "保留我的草稿"}</Button></div></div>}
-              {conflict && <div className="conflict-banner" role="alert"><div><strong>{conflict.deletedAt ? "这篇知识已被移入回收站" : "这篇知识在别处被修改过"}</strong><span>{conflict.deletedAt ? "可接受回收站状态，或恢复文档后保存你的本地修改。" : "选择保留服务器新版，或基于新版继续保存你的文字。"}</span></div><div><Button type="button" onClick={() => void acceptServerVersion()} disabled={closing || Boolean(remoteDraftConflict) || saveState === "saving"}>{conflict.deletedAt ? "查看回收站版本" : "使用新版"}</Button><Button type="button" className="primary-button" onClick={() => void keepLocalVersion()} disabled={closing || Boolean(remoteDraftConflict) || saveState === "saving"}>{saveState === "saving" ? "处理中…" : "保留我的修改"}</Button></div></div>}
+              {remoteDraftConflict && <div className="conflict-banner" role="alert"><div><strong>草稿在另一窗口发生了变化</strong><span>{remoteDraftConflict.remote ? "你的当前编辑仍在内存中，可以显式保留，或切换到另一窗口的草稿。" : "另一窗口已放弃草稿；你可保留当前编辑，或恢复正文。"}</span></div><div><Button type="button" onClick={useRemoteDraft} disabled={closing || saveState === "saving"}>{remoteDraftConflict.remote ? "切换草稿" : "恢复正文"}</Button><Button type="button" className="primary-button" onClick={() => void keepLocalDraft()} disabled={closing || saveState === "saving"}>{saveState === "saving" ? "处理中…" : "保留草稿"}</Button></div></div>}
+              {conflict && <div className="conflict-banner" role="alert"><div><strong>{conflict.deletedAt ? "织片已删除" : "织片已有新版"}</strong><span>{conflict.deletedAt ? "可接受回收站状态，或恢复文档后保存你的本地修改。" : "选择保留服务器新版，或基于新版继续保存你的文字。"}</span></div><div><Button type="button" onClick={() => void acceptServerVersion()} disabled={closing || Boolean(remoteDraftConflict) || saveState === "saving"}>{conflict.deletedAt ? "查看回收站版本" : "使用新版"}</Button><Button type="button" className="primary-button" onClick={() => void keepLocalVersion()} disabled={closing || Boolean(remoteDraftConflict) || saveState === "saving"}>{saveState === "saving" ? "处理中…" : "保留修改"}</Button></div></div>}
               {captureHistoryOpen && (
                 <CaptureHistoryPanel
                   document={currentDoc}
@@ -4053,58 +4053,58 @@ export default function App() {
               {currentDoc.deletedAt ? (
                 <div className="trash-workbench">
                   <div className="trash-callout">
-                    <div><span className="eyebrow">READ ONLY · {formatDateTime(currentDoc.deletedAt)}</span><h3>这张织片在回收站中</h3><p>正文与历史版本仍完整保留。恢复后才能继续编辑。</p></div>
+                    <div><span className="eyebrow">READ ONLY · {formatDateTime(currentDoc.deletedAt)}</span><h3>已删除</h3><p>正文和历史版本仍在，恢复后可编辑。</p></div>
                     <div className="trash-actions">
-                      <Button type="button" className="primary-button" onClick={() => void restoreFromTrash()} disabled={closing || importing || Boolean(lifecycleAction)}>{lifecycleAction === "restore" ? <><Spinner />恢复中</> : "恢复到资料库"}</Button>
+                      <Button type="button" className="primary-button" onClick={() => void restoreFromTrash()} disabled={closing || importing || Boolean(lifecycleAction)}>{lifecycleAction === "restore" ? <><Spinner />恢复中</> : "恢复资料"}</Button>
                       <Button type="button" className="text-button danger" onClick={() => void permanentlyDelete()} disabled={closing || organizationSaving || Boolean(lifecycleAction) || hasUnsavedChanges || Boolean(conflict) || Boolean(organizationConflict) || Boolean(remoteDraftConflict)} title={hasUnsavedChanges || conflict || organizationConflict || remoteDraftConflict ? "请先处理当前更改" : undefined}>{lifecycleAction === "permanent" ? "删除中…" : "永久删除"}</Button>
                     </div>
                   </div>
                   <section className="trash-preview" aria-label="回收站文档预览">
                     <div className="pane-label">READ ONLY</div>
-                    {!longPreviewAllowed ? <StatePanel kind="empty" title="长文预览已暂停"><Button type="button" onClick={() => setLongPreviewDocumentId(currentDoc.id)}>仍然预览</Button></StatePanel> : draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} /> : <StatePanel kind="empty" title="这张织片没有正文" />}
+                    {!longPreviewAllowed ? <StatePanel kind="empty" title="长文预览已暂停"><Button type="button" onClick={() => setLongPreviewDocumentId(currentDoc.id)}>打开预览</Button></StatePanel> : draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} /> : <StatePanel kind="empty" title="暂无正文" />}
                   </section>
                 </div>
               ) : activeCapture ? (
                 <div className="capture-progress" aria-live="polite">
                   <div className="progress-orbit"><i /><i /><span>织</span></div>
                   <span className="eyebrow">{currentDoc.status === "queued" && captureQueue?.paused ? "PAUSED" : currentDoc.status.toUpperCase()}</span>
-                  <h3>{currentDoc.status === "queued" && captureQueue?.paused ? "等待继续采集" : STATUS_LABEL[currentDoc.status]}</h3>
-                  <p>{currentDoc.status === "queued" && captureQueue?.paused ? "采集队列已暂停。你可以继续队列，或取消这项等待任务。" : "这通常只需片刻。你可以去看其他织片，完成后会自动刷新。"}</p>
+                  <h3>{currentDoc.status === "queued" && captureQueue?.paused ? "等待继续收取" : STATUS_LABEL[currentDoc.status]}</h3>
+                  <p>{currentDoc.status === "queued" && captureQueue?.paused ? "收取已暂停，可继续收取或取消等待。" : "你可以先看其他织片，完成后会自动刷新。"}</p>
                   {!(currentDoc.status === "queued" && captureQueue?.paused) && <div className="progress-line"><span /></div>}
                   {currentDoc.status === "queued" && <Button type="button" className="text-button danger" onClick={() => void cancelCapture()} disabled={cancelling || closing}>{cancelling ? "取消中…" : "取消等待"}</Button>}
                 </div>
               ) : currentDoc.status === "failed" ? (
                 <div className="capture-failed" role="alert">
                   <span className="failure-code">{currentDoc.errorCode || "CAPTURE_FAILED"}</span>
-                  <h3>这张网页没有收进来</h3>
+                  <h3>保存失败</h3>
                   <p>{userErrorMessage(currentDoc.errorCode ?? "CAPTURE_FAILED")}</p>
                   <div className="capture-failed-actions">
-                    <Button type="button" className="primary-button" onClick={retryCapture} disabled={retrying}>{retrying ? <><Spinner />处理中…</> : "重新抓取"}</Button>
-                    <Button type="button" className="text-button" onClick={() => void beginManualExcerpt()} disabled={retrying}>手动摘录正文</Button>
+                    <Button type="button" className="primary-button" onClick={retryCapture} disabled={retrying}>{retrying ? <><Spinner />处理中…</> : "重新收取"}</Button>
+                    <Button type="button" className="text-button" onClick={() => void beginManualExcerpt()} disabled={retrying}>手动摘录</Button>
                   </div>
                 </div>
               ) : (
-                <>{!longPreviewAllowed && <div className="notice warning" role="status"><strong>长文模式</strong><span>正文较长，已默认暂停预览以保持编辑流畅；需要时可手动切换到预览。</span></div>}<div className="editor-workbench">
+                <>{!longPreviewAllowed && <div className="notice warning" role="status"><strong>长文模式</strong><span>长文已暂停预览，可手动打开。</span></div>}<div className="editor-workbench">
                   <div className="editor-toolbar">
-                    <SegmentedControl label="编辑器显示模式" className="mode-switch" value={mode} options={(["edit", "split", "preview"] as EditorMode[]).map((value) => ({ value, label: value === "edit" ? "编辑" : value === "split" ? "对照" : "预览" }))} onChange={(value) => { if (longArticle && value !== "edit") setLongPreviewDocumentId(currentDoc.id); setMode(value); }} />
+                    <SegmentedControl label="编辑器显示模式" className="mode-switch" value={mode} options={(["edit", "split", "preview"] as EditorMode[]).map((value) => ({ value, label: value === "edit" ? "编辑" : value === "split" ? "边写边看" : "预览" }))} onChange={(value) => { if (longArticle && value !== "edit") setLongPreviewDocumentId(currentDoc.id); setMode(value); }} />
                     <MarkdownStyleSelect value={readingText} onChange={changeMarkdownStyle} />
                     <div className="markdown-toolbar-host" ref={setMarkdownToolbarHost} />
-                    <div className={`save-indicator save-${saveState}`}><span aria-live="polite">{saveState === "saving" ? <><Spinner />正在保存</> : saveState === "saved" ? "已保存" : saveState === "error" ? "保存失败" : saveState === "conflict" ? "版本冲突" : dirty ? "未保存" : "已同步"}</span><span className="editor-stats">{draft.markdown.length.toLocaleString("zh-CN")} 字符</span></div>
+                    <div className={`save-indicator save-${saveState}`}><span aria-live="polite">{saveState === "saving" ? <><Spinner />正在保存</> : saveState === "saved" ? "已保存" : saveState === "error" ? "保存失败" : saveState === "conflict" ? "版本有变" : dirty ? "未保存" : "已同步"}</span><span className="editor-stats">{draft.markdown.length.toLocaleString("zh-CN")} 字符</span></div>
                     {saveState === "error" && <Button type="button" className="text-button danger" onClick={() => void saveNow()} disabled={closing}>重试</Button>}
                     <Button type="button" className="text-button save-button" aria-keyshortcuts="Meta+S Control+S" onClick={() => void saveNow()} disabled={closing || !dirty || saveState === "saving" || saveState === "conflict"} title="保存（⌘S）">保存</Button>
-                    <Button type="button" className="history-button" onClick={() => void toggleHistory()} disabled={closing || organizationSaving || hasUnsavedChanges || saveState === "saving"} aria-expanded={historyOpen} aria-controls="revision-history">修订历史</Button>
+                    <Button type="button" className="history-button" onClick={() => void toggleHistory()} disabled={closing || organizationSaving || hasUnsavedChanges || saveState === "saving"} aria-expanded={historyOpen} aria-controls="revision-history">历史版本</Button>
                     <a className="export-button" href={api.exportUrl(currentDoc.id)} download><Icon size={15}><path d="M12 3v12M7 10l5 5 5-5M5 20h14" /></Icon>导出 .md</a>
                   </div>
 
                   {saveState === "error" && <div className="inline-error" role="alert">{saveError}</div>}
                   {historyOpen && (
-                    <aside id="revision-history" className="revision-panel" aria-label="修订历史">
-                      <header><div><span className="eyebrow">VERSION THREAD</span><h3>修订历史</h3></div><Button type="button" onClick={() => setHistoryOpen(false)} aria-label="关闭修订历史">×</Button></header>
-                      {historyLoading ? <StatePanel kind="loading" title="正在查找历史版本" /> : historyError ? <StatePanel kind="error" title="无法读取修订历史">{historyError}</StatePanel> : !revisions.length ? <StatePanel kind="empty" title="还没有修订记录">人工编辑并保存后，版本会出现在这里。</StatePanel> : (
+                    <aside id="revision-history" className="revision-panel" aria-label="历史版本">
+                      <header><div><span className="eyebrow">VERSION THREAD</span><h3>历史版本</h3></div><Button type="button" onClick={() => setHistoryOpen(false)} aria-label="关闭历史版本">×</Button></header>
+                      {historyLoading ? <StatePanel kind="loading" title="正在查找历史版本" /> : historyError ? <StatePanel kind="error" title="无法读取历史版本">{historyError}</StatePanel> : !revisions.length ? <StatePanel kind="empty" title="还没有修订记录">编辑保存后，这里会保留历史版本。</StatePanel> : (
                         <ol>
                           {revisions.map((revision) => {
                             const isCurrent = revision.revision === currentDoc.revision;
-                            return <li key={revision.revision} className={isCurrent ? "is-current" : undefined}><div className="revision-meta"><strong>版本 {revision.revision}</strong><time dateTime={revision.createdAt}>{formatDateTime(revision.createdAt)}</time></div><h4>{revision.title || "未命名网页"}</h4><p>{revisionPreview(revision.markdown)}</p><div className="revision-foot"><span>{revision.tags.length ? revision.tags.map((value) => `#${value}`).join(" ") : "无标签"}</span><Button type="button" onClick={() => void restoreRevision(revision)} disabled={isCurrent || importing || hasUnsavedChanges || restoringRevision !== null}>{isCurrent ? "当前版本" : restoringRevision === revision.revision ? "恢复中…" : "恢复此版本"}</Button></div></li>;
+                            return <li key={revision.revision} className={isCurrent ? "is-current" : undefined}><div className="revision-meta"><strong>版本 {revision.revision}</strong><time dateTime={revision.createdAt}>{formatDateTime(revision.createdAt)}</time></div><h4>{revision.title || "未命名织片"}</h4><p>{revisionPreview(revision.markdown)}</p><div className="revision-foot"><span>{revision.tags.length ? revision.tags.map((value) => `#${value}`).join(" ") : "无标签"}</span><Button type="button" onClick={() => void restoreRevision(revision)} disabled={isCurrent || importing || hasUnsavedChanges || restoringRevision !== null}>{isCurrent ? "当前版本" : restoringRevision === revision.revision ? "恢复中…" : "恢复版本"}</Button></div></li>;
                           })}
                         </ol>
                       )}
@@ -4113,7 +4113,7 @@ export default function App() {
 
                   <div ref={editorGridRef} className={`editor-grid mode-${mode}`} onScrollCapture={markPaneScroll}>
                     {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><PaneLabel>MARKDOWN</PaneLabel><MarkdownEditor ref={markdownEditorRef} toolbarHost={markdownToolbarHost} value={draft.markdown} onChange={(markdown) => { if (!closeAttemptRef.current) setDraft((value) => value ? { ...value, markdown } : value); }} readOnly={editorLocked} /></section>}
-                    {mode !== "edit" && longPreviewAllowed && <section className="preview-pane" aria-label="Markdown 预览" tabIndex={0}><PaneLabel>PREVIEW</PaneLabel>{draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} /> : <StatePanel kind="empty" title="这里还没有文字">在编辑区写下 Markdown，预览会同步出现。</StatePanel>}</section>}
+                    {mode !== "edit" && longPreviewAllowed && <section className="preview-pane" aria-label="Markdown 预览" tabIndex={0}><PaneLabel>PREVIEW</PaneLabel>{draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} /> : <StatePanel kind="empty" title="暂无正文">写下正文，即可查看排版效果。</StatePanel>}</section>}
                   </div>
                 </div></>
               )}
@@ -4128,7 +4128,7 @@ export default function App() {
             }
             else markdownEditorRef.current?.jumpTo(offset);
           }} />}</div>
-          {showBackToTitle && <Button type="button" className="back-to-title" aria-label="返回文章标题" onClick={() => documentHeadRef.current?.scrollIntoView({ block: "start" })}><Icon size={20}><path d="m6 10 6-6 6 6M12 4v16" /></Icon></Button>}
+          {showBackToTitle && <Button type="button" className="back-to-title" aria-label="回到顶部" onClick={() => documentHeadRef.current?.scrollIntoView({ block: "start" })}><Icon size={20}><path d="m6 10 6-6 6 6M12 4v16" /></Icon></Button>}
         </section>
       </main>
       </>}

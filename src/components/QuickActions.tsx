@@ -85,11 +85,11 @@ export function QuickActions({ open, onClose, onOpenDocument, onCreateArticle }:
     try {
       if (await onCreateArticle(term)) onClose();
       else {
-        setError("尚未创建文章；未保存内容和当前输入都已保留，可继续搜索或重试。");
+        setError("尚未新建文章；未保存内容和当前输入都已保留，可继续搜索或重试。");
         window.requestAnimationFrame(() => input.current?.focus());
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "无法创建文章，请稍后重试。");
+      setError(reason instanceof Error ? reason.message : "无法新建文章，请稍后重试。");
       window.requestAnimationFrame(() => input.current?.focus());
     } finally {
       setBusy(false);
@@ -133,8 +133,8 @@ export function QuickActions({ open, onClose, onOpenDocument, onCreateArticle }:
     ? `${id}-result-${activeIndex}`
     : canCreate ? createOptionId : undefined;
 
-  return <Modal open={open} title="快捷搜索与新建" onClose={onClose} panel={false} className="quick-actions-backdrop">
-    <section className="quick-actions-panel" aria-label="快捷搜索与新建文章">
+  return <Modal open={open} title="快捷查找" onClose={onClose} panel={false} className="quick-actions-backdrop">
+    <section className="quick-actions-panel" aria-label="快捷查找">
       <header className="quick-actions-header">
         <input
           ref={input}
@@ -146,7 +146,7 @@ export function QuickActions({ open, onClose, onOpenDocument, onCreateArticle }:
           aria-activedescendant={activeDescendant}
           autoComplete="off"
           maxLength={200}
-          placeholder="搜索资料，或输入文章标题…"
+          placeholder="输入关键词或新文章标题"
           value={query}
           disabled={busy}
           onChange={(event) => {
@@ -206,7 +206,7 @@ export function QuickActions({ open, onClose, onOpenDocument, onCreateArticle }:
       <footer className="quick-actions-footer">
         <span><kbd>↑</kbd><kbd>↓</kbd> 导航</span>
         <span><kbd>↵</kbd> {items.length ? "打开" : canCreate ? "创建" : "打开"}</span>
-        <span><kbd>Shift + Enter</kbd> 创建文章</span>
+        <span><kbd>Shift + Enter</kbd> 新建文章</span>
         <span><kbd>esc</kbd> 退出</span>
       </footer>
     </section>

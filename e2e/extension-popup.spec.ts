@@ -86,8 +86,8 @@ test("extension save notifies open library tabs without coupling save success to
   await page.locator("#title").fill("即时刷新测试");
   await page.locator("#source").fill("https://example.com/saved");
   await page.locator("#markdown").fill("# 已保存");
-  await page.getByRole("button", { name: "确认并保存新副本" }).click();
-  await expect(page.locator("#status")).toHaveText("已保存，织页目录已自动刷新。");
+  await page.getByRole("button", { name: "保存副本" }).click();
+  await expect(page.locator("#status")).toHaveText("已保存，织片列表已更新。");
   expect(await page.evaluate(() => {
     const { args, query, received } = (window as typeof window & { __EXTENSION_PUSH_TEST__: { args?: unknown[]; query?: unknown; received: unknown[] } }).__EXTENSION_PUSH_TEST__;
     return { args, query, received };
@@ -101,14 +101,14 @@ test("extension save notifies open library tabs without coupling save success to
     state.rejectInjection = true;
     document.querySelector<HTMLElement>("#clip-form")!.hidden = false;
   });
-  await page.getByRole("button", { name: "确认并保存新副本" }).click();
-  await expect(page.locator("#status")).toHaveText("已保存为织页中的新副本。");
+  await page.getByRole("button", { name: "保存副本" }).click();
+  await expect(page.locator("#status")).toHaveText("已另存一张新织片。");
   await page.evaluate(() => {
     const state = (window as typeof window & { __EXTENSION_PUSH_TEST__: { hasTab: boolean; rejectInjection: boolean } }).__EXTENSION_PUSH_TEST__;
     state.rejectInjection = false;
     state.hasTab = false;
     document.querySelector<HTMLElement>("#clip-form")!.hidden = false;
   });
-  await page.getByRole("button", { name: "确认并保存新副本" }).click();
-  await expect(page.locator("#status")).toHaveText("已保存为织页中的新副本。");
+  await page.getByRole("button", { name: "保存副本" }).click();
+  await expect(page.locator("#status")).toHaveText("已另存一张新织片。");
 });

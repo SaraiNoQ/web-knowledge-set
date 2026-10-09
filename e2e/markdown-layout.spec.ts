@@ -18,7 +18,7 @@ for (const cloud of [false, true]) test(`Markdown toolbar and floating pane labe
   const head = page.locator(".compact-document-head");
   if (cloud) {
     const actions = head.locator(".document-actions");
-    await expect(actions.getByRole("combobox", { name: "Markdown 展示风格", exact: true })).toHaveCount(1);
+    await expect(actions.getByRole("combobox", { name: "页面风格", exact: true })).toHaveCount(1);
     await expect(page.locator(".editor-toolbar .markdown-style-select")).toHaveCount(0);
     await actions.getByRole("button", { name: "收藏", exact: true }).click();
     await expect(actions.getByRole("button", { name: "取消收藏", exact: true })).toBeVisible();
@@ -56,7 +56,7 @@ for (const cloud of [false, true]) test(`Markdown toolbar and floating pane labe
     await expect(head.locator(".document-actions > button").first()).toHaveText("编辑");
     await head.getByRole("button", { name: "编辑", exact: true }).click();
     await expect(head.locator(".document-actions > button").first()).toHaveText("返回阅读");
-    await expect(actions.getByRole("combobox", { name: "Markdown 展示风格", exact: true })).toBeVisible();
+    await expect(actions.getByRole("combobox", { name: "页面风格", exact: true })).toBeVisible();
     const status = page.locator(".editor-toolbar .save-indicator");
     await expect(status.locator(":scope > span[aria-live]")).toHaveText("已同步");
     await expect(status.locator(":scope > .editor-stats")).toContainText("字符");
@@ -96,7 +96,7 @@ for (const cloud of [false, true]) test(`Markdown toolbar and floating pane labe
   await expect(previewLabel).toHaveCSS("opacity", "1");
   await expect(editor).toHaveAttribute("data-identity", "retained");
   for (const theme of ["light", "dark"]) {
-    if (theme === "dark") await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+    if (theme === "dark") await page.getByRole("button", { name: "深色外观", exact: true }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
     await page.screenshot({ path: `/tmp/zhiye-md-layout-${cloud}-${theme}.png` });
     if (cloud) {

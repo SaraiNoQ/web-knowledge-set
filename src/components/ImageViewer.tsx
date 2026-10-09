@@ -88,19 +88,19 @@ function ImageViewer({ src, alt, onClose }: { src: string; alt: string; onClose:
     } catch (cause) { setError(cause instanceof Error ? cause.message : "图片导出失败，请重试。"); }
     finally { setExporting(false); }
   };
-  return createPortal(<Modal open panel={false} className="image-viewer" title="图片查看器" onClose={onClose}>
-    <header className="image-viewer-header"><div><strong>{alt || "正文图片"}</strong><small>{size.width ? `${size.width} × ${size.height} · 编辑后另存为 PNG，原图保留` : "正在加载图片…"}</small></div><IconButton label="关闭图片查看器" onClick={onClose}><WorkspaceIcon name="close" /></IconButton></header>
+  return createPortal(<Modal open panel={false} className="image-viewer" title="查看图片" onClose={onClose}>
+    <header className="image-viewer-header"><div><strong>{alt || "正文图片"}</strong><small>{size.width ? `${size.width} × ${size.height} · 编辑后另存为 PNG，原图保留` : "正在加载图片…"}</small></div><IconButton label="关闭查看图片" onClick={onClose}><WorkspaceIcon name="close" /></IconButton></header>
     <div className="image-viewer-toolbar" role="group" aria-label="图片工具">
-      <IconButton label="缩小图片" disabled={zoom <= .25} onClick={() => changeZoom(zoom / 1.25)}><WorkspaceIcon name="zoomOut" /></IconButton>
+      <IconButton label="缩小" disabled={zoom <= .25} onClick={() => changeZoom(zoom / 1.25)}><WorkspaceIcon name="zoomOut" /></IconButton>
       <output aria-label="图片缩放比例">{Math.round(scale * 100)}%</output>
-      <IconButton label="放大图片" disabled={zoom >= maxZoom} onClick={() => changeZoom(zoom * 1.25)}><WorkspaceIcon name="zoomIn" /></IconButton>
+      <IconButton label="放大" disabled={zoom >= maxZoom} onClick={() => changeZoom(zoom * 1.25)}><WorkspaceIcon name="zoomIn" /></IconButton>
       <Button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}>适应窗口</Button>
-      <Button onClick={() => { setZoom(1 / Math.max(.01, fit)); setPan({ x: 0, y: 0 }); }}>原始尺寸</Button>
-      <IconButton label="向右旋转图片" onClick={() => { setRotation((rotation + 90) % 360); setPan({ x: 0, y: 0 }); }}><WorkspaceIcon name="rotate" /></IconButton>
-      <IconButton label="水平翻转图片" aria-pressed={flipX === -1} onClick={() => setFlipX(-flipX)}><WorkspaceIcon name="flipHorizontal" /></IconButton>
-      <IconButton label="垂直翻转图片" aria-pressed={flipY === -1} onClick={() => setFlipY(-flipY)}><WorkspaceIcon name="flipVertical" /></IconButton>
-      <Button onClick={reset}>重置图片</Button>
-      <Button disabled={!size.width || exporting} onClick={() => void exportImage()}>{exporting ? "正在导出…" : "导出 PNG 副本"}</Button>
+      <Button onClick={() => { setZoom(1 / Math.max(.01, fit)); setPan({ x: 0, y: 0 }); }}>原始大小</Button>
+      <IconButton label="向右旋转" onClick={() => { setRotation((rotation + 90) % 360); setPan({ x: 0, y: 0 }); }}><WorkspaceIcon name="rotate" /></IconButton>
+      <IconButton label="左右翻转" aria-pressed={flipX === -1} onClick={() => setFlipX(-flipX)}><WorkspaceIcon name="flipHorizontal" /></IconButton>
+      <IconButton label="上下翻转" aria-pressed={flipY === -1} onClick={() => setFlipY(-flipY)}><WorkspaceIcon name="flipVertical" /></IconButton>
+      <Button onClick={reset}>恢复原样</Button>
+      <Button disabled={!size.width || exporting} onClick={() => void exportImage()}>{exporting ? "正在导出…" : "另存图片"}</Button>
     </div>
     <div ref={stageRef} className="image-viewer-stage" role="region" aria-label="图片画布" tabIndex={0}
       onKeyDown={(event) => {

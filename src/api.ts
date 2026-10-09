@@ -133,7 +133,7 @@ async function requestResponse(path: string, init: RequestInit = {}, replaceData
   if (responseEpoch) {
     if (dataEpoch === null || (replaceDataEpoch && response.ok)) dataEpoch = responseEpoch;
     else if (responseEpoch !== dataEpoch) {
-      throw new ApiRequestError("本地知识库已从留档恢复，请刷新页面后继续。", 409, "STALE_DATA_EPOCH");
+      throw new ApiRequestError("知识库已从备份恢复，请刷新后继续。", 409, "STALE_DATA_EPOCH");
     }
   }
 
@@ -305,13 +305,13 @@ export const api = {
   setSemanticApiKey(apiKey: string) {
     if (cloudRuntime) {
       const storage = cloudCredentialStorage();
-      if (!storage) return Promise.reject(new ApiRequestError("浏览器无法安全保存云端向量密钥。", 0, "SEMANTIC_KEY_STORAGE_FAILED"));
+      if (!storage) return Promise.reject(new ApiRequestError("浏览器无法保存推荐密钥，请检查权限。", 0, "SEMANTIC_KEY_STORAGE_FAILED"));
       try {
         const credential = saveCloudSemanticCredential(storage, apiKey);
         wakeSemanticIndexer();
         return Promise.resolve({ configured: true, endpointUrl: credential.endpointUrl });
       } catch {
-        return Promise.reject(new ApiRequestError("向量 API 密钥无效或无法保存。", 400, "SEMANTIC_KEY_INVALID"));
+        return Promise.reject(new ApiRequestError("推荐密钥无效或无法保存。", 400, "SEMANTIC_KEY_INVALID"));
       }
     }
     return request<{ configured: boolean; endpointUrl: string | null }>("/api/settings/semantic/key", {
@@ -334,7 +334,7 @@ export const api = {
         wakeSemanticIndexer();
         return { configured: false, endpointUrl: null };
       } catch {
-        throw new ApiRequestError("无法清除向量 API 密钥。", 0, "SEMANTIC_KEY_STORAGE_FAILED");
+        throw new ApiRequestError("无法删除推荐密钥。", 0, "SEMANTIC_KEY_STORAGE_FAILED");
       }
     }
     const status = await request<{ configured: boolean; endpointUrl: string | null }>("/api/settings/semantic/key", {

@@ -78,7 +78,7 @@ for (const cloud of [false, true]) test(`right outline folds and navigates real 
   expect((await request.patch(`/api/documents/${document.id}`, { headers, data: { markdown, revision: document.revision } })).ok()).toBe(true);
   await page.goto("/");
   await page.locator(".directory-document-row").getByRole("button", { name: title, exact: true }).click();
-  await page.getByRole("button", { name: "展开右侧功能区", exact: true }).click();
+  await page.getByRole("button", { name: "展开侧栏", exact: true }).click();
   const outline = page.getByRole("navigation", { name: "Markdown 大纲" });
   await expect(outline.locator(".outline-fold-space")).toHaveCount(0);
   await expect(outline.getByRole("button", { name: "代码中的假标题", exact: true })).toHaveCount(0);
@@ -91,7 +91,7 @@ for (const cloud of [false, true]) test(`right outline folds and navigates real 
   await expect(page.locator('.reader-main .markdown-preview h2').last()).toBeInViewport();
   await page.screenshot({ path: `test-results/outline-${cloud ? "web" : "local"}-reading.png` });
   if (cloud) await page.getByRole("button", { name: "编辑", exact: true }).click();
-  await page.getByRole("button", { name: "对照", exact: true }).click();
+  await page.getByRole("button", { name: "边写边看", exact: true }).click();
   await outline.getByRole("button", { name: "中部跳转", exact: true }).click();
   await expect.poll(async () => {
     const heading = await page.locator(".markdown-preview").getByRole("heading", { name: "中部跳转", exact: true }).boundingBox();
@@ -110,14 +110,14 @@ for (const cloud of [false, true]) test(`right outline folds and navigates real 
   await expect(outline.getByRole("button", { name: "新草稿", exact: true })).toBeVisible();
   await outline.getByRole("button", { name: "编辑定位", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Markdown 编辑器" })).toBeFocused();
-  await page.getByRole("button", { name: "收起右侧功能区", exact: true }).click();
+  await page.getByRole("button", { name: "收起侧栏", exact: true }).click();
   await expect(outline).toHaveCount(0);
-  await page.getByRole("button", { name: "展开右侧功能区", exact: true }).click();
+  await page.getByRole("button", { name: "展开侧栏", exact: true }).click();
   for (const width of [1440, 800, 390, 320]) {
     await page.setViewportSize({ width, height: 844 });
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   }
-  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await page.getByRole("button", { name: "深色外观", exact: true }).click();
   await page.screenshot({ path: `test-results/outline-${cloud ? "web" : "local"}-mobile.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.screenshot({ path: `test-results/outline-${cloud ? "web" : "local"}-desktop.png` });
@@ -133,16 +133,16 @@ for (const cloud of [false, true]) {
     if (cloud) await page.route("**/health", (route) => route.fulfill({ json: { ok: true, mode: "cloud-core" } }));
     await page.goto("/");
     const create = { click: async () => {
-      await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
-      await page.getByRole("dialog", { name: "快捷搜索与新建", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
+      await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷查找", exact: true }).click();
+      await page.getByRole("dialog", { name: "快捷查找", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
     } };
     await create.click();
     if (cloud) await page.getByRole("button", { name: "编辑" }).click();
     if (cloud) {
-      await page.getByRole("button", { name: "重命名文章", exact: true }).dblclick();
+      await page.getByRole("button", { name: "修改标题", exact: true }).dblclick();
       await page.getByRole("textbox", { name: "文章标题", exact: true }).fill("第一篇工作笔记");
       await page.getByRole("textbox", { name: "文章标题", exact: true }).press("Enter");
-      await expect(page.getByRole("button", { name: "重命名文章", exact: true })).toHaveAttribute("title", "第一篇工作笔记");
+      await expect(page.getByRole("button", { name: "修改标题", exact: true })).toHaveAttribute("title", "第一篇工作笔记");
     } else await page.getByLabel("文档标题").fill("第一篇工作笔记");
     await page.getByRole("textbox", { name: "Markdown 编辑器" }).fill("第一篇已保存正文。");
     await page.getByRole("button", { name: "保存", exact: true }).click();
@@ -156,10 +156,10 @@ for (const cloud of [false, true]) {
     await expect(tabTitle).toHaveCSS("box-shadow", "none");
     if (cloud) await page.getByRole("button", { name: "编辑" }).click();
     if (cloud) {
-      await page.getByRole("button", { name: "重命名文章", exact: true }).dblclick();
+      await page.getByRole("button", { name: "修改标题", exact: true }).dblclick();
       await page.getByRole("textbox", { name: "文章标题", exact: true }).fill("第二篇工作笔记");
       await page.getByRole("textbox", { name: "文章标题", exact: true }).press("Enter");
-      await expect(page.getByRole("button", { name: "重命名文章", exact: true })).toHaveAttribute("title", "第二篇工作笔记");
+      await expect(page.getByRole("button", { name: "修改标题", exact: true })).toHaveAttribute("title", "第二篇工作笔记");
     } else await page.getByLabel("文档标题").fill("第二篇工作笔记");
     await page.getByRole("textbox", { name: "Markdown 编辑器" }).fill("第二篇已保存正文。");
     await page.getByRole("button", { name: "保存", exact: true }).click();
@@ -190,13 +190,13 @@ for (const cloud of [false, true]) {
     await expect(page.getByRole("textbox", { name: "Markdown 编辑器" })).toHaveText("尚未保存的内容。");
     await page.setViewportSize({ width: 1440, height: 600 });
     for (const immersive of [false, true]) {
-      if (immersive) await page.getByRole("button", { name: "进入沉浸模式", exact: true }).click();
+      if (immersive) await page.getByRole("button", { name: "专注阅读", exact: true }).click();
       await page.locator(".editor-toolbar").evaluate((element) => element.scrollIntoView({ block: "start" }));
       const toolbar = await page.locator(".editor-toolbar").boundingBox();
       const bar = await page.locator(".document-tabbar").boundingBox();
       expect(toolbar!.y).toBeGreaterThanOrEqual(bar!.y + bar!.height);
       await expect(page.getByRole("button", { name: "保存", exact: true })).toBeVisible();
-      if (immersive) await page.getByRole("button", { name: "退出沉浸模式", exact: true }).click();
+      if (immersive) await page.getByRole("button", { name: "退出专注", exact: true }).click();
     }
     await page.setViewportSize({ width: 1440, height: 900 });
     while (await page.getByRole("button", { name: "关闭通知", exact: true }).count()) await page.getByRole("button", { name: "关闭通知", exact: true }).first().click();
@@ -209,7 +209,7 @@ for (const cloud of [false, true]) {
     await create.click();
     await page.getByRole("button", { name: "关闭文章：未命名文章" }).click();
     await expect(tabs.getByRole("button", { name: "第一篇工作笔记", exact: true })).toHaveAttribute("aria-pressed", "true");
-    await page.getByRole("button", { name: "返回文档目录", exact: true }).click();
+    await page.getByRole("button", { name: "返回目录", exact: true }).click();
     await expect(tabs.locator(".document-tab-select")).toHaveCount(1);
     await tabs.getByRole("button", { name: "第一篇工作笔记", exact: true }).click();
     await expect(tabs.getByRole("button", { name: "第一篇工作笔记", exact: true })).toHaveAttribute("aria-pressed", "true");
@@ -228,18 +228,18 @@ test("long folder breadcrumbs fit small screens and the rail scrolls on landscap
   await page.route("**/api/settings/appearance", (route) => route.fulfill({ json: { immersiveMode: route.request().method() === "GET" ? false : route.request().postDataJSON().immersiveMode } }));
   const list = await request.get("/api/documents");
   const headers = { Origin: "http://127.0.0.1:4174", "X-Zhiye-Data-Epoch": list.headers()["x-zhiye-data-epoch"] };
-  const folderName = "这是用于检验小屏幕位置栏截断的长文件夹名称".repeat(3);
+  const folderName = "这是用于检验小屏幕位置栏截断的长分组名称".repeat(3);
   const created = await request.post("/api/folders", { headers, data: { name: folderName } });
   expect(created.ok()).toBe(true);
   const folder = await created.json();
   await page.goto("/");
-  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
-  await page.getByRole("dialog", { name: "快捷搜索与新建", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷查找", exact: true }).click();
+  await page.getByRole("dialog", { name: "快捷查找", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
   await expect(page.getByLabel("文档标题")).toHaveValue("未命名文章");
   const row = page.locator(".directory-document-row.is-selected");
   await row.getByRole("button", { name: /^更多操作/ }).click();
-  await page.getByRole("dialog", { name: /^操作/ }).getByRole("button", { name: "移动到文件夹…" }).click();
-  const move = page.getByRole("dialog", { name: "移动到文件夹" });
+  await page.getByRole("dialog", { name: /^操作/ }).getByRole("button", { name: "移动资料" }).click();
+  const move = page.getByRole("dialog", { name: "移动资料" });
   await move.getByRole("combobox").click();
   await page.getByRole("option", { name: folderName, exact: true }).click();
   await move.getByRole("button", { name: "移动", exact: true }).click();
@@ -251,8 +251,8 @@ test("long folder breadcrumbs fit small screens and the rail scrolls on landscap
   await page.setViewportSize({ width: 844, height: 390 });
   const rail = page.getByRole("navigation", { name: "工作台导航" });
   await expect.poll(() => rail.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
-  await rail.getByRole("button", { name: "打开设置", exact: true }).scrollIntoViewIfNeeded();
-  const button = await rail.getByRole("button", { name: "打开设置", exact: true }).boundingBox();
+  await rail.getByRole("button", { name: "设置", exact: true }).scrollIntoViewIfNeeded();
+  const button = await rail.getByRole("button", { name: "设置", exact: true }).boundingBox();
   expect(button!.y).toBeGreaterThanOrEqual(0);
   expect(button!.y + button!.height).toBeLessThanOrEqual(390);
   await request.delete(`/api/folders/${folder.id}`, { headers });

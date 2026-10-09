@@ -41,15 +41,15 @@ test("directory categories align with article tabs and reuse existing views", as
   await page.goto("/");
   const categories = page.getByLabel("目录分类", { exact: true });
   await expect(categories.getByRole("button")).toHaveCount(5);
-  await expect(categories.getByRole("button", { name: "列表", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(categories.getByRole("button", { name: "全部资料", exact: true })).toHaveAttribute("aria-pressed", "true");
   for (const immersive of [false, true]) {
-    if (immersive) await page.getByRole("button", { name: "进入沉浸模式", exact: true }).click();
+    if (immersive) await page.getByRole("button", { name: "专注阅读", exact: true }).click();
     const header = await categories.boundingBox();
     const articleTabs = await page.locator(".document-tabbar").boundingBox();
     expect(header!.height).toBe(42);
     expect(header!.y).toBe(articleTabs!.y);
     expect(header!.height).toBe(articleTabs!.height);
-    if (immersive) await page.getByRole("button", { name: "退出沉浸模式", exact: true }).click();
+    if (immersive) await page.getByRole("button", { name: "退出专注", exact: true }).click();
   }
   await categories.getByRole("button", { name: "收藏", exact: true }).click();
   await expect(page.locator(".directory-document-row").getByRole("button", { name: document.title, exact: true })).toBeVisible();
@@ -63,7 +63,7 @@ test("directory categories align with article tabs and reuse existing views", as
     await queried;
     await expect(categories.getByRole("button", { name, exact: true })).toHaveAttribute("aria-pressed", "true");
   }
-  await categories.getByRole("button", { name: "列表", exact: true }).click();
+  await categories.getByRole("button", { name: "全部资料", exact: true }).click();
   await expect(page.locator(".directory-document-row").getByRole("button", { name: document.title, exact: true })).toBeVisible();
 });
 
@@ -76,8 +76,8 @@ test("search opens body matches and category changes protect unsaved edits", asy
   await panel.locator(".library-search-snippets button").first().click();
   await expect(page.getByRole("navigation", { name: "已打开的文章" }).getByRole("button", { name: document.title, exact: true })).toBeVisible();
   await page.getByLabel("目录分类", { exact: true }).getByRole("button", { name: "搜索", exact: true }).click();
-  await expect(page.getByRole("button", { name: "重命名文章", exact: true })).toHaveAttribute("title", document.title);
-  await page.getByLabel("目录分类", { exact: true }).getByRole("button", { name: "列表", exact: true }).click();
+  await expect(page.getByRole("button", { name: "修改标题", exact: true })).toHaveAttribute("title", document.title);
+  await page.getByLabel("目录分类", { exact: true }).getByRole("button", { name: "全部资料", exact: true }).click();
   await page.getByLabel("目录分类", { exact: true }).getByRole("button", { name: "搜索", exact: true }).click();
   await expect(page.getByRole("searchbox", { name: "搜索文档", exact: true })).toHaveValue("联邦原型");
   await expect(panel.locator(".library-search-result-title")).toHaveText(document.title);
@@ -96,9 +96,9 @@ test("quick actions search, open results, create named articles, and protect dra
   const searchTerm = `QuickPaletteBody${suffix}`;
   const document = await seed(request, `快捷面板搜索结果${suffix}`, `${searchTerm} 命中正文。`, false);
   await page.goto("/");
-  const railSearch = page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷搜索与新建文章", exact: true });
+  const railSearch = page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷查找", exact: true });
   await railSearch.click();
-  const dialog = page.getByRole("dialog", { name: "快捷搜索与新建", exact: true });
+  const dialog = page.getByRole("dialog", { name: "快捷查找", exact: true });
   const input = dialog.getByRole("combobox", { name: "搜索资料或输入文章标题", exact: true });
   await expect(input).toBeFocused();
   await input.fill(searchTerm);
@@ -124,7 +124,7 @@ test("quick actions search, open results, create named articles, and protect dra
   await expect(dialog.getByRole("option", { name: new RegExp(createTitle) })).toBeVisible();
   await dialog.getByRole("combobox", { name: "搜索资料或输入文章标题", exact: true }).press("Shift+Enter");
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "重命名文章", exact: true })).toHaveAttribute("title", createTitle);
+  await expect(page.getByRole("button", { name: "修改标题", exact: true })).toHaveAttribute("title", createTitle);
 
   await railSearch.click();
   const enterTitle = `回车创建的快捷文章${suffix}`;
@@ -133,7 +133,7 @@ test("quick actions search, open results, create named articles, and protect dra
   await expect(dialog.getByRole("option", { name: new RegExp(enterTitle) })).toBeVisible();
   await enterInput.press("Enter");
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "重命名文章", exact: true })).toHaveAttribute("title", enterTitle);
+  await expect(page.getByRole("button", { name: "修改标题", exact: true })).toHaveAttribute("title", enterTitle);
 
   await page.getByRole("button", { name: "编辑", exact: true }).click();
   const editor = page.getByRole("textbox", { name: "Markdown 编辑器" });
@@ -165,15 +165,15 @@ test("quick actions search, open results, create named articles, and protect dra
   await expect(editor).toHaveText("创建前必须保护的未保存正文");
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "重命名文章", exact: true })).toHaveAttribute("title", enterTitle);
+  await expect(page.getByRole("button", { name: "修改标题", exact: true })).toHaveAttribute("title", enterTitle);
   await expect(editor).toHaveText("创建前必须保护的未保存正文");
 });
 
 test("quick actions shortcuts open the centered panel and Escape restores focus", async ({ page }) => {
   await page.goto("/");
-  const railSearch = page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷搜索与新建文章", exact: true });
+  const railSearch = page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷查找", exact: true });
   await railSearch.click();
-  const dialog = page.getByRole("dialog", { name: "快捷搜索与新建", exact: true });
+  const dialog = page.getByRole("dialog", { name: "快捷查找", exact: true });
   await expect(dialog).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
@@ -187,10 +187,10 @@ test("quick actions shortcuts open the centered panel and Escape restores focus"
 
 test("quick actions keep their paper surface inside narrow dark viewports", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
-  const railSearch = page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷搜索与新建文章", exact: true });
+  await page.getByRole("button", { name: "深色外观", exact: true }).click();
+  const railSearch = page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷查找", exact: true });
   await railSearch.click();
-  const dialog = page.getByRole("dialog", { name: "快捷搜索与新建", exact: true });
+  const dialog = page.getByRole("dialog", { name: "快捷查找", exact: true });
   await expect(dialog).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   for (const width of [390, 320]) {
@@ -216,8 +216,8 @@ test("quick actions stay compact and accessible across themes, content, and sear
     return route.fulfill({ json: { items: Array.from({ length: 7 }, (_, index) => result(`visual-${index}`, `${index + 1} · 长标题与中英文混排 ${"检索体验 / Reading notes ".repeat(12)}`, ["用于检查命中片段的行高、层级与截断。".repeat(8)])), total: 9, page: 1, pageSize: 50 } });
   });
   await page.goto("/");
-  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷搜索与新建文章", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "快捷搜索与新建", exact: true });
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷查找", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "快捷查找", exact: true });
   const panel = dialog.locator(".quick-actions-panel");
   const input = dialog.getByRole("combobox", { name: "搜索资料或输入文章标题", exact: true });
   await expect(panel.locator(".quick-actions-header > svg, .quick-actions-header > button")).toHaveCount(0);
@@ -269,9 +269,9 @@ test("the map rail entry returns to the selected directory category", async ({ p
   const categories = page.getByRole("navigation", { name: "目录分类" });
   await categories.getByRole("button", { name: "收藏", exact: true }).click();
   await expect(page.locator(".directory-document-row").getByRole("button", { name: document.title, exact: true })).toBeVisible();
-  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "查看知识地图", exact: true }).click();
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "知识地图", exact: true }).click();
   await expect(page.getByRole("heading", { name: "知识地图", exact: true })).toBeVisible();
-  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "文档资料库", exact: true }).click();
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "资料库", exact: true }).click();
   await expect(categories.getByRole("button", { name: "收藏", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".directory-document-row").getByRole("button", { name: document.title, exact: true })).toBeVisible();
 });
@@ -297,16 +297,16 @@ test("search settings use actual fields and Aa distinguishes case", async ({ pag
   const panel = await search(page, "searchcase");
   await expect(panel.locator(".library-search-result-title")).toHaveText(document.title);
   await panel.getByRole("button", { name: "区分大小写", exact: true }).click();
-  await expect(panel.getByText("没有找到匹配文档。试试其他关键词或调整搜索设置。", { exact: true })).toBeVisible();
+  await expect(panel.getByText("没找到织片，试试换词或调整范围。", { exact: true })).toBeVisible();
   await page.getByRole("searchbox", { name: "搜索文档", exact: true }).fill("SearchCASE");
   await expect(panel.locator(".library-search-result-title")).toHaveText(document.title);
   await panel.getByRole("button", { name: "搜索设置", exact: true }).click();
   await chooseSearchOption(page, "搜索范围", "正文");
-  await chooseSearchOption(page, "搜索文档类型", "文章");
-  await panel.getByRole("checkbox", { name: "仅搜索收藏", exact: true }).check();
+  await chooseSearchOption(page, "搜索资料类型", "文章");
+  await panel.getByRole("checkbox", { name: "只看收藏", exact: true }).check();
   await expect(panel.locator(".library-search-result-title")).toHaveText(document.title);
   await page.getByRole("searchbox", { name: "搜索文档", exact: true }).fill("SearchCASE 标题");
-  await expect(panel.getByText("没有找到匹配文档。试试其他关键词或调整搜索设置。", { exact: true })).toBeVisible();
+  await expect(panel.getByText("没找到织片，试试换词或调整范围。", { exact: true })).toBeVisible();
   await chooseSearchOption(page, "搜索范围", "标题");
   await expect(panel.locator(".library-search-result-title")).toHaveText(document.title);
 });
@@ -325,13 +325,13 @@ test("search supports paging, sorting, collapsing and more context", async ({ pa
   await expect(panel.locator(".library-search-snippets button")).toHaveCount(2);
   await panel.getByRole("button", { name: "下一页", exact: true }).click();
   await expect(panel.locator(".library-search-result-title")).toHaveText("PagingMatch 文档 2");
-  await chooseSearchOption(page, "搜索结果排序", "标题 (A–Z)");
+  await chooseSearchOption(page, "搜索结果排序", "标题排序");
   await expect(panel.locator(".library-search-result-title")).toHaveText("PagingMatch 文档 1");
   await expect.poll(() => requests.at(-1)?.searchParams.get("sort")).toBe("title");
   await panel.getByRole("button", { name: "搜索设置", exact: true }).click();
-  await panel.getByRole("switch", { name: "显示更多上下文", exact: true }).check();
+  await panel.getByRole("switch", { name: "更多原文", exact: true }).check();
   await expect(panel.locator(".library-search-snippets button")).toHaveCount(5);
-  await panel.getByRole("switch", { name: "折叠搜索结果", exact: true }).check();
+  await panel.getByRole("switch", { name: "收起片段", exact: true }).check();
   await expect(panel.locator(".library-search-snippets")).toHaveCount(0);
   await panel.getByRole("button", { name: "展开 PagingMatch 文档 1 的搜索结果", exact: true }).click();
   await expect(panel.locator(".library-search-snippets button")).toHaveCount(5);
@@ -357,21 +357,21 @@ test("late search responses cannot overwrite newer results and history can be cl
   releaseOld();
   await expect.poll(() => oldFinished).toBe(true);
   await expect(panel.locator(".library-search-result-title")).toHaveText("FreshNew 文档");
-  await panel.getByRole("button", { name: "清空搜索", exact: true }).click();
+  await panel.getByRole("button", { name: "清空输入", exact: true }).click();
   await expect(panel.getByRole("button", { name: "FreshNew", exact: true })).toBeVisible();
   await expect(panel.getByRole("button", { name: "StaleOld", exact: true })).toHaveCount(0);
   await panel.getByRole("button", { name: "FreshNew", exact: true }).click();
   await expect(page.getByRole("searchbox", { name: "搜索文档", exact: true })).toHaveValue("FreshNew");
   await expect(panel.locator(".library-search-result-title")).toHaveText("FreshNew 文档");
-  await panel.getByRole("button", { name: "清空搜索", exact: true }).click();
-  await panel.getByRole("button", { name: "清除搜索历史", exact: true }).click();
-  await expect(panel.getByText("搜索历史", { exact: true })).toHaveCount(0);
+  await panel.getByRole("button", { name: "清空输入", exact: true }).click();
+  await panel.getByRole("button", { name: "清除记录", exact: true }).click();
+  await expect(panel.getByText("最近搜索", { exact: true })).toHaveCount(0);
 });
 
 test("search categories and controls fit mobile dark mode", async ({ page }) => {
   await page.goto("/");
   await search(page, "");
-  await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
+  await page.getByRole("button", { name: "深色外观", exact: true }).click();
   await page.locator(".library-search").getByRole("button", { name: "搜索设置", exact: true }).click();
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
@@ -390,17 +390,17 @@ test("mobile rail opens quick actions without leaving the current search or read
   const resultTitle = panel.locator(".library-search-result-title");
   await expect(resultTitle).toHaveText(document.title);
   await resultTitle.click();
-  await expect(page.getByRole("button", { name: "重命名文章", exact: true })).toHaveText(document.title);
+  await expect(page.getByRole("button", { name: "修改标题", exact: true })).toHaveText(document.title);
   await expect(panel).toBeHidden();
-  const railSearch = page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷搜索与新建文章", exact: true });
+  const railSearch = page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷查找", exact: true });
   await railSearch.click();
-  const quickActions = page.getByRole("dialog", { name: "快捷搜索与新建", exact: true });
+  const quickActions = page.getByRole("dialog", { name: "快捷查找", exact: true });
   await expect(quickActions).toBeVisible();
   await expect(panel).toBeHidden();
   await expect(quickActions.getByRole("combobox", { name: "搜索资料或输入文章标题", exact: true })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(quickActions).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "重命名文章", exact: true })).toHaveAttribute("title", document.title);
+  await expect(page.getByRole("button", { name: "修改标题", exact: true })).toHaveAttribute("title", document.title);
   await page.getByRole("button", { name: "编辑", exact: true }).click();
   const editor = page.getByRole("textbox", { name: "Markdown 编辑器" });
   await editor.fill("手机搜索返回之前尚未保存的正文");
@@ -448,7 +448,7 @@ test("search input and custom field menus reuse the existing compact controls", 
   await page.goto("/");
   const panel = await search(page, "CustomSelectToken");
   await expect(panel.locator(".library-search-input")).toHaveCSS("border-radius", "4px");
-  expect((await panel.getByRole("button", { name: "清空搜索", exact: true }).locator("svg").boundingBox())!.width).toBeGreaterThanOrEqual(16);
+  expect((await panel.getByRole("button", { name: "清空输入", exact: true }).locator("svg").boundingBox())!.width).toBeGreaterThanOrEqual(16);
   const settingsButton = panel.getByRole("button", { name: "搜索设置", exact: true });
   expect((await settingsButton.locator("svg").boundingBox())!.width).toBeGreaterThanOrEqual(18);
   await panel.screenshot({ path: "/tmp/zhiye-reader-search-settings.png" });
@@ -462,7 +462,7 @@ test("search input and custom field menus reuse the existing compact controls", 
   await expect(scope).toContainText("正文");
   await expect(panel.locator(".library-search-result-title")).toHaveText(document.title);
   await chooseSearchOption(page, "搜索范围", "标题");
-  await expect(panel.getByText("没有找到匹配文档。试试其他关键词或调整搜索设置。", { exact: true })).toBeVisible();
+  await expect(panel.getByText("没找到织片，试试换词或调整范围。", { exact: true })).toBeVisible();
   await chooseSearchOption(page, "搜索范围", "正文");
   await expect(panel.locator(".library-search-result-title")).toHaveText(document.title);
 });

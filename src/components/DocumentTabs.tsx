@@ -46,10 +46,10 @@ export function DocumentTabs({ documents, selectedId, dirty, disabled, onSelect,
           event.preventDefault();
           const next = event.key === "Home" ? 0 : event.key === "End" ? documents.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + documents.length) % documents.length;
           void onSelect(documents[next].id).then((selected) => { if (selected || documents[next].id === selectedId) list.current?.querySelectorAll<HTMLButtonElement>('.document-tab-select')[next]?.focus(); });
-        }}><WorkspaceIcon name="document" size={17} /><span>{document.title || "未命名网页"}</span>{selectedId === document.id && dirty && <i className="tab-dirty" aria-label="有未保存修改" />}</Button>
-        <IconButton label={`关闭文章：${document.title || "未命名网页"}`} disabled={disabled} onClick={(event) => { const button = event.currentTarget; void onClose(document.id).then(() => window.requestAnimationFrame(() => { if (!button.isConnected) { const target = list.current?.querySelector<HTMLButtonElement>('[aria-pressed="true"]') ?? globalThis.document.querySelector<HTMLInputElement>('#library-panel input'); target?.focus(); } })); }}><WorkspaceIcon name="close" size={14} /></IconButton>
+        }}><WorkspaceIcon name="document" size={17} /><span>{document.title || "未命名织片"}</span>{selectedId === document.id && dirty && <i className="tab-dirty" aria-label="有未保存修改" />}</Button>
+        <IconButton label={`关闭文章：${document.title || "未命名织片"}`} disabled={disabled} onClick={(event) => { const button = event.currentTarget; void onClose(document.id).then(() => window.requestAnimationFrame(() => { if (!button.isConnected) { const target = list.current?.querySelector<HTMLButtonElement>('[aria-pressed="true"]') ?? globalThis.document.querySelector<HTMLInputElement>('#library-panel input'); target?.focus(); } })); }}><WorkspaceIcon name="close" size={14} /></IconButton>
       </div>)}
     </div>
-    <IconButton label={toolsOpen ? "收起右侧功能区" : "展开右侧功能区"} aria-expanded={toolsOpen} aria-controls={toolsOpen ? "document-tools" : undefined} onClick={onToggleTools}><WorkspaceIcon name="panelRight" size={19} /></IconButton>
+    <IconButton label={toolsOpen ? "收起侧栏" : "展开侧栏"} aria-expanded={toolsOpen} aria-controls={toolsOpen ? "document-tools" : undefined} onClick={onToggleTools}><WorkspaceIcon name="panelRight" size={19} /></IconButton>
   </div>;
 }

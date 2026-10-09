@@ -32,7 +32,7 @@ for (const cloud of [false, true]) test(`cached images open and export edited co
   await expect(trigger).toBeEnabled();
   await expect(page.getByRole("button", { name: "查看图片：未缓存图", exact: true })).toHaveCount(0);
   await trigger.focus(); await trigger.press("Enter");
-  const viewer = page.getByRole("dialog", { name: "图片查看器", exact: true });
+  const viewer = page.getByRole("dialog", { name: "查看图片", exact: true });
   await expect(viewer).toBeVisible();
   await expect.poll(() => viewer.getByRole("img").evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(320);
   const refresh = page.waitForResponse((response) => response.url().includes("/api/documents?") && response.status() === 200);
@@ -41,7 +41,7 @@ for (const cloud of [false, true]) test(`cached images open and export edited co
   await expect(viewer).toBeVisible();
   const bounds = await viewer.boundingBox();
   expect(bounds!.width).toBe(1440); expect(bounds!.height).toBe(900);
-  await viewer.getByRole("button", { name: "放大图片", exact: true }).click();
+  await viewer.getByRole("button", { name: "放大", exact: true }).click();
   await expect(viewer.getByLabel("图片缩放比例")).toHaveText("125%");
   const stage = viewer.getByRole("region", { name: "图片画布" });
   const stageBounds = await stage.boundingBox();
@@ -51,14 +51,14 @@ for (const cloud of [false, true]) test(`cached images open and export edited co
   await stage.focus(); await stage.press("ArrowRight");
   await expect(viewer.getByRole("img")).toHaveCSS("transform", "matrix(1.25, 0, 0, 1.25, 40, 0)");
   await stage.press("0");
-  await viewer.getByRole("button", { name: "水平翻转图片", exact: true }).click();
-  await viewer.getByRole("button", { name: "向右旋转图片", exact: true }).click();
+  await viewer.getByRole("button", { name: "左右翻转", exact: true }).click();
+  await viewer.getByRole("button", { name: "向右旋转", exact: true }).click();
   await viewer.getByLabel("亮度").fill("125");
   await expect(viewer.getByRole("img")).toHaveCSS("filter", "brightness(1.25) contrast(1)");
   await viewer.getByLabel("亮度").fill("50");
   await viewer.getByLabel("对比度").fill("50");
   const downloadPromise = page.waitForEvent("download");
-  await viewer.getByRole("button", { name: "导出 PNG 副本", exact: true }).click();
+  await viewer.getByRole("button", { name: "另存图片", exact: true }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("zhiye-image-edited.png");
   const file = `/tmp/zhiye-edited-${cloud}.png`;
@@ -80,8 +80,8 @@ for (const cloud of [false, true]) test(`cached images open and export edited co
   await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
   await page.screenshot({ path: `/tmp/zhiye-image-viewer-${cloud}-mobile.png` });
   expect((await viewer.boundingBox())!.height).toBe(844);
-  await viewer.getByRole("button", { name: "重置图片", exact: true }).click();
-  await expect(viewer.getByRole("button", { name: "水平翻转图片", exact: true })).toHaveAttribute("aria-pressed", "false");
+  await viewer.getByRole("button", { name: "恢复原样", exact: true }).click();
+  await expect(viewer.getByRole("button", { name: "左右翻转", exact: true })).toHaveAttribute("aria-pressed", "false");
   await page.keyboard.press("Escape"); await expect(viewer).toHaveCount(0);
   await expect(trigger).toBeFocused();
   expect((await (await request.get(`/api/documents/${document.id}`)).json())).toMatchObject({ markdown, revision: before.revision });

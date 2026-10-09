@@ -47,8 +47,8 @@ for (const cloud of [false, true]) test(`${cloud ? "cloud" : "local"} editor for
   await page.keyboard.insertText("列名");
   await expect(page.locator(".markdown-preview table")).toBeVisible();
   await expect(page.locator(".markdown-preview th").first()).toHaveText("列名");
-  await page.getByRole("combobox", { name: "Markdown 展示风格", exact: true }).click();
-  await page.getByRole("option", { name: "技术", exact: true }).click();
+  await page.getByRole("combobox", { name: "页面风格", exact: true }).click();
+  await page.getByRole("option", { name: "紧凑", exact: true }).click();
   await expect(page.locator(".app-shell")).toHaveAttribute("data-reading-style", "technical");
   let releaseSave = () => {};
   if (cloud) {
@@ -89,9 +89,9 @@ test("four reading treatments share accessible controls across light, dark and n
   if (await defer.isVisible()) await defer.click();
   await page.getByRole("button", { name: title, exact: true }).click();
   for (const theme of ["light", "dark"]) {
-    if (theme === "dark") await page.getByRole("button", { name: "切换到深色模式", exact: true }).click();
-    for (const [id, label] of [["paper", "纸页"], ["minimal", "极简"], ["editorial", "书刊"], ["technical", "技术"]]) {
-      await page.getByRole("combobox", { name: "Markdown 展示风格", exact: true }).click();
+    if (theme === "dark") await page.getByRole("button", { name: "深色外观", exact: true }).click();
+    for (const [id, label] of [["paper", "纸页"], ["minimal", "极简"], ["editorial", "书刊"], ["technical", "紧凑"]]) {
+      await page.getByRole("combobox", { name: "页面风格", exact: true }).click();
       await page.getByRole("option", { name: label, exact: true }).click();
       await expect(page.locator(".app-shell")).toHaveAttribute("data-reading-style", id);
       await expect(page.locator(".markdown-preview h1")).toHaveText("让知识有自己的节奏");
@@ -140,7 +140,7 @@ test("long Markdown keeps preview paused and responds to editing without rebuild
   const elapsed = Date.now() - started;
   expect(elapsed).toBeLessThan(2_000);
   test.info().annotations.push({ type: "long-document-input", description: `${markdown.length} characters, ${elapsed} ms to visible edit (server Chromium)` });
-  await page.getByRole("combobox", { name: "Markdown 展示风格", exact: true }).click();
+  await page.getByRole("combobox", { name: "页面风格", exact: true }).click();
   await page.getByRole("option", { name: "书刊", exact: true }).click();
   await expect(editor).toHaveAttribute("data-view-identity", "retained");
   await expect(page.locator(".markdown-preview")).toHaveCount(0);

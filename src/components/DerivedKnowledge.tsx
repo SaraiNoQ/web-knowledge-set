@@ -20,14 +20,14 @@ import { WorkspaceIcon } from "./ui/WorkspaceIcon";
 import { useDialogs, useToast } from "./ui/Feedback";
 
 const TYPE_LABEL: Record<DerivedResultType, string> = {
-  summary: "摘要",
-  outline: "分层提纲",
+  summary: "内容摘要",
+  outline: "文章提纲",
   keywords: "关键词",
-  "tag-suggestions": "标签建议",
+  "tag-suggestions": "推荐标签",
   translation: "翻译",
 };
 export type DerivedMode = DerivedResultType | "custom";
-const CUSTOM_LABEL = "AI 对话";
+const CUSTOM_LABEL = "提问分析";
 const LIGHTWEIGHT_RESULT_CHARS = 250_000;
 
 function typeLabel(type: DerivedResultType, targetLanguage?: TranslationLanguage | null, promptVersion?: string) {
@@ -77,8 +77,8 @@ function DerivedOutput({ result, markdown, onLoadMarkdown }: {
   if (result.output.length <= LIGHTWEIGHT_RESULT_CHARS || markdown) return <ModelMarkdown>{result.output}</ModelMarkdown>;
   return (
     <div className="derived-lightweight">
-      <div><span>轻量阅读</span><p>结果超过 250,000 字符，默认以纯文本显示以保持流畅。</p><Button type="button" onClick={onLoadMarkdown}>加载 Markdown 渲染</Button></div>
-      <pre aria-label="派生结果纯文本">{result.output}</pre>
+      <div><span>纯文阅读</span><p>结果超过25万字符，暂以纯文字显示。</p><Button type="button" onClick={onLoadMarkdown}>显示排版</Button></div>
+      <pre aria-label="生成结果纯文本">{result.output}</pre>
     </div>
   );
 }
@@ -258,7 +258,7 @@ export function DerivedKnowledge({ cloud = false, hideTagSuggestions = false, do
   const remove = async (result: DerivedResult) => {
     if (busyRef.current || !await dialogs.confirm(
       `删除这条${typeLabel(result.type, result.targetLanguage, result.promptVersion)}结果？`,
-      { title: "删除派生结果", confirmLabel: "删除结果", tone: "danger" },
+      { title: "删除结果", confirmLabel: "删除结果", tone: "danger" },
     )) return;
     const current = resultsRef.current.find((value) => value.id === result.id);
     if (busyRef.current || !current) return;
@@ -297,41 +297,41 @@ export function DerivedKnowledge({ cloud = false, hideTagSuggestions = false, do
 
   return (
     <>
-      {pinned && !open && <section className={`derived-pinned ${pinned.stale ? "is-stale" : ""}`} aria-label="固定摘要"><div><span>PINNED SUMMARY</span>{pinned.stale && <em>正文更新后已过期</em>}</div><DerivedOutput result={pinned} markdown={markdownResults.has(pinned.id)} onLoadMarkdown={() => loadResultMarkdown(pinned.id)} /></section>}
+      {pinned && !open && <section className={`derived-pinned ${pinned.stale ? "is-stale" : ""}`} aria-label="固定摘要"><div><span>PINNED SUMMARY</span>{pinned.stale && <em>正文已修改，建议重新生成。</em>}</div><DerivedOutput result={pinned} markdown={markdownResults.has(pinned.id)} onLoadMarkdown={() => loadResultMarkdown(pinned.id)} /></section>}
       {open && (
-        <aside id="derived-knowledge" className="derived-panel" aria-label="AI 派生知识">
-          <header><h3>AI 派生知识</h3><IconButton label="关闭 AI 派生知识" onClick={onClose}><WorkspaceIcon name="close" /></IconButton></header>
+        <aside id="derived-knowledge" className="derived-panel" aria-label="智能助手">
+          <header><h3>智能助手</h3><IconButton label="关闭助手" onClick={onClose}><WorkspaceIcon name="close" /></IconButton></header>
 
-          {loading ? <div className="derived-state" role="status">正在翻阅派生记录…</div> : (
+          {loading ? <div className="derived-state" role="status">正在读取生成记录…</div> : (
             <>
-              <section className={`derived-generator${type !== "translation" && type !== "custom" ? " is-inline" : ""}`} aria-label="生成派生内容">
+              <section className={`derived-generator${type !== "translation" && type !== "custom" ? " is-inline" : ""}`} aria-label="生成内容">
                 <div className="derived-options">
-                  <SegmentedControl label="派生类型" value={type} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing} options={[...(Object.entries(TYPE_LABEL) as Array<[DerivedResultType, string]>).filter(([value]) => value !== "tag-suggestions" || (!cloud && !hideTagSuggestions)).map(([value, label]) => ({ value, label })), { value: "custom", label: CUSTOM_LABEL }]} onChange={onTypeChange} />
-                  {type === "translation" && <label className="derived-target-language"><span>翻译为</span><Select aria-label="翻译目标语言" value={targetLanguage} onChange={(event) => { setTargetLanguage(event.target.value as TranslationLanguage); }} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing}>{(Object.entries(TRANSLATION_LANGUAGES) as Array<[TranslationLanguage, string]>).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></label>}
+                  <SegmentedControl label="处理方式" value={type} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing} options={[...(Object.entries(TYPE_LABEL) as Array<[DerivedResultType, string]>).filter(([value]) => value !== "tag-suggestions" || (!cloud && !hideTagSuggestions)).map(([value, label]) => ({ value, label })), { value: "custom", label: CUSTOM_LABEL }]} onChange={onTypeChange} />
+                  {type === "translation" && <label className="derived-target-language"><span>译成</span><Select aria-label="翻译目标语言" value={targetLanguage} onChange={(event) => { setTargetLanguage(event.target.value as TranslationLanguage); }} disabled={busy || task?.status === "running" || !settings?.enabled || Boolean(generationBlockedReason) || cloudKeyMissing}>{(Object.entries(TRANSLATION_LANGUAGES) as Array<[TranslationLanguage, string]>).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></label>}
                 </div>
-                {!settings?.enabled && <p className="derived-boundary">AI 当前关闭。历史结果仍可查看；请先到左侧“设置”中启用。</p>}
-                {cloudKeyMissing && <p className="derived-boundary">当前浏览器没有此平台的 AI 密钥。历史结果仍可查看；请先到左侧“设置”保存密钥。</p>}
+                {!settings?.enabled && <p className="derived-boundary">助手未开启，历史结果仍可查看。<br />请先到“设置”中开启。</p>}
+                {cloudKeyMissing && <p className="derived-boundary">当前浏览器缺少平台密钥。<br />历史结果仍可查看，请到设置保存密钥。</p>}
                 {generationBlockedReason && <p className="derived-boundary">{generationBlockedReason}</p>}
-                {type !== "custom" && <Button type="button" className="primary-button" onClick={() => void generate()} disabled={busy || !settings?.enabled || task?.status === "running" || Boolean(generationBlockedReason) || cloudKeyMissing}>{busy ? "获取中…" : "获取"}</Button>}
+                {type !== "custom" && <Button type="button" className="primary-button" onClick={() => void generate()} disabled={busy || !settings?.enabled || task?.status === "running" || Boolean(generationBlockedReason) || cloudKeyMissing}>{busy ? "生成中…" : "开始生成"}</Button>}
               </section>
 
-              {type === "custom" && <section className="derived-chat" aria-label="AI 对话">
-                <label className="derived-custom-prompt"><span>你希望 AI 如何分析这篇文章？</span><textarea aria-label="AI 对话 Prompt" maxLength={4_000} rows={5} value={customPrompt} onChange={(event) => setCustomPrompt(event.target.value)} placeholder="例如：找出文章的核心论点、可疑假设和值得追问的问题。" disabled={busy || task?.status === "running"} /><small>{customPrompt.length.toLocaleString("zh-CN")} / 4,000</small></label>
-                <div className="derived-chat-actions"><Button onClick={() => { setCustomPrompt(""); onTypeChange("summary"); }} disabled={busy || task?.status === "running"}>取消</Button><Button variant="primary" onClick={() => void generate()} disabled={busy || !customPrompt.trim() || !settings?.enabled || task?.status === "running" || Boolean(generationBlockedReason) || cloudKeyMissing}>{busy ? "生成中…" : "发送并生成"}</Button></div>
+              {type === "custom" && <section className="derived-chat" aria-label="提问分析">
+                <label className="derived-custom-prompt"><span>你想了解什么？</span><textarea aria-label="提问分析 Prompt" maxLength={4_000} rows={5} value={customPrompt} onChange={(event) => setCustomPrompt(event.target.value)} placeholder="例如：总结核心观点，找出值得追问的问题。" disabled={busy || task?.status === "running"} /><small>{customPrompt.length.toLocaleString("zh-CN")} / 4,000</small></label>
+                <div className="derived-chat-actions"><Button onClick={() => { setCustomPrompt(""); onTypeChange("summary"); }} disabled={busy || task?.status === "running"}>取消</Button><Button variant="primary" onClick={() => void generate()} disabled={busy || !customPrompt.trim() || !settings?.enabled || task?.status === "running" || Boolean(generationBlockedReason) || cloudKeyMissing}>{busy ? "生成中…" : "发送生成"}</Button></div>
               </section>}
 
-              {task && task.status !== "succeeded" && <section className={`derived-task is-${task.status}`} aria-live="polite"><div><span>TASK</span><strong>{taskLabel}{task.status === "running" ? "正在生成" : task.status === "failed" ? "生成失败" : "已取消"}</strong>{task.status === "running" && <div className="derived-task-progress"><progress aria-label="AI 生成批次进度" max={task.progress.totalBatches} value={task.progress.completedBatches} /><small>批次进度 {task.progress.completedBatches} / {task.progress.totalBatches}</small></div>}{task.error && <small>{task.error.code} · {userErrorMessage(task.error.code)}</small>}{task.status !== "running" && task.progress.totalBatches > 1 && <small className="derived-retry-note">重试将从第一批开始，不会复用已完成批次。</small>}</div>{task.status === "running" ? <Button type="button" onClick={() => void cancel()} disabled={busy}>取消任务</Button> : <Button type="button" onClick={() => void retry()} disabled={busy || !settings?.enabled}>重试</Button>}</section>}
+              {task && task.status !== "succeeded" && <section className={`derived-task is-${task.status}`} aria-live="polite"><div><span>TASK</span><strong>{taskLabel}{task.status === "running" ? "正在生成" : task.status === "failed" ? "生成失败" : "已取消"}</strong>{task.status === "running" && <div className="derived-task-progress"><progress aria-label="AI 生成处理进度" max={task.progress.totalBatches} value={task.progress.completedBatches} /><small>处理进度 {task.progress.completedBatches} / {task.progress.totalBatches}</small></div>}{task.error && <small>{task.error.code} · {userErrorMessage(task.error.code)}</small>}{task.status !== "running" && task.progress.totalBatches > 1 && <small className="derived-retry-note">重试会从头开始，不复用已完成部分。</small>}</div>{task.status === "running" ? <Button type="button" onClick={() => void cancel()} disabled={busy}>取消生成</Button> : <Button type="button" onClick={() => void retry()} disabled={busy || !settings?.enabled}>重试</Button>}</section>}
 
               {(notice || error) && <p className={`derived-message ${error ? "is-error" : ""}`} role={error ? "alert" : "status"}>{error || notice}</p>}
 
               <section className="derived-history" aria-labelledby="derived-history-title">
-                <div className="derived-history-head"><div><h4 id="derived-history-title">派生历史</h4></div><strong>{total} 条</strong></div>
-                {!results.length ? <p className="derived-empty">还没有派生结果。AI 关闭时，这里也不会产生任何后台请求。</p> : <ol>{results.map((result) => {
+                <div className="derived-history-head"><div><h4 id="derived-history-title">生成记录</h4></div><strong>{total} 条</strong></div>
+                {!results.length ? <p className="derived-empty">还没有生成结果。<br />助手关闭时，不会自动请求服务。</p> : <ol>{results.map((result) => {
                   const tags = result.type === "tag-suggestions" ? stringList(result.output) : [];
                   const checkedTags = selectedTags.resultId === result.id ? selectedTags.tags : [];
-                  return <li key={result.id} className={result.stale ? "is-stale" : undefined}><header><div><strong>{typeLabel(result.type, result.targetLanguage, result.promptVersion)}</strong>{result.pinned && <span>已固定</span>}{result.stale && <em>已过期</em>}{result.truncated && <em>输入已截断</em>}</div><time dateTime={result.createdAt}>{dateTime(result.createdAt)}</time></header><div className="derived-result-meta">{result.model} · {result.endpointId} · {result.durationMs} ms{result.usage?.totalTokens ? ` · ${result.usage.totalTokens} tokens` : ""}</div>{result.type === "tag-suggestions" ? <fieldset className="derived-tags" disabled={busy || Boolean(generationBlockedReason)}><legend>选择要加入的标签（默认不选）</legend>{tags.map((tag) => <label key={tag}><input type="checkbox" checked={checkedTags.includes(tag)} onChange={(event) => setSelectedTags((current) => { const selected = current.resultId === result.id ? current.tags : []; return { resultId: result.id, tags: event.target.checked ? [...new Set([...selected, tag])] : selected.filter((value) => value !== tag) }; })} />#{tag}</label>)}<Button type="button" onClick={() => void adoptTags(result)} disabled={!checkedTags.length || busy}>采纳所选标签</Button></fieldset> : <DerivedOutput result={result} markdown={markdownResults.has(result.id)} onLoadMarkdown={() => loadResultMarkdown(result.id)} />}<footer>{result.type === "summary" && !result.promptVersion.includes("custom-v1-") && <Button type="button" onClick={() => void pin(result)} disabled={busy}>{result.pinned ? "取消固定" : "固定摘要"}</Button>}<Button type="button" className="danger" onClick={() => void remove(result)} disabled={busy}>删除结果</Button></footer></li>;
+                  return <li key={result.id} className={result.stale ? "is-stale" : undefined}><header><div><strong>{typeLabel(result.type, result.targetLanguage, result.promptVersion)}</strong>{result.pinned && <span>已固定</span>}{result.stale && <em>正文已改</em>}{result.truncated && <em>内容截短</em>}</div><time dateTime={result.createdAt}>{dateTime(result.createdAt)}</time></header><div className="derived-result-meta">{result.model} · {result.endpointId} · {result.durationMs} ms{result.usage?.totalTokens ? ` · ${result.usage.totalTokens} tokens` : ""}</div>{result.type === "tag-suggestions" ? <fieldset className="derived-tags" disabled={busy || Boolean(generationBlockedReason)}><legend>选择要加入的标签（默认不选）</legend>{tags.map((tag) => <label key={tag}><input type="checkbox" checked={checkedTags.includes(tag)} onChange={(event) => setSelectedTags((current) => { const selected = current.resultId === result.id ? current.tags : []; return { resultId: result.id, tags: event.target.checked ? [...new Set([...selected, tag])] : selected.filter((value) => value !== tag) }; })} />#{tag}</label>)}<Button type="button" onClick={() => void adoptTags(result)} disabled={!checkedTags.length || busy}>添加标签</Button></fieldset> : <DerivedOutput result={result} markdown={markdownResults.has(result.id)} onLoadMarkdown={() => loadResultMarkdown(result.id)} />}<footer>{result.type === "summary" && !result.promptVersion.includes("custom-v1-") && <Button type="button" onClick={() => void pin(result)} disabled={busy}>{result.pinned ? "取消固定" : "固定摘要"}</Button>}<Button type="button" className="danger" onClick={() => void remove(result)} disabled={busy}>删除结果</Button></footer></li>;
                 })}</ol>}
-                {total > 30 && <nav aria-label="派生历史分页"><Button type="button" disabled={page <= 1 || busy} onClick={() => void loadResults(page - 1)}>上一页</Button><span>{page} / {Math.ceil(total / 30)}</span><Button type="button" disabled={page >= Math.ceil(total / 30) || busy} onClick={() => void loadResults(page + 1)}>下一页</Button></nav>}
+                {total > 30 && <nav aria-label="生成记录分页"><Button type="button" disabled={page <= 1 || busy} onClick={() => void loadResults(page - 1)}>上一页</Button><span>{page} / {Math.ceil(total / 30)}</span><Button type="button" disabled={page >= Math.ceil(total / 30) || busy} onClick={() => void loadResults(page + 1)}>下一页</Button></nav>}
               </section>
             </>
           )}

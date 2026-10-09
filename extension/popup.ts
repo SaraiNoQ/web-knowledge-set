@@ -98,7 +98,7 @@ pairingForm.addEventListener("submit", async (event) => {
     await webext.storage.local.set({ token: payload.token });
     codeInput.value = "";
     await showState();
-    message("已配对。打开登录后的网页并点击提取。");
+    message("已连接，请打开网页并读取正文。");
   } catch (error) {
     message(`配对失败：${(error as Error).message}`, true);
   }
@@ -126,8 +126,8 @@ extractButton.addEventListener("click", async () => {
     count.textContent = `${result.markdown.length.toLocaleString()} 字符`;
     clipForm.hidden = false;
     message(typedAiTitleKey()
-      ? "请核对正文后保存；保存时会用 AI 换成 20 字以内的中文标题。"
-      : "请核对正文后保存。保存时会尝试缓存图片，失败才保留原链接。");
+      ? "请核对正文。保存时生成中文标题，最多20字。"
+      : "请核对正文。图片会尝试缓存；失败时保留链接。");
   } catch (error) {
     message((error as Error).message, true);
   }
@@ -162,7 +162,7 @@ clipForm.addEventListener("submit", async (event) => {
     const payload = await responseJson(response);
     const notified = payload.documentId ? await notifyOpenLibraries(payload.documentId).catch(() => false) : false;
     clipForm.hidden = true;
-    if (!key) message(notified ? "已保存，织页目录已自动刷新。" : "已保存为织页中的新副本。");
+    if (!key) message(notified ? "已保存，织片列表已更新。" : "已另存一张新织片。");
     else if (payload.aiTitleError) message(`已保存；AI 标题未生成（${payload.aiTitleError}），已保留原标题。`, true);
     else message(notified ? "已保存，标题已换成中文，织页目录已自动刷新。" : "已保存，标题已换成中文。");
   } catch (error) {

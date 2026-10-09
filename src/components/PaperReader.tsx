@@ -14,31 +14,31 @@ function labelForBlock(type: PaperBlock["type"]) {
 function paperFailureMessage(paper: PaperDocument) {
   switch (paper.errorCode) {
     case "PAPER_PAGE_IMAGES_REQUIRED":
-      return "当前模型需要逐页图片：请在阅读器里渲染页图后重新提取。";
+      return "模型需要逐页图片，请点击重新处理。";
     case "PAPER_MODEL_NO_VISION":
-      return "当前模型既不接受整份 PDF，也不接受图片输入，请在 AI 设置里改用支持视觉的模型（例如 deepseek-flash）。";
+      return "模型不支持 PDF 或图片。请在智能设置中更换支持图片的模型。";
     case "PAPER_PAGE_COUNT_REQUIRED":
-      return "还没有登记论文页数，请重新提取以渲染页图。";
+      return "尚未获取页数，请点击重新处理。";
     case "PAPER_PAGE_OVERFLOW":
-      return paper.errorMessage || "有一页的内容超出单次回答上限，无法分页提取。";
+      return paper.errorMessage || "单页内容超过回答上限，无法继续处理。";
     case "PAPER_RESPONSE_TRUNCATED":
-      return "模型在单次回答里放不下整篇论文，重新提取会改用逐页图片分批处理。";
+      return "整篇论文超过回答上限。重新处理会改用逐页图片。";
     case "PAPER_PDF_UNSUPPORTED":
-      return "当前模型或端点不接受整份 PDF，重新提取会改用逐页图片分批处理。";
+      return "服务不接受整份 PDF。重新处理会改用逐页图片。";
     case "LLM_PROTOCOL_REJECTED":
     case "LLM_HTTP_ERROR":
-      return "当前模型或端点拒绝了 PDF 文件输入，请切换支持 PDF content-part 的模型或端点。";
+      return "服务不接受 PDF 文件。请更换支持 PDF 的模型或服务。";
     default:
-      return paper.errorMessage || "模型没有返回可验证的分页结构。";
+      return paper.errorMessage || "返回的分页内容有误，请重新处理。";
   }
 }
 
 function progressText(progress: PaperExtractionProgress) {
   const total = progress.total ? ` ${progress.done}/${progress.total}` : "";
   switch (progress.stage) {
-    case "rendering": return `正在渲染页图${total}，完成后按页发送给模型`;
-    case "extracting": return `正在生成分页对照${total}，每批完成后立即保存`;
-    default: return "正在确认这篇论文的发送方式";
+    case "rendering": return `正在准备页面${total}，随后逐页发送`;
+    case "extracting": return `正在生成译文${total}，分批保存`;
+    default: return "正在确认论文发送方式…";
   }
 }
 
@@ -59,11 +59,11 @@ function clampZoom(value: number) {
 
 function PaperZoom({ zoom, onZoom }: { zoom: number; onZoom: (value: number) => void }) {
   return (
-    <span className="paper-reader-zoom" role="group" aria-label="原始 PDF 缩放">
-      <Button type="button" onClick={() => onZoom(clampZoom(zoom - ZOOM_STEP))} disabled={zoom <= ZOOM_MIN} aria-label="缩小原始 PDF">-</Button>
+    <span className="paper-reader-zoom" role="group" aria-label="页面缩放">
+      <Button type="button" onClick={() => onZoom(clampZoom(zoom - ZOOM_STEP))} disabled={zoom <= ZOOM_MIN} aria-label="缩小">-</Button>
       <span aria-live="polite">{Math.round(zoom * 100)}%</span>
-      <Button type="button" onClick={() => onZoom(clampZoom(zoom + ZOOM_STEP))} disabled={zoom >= ZOOM_MAX} aria-label="放大原始 PDF">+</Button>
-      <Button type="button" className="paper-reader-zoom-reset" onClick={() => onZoom(1)} disabled={zoom === 1} aria-label="恢复原始 PDF 缩放">重置</Button>
+      <Button type="button" onClick={() => onZoom(clampZoom(zoom + ZOOM_STEP))} disabled={zoom >= ZOOM_MAX} aria-label="放大">+</Button>
+      <Button type="button" className="paper-reader-zoom-reset" onClick={() => onZoom(1)} disabled={zoom === 1} aria-label="重置大小">重置</Button>
     </span>
   );
 }
@@ -333,28 +333,28 @@ export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChan
     } finally { setSaving(false); }
   };
 
-  if (error && !paper) return <section className="paper-reader paper-reader-state" aria-label="论文阅读器"><Button type="button" className="paper-reader-back" onClick={onClose}>← 返回资料库</Button><div role="alert"><strong>无法打开论文</strong><p>{error}</p></div></section>;
-  if (!paper) return <section className="paper-reader paper-reader-state" aria-label="论文阅读器"><span className="eyebrow">PAPER READER</span><strong>正在打开论文…</strong></section>;
+  if (error && !paper) return <section className="paper-reader paper-reader-state" aria-label="论文阅读"><Button type="button" className="paper-reader-back" onClick={onClose}>← 返回列表</Button><div role="alert"><strong>无法打开论文</strong><p>{error}</p></div></section>;
+  if (!paper) return <section className="paper-reader paper-reader-state" aria-label="论文阅读"><span className="eyebrow">PAPER READER</span><strong>正在打开论文…</strong></section>;
 
   const pages = paper.pageCount || paper.pages.length || 1;
   const processing = paper.status === "queued" || paper.status === "extracting";
   const readOnly = Boolean(paper.deletedAt);
   return (
-    <section className="paper-reader" aria-label="论文对照阅读器">
+    <section className="paper-reader" aria-label="论文阅读">
       <header className="paper-reader-header">
-        <Button type="button" className="paper-reader-back" onClick={onClose}>← 返回资料库</Button>
-        <div><span className="eyebrow">PAPER READER · {paper.status.toUpperCase()}</span><h1>{title || paper.title || "未命名论文"}</h1><p>{paper.author || "作者待提取"} · {paper.sourceUrl}</p></div>
+        <Button type="button" className="paper-reader-back" onClick={onClose}>← 返回列表</Button>
+        <div><span className="eyebrow">PAPER READER · {paper.status.toUpperCase()}</span><h1>{title || paper.title || "未命名论文"}</h1><p>{paper.author || "作者待查"} · {paper.sourceUrl}</p></div>
         <div className="paper-reader-actions"><span className="paper-reader-type">PAPER</span>{readOnly && <span className="paper-reader-type">只读</span>}{editing ? <><Button density="compact" onClick={() => { setEditing(false); if (page) setDraftBlocks(page.translationBlocks); }}>取消</Button><Button density="compact" variant="primary" onClick={() => void save()} disabled={saving}>{saving ? "保存中…" : "保存本页"}</Button></> : <Button density="compact" variant="primary" onClick={() => setEditing(true)} disabled={!page || processing || readOnly}>编辑译文</Button>}</div>
       </header>
 
       {error && <div className="paper-reader-notice is-error" role="alert">{error}</div>}
       {notice && <div className="paper-reader-notice" role="status">{notice}<Button type="button" aria-label="关闭提示" onClick={() => setNotice("")}>×</Button></div>}
 
-      {processing ? <div className="paper-reader-processing"><span className="eyebrow">LLM EXTRACTION</span><h2>{paper.status === "queued" && !progress ? "等待开始分页提取" : "正在生成分页对照"}</h2><p>{progress ? progressText(progress) : "原始 PDF 已保存；模型会按页生成原文块、中文译文和图表说明。"}</p>{progress && progress.total > 0 && <div className="paper-reader-progress" role="progressbar" aria-valuemin={0} aria-valuemax={progress.total} aria-valuenow={progress.done}><span style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} /></div>}{paper.status === "queued" && !progress && <Button variant="primary" onClick={() => void drive()}>开始提取</Button>}</div> : paper.status === "failed" ? <div className="paper-reader-processing is-error"><span className="eyebrow">EXTRACTION FAILED</span><h2>论文提取失败</h2><p>{paperFailureMessage(paper)}</p><Button onClick={() => void drive()}>重新提取</Button></div> : (
+      {processing ? <div className="paper-reader-processing"><span className="eyebrow">LLM EXTRACTION</span><h2>{paper.status === "queued" && !progress ? "等待处理" : "正在生成中文对照"}</h2><p>{progress ? progressText(progress) : "原始 PDF 已保存；模型会按页生成原文段落、中文译文和图表说明。"}</p>{progress && progress.total > 0 && <div className="paper-reader-progress" role="progressbar" aria-valuemin={0} aria-valuemax={progress.total} aria-valuenow={progress.done}><span style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} /></div>}{paper.status === "queued" && !progress && <Button variant="primary" onClick={() => void drive()}>开始处理</Button>}</div> : paper.status === "failed" ? <div className="paper-reader-processing is-error"><span className="eyebrow">EXTRACTION FAILED</span><h2>处理失败</h2><p>{paperFailureMessage(paper)}</p><Button onClick={() => void drive()}>重新处理</Button></div> : (
         <div className="paper-reader-body">
           <aside className="paper-reader-pages" aria-label="论文页码">{Array.from({ length: pages }, (_, index) => { const number = index + 1; return <Button key={number} type="button" className={number === pageNumber ? "is-active" : ""} aria-current={number === pageNumber ? "page" : undefined} onClick={() => { if (!editing) setPageNumber(number); }}>{String(number).padStart(2, "0")}</Button>; })}</aside>
           <div className="paper-reader-stage">
-            <div className="paper-reader-page-toolbar"><strong>第 {pageNumber} 页 / {pages}</strong><span>{page ? `${page.originalBlocks.length} 个原文块 · ${page.translationBlocks.length} 个译文块` : "本页译文尚未生成"}</span><div><Button type="button" onClick={() => setPageNumber((value) => Math.max(1, value - 1))} disabled={pageNumber === 1 || editing}>上一页</Button><Button type="button" onClick={() => setPageNumber((value) => Math.min(pages, value + 1))} disabled={pageNumber === pages || editing}>下一页</Button></div></div>
+            <div className="paper-reader-page-toolbar"><strong>第 {pageNumber} 页 / {pages}</strong><span>{page ? `${page.originalBlocks.length} 个原文段落 · ${page.translationBlocks.length} 个译文段落` : "本页译文尚未生成"}</span><div><Button type="button" onClick={() => setPageNumber((value) => Math.max(1, value - 1))} disabled={pageNumber === 1 || editing}>上一页</Button><Button type="button" onClick={() => setPageNumber((value) => Math.min(pages, value + 1))} disabled={pageNumber === pages || editing}>下一页</Button></div></div>
             <div
               className={`paper-reader-columns${dragging ? " is-dragging" : ""}`}
               ref={columnsRef}

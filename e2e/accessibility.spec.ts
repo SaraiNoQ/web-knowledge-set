@@ -63,11 +63,11 @@ test("has no serious or critical accessibility violations in primary workflows",
 
   try {
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: /你的知识/u })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "本机保存" })).toBeVisible();
     await expectNoHighImpactViolations(page, "首次使用指南");
 
     await page.getByRole("button", { name: "稍后设置" }).click();
-    await expect(page.getByLabel("网页地址")).toBeVisible();
+    await expect(page.getByLabel("网页链接")).toBeVisible();
     await expect(page.locator(".document-list .state-loading")).toHaveCount(0);
     await expectNoHighImpactViolations(page, "资料库");
     await page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "搜索", exact: true }).click();
@@ -77,16 +77,16 @@ test("has no serious or critical accessibility violations in primary workflows",
     expect(selectedValueId).toBeTruthy();
     expect((await librarySelect.getAttribute("aria-describedby"))?.split(/\s+/u)).toContain(selectedValueId);
 
-    await page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "列表", exact: true }).click();
-    const readyRow = page.locator(".document-row-wrap").filter({ hasText: "已就绪" }).first();
+    await page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "全部资料", exact: true }).click();
+    const readyRow = page.locator(".document-row-wrap").filter({ hasText: "可以阅读" }).first();
     if (await readyRow.count()) {
       await readyRow.locator(".document-row").click();
     } else {
       const created = page.waitForResponse((response) =>
         response.ok() && response.request().method() === "POST" && new URL(response.url()).pathname === "/api/documents"
       );
-      await page.getByLabel("网页地址").fill(`https://example.com/accessibility-${crypto.randomUUID()}`);
-      await page.getByRole("button", { name: "收取网页" }).click();
+      await page.getByLabel("网页链接").fill(`https://example.com/accessibility-${crypto.randomUUID()}`);
+      await page.getByRole("button", { name: "保存网页" }).click();
       const body = await (await created).json() as { created: boolean; document: { id: string } };
       expect(body.created).toBe(true);
       temporaryDocumentId = body.document.id;
@@ -99,27 +99,27 @@ test("has no serious or critical accessibility violations in primary workflows",
     await expectNoHighImpactViolations(page, "批量导入");
     await page.getByRole("button", { name: "关闭导入" }).click();
 
-    await page.getByRole("button", { name: "打开设置", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "AI 派生设置" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "语义关联" })).toBeVisible();
-    await expect(page.getByRole("checkbox", { name: "允许自动建立语义关联" })).not.toBeChecked();
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "智能设置" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "相关资料" })).toBeVisible();
+    await expect(page.getByRole("checkbox", { name: "自动推荐" })).not.toBeChecked();
     await expectNoHighImpactViolations(page, "AI 设置");
-    await page.getByRole("button", { name: "返回资料库" }).click();
+    await page.getByRole("button", { name: "返回列表" }).click();
     await page.keyboard.press("Escape");
 
-    await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "查看知识地图", exact: true }).click();
+    await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "知识地图", exact: true }).click();
     await expect(page.getByRole("heading", { name: "知识地图", exact: true })).toBeVisible();
     await expectNoHighImpactViolations(page, "知识地图");
-    await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "文档资料库", exact: true }).click();
+    await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "资料库", exact: true }).click();
 
-    await page.getByRole("button", { name: "管理数据安全", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "数据安全" })).toBeVisible();
-    await expectNoHighImpactViolations(page, "数据安全");
-    await page.getByRole("button", { name: "返回资料库" }).click();
+    await page.getByRole("button", { name: "备份恢复", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "备份恢复" })).toBeVisible();
+    await expectNoHighImpactViolations(page, "备份恢复");
+    await page.getByRole("button", { name: "返回列表" }).click();
 
-    await page.getByRole("button", { name: "帮助与关于", exact: true }).click();
-    await expect(page.getByRole("dialog", { name: "帮助与关于" })).toBeVisible();
-    await expectNoHighImpactViolations(page, "帮助与关于");
+    await page.getByRole("button", { name: "使用帮助", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "使用帮助" })).toBeVisible();
+    await expectNoHighImpactViolations(page, "使用帮助");
   } finally {
     if (temporaryDocumentId) await removeTemporaryDocument(page, temporaryDocumentId);
   }

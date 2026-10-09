@@ -90,7 +90,7 @@ export function AppUpdater({ beforeOperation, disabled }: { beforeOperation: () 
       await beforeOperation();
       const backup = await api.createBackup();
       if (backup.status !== "verified" || !backup.verifiedAt) {
-        throw Object.assign(new Error("更新前完整留档未通过校验"), { code: backup.errorCode ?? "BACKUP_FAILED" });
+        throw Object.assign(new Error("更新前完整备份未通过校验"), { code: backup.errorCode ?? "BACKUP_FAILED" });
       }
       setPhase("installing");
       await update.downloadAndInstall((event: DownloadEvent) => {
@@ -112,21 +112,21 @@ export function AppUpdater({ beforeOperation, disabled }: { beforeOperation: () 
 
   return <>
     <Button type="button" className="local-mark update-link" onClick={() => void checkNow()} disabled={disabled}>检查更新</Button>
-    {open && <Modal open panel={false} className="shortcut-backdrop" title="应用更新" dismissible={!busy} onClose={close}>
+    {open && <Modal open panel={false} className="shortcut-backdrop" title="软件更新" dismissible={!busy} onClose={close}>
       <section className="shortcut-card update-card">
-        <header><div><span className="eyebrow">SIGNED UPDATE</span><h2 id="update-title">应用更新</h2></div><Button type="button" onClick={close} disabled={busy} aria-label="稍后更新">×</Button></header>
-        {phase === "checking" && <p role="status">正在通过 GitHub Releases 检查签名更新…</p>}
-        {phase === "current" && <p role="status">当前已经是最新版本。</p>}
+        <header><div><span className="eyebrow">SIGNED UPDATE</span><h2 id="update-title">软件更新</h2></div><Button type="button" onClick={close} disabled={busy} aria-label="稍后更新">×</Button></header>
+        {phase === "checking" && <p role="status">正在检查新版本…</p>}
+        {phase === "current" && <p role="status">已是最新版本。</p>}
         {metadata && <div className="update-release"><strong>v{metadata.currentVersion} → v{metadata.version}</strong>{metadata.date && <time dateTime={metadata.date}>{new Date(metadata.date).toLocaleDateString("zh-CN")}</time>}{metadata.body && <p>{metadata.body.slice(0, 4_000)}</p>}</div>}
-        {phase === "available" && <p>确认后会先保存当前草稿并创建、校验完整留档，再下载和安装签名更新。</p>}
-        {phase === "backing-up" && <p role="status">正在保存草稿并校验更新前完整留档…</p>}
-        {phase === "installing" && <div className="update-progress" role="status"><progress value={progress ?? undefined} max="100" /> <span>{progress === null ? "正在下载并验证签名…" : `正在下载并验证签名… ${progress}%`}</span></div>}
+        {phase === "available" && <p>确认后会先保存当前草稿并创建、校验完整备份，再下载和安装签名更新。</p>}
+        {phase === "backing-up" && <p role="status">正在保存草稿并校验更新前完整备份…</p>}
+        {phase === "installing" && <div className="update-progress" role="status"><progress value={progress ?? undefined} max="100" /> <span>{progress === null ? "正在下载并检查更新…" : `正在下载并检查更新… ${progress}%`}</span></div>}
         {phase === "restarting" && <p role="status">更新已安装，正在安全保存并重新启动…</p>}
         {error && <p className="update-error" role="alert">{error}</p>}
         <footer>
           <Button type="button" onClick={close} disabled={busy}>稍后</Button>
-          {phase === "available" && <Button type="button" className="primary-button" onClick={() => void install()}>创建留档并更新</Button>}
-          {phase === "error" && <Button type="button" className="primary-button" onClick={() => void (installedRef.current ? restart() : updateRef.current ? install() : checkNow())}>{installedRef.current ? "重试重启" : "重试"}</Button>}
+          {phase === "available" && <Button type="button" className="primary-button" onClick={() => void install()}>备份更新</Button>}
+          {phase === "error" && <Button type="button" className="primary-button" onClick={() => void (installedRef.current ? restart() : updateRef.current ? install() : checkNow())}>{installedRef.current ? "重新启动" : "重试"}</Button>}
         </footer>
       </section>
     </Modal>}

@@ -61,7 +61,7 @@ export async function runPaperExtraction(
         task = await api.advancePaperTask(task.id, signal);
         continue;
       }
-      if (waited >= PDF_RUN_WAIT_MS) throw new Error("论文提取长时间没有进展，请重新提取。");
+      if (waited >= PDF_RUN_WAIT_MS) throw new Error("论文处理暂无进展，请重新处理。");
       await delay(PDF_POLL_MS, signal);
       waited += PDF_POLL_MS;
       task = await api.getPaperTask(task.id, signal);
@@ -73,5 +73,5 @@ export async function runPaperExtraction(
     if (attempt === 0 && IMAGE_FALLBACK_CODES.has(code)) continue;
     return task;
   }
-  throw new Error("论文提取没有产生结果");
+  throw new Error("论文处理未产生结果");
 }
