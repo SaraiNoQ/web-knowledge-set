@@ -699,10 +699,10 @@ test("opens one keyboard-accessible help and about dialog in normal and recovery
     clientWidth: element.clientWidth,
     clientHeight: element.clientHeight,
     scrollWidth: element.scrollWidth,
-    lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight),
+    fontSize: Number.parseFloat(getComputedStyle(element).fontSize),
   }));
   expect(privacySize.scrollWidth).toBeLessThanOrEqual(privacySize.clientWidth);
-  expect(privacySize.clientHeight).toBeGreaterThan(privacySize.lineHeight);
+  expect(privacySize.clientHeight).toBeGreaterThan(privacySize.fontSize * 1.5);
   await page.setViewportSize({ width: 1280, height: 720 });
   await help.getByRole("button", { name: "连接码" }).click();
   await expect(help.getByRole("status")).toContainText(/[A-Z2-9]{10}/u);
