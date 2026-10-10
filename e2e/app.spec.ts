@@ -677,21 +677,32 @@ test("opens one keyboard-accessible help and about dialog in normal and recovery
   await helpButton.click();
   const help = page.getByRole("dialog", { name: "使用帮助" });
   await expect(help).toBeVisible();
+  await expect(help.getByText("02 · BROWSER CLIPPER", { exact: true })).toHaveCount(0);
+  await expect(help.getByRole("heading", { name: "浏览助手" })).toBeVisible();
   await expect(help.getByRole("heading", { name: "快速上手" })).toHaveCount(0);
   await expect(help.getByText(/^v\d+\.\d+\.\d+(?:-[\w.]+)?$/u)).toHaveCount(0);
   await expect(help.getByText("本地 Web", { exact: true })).toHaveCount(0);
   await expect(help.getByText("MIT", { exact: true })).toHaveCount(0);
   await expect(help.getByText("点击读取后", { exact: false })).toHaveCount(0);
-  const singleLineNotes = help.locator(".extension-help__single-line");
-  await expect(singleLineNotes).toHaveCount(3);
-  for (const note of await singleLineNotes.all()) await expect(note).toHaveCSS("white-space", "nowrap");
-  await expect(singleLineNotes.nth(0)).toHaveText("Chrome：覆盖旧文件夹，重新加载扩展。");
-  await expect(singleLineNotes.nth(1)).toHaveText("Firefox：下载 XPI，在扩展管理页安装。");
+  const extensionNotes = help.locator(".extension-help > p");
+  await expect(extensionNotes).toHaveCount(4);
+  await expect(extensionNotes.nth(0)).toHaveText("Chrome：覆盖旧文件夹，重新加载扩展。");
+  await expect(extensionNotes.nth(1)).toHaveText("Firefox：下载 XPI，在扩展管理页安装。");
+  const privacyNote = extensionNotes.nth(3);
+  await expect(privacyNote).toHaveText("仅向 clip.sarainoq.cn 保存新织片。保存后会通知已打开的织页刷新列表。图片会尝试缓存，失败时保留链接。不上传登录凭证、完整网页结构。不上传需登录才能读取的图片内容。");
+  for (const note of await extensionNotes.all()) {
+    await expect(note).toHaveCSS("white-space", "normal");
+    expect(await note.evaluate((element) => element.textContent)).not.toMatch(/[\r\n]/u);
+  }
   await page.setViewportSize({ width: 390, height: 844 });
-  const privacyNote = singleLineNotes.nth(2);
-  await expect(privacyNote).toHaveCSS("overflow-x", "auto");
-  const privacySize = await privacyNote.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }));
-  expect(privacySize.scrollWidth).toBeGreaterThan(privacySize.clientWidth);
+  const privacySize = await privacyNote.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    clientHeight: element.clientHeight,
+    scrollWidth: element.scrollWidth,
+    fontSize: Number.parseFloat(getComputedStyle(element).fontSize),
+  }));
+  expect(privacySize.scrollWidth).toBeLessThanOrEqual(privacySize.clientWidth);
+  expect(privacySize.clientHeight).toBeGreaterThan(privacySize.fontSize * 1.5);
   await page.setViewportSize({ width: 1280, height: 720 });
   await help.getByRole("button", { name: "连接码" }).click();
   await expect(help.getByRole("status")).toContainText(/[A-Z2-9]{10}/u);
