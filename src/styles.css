@@ -173,10 +173,7 @@ a { color: inherit; }
 .help-links a { color: var(--ink-soft); font-size: var(--font-ui); text-underline-offset: 4px; }
 .help-links a::after { margin-left: 5px; color: var(--vermilion); content: "↗"; }
 .extension-help { margin-top: 20px; padding: 22px; border: 1px solid var(--line); }
-.extension-help > span { color: var(--vermilion); font: 600 var(--font-caption)/1.4 var(--font-mono); letter-spacing: .08em; }
 .extension-help > p { color: var(--ink-soft); font-size: var(--font-body); }
-.extension-help__single-line { max-width: 100%; overflow-x: auto; white-space: nowrap; scrollbar-width: thin; }
-.extension-help__single-line:focus-visible { outline: 2px solid var(--vermilion); outline-offset: 3px; }
 .extension-downloads { display: flex; flex-wrap: wrap; gap: 10px; }
 .extension-downloads a { padding: 9px 13px; color: var(--paper); background: var(--ink); text-decoration: none; font-size: var(--font-ui); }
 .extension-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; }
