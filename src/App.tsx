@@ -362,7 +362,23 @@ function markPaneScroll(event: import("react").UIEvent<HTMLDivElement>) {
 
 const headingComponents = Object.fromEntries(["h1", "h2", "h3", "h4", "h5", "h6"].map((tag) => [tag, ({ node, children, ...props }: { node?: { position?: { start: { offset?: number } } }; children?: ReactNode }) => createElement(tag, { ...props, "data-heading-offset": node?.position?.start.offset }, children)])) as Components;
 
-const MarkdownPreview = memo(function MarkdownPreview({ markdown, sourceUrl, assets = EMPTY_DOCUMENT_ASSETS }: { markdown: string; sourceUrl: string; assets?: DocumentAsset[] }) {
+interface PreviewSourceNode {
+  type: string;
+  position?: { start: { offset?: number } };
+  properties?: Record<string, unknown>;
+  children?: PreviewSourceNode[];
+}
+
+function previewSourcePositions() {
+  return function annotate(node: PreviewSourceNode) {
+    if (node.type === "element" && node.position?.start.offset !== undefined) {
+      node.properties = { ...node.properties, "data-source-offset": node.position.start.offset };
+    }
+    node.children?.forEach(annotate);
+  };
+}
+
+const MarkdownPreview = memo(function MarkdownPreview({ markdown, sourceUrl, assets = EMPTY_DOCUMENT_ASSETS, onNavigateSource }: { markdown: string; sourceUrl: string; assets?: DocumentAsset[]; onNavigateSource?: (offset: number) => void }) {
   const assetsBySource = useMemo(() => {
     const result = new Map<string, DocumentAsset>();
     for (const asset of assets) {
@@ -395,8 +411,17 @@ const MarkdownPreview = memo(function MarkdownPreview({ markdown, sourceUrl, ass
     },
     img: PreviewImage,
   }), [sourceUrl]);
-  return <PreviewAssets.Provider value={context}><article className="markdown-preview">
-    <ReactMarkdown urlTransform={markdownUrlTransform} rehypePlugins={[rehypeKatex]} remarkPlugins={[remarkGfm, remarkMath]} components={components}>{markdown}</ReactMarkdown>
+  return <PreviewAssets.Provider value={context}><article className="markdown-preview" onClick={onNavigateSource ? (event) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const target = event.target;
+    if (!(target instanceof Element) || target.closest("a, button, input, select, textarea, [role=button]")) return;
+    if (!window.getSelection()?.isCollapsed) return;
+    const source = target.closest<HTMLElement>("[data-source-offset]");
+    if (!source || !event.currentTarget.contains(source)) return;
+    const offset = Number(source.dataset.sourceOffset);
+    if (Number.isInteger(offset) && offset >= 0 && offset <= markdown.length) onNavigateSource(offset);
+  } : undefined}>
+    <ReactMarkdown urlTransform={markdownUrlTransform} rehypePlugins={onNavigateSource ? [previewSourcePositions, rehypeKatex] : [rehypeKatex]} remarkPlugins={[remarkGfm, remarkMath]} components={components}>{markdown}</ReactMarkdown>
   </article></PreviewAssets.Provider>;
 });
 
@@ -577,6 +602,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [toolsOpen, setToolsOpen] = useState(false);
   const markdownEditorRef = useRef<MarkdownEditorHandle>(null);
+  const navigatePreviewSource = useCallback((offset: number) => markdownEditorRef.current?.jumpTo(offset), []);
   const [openDocuments, setOpenDocuments] = useState<OpenDocumentTab[]>([]);
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const [sidebarSearch, setSidebarSearch] = useState(false);
@@ -3906,7 +3932,7 @@ export default function App() {
                 {conflict && <div className="conflict-banner" role="alert"><div><strong>这张织片已在别处更新</strong><span>你的文字仍保留在编辑器中。请复制需要保留的内容，然后载入最新版。</span></div><Button type="button" onClick={() => { installCurrentDocument(conflict); updateListItem(conflict); setDraft(draftOf(conflict)); setConflict(null); setSaveState("idle"); }}>载入最新版</Button></div>}
                 <div ref={editorGridRef} className={`editor-grid mode-${mode}`} onScrollCapture={markPaneScroll}>
                   {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><PaneLabel>MARKDOWN</PaneLabel><MarkdownEditor ref={markdownEditorRef} toolbarHost={markdownToolbarHost} value={draft.markdown} onChange={(markdown) => setDraft((value) => value ? { ...value, markdown } : value)} readOnly={saveState === "saving" || organizationSaving} /></section>}
-                  {mode !== "edit" && <section className="preview-pane" aria-label="Markdown 预览" tabIndex={0}><PaneLabel>PREVIEW</PaneLabel>{draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : EMPTY_DOCUMENT_ASSETS} /> : <StatePanel kind="empty" title="暂无正文" />}</section>}
+                  {mode !== "edit" && <section className="preview-pane" aria-label="Markdown 预览" tabIndex={0}><PaneLabel>PREVIEW</PaneLabel>{draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : EMPTY_DOCUMENT_ASSETS} onNavigateSource={mode === "split" && draft.markdown === deferredDraftMarkdown ? navigatePreviewSource : undefined} /> : <StatePanel kind="empty" title="暂无正文" />}</section>}
                 </div>
               </div> : <>
                 <div className="pane-label">READ ONLY · MARKDOWN</div>
@@ -4101,7 +4127,7 @@ export default function App() {
 
                   <div ref={editorGridRef} className={`editor-grid mode-${mode}`} onScrollCapture={markPaneScroll}>
                     {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><PaneLabel>MARKDOWN</PaneLabel><MarkdownEditor ref={markdownEditorRef} toolbarHost={markdownToolbarHost} value={draft.markdown} onChange={(markdown) => { if (!closeAttemptRef.current) setDraft((value) => value ? { ...value, markdown } : value); }} readOnly={editorLocked} /></section>}
-                    {mode !== "edit" && longPreviewAllowed && <section className="preview-pane" aria-label="Markdown 预览" tabIndex={0}><PaneLabel>PREVIEW</PaneLabel>{draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} /> : <StatePanel kind="empty" title="暂无正文">写下正文，即可查看排版效果。</StatePanel>}</section>}
+                    {mode !== "edit" && longPreviewAllowed && <section className="preview-pane" aria-label="Markdown 预览" tabIndex={0}><PaneLabel>PREVIEW</PaneLabel>{draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} onNavigateSource={mode === "split" && draft.markdown === deferredDraftMarkdown ? navigatePreviewSource : undefined} /> : <StatePanel kind="empty" title="暂无正文">写下正文，即可查看排版效果。</StatePanel>}</section>}
                   </div>
                 </div></>
               )}
