@@ -44,7 +44,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           # Owner-approved exception, limited to PR 21 and its v1.0.7 release.
-          MACOS_ONLY_RELEASE: ${{ github.event.pull_request.number == 21 || github.ref == 'refs/tags/v1.0.7' || (github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Merge pull request #21 from ')) }}
+          MACOS_ONLY_RELEASE: "${{ github.event.pull_request.number == 21 || github.ref == 'refs/tags/v1.0.7' || (github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Merge pull request #21 from ')) }}"
           FULL_REQUESTED: ${{ inputs.full_validation == true || startsWith(github.ref, 'refs/tags/') || contains(github.event.pull_request.labels.*.name, 'validation:release') }}
         run: |
           node --input-type=module <<'JS'
