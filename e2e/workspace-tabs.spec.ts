@@ -139,10 +139,10 @@ for (const cloud of [false, true]) {
     await create.click();
     if (cloud) await page.getByRole("button", { name: "编辑" }).click();
     if (cloud) {
-      await page.getByRole("button", { name: "修改标题", exact: true }).dblclick();
+      await page.getByRole("button", { name: /^修改标题：/u }).dblclick();
       await page.getByRole("textbox", { name: "文章标题", exact: true }).fill("第一篇工作笔记");
       await page.getByRole("textbox", { name: "文章标题", exact: true }).press("Enter");
-      await expect(page.getByRole("button", { name: "修改标题", exact: true })).toHaveAttribute("title", "第一篇工作笔记");
+      await expect(page.getByRole("button", { name: /^修改标题：/u })).toHaveAttribute("title", "第一篇工作笔记");
     } else await page.getByLabel("文档标题").fill("第一篇工作笔记");
     await page.getByRole("textbox", { name: "Markdown 编辑器" }).fill("第一篇已保存正文。");
     await page.getByRole("button", { name: "保存", exact: true }).click();
@@ -156,10 +156,10 @@ for (const cloud of [false, true]) {
     await expect(tabTitle).toHaveCSS("box-shadow", "none");
     if (cloud) await page.getByRole("button", { name: "编辑" }).click();
     if (cloud) {
-      await page.getByRole("button", { name: "修改标题", exact: true }).dblclick();
+      await page.getByRole("button", { name: /^修改标题：/u }).dblclick();
       await page.getByRole("textbox", { name: "文章标题", exact: true }).fill("第二篇工作笔记");
       await page.getByRole("textbox", { name: "文章标题", exact: true }).press("Enter");
-      await expect(page.getByRole("button", { name: "修改标题", exact: true })).toHaveAttribute("title", "第二篇工作笔记");
+      await expect(page.getByRole("button", { name: /^修改标题：/u })).toHaveAttribute("title", "第二篇工作笔记");
     } else await page.getByLabel("文档标题").fill("第二篇工作笔记");
     await page.getByRole("textbox", { name: "Markdown 编辑器" }).fill("第二篇已保存正文。");
     await page.getByRole("button", { name: "保存", exact: true }).click();
