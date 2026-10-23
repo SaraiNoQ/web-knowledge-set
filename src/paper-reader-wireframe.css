@@ -272,9 +272,11 @@
 .paper-reader-stage { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); background: rgba(239,234,223,.62); }
 .paper-reader-page-toolbar { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px; min-height: 58px; padding: 12px 20px; border-bottom: 1px solid var(--wire-line); }
 .paper-reader-page-toolbar strong { font: 500 17px/1 var(--font-serif); }
-.paper-reader-page-toolbar span { color: var(--wire-muted); font-size: 11px; }
-.paper-reader-page-toolbar div { display: flex; gap: 6px; }
-.paper-reader-page-toolbar button { padding: 6px 8px; color: var(--wire-muted); background: transparent; border: 1px solid var(--wire-line); font-size: 11px; }
+.paper-reader-page-toolbar > span { color: var(--wire-muted); font-size: 11px; }
+.paper-reader-page-toolbar > div { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.paper-reader-font-size { display: flex; align-items: center; gap: 6px; color: var(--wire-muted); font-size: 11px; white-space: nowrap; }
+.paper-reader-font-size .ui-select-wrap { width: 76px; }
+.paper-reader-page-toolbar > div > button { padding: 6px 8px; color: var(--wire-muted); background: transparent; border: 1px solid var(--wire-line); font-size: 11px; }
 .paper-reader-columns { display: grid; grid-template-columns: var(--paper-split, 50%) 14px minmax(0, 1fr); gap: 0; padding: 18px; min-height: 0; }
 .paper-reader-columns.is-dragging { cursor: col-resize; user-select: none; }
 .paper-reader-split { position: relative; cursor: col-resize; border: 0; background: transparent; touch-action: none; }
@@ -299,9 +301,9 @@
 .paper-reader-blocks { display: grid; gap: 12px; }
 .paper-reader-block { padding: 12px; border-left: 2px solid rgba(189,65,44,.22); }
 .paper-reader-block > span, .paper-reader-block--edit > span { display: block; margin-bottom: 6px; color: var(--wire-accent); font: 600 9px/1 var(--font-mono); letter-spacing: .06em; }
-.paper-reader-block p { margin: 0; color: #4e4a43; font: 14px/1.8 var(--font-serif); white-space: pre-wrap; }
+.paper-reader-block p { margin: 0; color: #4e4a43; font: var(--paper-translation-font-size, 14px)/1.8 var(--font-serif); white-space: pre-wrap; }
 .paper-reader-block--edit { display: grid; gap: 7px; padding: 10px; background: rgba(189,65,44,.045); border: 1px solid rgba(189,65,44,.25); }
-.paper-reader-block--edit textarea { width: 100%; min-height: 55px; resize: vertical; padding: 8px; color: var(--wire-ink); background: #fffdf7; border: 1px solid var(--wire-line); outline: 0; font: 14px/1.7 var(--font-serif); }
+.paper-reader-block--edit textarea { width: 100%; min-height: 55px; resize: vertical; padding: 8px; color: var(--wire-ink); background: #fffdf7; border: 1px solid var(--wire-line); outline: 0; font: var(--paper-translation-font-size, 14px)/1.7 var(--font-serif); }
 .paper-reader-block--edit textarea:focus { border-color: var(--wire-accent); }
 .paper-reader-empty { margin: 0; color: var(--wire-muted); }
 
@@ -329,5 +331,6 @@
      instead of the content area clipping what it cannot scroll. */
   .paper-reader-body { height: auto; }
   .paper-reader-page-toolbar { grid-template-columns: 1fr auto; }
-  .paper-reader-page-toolbar span { grid-column: 1 / -1; grid-row: 2; }
+  .paper-reader-page-toolbar > span { grid-column: 1 / -1; grid-row: 2; }
+  .paper-reader-page-toolbar > div { grid-column: 1 / -1; }
 }

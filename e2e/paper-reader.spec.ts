@@ -43,8 +43,16 @@ test("imports a paper and opens the bilingual page reader", async ({ page }) => 
   await expect(page.getByRole("heading", { name: "E2E 论文" })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText("一篇 E2E 论文。", { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText("中文对照 · 第 1 页", { exact: true })).toBeVisible();
+  const fontSize = page.getByRole("combobox", { name: "中文字号", exact: true });
+  await expect(page.locator(".paper-reader-block p")).toHaveCSS("font-size", "14px");
+  await fontSize.click();
+  await page.getByRole("option", { name: "20 px", exact: true }).click();
+  await expect(page.locator(".paper-reader-block p")).toHaveCSS("font-size", "20px");
+  await expect(page.locator(".paper-reader-zoom span")).toHaveText("100%");
+
   await page.getByRole("button", { name: "编辑译文" }).click();
   await expect(page.locator("textarea")).toHaveCount(1);
+  await expect(page.locator("textarea")).toHaveCSS("font-size", "20px");
   await page.locator("textarea").fill("修改后的论文译文。");
   await page.getByRole("button", { name: "保存本页" }).click();
   await expect(page.locator(".paper-reader-notice")).toContainText("本页译文已保存。");
@@ -158,6 +166,14 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
   // pushing the layout taller.
   const canvasWidth = () => page.locator(".paper-reader-pdf-scroll canvas").evaluate((element) => Math.round(element.getBoundingClientRect().width));
   const fitted = await canvasWidth();
+  await page.getByRole("combobox", { name: "中文字号", exact: true }).click();
+  await page.getByRole("option", { name: "24 px", exact: true }).click();
+  await expect(page.locator(".paper-reader-block p").first()).toHaveCSS("font-size", "24px");
+  expect(await canvasWidth()).toBe(fitted);
+  await page.getByRole("button", { name: "下一页", exact: true }).click();
+  await page.getByRole("button", { name: "上一页", exact: true }).click();
+  await expect(page.locator(".paper-reader-block p").first()).toHaveCSS("font-size", "24px");
+
   expect(fitted).toBeGreaterThan(0);
   await page.getByRole("button", { name: "放大" }).click();
   await page.getByRole("button", { name: "放大" }).click();
@@ -206,6 +222,16 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
   });
   expect(stacked.sameRow).toBe(false);
   expect(stacked.clipped).toBe(false);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const fontControl = page.getByRole("combobox", { name: "中文字号", exact: true });
+  await fontControl.scrollIntoViewIfNeeded();
+  const fontBounds = await fontControl.boundingBox();
+  const nextBounds = await page.getByRole("button", { name: "下一页", exact: true }).boundingBox();
+  expect(fontBounds!.x).toBeGreaterThanOrEqual(0);
+  expect(nextBounds!.x + nextBounds!.width).toBeLessThanOrEqual(390);
+  await fontControl.click();
+  await page.getByRole("option", { name: "12 px", exact: true }).click();
+  await expect(page.locator(".paper-reader-block p").first()).toHaveCSS("font-size", "12px");
   await page.setViewportSize({ width: 1440, height: 900 });
 
   // The "论文" view narrows the very same listing to paper knowledge.
