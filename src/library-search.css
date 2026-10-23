@@ -24,14 +24,9 @@
 .library-search-filters .ui-select { width: 100%; min-width: 0; }
 .library-search-filters > .library-search-checkbox { display: flex; gap: 7px; color: var(--ink); }
 .library-search-checkbox input { margin: 0; accent-color: var(--vermilion); }
+.library-search-scope-help { margin: 0; color: var(--ink-soft); font-size: var(--font-small); line-height: 1.55; }
 .library-search-start { padding: 2px 1px; }
 .library-search h3 { margin: 0; color: var(--ink-soft); font-size: var(--font-small); font-weight: 600; }
-.library-search-start > p { margin: 10px 0 16px; color: var(--ink-soft); font-size: var(--font-small); line-height: 1.7; }
-.library-search-start dl { display: grid; gap: 13px; margin: 0; }
-.library-search-start dl div { display: grid; gap: 4px; }
-.library-search-start dt { font-size: var(--font-small); font-weight: 600; }
-.library-search-start dd { margin: 0; color: var(--ink-soft); font-size: var(--font-small); line-height: 1.55; }
-.library-search-history { margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--line); }
 .library-search-history-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
 .library-search-history > button { display: flex; align-items: center; gap: 7px; width: 100%; padding: 8px 4px; color: var(--ink); text-align: left; background: transparent; border: 0; border-radius: var(--control-radius); }
 .library-search-history > button:hover { background: var(--paper-deep); }

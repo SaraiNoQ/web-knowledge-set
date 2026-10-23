@@ -466,3 +466,21 @@ test("search input and custom field menus reuse the existing compact controls", 
   await chooseSearchOption(page, "搜索范围", "正文");
   await expect(panel.locator(".library-search-result-title")).toHaveText(document.title);
 });
+
+
+test("search explains source scope only when selected", async ({ page }) => {
+  await page.goto("/");
+  const panel = await search(page, "");
+  await expect(panel.getByRole("heading", { name: "搜索选项", exact: true })).toHaveCount(0);
+  const help = panel.getByText("查找链接、作者和来源备注。", { exact: true });
+  await expect(help).toHaveCount(0);
+  await panel.getByRole("button", { name: "搜索设置", exact: true }).click();
+  await chooseSearchOption(page, "搜索范围", "来源信息");
+  await expect(help).toBeVisible();
+  await expect(panel.getByRole("combobox", { name: "搜索范围", exact: true })).toHaveAccessibleDescription(/查找链接、作者和来源备注。/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(help).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await chooseSearchOption(page, "搜索范围", "标题");
+  await expect(help).toHaveCount(0);
+});

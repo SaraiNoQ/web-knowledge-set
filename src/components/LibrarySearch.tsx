@@ -99,16 +99,14 @@ export function LibrarySearch({ folders, refreshKey, inputRef, onOpen, active }:
       <label className="library-search-switch"><span>收起片段</span><input type="checkbox" role="switch" checked={collapseResults} onChange={(event) => { setCollapseResults(event.target.checked); setExpanded({}); }} /></label>
       <label className="library-search-switch"><span>更多原文</span><input type="checkbox" role="switch" checked={moreContext} onChange={(event) => setMoreContext(event.target.checked)} /></label>
       <div className="library-search-filters">
-        <label>搜索范围<Select density="compact" aria-label="搜索范围" value={scope} onChange={(event) => { setScope(event.target.value as DocumentSearchScope); setPage(1); }}><option value="all">全部内容</option><option value="title">标题</option><option value="body">正文</option><option value="source">来源信息</option></Select></label>
+        <label>搜索范围<Select density="compact" aria-label="搜索范围" aria-describedby={scope === "source" ? `${id}-source-help` : undefined} value={scope} onChange={(event) => { setScope(event.target.value as DocumentSearchScope); setPage(1); }}><option value="all">全部内容</option><option value="title">标题</option><option value="body">正文</option><option value="source">来源信息</option></Select></label>
+        {scope === "source" && <p className="library-search-scope-help" id={`${id}-source-help`}>查找链接、作者和来源备注。</p>}
         <label>分组<Select density="compact" aria-label="搜索分组" value={folderId} onChange={(event) => { setFolderId(event.target.value); setPage(1); }}><option value="">全部分组</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</Select></label>
         <label>资料类型<Select density="compact" aria-label="搜索资料类型" value={kind} onChange={(event) => { setKind(event.target.value as typeof kind); setPage(1); }}><option value="">全部类型</option><option value="article">文章</option><option value="paper">论文</option></Select></label>
         <label className="library-search-checkbox"><input type="checkbox" checked={favorite} onChange={(event) => { setFavorite(event.target.checked); setPage(1); }} />只看收藏</label>
       </div>
     </div>}
     {!term ? <div className="library-search-start">
-      <h3>搜索选项</h3>
-      <p>输入关键词，也可缩小搜索范围。</p>
-      <dl><div><dt>标题</dt><dd>查找文章和论文标题</dd></div><div><dt>正文</dt><dd>查找已保存的正文</dd></div><div><dt>来源信息</dt><dd>查找链接、作者和来源备注</dd></div><div><dt>分组 / 类型 / 收藏</dt><dd>筛选对应文档</dd></div></dl>
       {history.length > 0 && <div className="library-search-history"><div className="library-search-history-heading"><h3>最近搜索</h3><IconButton className="library-search-icon" label="清除记录" onClick={() => setHistory([])}><WorkspaceIcon name="close" size={16} /></IconButton></div>{history.map((value) => <Button type="button" key={value} onClick={() => changeQuery(value)}><WorkspaceIcon name="search" size={14} /><span>{value}</span></Button>)}</div>}
     </div> : <>
       <div className="library-search-summary"><span role="status" aria-live="polite">{loading ? "正在搜索…" : result ? `${result.total} 篇结果` : "搜索结果"}</span><label><span className="sr-only">搜索结果排序</span><Select density="compact" aria-label="搜索结果排序" value={sort} onChange={(event) => { setSort(event.target.value as DocumentSort); setPage(1); }}><option value="updated">最近修改</option><option value="created">最近添加</option><option value="title">标题排序</option></Select></label></div>
