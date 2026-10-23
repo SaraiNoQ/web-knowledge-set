@@ -18,3 +18,23 @@ test("reading styles migrate old preferences and retain custom size, spacing, an
   assert.equal(normalizeReadingText({ style: "technical" }).style, "technical");
   assert.deepEqual(applyReadingStyle({ ...DEFAULT_READING_TEXT, fontSize: 22, letterSpacing: .08 }, "technical"), { style: "technical", font: "sans", fontSize: 22, lineHeight: 1.7, letterSpacing: .08 });
 });
+
+import { loadPaperFontSize, savePaperFontSize } from "../src/reading-preferences";
+test("paper font preference survives reload and ignores invalid storage", () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  let saved: string | null = null;
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: () => saved, setItem: (_key: string, value: string) => { saved = value; } } });
+  try {
+    assert.equal(loadPaperFontSize(), 14);
+    assert.equal(savePaperFontSize(24), true);
+    assert.equal(loadPaperFontSize(), 24);
+    saved = "NaN";
+    assert.equal(loadPaperFontSize(), 14);
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, get() { throw new Error("denied"); } });
+    assert.equal(loadPaperFontSize(), 14);
+    assert.equal(savePaperFontSize(20), false);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "localStorage", previous);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+  }
+});

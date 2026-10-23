@@ -1,7 +1,7 @@
 import type { ImportApplyItem, ImportApplyResult, ImportPreview, ImportStrategy } from "../shared/types";
 import type { PreparedImportItem } from "../shared/types";
 import { ImportParseError, parseImportRequest } from "../shared/import";
-import { CloudHttpError, jsonObject, unsafeControl, type D1Database } from "./extension";
+import { CloudHttpError, MAX_CLOUD_ROW_TEXT_BYTES, jsonObject, unsafeControl, type D1Database } from "./extension";
 
 type Payload = Extract<PreparedImportItem["payload"], { type: "markdown" }>;
 interface Item { id: string; item_index: number; label: string; source_url: string; payload_json: string; existing_id: string | null; existing_revision: number | null; error: string | null; warnings_json: string; result_json: string | null }
@@ -35,7 +35,7 @@ export async function handleImportApi(request: Request, db: D1Database, url: URL
         payload.markdown = (body.files as { content: string }[])[index].content;
       }
       const contentError = !payload.title.trim() || payload.title.length > 1000 || payload.sourceNote.length > 50_000 || [payload.title, payload.markdown, payload.sourceNote, payload.author || ""].some((value) => unsafeControl.test(value)) ? "正文或来源信息包含非法控制字符，或标题/备注超出长度上限。" : null;
-      const error = item.error || contentError || (new TextEncoder().encode(JSON.stringify(payload)).byteLength > 1024 * 1024 ? "单篇内容超过云端 1 MiB 上限，请拆分文件。" : null);
+      const error = item.error || contentError || (new TextEncoder().encode(JSON.stringify(payload)).byteLength > MAX_CLOUD_ROW_TEXT_BYTES ? "单篇内容超过云端文章容量上限，请拆分文件。" : null);
       if (!error) for (const alias of aliases) if (alias && !seen.has(alias)) seen.set(alias, existing || { id: itemId, revision: 1 });
       statements.push(db.prepare("INSERT INTO cloud_import_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)").bind(itemId, id, index, item.label, source, error ? "{}" : JSON.stringify(payload), existing?.id ?? null, existing?.revision ?? null, error, JSON.stringify(warnings)));
       items.push({ id: itemId, index, label: item.label, sourceUrl: payload.sourceUrl, existingDocumentId: existing?.id ?? null, status: error ? "invalid" : existing ? "duplicate" : "valid", error, warnings });

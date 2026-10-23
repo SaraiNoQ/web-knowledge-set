@@ -2020,7 +2020,7 @@ export default function App() {
     await captureUrl(importUrl);
   };
 
-  const createArticle = async (title?: string): Promise<boolean> => {
+  const createArticle = async (title?: string, markdown?: string): Promise<boolean> => {
     if (importing || createArticleBusyRef.current || closeAttemptRef.current || lifecycleAction || restoringRevision !== null) return false;
     createArticleBusyRef.current = true;
     try {
@@ -2028,8 +2028,16 @@ export default function App() {
       const guard = beginNavigation();
       setImporting(true);
       try {
-        const result = await api.createArticle(title?.trim() || undefined);
-        if (!await revealDocument(result.document, guard)) return false;
+        let document: DocumentSummary;
+        if (markdown !== undefined) {
+          const filename = (title || "中文对照").replace(/[\\/]/gu, "_");
+          const preview = await api.previewImport({ kind: "markdown", files: [{ path: `${filename}.md`, content: markdown }] });
+          const result = await api.applyImport(preview.id, "copy");
+          const item = result.items[0];
+          if (item?.status !== "created" || !item.documentId) throw new Error(item?.error || "创建文章失败，请重试。");
+          document = await api.getDocument(item.documentId);
+        } else document = (await api.createArticle(title?.trim() || undefined)).document;
+        if (!await revealDocument(document, guard)) return false;
         setMode("edit");
         toast.success("已在未分组新建文章。");
         return true;
@@ -3938,7 +3946,7 @@ export default function App() {
           ) : detailError && (!currentDoc || (currentDoc.kind === "paper" && !currentPaper)) ? (
             <StatePanel kind="error" title="无法打开织片">{detailError}</StatePanel>
           ) : currentPaper && currentDoc ? (
-            <PaperReader paperId={currentPaper.id} title={currentDoc.title} autoStart={paperAutoStart === currentPaper.id} onClose={closeDocument} onRevisionChange={updateCurrentPaperRevision} onDirtyChange={setPaperDirty} />
+            <PaperReader paperId={currentPaper.id} title={currentDoc.title} autoStart={paperAutoStart === currentPaper.id} onClose={closeDocument} onRevisionChange={updateCurrentPaperRevision} onDirtyChange={setPaperDirty} onCreateArticle={createArticle} />
           ) : currentDoc && draft && webArticleMode ? (
             <>
               <Button type="button" className="mobile-back" onClick={closeDocument}><Icon size={16}><path d="m15 18-6-6 6-6" /></Icon>返回列表</Button>
