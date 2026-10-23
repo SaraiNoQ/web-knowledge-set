@@ -126,8 +126,9 @@ jobs:
           set -euo pipefail
           mkdir release-assets
           cp "src-tauri/target/release/bundle/dmg/Zhiye_${VERSION}_aarch64.dmg" release-assets/
+          bash scripts/package-macos-installer.sh "src-tauri/target/release/bundle/macos/织页.app" "$PWD/release-assets/Zhiye_${VERSION}_aarch64.pkg"
           cp "docs/RELEASE_NOTES_${VERSION}.md" release-assets/RELEASE_NOTES.md
-          (cd release-assets && shasum -a 256 *.dmg RELEASE_NOTES.md > SHA256SUMS)
+          (cd release-assets && shasum -a 256 *.dmg *.pkg RELEASE_NOTES.md > SHA256SUMS)
       - name: Upload verified source artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

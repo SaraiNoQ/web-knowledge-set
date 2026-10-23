@@ -76,6 +76,21 @@ const javascript = Object.values(jsGroups)
   }))
   .filter((item, index, items) => index === items.findIndex((other) => other.name === item.name && other.version === item.version))
   .sort((a, b) => `${a.name}@${a.version}`.localeCompare(`${b.name}@${b.version}`, "en"));
+// Inventory every optional canvas binary so macOS and Linux produce the same notices.
+const canvas = Object.values(jsGroups).flat().find((item) => item.name === "@napi-rs/canvas");
+if (canvas) {
+  const directory = canvas.paths[0];
+  const manifest = JSON.parse(readFileSync(resolve(directory, "package.json"), "utf8"));
+  for (let index = javascript.length - 1; index >= 0; index--) {
+    if (javascript[index].name.startsWith("@napi-rs/canvas-")) javascript.splice(index, 1);
+  }
+  for (const [name, version] of Object.entries(manifest.optionalDependencies ?? {})) {
+    if (!name.startsWith("@napi-rs/canvas-")) continue;
+    const item = { name, version, license: license(manifest.license, name), attribution: typeof manifest.author === "string" ? manifest.author : "—", source: `https://www.npmjs.com/package/${name}` };
+    collectTexts(item, directory);
+    javascript.push(item);
+  }
+}
 const platformJavascript = [{
   name: "fsevents",
   version: "2.3.2",
@@ -121,17 +136,18 @@ const rust = cargo.packages
   .sort((a, b) => `${a.name}@${a.version}`.localeCompare(`${b.name}@${b.version}`, "en"));
 
 const donor = {
-  "@napi-rs/canvas-linux-x64-gnu@1.0.9": ["@napi-rs/canvas@1.0.9"],
-  "alloc-stdlib@0.2.4": ["alloc-no-stdlib@2.0.4"],
+  "@napi-rs/canvas-linux-x64-gnu@1.0.13": ["@napi-rs/canvas@1.0.13"],
+  "@napi-rs/canvas-darwin-arm64@1.0.13": ["@napi-rs/canvas@1.0.13"],
+  "alloc-stdlib@0.3.0": ["alloc-no-stdlib@3.0.0"],
   "defmt-parser@1.0.0": ["defmt@1.1.1"],
-  "selectors@0.36.1": ["cssparser@0.36.0"],
-  "tauri-plugin@2.6.3": ["tauri-build@2.6.3"],
+  "selectors@0.38.0": ["cssparser@0.37.0"],
+  "tauri-plugin@2.7.2": ["tauri-build@2.7.4"],
 };
 const override = new Map([
-  [["block2@0.6.2", "dispatch2@0.3.1", "objc2@0.6.4", "objc2-app-kit@0.3.2", "objc2-core-foundation@0.3.2", "objc2-core-graphics@0.3.2", "objc2-encode@4.1.0", "objc2-exception-helper@0.1.1", "objc2-foundation@0.3.2", "objc2-io-surface@0.3.2", "objc2-osa-kit@0.3.2", "objc2-web-kit@0.3.2"], "objc2-LICENSE.md"],
+  [["block2@0.6.2", "dispatch2@0.3.1", "objc2@0.6.5", "objc2-quartz-core@0.3.2", "objc2-app-kit@0.3.2", "objc2-core-foundation@0.3.2", "objc2-core-graphics@0.3.2", "objc2-encode@4.1.0", "objc2-exception-helper@0.1.1", "objc2-foundation@0.3.2", "objc2-io-surface@0.3.2", "objc2-osa-kit@0.3.2", "objc2-web-kit@0.3.2"], "objc2-LICENSE.md"],
   [["rehype-katex@7.0.1", "remark-math@6.0.0"], "remark-math-LICENSE-MIT.txt"],
   [["sigchld@0.2.4"], "sigchld-LICENSE-MIT.txt"],
-  [["selectors@0.36.1"], "selectors-NOTICE-MPL-2.0.txt"],
+  [["selectors@0.38.0"], "selectors-NOTICE-MPL-2.0.txt"],
   [["bezier-js@6.1.4"], "bezier-js-LICENSE-MIT.txt"],
   [["react-force-graph-2d@1.29.1"], "react-force-graph-LICENSE-MIT.txt"],
   [["unic-char-property@0.9.0", "unic-char-range@0.9.0", "unic-common@0.9.0", "unic-ucd-ident@0.9.0", "unic-ucd-version@0.9.0"], "rust-unic-NOTICE.txt"],
@@ -142,7 +158,7 @@ const overrideHashes = {
   "react-force-graph-LICENSE-MIT.txt": "1906ba789f47eb3bb5f8525c5fb3fd0acf2a2fce3f70863798876e6a3c9b4c4c",
   "remark-math-LICENSE-MIT.txt": "b4c9077a6fe03b40387623026f4de8c05ad819f1f86e7e0ad3230976bbf3fd90",
   "rust-unic-NOTICE.txt": "ad68113eef6907387d6095debdd4b1a12a38bbc3533b65e434d501a996f6336d",
-  "selectors-NOTICE-MPL-2.0.txt": "c80bb752cdf998c673781daf9830e1e96f641ae6b43c886daa68de63c59b945f",
+  "selectors-NOTICE-MPL-2.0.txt": "834301b9c18a65446fcc74ad560db50d58544f1e0ca0ac2f31017fa80b12df10",
   "sigchld-LICENSE-MIT.txt": "f427674c31022b54bb6aaa28135efa4f026fd08d63c318411e0380be942e51ce",
 };
 for (const item of missingTexts) {
