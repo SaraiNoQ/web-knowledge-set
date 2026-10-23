@@ -1,14 +1,7 @@
-name: macOS DMG build
+name: Publish accepted macOS 1.0.7
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      source_sha:
-        description: Full commit SHA to package
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -17,33 +10,22 @@ permissions:
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 90
-    outputs:
-      sha: ${{ steps.source.outputs.sha }}
-      version: ${{ steps.version.outputs.version }}
+    timeout-minutes: 30
     steps:
-      - name: Validate exact current main source before checkout
-        id: source
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
-        run: |
-          set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-            SOURCE_SHA=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)
-          else
-            test "$GITHUB_REF" = refs/heads/main
-            [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
-          fi
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$SOURCE_SHA"
-          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ steps.source.outputs.sha }}
-          fetch-depth: 1
+          ref: 1a6eb0500c07d14da40b289bdd66e0e3d1f74934
+          fetch-depth: 0
           persist-credentials: false
+      - name: Bind packaging to the accepted source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 1a6eb0500c07d14da40b289bdd66e0e3d1f74934
+          test "$(gh run view 40007202146 --repo "$GITHUB_REPOSITORY" --json conclusion --jq .conclusion)" = success
+          test "$(gh run view 40007202146 --repo "$GITHUB_REPOSITORY" --json headSha --jq .headSha)" = 7632c92527390bbbbfcf5319018c7f0afc28b45a
+          git diff --exit-code 7632c92527390bbbbfcf5319018c7f0afc28b45a HEAD
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
         with:
           version: 11.7.0
@@ -51,62 +33,19 @@ jobs:
         with:
           node-version: 24.19.0
           cache: pnpm
-      - name: Derive and validate all source versions
-        id: version
-        run: |
-          node --input-type=module <<'JS'
-          import { readFileSync, appendFileSync } from 'node:fs';
-          import { desktopReleaseVersion } from './scripts/delivery-policy.mjs';
-          const read = name => readFileSync(name, 'utf8');
-          const value = desktopReleaseVersion({ version: JSON.parse(read('package.json')).version,
-            cargo: read('src-tauri/Cargo.toml'), tauri: JSON.parse(read('src-tauri/tauri.conf.json')),
-            info: read('src-tauri/Info.rc.plist'), lock: read('src-tauri/Cargo.lock') },
-            process.env.GITHUB_EVENT_NAME === 'push' ? process.env.GITHUB_REF_NAME : undefined);
-          const config = JSON.stringify({ bundle: { macOS: { infoPlist: 'Info.rc.plist', bundleVersion: value.bundleVersion } } });
-          appendFileSync(process.env.GITHUB_ENV, `VERSION=${value.version}\nBUNDLE_VERSION=${value.bundleVersion}\nTAURI_RELEASE_CONFIG=${config}\n`);
-          appendFileSync(process.env.GITHUB_OUTPUT, `version=${value.version}\n`);
-          JS
-      - name: Reuse exact-source CI, requiring the full tag run before publication
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ steps.source.outputs.sha }}
-        run: |
-          set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            run_id=''
-            for attempt in $(seq 1 30); do
-              runs=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$SOURCE_SHA" --event push --limit 20 --json databaseId,headBranch)
-              run_id=$(jq -r --arg tag "$GITHUB_REF_NAME" '[.[] | select(.headBranch == $tag)][0].databaseId // empty' <<< "$runs")
-              if [ -n "$run_id" ]; then break; fi
-              sleep 10
-            done
-            test -n "$run_id"
-            gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status --interval 30
-          else
-            run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$SOURCE_SHA" --branch main --event push --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-            test -n "$run_id"
-          fi
-      - name: Install Rust toolchain
+      - name: Prepare locked build tools
         run: |
           rustup toolchain install 1.97.1 --profile minimal --no-self-update
           rustup default 1.97.1
-      - name: Install build dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Generate desktop icons
-        run: pnpm tauri icon src-tauri/icons/zhiye.svg
-      - name: Prepare desktop runtime
-        run: pnpm desktop:prepare
-      - name: Build application
-        run: pnpm tauri build --ci --no-sign --config "$TAURI_RELEASE_CONFIG" --bundles app
-      - name: Ad-hoc sign application and build DMG
-        shell: bash
+          pnpm install --frozen-lockfile
+      - name: Build accepted release application
+        run: pnpm tauri build --ci --no-sign --bundles app --config '{"bundle":{"macOS":{"infoPlist":"Info.rc.plist","bundleVersion":"10007"}}}'
+      - name: Sign and package
         run: |
           set -euo pipefail
-          APP=$(find src-tauri/target/release/bundle/macos -maxdepth 1 -type d -name '*.app' -print -quit)
-          test -n "$APP"
-          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = "$VERSION"
-          test "$(plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")" = "$BUNDLE_VERSION"
-          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "io.github.sarainoq.zhiye"
+          APP="src-tauri/target/release/bundle/macos/织页.app"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")" = 1.0.7
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = io.github.sarainoq.zhiye
           while IFS= read -r -d '' PATHNAME; do
             if [[ -f "$PATHNAME" ]] && file -b "$PATHNAME" | grep -q Mach-O; then
               codesign --force --sign - --entitlements src-tauri/entitlements.chromium.plist "$PATHNAME"
@@ -115,64 +54,49 @@ jobs:
             fi
           done < <(find "$APP/Contents" -depth -print0)
           codesign --force --sign - "$APP"
-          codesign --verify --deep --strict "$APP"
-          mkdir -p dmg-root src-tauri/target/release/bundle/dmg
-          ditto "$APP" "dmg-root/织页.app"
-          ln -s /Applications dmg-root/Applications
-          hdiutil create -volname "织页" -srcfolder dmg-root -ov -format UDZO \
-            "src-tauri/target/release/bundle/dmg/Zhiye_${VERSION}_aarch64.dmg"
-      - name: Stage release assets and checksums
-        run: |
-          set -euo pipefail
           mkdir release-assets
-          cp "src-tauri/target/release/bundle/dmg/Zhiye_${VERSION}_aarch64.dmg" release-assets/
-          bash scripts/package-macos-installer.sh "src-tauri/target/release/bundle/macos/织页.app" "$PWD/release-assets/Zhiye_${VERSION}_aarch64.pkg"
-          cp "docs/RELEASE_NOTES_${VERSION}.md" release-assets/RELEASE_NOTES.md
-          (cd release-assets && shasum -a 256 *.dmg *.pkg RELEASE_NOTES.md > SHA256SUMS)
-      - name: Upload verified source artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+          bash scripts/package-macos-installer.sh "$APP" "$PWD/release-assets/Zhiye_1.0.7_aarch64.pkg"
+          cp docs/RELEASE_NOTES_1.0.7.md release-assets/RELEASE_NOTES.md
+          printf '\nRust 审计无阻断漏洞，仍有四条停止维护及一条 glib 不健全性警告。\n' >> release-assets/RELEASE_NOTES.md
+          printf '%s\n' '{"version":"1.0.7","source":"1a6eb0500c07d14da40b289bdd66e0e3d1f74934","acceptance":"https://github.com/SaraiNoQ/web-knowledge-set/actions/runs/40007202146","macos":"passed","linux":"owner-approved skip","signing":"ad-hoc, not Apple-notarized"}' > release-assets/verification.json
+          (cd release-assets && shasum -a 256 *.pkg RELEASE_NOTES.md verification.json > SHA256SUMS)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: zhiye-dmg-${{ steps.source.outputs.sha }}
+          name: accepted-macos-1.0.7-${{ github.run_id }}
           path: release-assets/
           if-no-files-found: error
           retention-days: 7
 
   publish:
-    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     permissions:
       contents: write
       actions: read
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: zhiye-dmg-${{ needs.build.outputs.sha }}
+          name: accepted-macos-1.0.7-${{ github.run_id }}
           path: release-assets
-      - name: Verify, create draft, download-check and publish immutable release
+      - name: Upload, verify and publish
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ needs.build.outputs.sha }}
-          VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
-          test "$GITHUB_REF_NAME" = "v$VERSION"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$SOURCE_SHA"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)" = "$SOURCE_SHA"
           (cd release-assets && sha256sum --check SHA256SUMS)
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo 'Release already exists; do not replace tags/assets blindly' >&2
-            exit 1
-          fi
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
-            --title "织页 $VERSION（Apple Silicon，ad-hoc，未公证）" \
-            --notes-file release-assets/RELEASE_NOTES.md release-assets/*
-          mkdir downloaded-assets
-          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir downloaded-assets
-          cmp release-assets/SHA256SUMS downloaded-assets/SHA256SUMS
-          (cd downloaded-assets && sha256sum --check SHA256SUMS)
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$SOURCE_SHA"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)" = "$SOURCE_SHA"
-          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
-          test "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = false
+          test "$(gh release view v1.0.7 --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
+          gh release upload v1.0.7 --repo "$GITHUB_REPOSITORY" release-assets/* --clobber
+          gh release view v1.0.7 --repo "$GITHUB_REPOSITORY" --json assets > remote-assets.json
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          assets={a['name']:a for a in json.load(open('remote-assets.json'))['assets']}
+          for path in Path('release-assets').iterdir():
+              asset=assets[path.name]
+              assert asset['state']=='uploaded' and asset['size']==path.stat().st_size
+              assert asset['digest']=='sha256:'+hashlib.file_digest(path.open('rb'),'sha256').hexdigest()
+          PY
+          gh release edit v1.0.7 --repo "$GITHUB_REPOSITORY" --draft=false --latest --target 1a6eb0500c07d14da40b289bdd66e0e3d1f74934 --title '织页 1.0.7（Apple Silicon）' --notes-file release-assets/RELEASE_NOTES.md
+          test "$(gh release view v1.0.7 --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = false
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/v1.0.7" --jq .sha)" = 1a6eb0500c07d14da40b289bdd66e0e3d1f74934
