@@ -49,6 +49,9 @@ test("imports a paper and opens the bilingual page reader", async ({ page }) => 
   await page.getByRole("option", { name: "20 px", exact: true }).click();
   await expect(page.locator(".paper-reader-block p")).toHaveCSS("font-size", "20px");
   await expect(page.locator(".paper-reader-zoom span")).toHaveText("100%");
+  await page.reload();
+  await expect(page.locator(".paper-reader-block p")).toHaveCSS("font-size", "20px");
+
 
   await page.getByRole("button", { name: "编辑译文" }).click();
   await expect(page.locator("textarea")).toHaveCount(1);
@@ -56,6 +59,12 @@ test("imports a paper and opens the bilingual page reader", async ({ page }) => 
   await page.locator("textarea").fill("修改后的论文译文。");
   await page.getByRole("button", { name: "保存本页" }).click();
   await expect(page.locator(".paper-reader-notice")).toContainText("本页译文已保存。");
+  await page.getByRole("button", { name: "整理为文章", exact: true }).click();
+  await expect(page.getByLabel("Markdown 编辑器")).toContainText("修改后的论文译文。");
+  await expect(page.getByLabel("Markdown 编辑器")).toContainText("## 第 1 页");
+  await page.locator(".directory-title").filter({ hasText: /^E2E 论文$/ }).click();
+  await expect(page.locator(".paper-reader-block p")).toHaveCSS("font-size", "20px");
+
 
   await page.getByRole("button", { name: "更多操作：E2E 论文" }).click();
   await page.getByRole("dialog", { name: "操作：E2E 论文" }).getByRole("button", { name: "删除资料" }).click();

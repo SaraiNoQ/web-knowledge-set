@@ -330,6 +330,10 @@
   /* Stacked panes are taller than any viewport, so the page scrolls here
      instead of the content area clipping what it cannot scroll. */
   .paper-reader-body { height: auto; }
+
+}
+
+@media (max-width: 1100px) {
   .paper-reader-page-toolbar { grid-template-columns: 1fr auto; }
   .paper-reader-page-toolbar > span { grid-column: 1 / -1; grid-row: 2; }
   .paper-reader-page-toolbar > div { grid-column: 1 / -1; }
