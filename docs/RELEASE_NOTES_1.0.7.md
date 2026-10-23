@@ -7,3 +7,5 @@
 带来源链接的 Markdown 沿用已有资料匹配规则；无来源文件再次导入会新增副本，不覆盖原有内容。
 
 最低支持 macOS 13.5，适用于 Apple Silicon。应用为 ad-hoc 签名，未经过 Apple Developer ID 签名或 Apple 公证；未配置在线自动更新。下载后可使用 SHA256SUMS 核对安装文件。
+
+本次 v1.0.7 经所有者明确授权仅执行 macOS 发布验收，Linux 验收跳过；不代表 Linux 兼容性已通过。此例外仅适用于 PR #21 及本版本发布。
