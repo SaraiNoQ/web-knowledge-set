@@ -3600,7 +3600,7 @@ export default function App() {
       <a className="skip-link" href="#library-panel">跳到资料库</a>
       <nav className="workspace-rail" aria-label="工作台导航">
         <Button type="button" className="rail-brand" aria-label="返回首页" disabled={closing} onClick={() => void returnToLibrary()}>织</Button>
-        <IconButton label="资料库" ref={libraryRailRef} aria-expanded={workspaceVisible && !libraryCollapsed} aria-controls={workspaceVisible ? "library-panel" : undefined} aria-pressed={!libraryCollapsed && !sidebarSearch && !graphMode && libraryView === "all" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing} onClick={() => void toggleDirectory()}><WorkspaceIcon name="document" /></IconButton>
+        <IconButton label="资料库" title={workspaceVisible && !graphMode && !libraryCollapsed ? "收起资料目录" : "展开资料目录"} ref={libraryRailRef} aria-expanded={workspaceVisible && !libraryCollapsed} aria-controls={workspaceVisible ? "library-panel" : undefined} aria-pressed={!libraryCollapsed && !sidebarSearch && !graphMode && libraryView === "all" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing} onClick={() => void toggleDirectory()}><WorkspaceIcon name="document" /></IconButton>
         <IconButton label="快捷查找" aria-haspopup="dialog" aria-expanded={quickActionsOpen} disabled={closing} onClick={openQuickActions}><WorkspaceIcon name="quickSearch" /></IconButton>
         <IconButton label="知识地图" aria-pressed={graphMode} disabled={closing} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); void openKnowledgeMap(); }}><WorkspaceIcon name="map" /></IconButton>
         <IconButton label="导入" disabled={closing} onClick={() => { if (!bulkImportPreview) setBulkImportKind(cloudMode ? "markdown" : "urls"); setBulkImportOpen(true); }}><WorkspaceIcon name="import" /></IconButton>
@@ -3798,6 +3798,7 @@ export default function App() {
         <aside id="library-panel" className={`library-panel ${libraryCollapsed ? "is-collapsed" : ""}`} aria-label="知识列表">
           <nav className="sidebar-tabbar" aria-label="目录分类">
             <SegmentedControl label="目录视图切换" className="sidebar-category-toggle" value={sidebarSearch ? "search" : libraryView} disabled={closing || batchBusy} options={([["all", "全部资料"], ["favorites", "收藏"], ["paper", "论文"], ["trash", "回收站"], ["search", "搜索"]] as const).map(([value, label]) => ({ value, label, icon: <WorkspaceIcon name={({ all: "list", favorites: "star", paper: "paper", trash: "trash", search: "search" } as const)[value]} size={18} /> }))} onChange={(value) => { if (value === "search") void openSidebarSearch(); else void applyLibraryView(value); }} />
+            <IconButton className="sidebar-collapse-button" label="收起资料目录" aria-controls="library-panel" disabled={closing} onClick={() => { setLibraryCollapsed(true); libraryRailRef.current?.focus(); }}><WorkspaceIcon name="panelCollapse" size={18} /></IconButton>
           </nav>
           <div className="sidebar-scroll-region">
           <div className="sidebar-search-host" hidden={!sidebarSearch}><LibrarySearch folders={folders} refreshKey={listRefresh} inputRef={sidebarSearchRef} onOpen={selectDocument} active={sidebarSearch && !libraryCollapsed} /></div>

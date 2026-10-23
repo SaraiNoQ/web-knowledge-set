@@ -29,7 +29,11 @@ test("category tabs replace duplicate rail entries and collapsed directory leave
   }
   await page.getByRole("navigation", { name: "目录分类" }).getByRole("button", { name: "全部资料", exact: true }).click();
   await expect(documents).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "资料库", exact: true }).click();
+  await expect(documents).toHaveAttribute("title", "收起资料目录");
+  await categories.getByRole("button", { name: "收起资料目录", exact: true }).click();
+  await expect(documents).toBeFocused();
+  await expect(documents).toHaveAttribute("aria-expanded", "false");
+  await expect(documents).toHaveAttribute("title", "展开资料目录");
   await expect(page.locator(".library-panel")).toBeHidden();
   await expect(documents).toHaveAttribute("aria-pressed", "false");
   await expect(page.getByRole("button", { name: "展开知识织片", exact: true })).toHaveCount(0);
@@ -39,6 +43,25 @@ test("category tabs replace duplicate rail entries and collapsed directory leave
   await documents.click();
   await expect(page.locator(".library-panel")).toBeVisible();
   await expect(documents).toHaveAttribute("aria-pressed", "true");
+  await expect(documents).toHaveAttribute("title", "收起资料目录");
+  for (const width of [1440, 800, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    const collapse = categories.getByRole("button", { name: "收起资料目录", exact: true });
+    await expect(collapse).toBeInViewport();
+    const bounds = await collapse.boundingBox();
+    const searchBounds = await categories.getByRole("button", { name: "搜索", exact: true }).boundingBox();
+    expect(bounds!.x).toBeGreaterThanOrEqual(searchBounds!.x + searchBounds!.width);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: `test-results/directory-collapse-${width}.png` });
+    await collapse.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".library-panel")).toBeHidden();
+    await expect(documents).toBeFocused();
+    await expect(documents).toHaveAttribute("title", "展开资料目录");
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".library-panel")).toBeVisible();
+    await expect(documents).toHaveAttribute("title", "收起资料目录");
+  }
 });
 
 test("compact reader exposes safe title editing from breadcrumb and directory", async ({ page }) => {
