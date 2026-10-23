@@ -42,3 +42,14 @@ export function loadReadingText() {
 export function saveReadingText(value: ReadingTextSettings) {
   try { localStorage.setItem(TEXT_KEY, JSON.stringify(normalizeReadingText(value))); return true; } catch { return false; }
 }
+
+const PAPER_FONT_KEY = "zhiye:paper-translation-font-size";
+export const PAPER_FONT_SIZES = [12, 14, 16, 18, 20, 24, 28];
+export function loadPaperFontSize() {
+  try { const value = Number(localStorage.getItem(PAPER_FONT_KEY)); return PAPER_FONT_SIZES.includes(value) ? value : 14; }
+  catch { return 14; }
+}
+export function savePaperFontSize(value: number) {
+  try { localStorage.setItem(PAPER_FONT_KEY, String(value)); return true; }
+  catch { return false; }
+}

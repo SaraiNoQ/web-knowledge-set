@@ -2359,3 +2359,19 @@ test("cloud Markdown imports preview, commit idempotently, and guard conflicting
   assert.equal(db.sqlite.prepare("SELECT markdown FROM cloud_documents WHERE id=?").get(id)!.markdown, "# 安全更新");
 
 });
+
+
+test("cloud Markdown imports preserve long translations within the row budget", async () => {
+  const { env, db } = sqliteEnvironment();
+  const epoch = (db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get() as { value: string }).value;
+  const headers = { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch };
+  const post = (path: string, body: unknown) => handleRequest(new Request(`https://app.example.com${path}`, { method: "POST", headers, body: JSON.stringify(body) }), env);
+  const preview = async (content: string, path = "研究.md") => await (await post("/api/imports/preview", { kind: "markdown", files: [{ path, content }] })).json() as import("../shared/types").ImportPreview;
+  const largeContent = "中".repeat(400_000);
+  const large = await preview(largeContent, "长篇中文对照.md");
+  assert.equal(large.counts.valid, 1);
+  const largeApplied = await (await post(`/api/imports/${large.id}/apply`, { strategy: "copy" })).json() as import("../shared/types").ImportApplyResult;
+  assert.equal(largeApplied.counts.created, 1);
+  assert.equal((db.sqlite.prepare("SELECT markdown FROM cloud_documents WHERE id=?").get(largeApplied.items[0].documentId) as { markdown: string }).markdown, largeContent);
+  assert.equal((await preview("中".repeat(640_000))).counts.invalid, 1);
+});

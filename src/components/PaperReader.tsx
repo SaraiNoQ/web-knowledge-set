@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { PaperBlock, PaperDocument, PaperPage } from "../../shared/types";
 import type { PDFDocumentProxy } from "pdfjs-dist";
+import { loadPaperFontSize, savePaperFontSize, PAPER_FONT_SIZES } from "../reading-preferences";
+import { paperTranslationMarkdown } from "../paper-translation";
 import { api } from "../api";
 import { runPaperExtraction, type PaperExtractionProgress } from "../paper-extraction";
 import { Button, Select } from "./ui/Controls";
@@ -169,7 +171,7 @@ function PaperCanvas({ paperId, pageNumber, zoom, onZoom }: { paperId: string; p
   );
 }
 
-export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChange, onDirtyChange }: { paperId: string; title?: string; autoStart?: boolean; onClose: () => void; onRevisionChange: (paperId: string, revision: number) => void; onDirtyChange?: (dirty: boolean) => void }) {
+export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChange, onDirtyChange, onCreateArticle }: { paperId: string; title?: string; autoStart?: boolean; onClose: () => void; onRevisionChange: (paperId: string, revision: number) => void; onDirtyChange?: (dirty: boolean) => void; onCreateArticle: (title: string, markdown: string) => Promise<boolean> }) {
   const [paper, setPaper] = useState<PaperDocument | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [draftBlocks, setDraftBlocks] = useState<PaperBlock[]>([]);
@@ -179,7 +181,9 @@ export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChan
   const [notice, setNotice] = useState("");
   const [progress, setProgress] = useState<PaperExtractionProgress | null>(null);
   const [zoom, setZoom] = useState(1);
-  const [translationFontSize, setTranslationFontSize] = useState(14);
+  const [translationFontSize, setTranslationFontSize] = useState(loadPaperFontSize);
+  const [creatingArticle, setCreatingArticle] = useState(false);
+  const creatingArticleRef = useRef(false);
   const [splitRatio, setSplitRatio] = useState(0.5);
   const [dragging, setDragging] = useState(false);
   const loadSequence = useRef(0);
@@ -334,6 +338,20 @@ export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChan
     } finally { setSaving(false); }
   };
 
+  const createTranslationArticle = async () => {
+    if (creatingArticleRef.current || editing) return;
+    creatingArticleRef.current = true;
+    setCreatingArticle(true);
+    setError("");
+    try {
+      const latest = await api.getPaper(paperId);
+      const markdown = paperTranslationMarkdown(latest);
+      const articleTitle = `${title || latest.title || "未命名论文"}（中文对照）`;
+      await onCreateArticle(articleTitle, `# ${articleTitle}\n\n${markdown}\n`);
+    } catch (cause) { setError((cause as Error).message); }
+    finally { creatingArticleRef.current = false; setCreatingArticle(false); }
+  };
+
   if (error && !paper) return <section className="paper-reader paper-reader-state" aria-label="论文阅读"><Button type="button" className="paper-reader-back" onClick={onClose}>← 返回列表</Button><div role="alert"><strong>无法打开论文</strong><p>{error}</p></div></section>;
   if (!paper) return <section className="paper-reader paper-reader-state" aria-label="论文阅读"><span className="eyebrow">PAPER READER</span><strong>正在打开论文…</strong></section>;
 
@@ -345,7 +363,7 @@ export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChan
       <header className="paper-reader-header">
         <Button type="button" className="paper-reader-back" onClick={onClose}>← 返回列表</Button>
         <div><span className="eyebrow">PAPER READER · {paper.status.toUpperCase()}</span><h1>{title || paper.title || "未命名论文"}</h1><p>{paper.author || "作者待查"} · {paper.sourceUrl}</p></div>
-        <div className="paper-reader-actions"><span className="paper-reader-type">PAPER</span>{readOnly && <span className="paper-reader-type">只读</span>}{editing ? <><Button density="compact" onClick={() => { setEditing(false); if (page) setDraftBlocks(page.translationBlocks); }}>取消</Button><Button density="compact" variant="primary" onClick={() => void save()} disabled={saving}>{saving ? "保存中…" : "保存本页"}</Button></> : <Button density="compact" variant="primary" onClick={() => setEditing(true)} disabled={!page || processing || readOnly}>编辑译文</Button>}</div>
+        <div className="paper-reader-actions"><span className="paper-reader-type">PAPER</span>{readOnly && <span className="paper-reader-type">只读</span>}{editing ? <><Button density="compact" onClick={() => { setEditing(false); if (page) setDraftBlocks(page.translationBlocks); }}>取消</Button><Button density="compact" variant="primary" onClick={() => void save()} disabled={saving}>{saving ? "保存中…" : "保存本页"}</Button></> : <Button density="compact" variant="primary" onClick={() => setEditing(true)} disabled={!page || processing || readOnly || creatingArticle}>编辑译文</Button>}</div>
       </header>
 
       {error && <div className="paper-reader-notice is-error" role="alert">{error}</div>}
@@ -355,7 +373,7 @@ export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChan
         <div className="paper-reader-body">
           <aside className="paper-reader-pages" aria-label="论文页码">{Array.from({ length: pages }, (_, index) => { const number = index + 1; return <Button key={number} type="button" className={number === pageNumber ? "is-active" : ""} aria-current={number === pageNumber ? "page" : undefined} onClick={() => { if (!editing) setPageNumber(number); }}>{String(number).padStart(2, "0")}</Button>; })}</aside>
           <div className="paper-reader-stage">
-            <div className="paper-reader-page-toolbar"><strong>第 {pageNumber} 页 / {pages}</strong><span>{page ? `${page.originalBlocks.length} 个原文段落 · ${page.translationBlocks.length} 个译文段落` : "本页译文尚未生成"}</span><div><label className="paper-reader-font-size">中文字号<Select density="compact" aria-label="中文字号" value={translationFontSize} onChange={(event) => setTranslationFontSize(Number(event.target.value))}>{[12, 14, 16, 18, 20, 24, 28].map((size) => <option key={size} value={size}>{size} px</option>)}</Select></label><Button type="button" onClick={() => setPageNumber((value) => Math.max(1, value - 1))} disabled={pageNumber === 1 || editing}>上一页</Button><Button type="button" onClick={() => setPageNumber((value) => Math.min(pages, value + 1))} disabled={pageNumber === pages || editing}>下一页</Button></div></div>
+            <div className="paper-reader-page-toolbar"><strong>第 {pageNumber} 页 / {pages}</strong><span>{page ? `${page.originalBlocks.length} 个原文段落 · ${page.translationBlocks.length} 个译文段落` : "本页译文尚未生成"}</span><div><label className="paper-reader-font-size">中文字号<Select density="compact" aria-label="中文字号" value={translationFontSize} onChange={(event) => { const size = Number(event.target.value); setTranslationFontSize(size); if (!savePaperFontSize(size)) setNotice("字号已生效，但未保存。刷新后会恢复上次设置。"); }}>{PAPER_FONT_SIZES.map((size) => <option key={size} value={size}>{size} px</option>)}</Select></label><Button type="button" disabled={editing || creatingArticle || readOnly} onClick={() => void createTranslationArticle()}>{creatingArticle ? "正在整理…" : "整理为文章"}</Button><Button type="button" onClick={() => setPageNumber((value) => Math.max(1, value - 1))} disabled={pageNumber === 1 || editing}>上一页</Button><Button type="button" onClick={() => setPageNumber((value) => Math.min(pages, value + 1))} disabled={pageNumber === pages || editing}>下一页</Button></div></div>
             <div
               className={`paper-reader-columns${dragging ? " is-dragging" : ""}`}
               ref={columnsRef}
