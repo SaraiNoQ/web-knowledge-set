@@ -3,7 +3,7 @@ import type { PaperBlock, PaperDocument, PaperPage } from "../../shared/types";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { api } from "../api";
 import { runPaperExtraction, type PaperExtractionProgress } from "../paper-extraction";
-import { Button } from "./ui/Controls";
+import { Button, Select } from "./ui/Controls";
 
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
@@ -179,6 +179,7 @@ export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChan
   const [notice, setNotice] = useState("");
   const [progress, setProgress] = useState<PaperExtractionProgress | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [translationFontSize, setTranslationFontSize] = useState(14);
   const [splitRatio, setSplitRatio] = useState(0.5);
   const [dragging, setDragging] = useState(false);
   const loadSequence = useRef(0);
@@ -354,7 +355,7 @@ export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChan
         <div className="paper-reader-body">
           <aside className="paper-reader-pages" aria-label="论文页码">{Array.from({ length: pages }, (_, index) => { const number = index + 1; return <Button key={number} type="button" className={number === pageNumber ? "is-active" : ""} aria-current={number === pageNumber ? "page" : undefined} onClick={() => { if (!editing) setPageNumber(number); }}>{String(number).padStart(2, "0")}</Button>; })}</aside>
           <div className="paper-reader-stage">
-            <div className="paper-reader-page-toolbar"><strong>第 {pageNumber} 页 / {pages}</strong><span>{page ? `${page.originalBlocks.length} 个原文段落 · ${page.translationBlocks.length} 个译文段落` : "本页译文尚未生成"}</span><div><Button type="button" onClick={() => setPageNumber((value) => Math.max(1, value - 1))} disabled={pageNumber === 1 || editing}>上一页</Button><Button type="button" onClick={() => setPageNumber((value) => Math.min(pages, value + 1))} disabled={pageNumber === pages || editing}>下一页</Button></div></div>
+            <div className="paper-reader-page-toolbar"><strong>第 {pageNumber} 页 / {pages}</strong><span>{page ? `${page.originalBlocks.length} 个原文段落 · ${page.translationBlocks.length} 个译文段落` : "本页译文尚未生成"}</span><div><label className="paper-reader-font-size">中文字号<Select density="compact" aria-label="中文字号" value={translationFontSize} onChange={(event) => setTranslationFontSize(Number(event.target.value))}>{[12, 14, 16, 18, 20, 24, 28].map((size) => <option key={size} value={size}>{size} px</option>)}</Select></label><Button type="button" onClick={() => setPageNumber((value) => Math.max(1, value - 1))} disabled={pageNumber === 1 || editing}>上一页</Button><Button type="button" onClick={() => setPageNumber((value) => Math.min(pages, value + 1))} disabled={pageNumber === pages || editing}>下一页</Button></div></div>
             <div
               className={`paper-reader-columns${dragging ? " is-dragging" : ""}`}
               ref={columnsRef}
@@ -373,7 +374,7 @@ export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChan
                 onPointerDown={startSplitDrag}
                 onKeyDown={resizeSplit}
               />
-              <article className="paper-reader-translation">
+              <article className="paper-reader-translation" style={{ "--paper-translation-font-size": `${translationFontSize}px` } as CSSProperties}>
                 <div className="paper-reader-page-label"><span>中文对照 · 第 {pageNumber} 页</span></div>
                 <div className="paper-reader-translation-scroll">{page ? <div className="paper-reader-blocks">{draftBlocks.map((block, index) => editing ? <label key={block.id} className="paper-reader-block paper-reader-block--edit"><span>{labelForBlock(block.type)} · {index + 1}</span><textarea value={block.translation} onChange={(event) => setDraftBlocks((current) => current.map((value) => value.id === block.id ? { ...value, translation: event.target.value } : value))} rows={Math.max(2, Math.min(8, Math.ceil(block.translation.length / 36)))} /></label> : <section key={block.id} className="paper-reader-block"><span>{labelForBlock(block.type)}</span><p>{block.translation || "（此块暂无译文）"}</p></section>)}</div> : <p className="paper-reader-empty">本页尚未生成译文。</p>}</div>
               </article>

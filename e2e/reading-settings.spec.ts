@@ -21,6 +21,9 @@ test("settings retain AI fields across categories and save the reading margin", 
   await expect(page.getByText("已保存", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await expect(page.getByRole("heading", { name: "设置", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "阅读外观", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("heading", { name: "阅读外观", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "智能设置", exact: true }).click();
   await page.getByRole("button", { name: "在线服务", exact: true }).click();
   const model = page.getByRole("textbox", { name: "在线模型", exact: true });
   await model.fill("unsaved-model");
@@ -50,8 +53,20 @@ test("settings retain AI fields across categories and save the reading margin", 
   await page.reload();
   await expect(page.locator(".app-shell")).toHaveCSS("--reading-margin", "50");
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  await page.getByRole("button", { name: "阅读外观", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "阅读外观", exact: true })).toBeVisible();
   await margin.fill("0");
+  const styleRow = await page.locator(".reading-control").first().boundingBox();
+  const description = await page.locator(".reading-style-description").boundingBox();
+  expect(description!.y - styleRow!.y - styleRow!.height).toBeGreaterThanOrEqual(12);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    const style = await page.getByRole("combobox", { name: "页面风格", exact: true }).boundingBox();
+    const font = await page.getByRole("combobox", { name: "字体", exact: true }).boundingBox();
+    expect(style!.width).toBe(font!.width);
+    expect(style!.height).toBe(font!.height);
+    expect(style!.x).toBe(font!.x);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.screenshot({ path: "/tmp/zhiye-reading-settings-desktop.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: "/tmp/zhiye-reading-settings-mobile.png", fullPage: true });

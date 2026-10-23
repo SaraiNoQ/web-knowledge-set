@@ -9,7 +9,7 @@ export function WorkspaceSettings({ cloud, semanticRefresh, onClose, readingMarg
   readingMargin: number; onReadingMarginChange: (value: number) => void;
   readingText: ReadingTextSettings; onReadingTextChange: (value: ReadingTextSettings) => void;
 }) {
-  const [section, setSection] = useState("ai");
+  const [section, setSection] = useState("reading");
   const readingSettingsRef = useRef<HTMLDivElement>(null);
   const [numberDraft, setNumberDraft] = useState({ fontSize: String(readingText.fontSize), lineHeight: String(readingText.lineHeight), letterSpacing: String(readingText.letterSpacing) });
   useEffect(() => setNumberDraft({ fontSize: String(readingText.fontSize), lineHeight: String(readingText.lineHeight), letterSpacing: String(readingText.letterSpacing) }), [readingText]);
@@ -37,7 +37,7 @@ export function WorkspaceSettings({ cloud, semanticRefresh, onClose, readingMarg
     onReadingTextChange(normalized); setStorageFailed(!saveReadingText(normalized));
   };
   return <main className="workspace-settings" aria-labelledby="workspace-settings-title">
-    <header><div><h1 id="workspace-settings-title">设置</h1><p>调整阅读外观和智能功能。</p></div><Button onClick={onClose}>返回列表</Button></header>
+    <header><div><h1 id="workspace-settings-title">设置</h1></div><Button onClick={onClose}>返回列表</Button></header>
     <div className="settings-layout">
       <nav className="settings-navigation" aria-label="设置分类">
         <Button type="button" aria-current={section === "reading" ? "page" : undefined} onClick={() => setSection("reading")}>阅读外观</Button>
@@ -47,7 +47,7 @@ export function WorkspaceSettings({ cloud, semanticRefresh, onClose, readingMarg
         <section hidden={section !== "reading"} aria-labelledby="reading-settings-title">
           <h2 id="reading-settings-title">阅读外观</h2>
           <div ref={readingSettingsRef} className="reading-setting">
-            <div className="reading-control"><span>页面风格</span><MarkdownStyleSelect value={readingText} onChange={changeText} /></div>
+            <div className="reading-control"><span>页面风格</span><MarkdownStyleSelect density="regular" value={readingText} onChange={changeText} /></div>
             <p className="reading-style-description">{READING_STYLES[readingText.style].description}。<br />切换会调整字体和行距，其他设置保留。</p>
             <div className="reading-control"><label htmlFor="reading-margin">两侧留白</label><div className="reading-number"><input type="number" aria-label="两侧留白百分比" min={0} max={50} step={1} value={readingMargin} onChange={(event) => changeMargin(event.currentTarget.valueAsNumber)} /><span>%</span></div><input id="reading-margin" type="range" min={0} max={50} step={1} value={readingMargin} style={{ "--range-progress": `${readingMargin * 2}%` } as import("react").CSSProperties} onChange={(event) => changeMargin(event.currentTarget.valueAsNumber)} /></div>
             <div className="reading-control"><label htmlFor="reading-font">字体</label><Select aria-label="字体" id="reading-font" value={readingText.font} onChange={(event) => changeText({ font: event.target.value as ReadingTextSettings["font"] })}>{Object.entries(READING_FONTS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</Select></div>

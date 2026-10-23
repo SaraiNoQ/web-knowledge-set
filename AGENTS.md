@@ -12,7 +12,7 @@
 Default: smallest complete change → one focused check → one PR when required by branch protection. Do not add specs, release notes, feature-ledger entries, or version changes to routine fixes.
 
 1. Check `git status` and read only the files needed for the request. Continue the active task branch; start a branch from current `main` only for a new task or a conflict. Do not overwrite other work.
-2. Make only the requested change. Use existing dependencies and helpers. Do not install or sync a new environment for docs or a trivial edit.
+2. Make only the requested change. Use existing dependencies and helpers. Do not install or sync a new environment for docs or a trivial edit. Avoid unnecessary secondary labels and descriptions. Let the layout do the explaining.
 3. Run the smallest relevant check once. Keep passing results while the checked code and toolchain are unchanged; do not rerun suites for commits, PR updates, or reviews that did not change that code.
 4. Request independent review for security, auth, data migration/recovery/deletion, or complex cross-layer changes. Routine copy, docs, and small reversible fixes need no extra review. Do not repeat review on unchanged code.
 5. Use one PR when required. Wait once for required CI, fix actual blockers, then merge under branch protection. Never force-push or use admin bypass.

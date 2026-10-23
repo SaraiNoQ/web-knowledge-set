@@ -1616,8 +1616,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .map-state h3 { margin: 10px 0 0; font: 500 20px var(--font-serif); }
 .map-state p { max-width: 340px; color: var(--ink-soft); font-size: var(--font-small); line-height: 1.7; }
 .knowledge-map-detail { position: relative; min-width: 0; padding: 20px 18px; background: rgba(244,240,229,.72); border-left: 1px solid var(--line-strong); overflow-y: auto; }
-.map-detail-head { display: flex; align-items: center; justify-content: space-between; min-height: 18px; }
-.map-detail-head .eyebrow { margin: 0; font: 600 9px var(--font-mono); letter-spacing: .12em; }
+.map-detail-head { display: flex; justify-content: flex-end; }
 .map-detail-close { display: grid; width: 30px; height: 30px; place-items: center; color: var(--ink-soft); background: transparent; border: 1px solid var(--line); font-size: 20px; }
 .map-empty-detail { margin-top: 36px; color: var(--ink-faint); font: 13px/1.7 var(--font-serif); }
 .map-kind-mark { display: block; width: 13px; height: 13px; margin-top: 24px; background: var(--moss); border: 1px solid var(--ink); border-radius: 50%; }

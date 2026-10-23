@@ -395,7 +395,6 @@ export function DataSafety({
         <section className="safety-card backup-ledger">
           <header>
             <div>
-              <span className="eyebrow">ARCHIVE LEDGER</span>
               <h2>完整备份</h2>
               <p>{cloud ? ".zhiye-cloud-backup 未加密，包含云端文档与 AI 结果，不包含 API Key；导入不会自动恢复。" : ".zhiye-backup / .zhiye-cloud-backup 均可；本机导入会把云端备份转成 .zhiye-backup，只新增已校验备份，不会自动恢复。云端不含网页存档与离线图片。"}</p>
             </div>

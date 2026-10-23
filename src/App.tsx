@@ -511,7 +511,7 @@ function CaptureHistoryPanel({
   return (
     <aside id="capture-history" className="revision-panel capture-history-panel" aria-label="收取记录">
       <header>
-        <div><span className="eyebrow">SOURCE LEDGER</span><h3>收取记录</h3></div>
+        <div><h3>收取记录</h3></div>
         <Button type="button" onClick={onClose} aria-label="关闭收取记录">×</Button>
       </header>
 
@@ -3697,7 +3697,7 @@ export default function App() {
         >
           <section className="bulk-import-card">
             <header>
-              <div><h2 id="bulk-import-title">导入</h2><p>{paperImportOpen ? "保存论文，生成分页中文对照。" : bulkImportKind === "bundle" ? "导入资料包；完整备份请到“备份恢复”。" : "检查后，批量添加到资料库。"}</p></div>
+              <div><h2 id="bulk-import-title">导入</h2>{(paperImportOpen || bulkImportKind === "bundle") && <p>{paperImportOpen ? "保存论文，生成分页中文对照。" : "导入资料包；完整备份请到“备份恢复”。"}</p>}</div>
               {bulkImportTask
                 ? <Button className="bulk-cancel-task" type="button" autoFocus onClick={cancelBulkImportTask}>{bulkImportTask === "validating" ? "取消校验" : "取消导入"}</Button>
                 : <Button type="button" autoFocus onClick={() => { if (paperImportOpen) setPaperImportOpen(false); else void closeBulkImport(); }} disabled={bulkImportBusy || paperImportBusy} aria-label="关闭导入">×</Button>}
@@ -3930,9 +3930,8 @@ export default function App() {
           {graphMode && !selectedId ? null : !selectedId ? (
             <div className="welcome-state">
               <div className="weave-mark" aria-hidden="true"><i /><i /><i /><i /></div>
-              <span className="eyebrow">QUIET WORKBENCH</span>
               <h2>选择织片</h2>
-              <p>{cloudMode ? <>选择织片，开始阅读、编辑或使用助手。<br />重要修改前，请先到“备份恢复”备份。</> : <>阅读原文、整理标签，或直接修改 Markdown。<br />你的文字会留在本地。</>}</p>
+              <p>{cloudMode ? "重要修改前，请先到“备份恢复”备份。" : "你的文字会留在本地。"}</p>
             </div>
           ) : detailLoading && (!currentDoc || (currentDoc.kind === "paper" && !currentPaper)) ? (
             <StatePanel kind="loading" title="正在打开织片…" />
@@ -4037,7 +4036,7 @@ export default function App() {
 
               {collectionsOpen && (
                 <aside id="collection-manager" className="collection-manager" aria-label="专题管理">
-                  <header><div><span className="eyebrow">CLASSIFICATION INDEX</span><h3>专题标签</h3></div><Button type="button" onClick={() => setCollectionsOpen(false)} aria-label="关闭分类管理">×</Button></header>
+                  <header><div><h3>专题标签</h3></div><Button type="button" onClick={() => setCollectionsOpen(false)} aria-label="关闭分类管理">×</Button></header>
                   <h4>专题</h4>
                   <form className="collection-create" onSubmit={createCollection}>
                     <label><span className="sr-only">新专题名</span><input aria-label="新专题名" maxLength={100} value={collectionName} onChange={(event) => setCollectionName(event.target.value)} placeholder="新专题名" disabled={organizationLocked || metadataDirty} /></label>
@@ -4078,7 +4077,7 @@ export default function App() {
               {organizationConflict && <div className="conflict-banner" role="alert"><div><strong>来源分类已改</strong><span>本次修改尚未保存。可按新版重试，或放弃修改。</span></div><div><Button type="button" onClick={discardOrganizationUpdate} disabled={closing || organizationSaving}>放弃修改</Button><Button type="button" className="primary-button" onClick={() => void retryOrganizationUpdate()} disabled={closing || organizationSaving}>{organizationSaving ? "重试中…" : "按新版重试"}</Button></div></div>}
               {qualityOpen && (
                 <aside id="capture-quality" className="quality-panel" aria-label="内容检查">
-                  <header><div><span className="eyebrow">CAPTURE QUALITY</span><h3>内容检查</h3></div><Button type="button" onClick={() => setQualityOpen(false)} aria-label="关闭内容检查">×</Button></header>
+                  <header><div><h3>内容检查</h3></div><Button type="button" onClick={() => setQualityOpen(false)} aria-label="关闭内容检查">×</Button></header>
                   {qualityIssues.length ? <ul>{qualityIssues.map((issue) => <li key={issue.title}><strong>{issue.title}</strong><span>{issue.detail}</span></li>)}</ul> : <div className="quality-ok"><i aria-hidden="true">✓</i><div><strong>未发现明显问题</strong><span>标题、正文长度和本机图片检查通过。</span></div></div>}
                   <Button type="button" className="history-button" onClick={toggleCaptureHistory}>查看记录</Button>
                 </aside>
@@ -4152,7 +4151,7 @@ export default function App() {
                   {saveState === "error" && <div className="inline-error" role="alert">{saveError}</div>}
                   {historyOpen && (
                     <aside id="revision-history" className="revision-panel" aria-label="历史版本">
-                      <header><div><span className="eyebrow">VERSION THREAD</span><h3>历史版本</h3></div><Button type="button" onClick={() => setHistoryOpen(false)} aria-label="关闭历史版本">×</Button></header>
+                      <header><div><h3>历史版本</h3></div><Button type="button" onClick={() => setHistoryOpen(false)} aria-label="关闭历史版本">×</Button></header>
                       {historyLoading ? <StatePanel kind="loading" title="正在查找历史版本" /> : historyError ? <StatePanel kind="error" title="无法读取历史版本">{historyError}</StatePanel> : !revisions.length ? <StatePanel kind="empty" title="还没有修订记录">编辑保存后，这里会保留历史版本。</StatePanel> : (
                         <ol>
                           {revisions.map((revision) => {

@@ -258,7 +258,7 @@
 .reading-setting { gap: 0; margin-top: 24px; padding-top: 0; border: 0; }
 .reading-control { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 16px; padding: 18px 0; border-bottom: 1px solid var(--line); }
 .reading-control > label { color: var(--ink); font-size: 14px; }
-.reading-control > .ui-select-wrap { width: 200px; }
+.reading-control > .ui-select-wrap { width: 200px; max-width: none; }
 .reading-number { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 200px; min-width: 0; min-height: 40px; padding: 7px 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--paper-light); box-shadow: none; transition: border-color 140ms, background-color 140ms; }
 .reading-number:focus-within { border-color: var(--vermilion); background: var(--paper); }
 .reading-number input[type="number"] { width: auto; min-width: 0; flex: 1; min-height: 24px; padding: 0; border: 0; outline: 0; background: transparent; color: var(--ink); text-align: right; font: 500 15px/1.4 var(--font-sans); font-variant-numeric: tabular-nums; appearance: textfield; -moz-appearance: textfield; }

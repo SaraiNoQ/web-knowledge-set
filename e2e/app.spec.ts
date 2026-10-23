@@ -640,6 +640,7 @@ test("semantic indexing remains opt-in until a credential and model probe are av
   await expect(deferSetup.or(page.getByLabel("网页链接"))).toBeVisible();
   if (await deferSetup.isVisible()) await deferSetup.click();
   await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "智能设置", exact: true }).click();
   await expect(page.getByRole("heading", { name: "相关资料" })).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "自动推荐" })).not.toBeChecked();
   await expect(page.locator(".semantic-settings").getByRole("button", { name: "测试连接" })).toBeDisabled();
@@ -822,6 +823,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(page.getByLabel("文档标题")).toHaveValue("AI 生命周期文章", { timeout: 8_000 });
 
   await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "智能设置", exact: true }).click();
   const remoteProvider = page.getByRole("combobox", { name: "服务平台" });
   await remoteProvider.click();
   await expect(page.getByRole("option")).toHaveCount(10);
@@ -842,6 +844,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await deferAfterReload.or(page.getByRole("button", { name: "设置", exact: true })).first().waitFor();
   if (await deferAfterReload.isVisible()) await deferAfterReload.click();
   await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "智能设置", exact: true }).click();
   await expect(page.getByText("当前平台密钥已就绪", { exact: false })).toBeVisible();
   await expect(page.getByRole("button", { name: "删除密钥" })).toBeVisible();
   await page.getByLabel("在线模型").fill("remote-e2e-model");
@@ -1000,6 +1003,7 @@ test("keeps optional AI generation explicit, cancellable, inert, and manually ad
   await expect(page.getByLabel("Markdown 编辑器")).toHaveText(originalMarkdown || "");
 
   await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "智能设置", exact: true }).click();
   await page.getByRole("button", { name: "关闭清空" }).click();
   await page.getByRole("alertdialog", { name: "关闭清空" }).getByRole("button", { name: "关闭清空" }).click();
   await expect(page.getByText(/AI 已关闭，并删除 5 条生成结果/u)).toBeVisible();
@@ -1752,6 +1756,7 @@ test("desktop AI settings explains local key failures without cloud wording", as
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
   if (await deferSetup.isVisible()) await deferSetup.click();
   await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "智能设置", exact: true }).click();
   await page.getByRole("button", { name: "在线服务", exact: true }).click();
   await page.getByLabel("在线模型").fill("desktop-e2e-model");
   await page.getByLabel("平台密钥").fill("desktop-e2e-key");
