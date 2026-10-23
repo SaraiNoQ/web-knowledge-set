@@ -89,7 +89,7 @@ test("compact reader exposes safe title editing from breadcrumb and directory", 
   await page.goto("/");
   await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷查找", exact: true }).click();
   await page.getByRole("dialog", { name: "快捷查找", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
-  const title = page.getByRole("button", { name: "修改标题", exact: true });
+  const title = page.getByRole("button", { name: /^修改标题：/u });
   await expect(title).toHaveText("未命名文章");
   await expect(page.locator(".document-head h2")).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^(显示|隐藏)文档侧栏$/ })).toHaveCount(0);
@@ -178,7 +178,7 @@ test("breadcrumb uses a capped content width and keeps the complete saved title"
   await expect(page.locator(".library-toggle")).toHaveCount(0);
   await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷查找", exact: true }).click();
   await page.getByRole("dialog", { name: "快捷查找", exact: true }).getByRole("option", { name: /新建空白文章/ }).click();
-  const title = page.getByRole("button", { name: "修改标题", exact: true });
+  const title = page.getByRole("button", { name: /^修改标题：/u });
   await title.dblclick();
   const input = page.getByRole("textbox", { name: "文章标题", exact: true });
   await input.fill("短标题");

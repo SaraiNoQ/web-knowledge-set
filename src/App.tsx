@@ -2165,6 +2165,10 @@ export default function App() {
       const kind = fileIntents[0]!.kind;
       if (fileIntents.some((intent) => intent.kind !== kind)) throw new Error("一次只能打开一种导入文件。");
       if (safetyOpen) throw new Error("请先退出备份恢复界面，再重新打开或拖入文件。");
+      if (kind === "markdown" && (bulkImportOpen || paperImportOpen || paperImportBusy || uploadPreparing)) {
+        toast.error("请先完成或关闭当前导入窗口，再重新打开 Markdown 文件。");
+        return;
+      }
       if (bulkImportBusy) throw new Error("当前导入完成后，请重新打开或拖入文件。");
       const files: File[] = [];
       for (const intent of fileIntents) {
@@ -2184,6 +2188,35 @@ export default function App() {
         ? unsupportedImportFileMessage(kind)
         : importFileLimitError(kind, accepted);
       if (error) throw new Error(error);
+      if (kind === "markdown") {
+        if (closeAttemptRef.current || lifecycleAction || restoringRevision !== null) throw new Error("请完成当前操作后重新打开文件。");
+        const guard = beginNavigation();
+        setBulkImportBusy(true);
+        let batchId: string | undefined;
+        try {
+          const preview = await api.previewImport({
+            kind: "markdown",
+            files: await Promise.all(accepted.map(async (file) => ({ path: file.name, content: await file.text() }))),
+          });
+          batchId = preview.id;
+          const result = await api.applyImport(preview.id, "skip");
+          setListRefresh((value) => value + 1);
+          void loadCollections();
+          if (result.counts.failed || result.counts.conflicts) toast.error(`有 ${result.counts.failed + result.counts.conflicts} 个文件未能导入，请检查文件后重试。`);
+          const documentId = result.items.find((item) => item.documentId)?.documentId;
+          if (documentId && canApplyNavigation(guard)) {
+            const document = await api.getDocument(documentId);
+            if (canApplyNavigation(guard) && await confirmDiscardChanges("当前修改尚未保存，确定打开 Markdown 文档吗？") && await revealDocument(document, guard)) {
+              setCloudEditing(false);
+              setMode("preview");
+            }
+          }
+        } finally {
+          setBulkImportBusy(false);
+          if (batchId) await api.cancelImport(batchId).catch(() => undefined);
+        }
+        return;
+      }
       if (bulkImportPreview && !await cancelBulkPreview()) return;
       clearBulkImport();
       setBulkImportKind(kind);
@@ -2191,8 +2224,9 @@ export default function App() {
       setBulkImportOpen(true);
       setBulkImportNotice(`已从桌面接收 ${accepted.length} 个文件，请检查后导入。`);
     } catch (error) {
-      setBulkImportError(userErrorFrom(error, "无法读取桌面导入文件，请检查文件后重试。"));
-      setBulkImportOpen(true);
+      const message = userErrorFrom(error, "无法读取桌面导入文件，请检查文件后重试。");
+      if (fileIntents.every((intent) => intent.kind === "markdown")) toast.error(message);
+      else { setBulkImportError(message); setBulkImportOpen(true); }
     } finally {
       if (pendingTokens.size) {
         try {
@@ -3899,7 +3933,7 @@ export default function App() {
           <DocumentTabs documents={openDocuments} selectedId={selectedId} dirty={hasUnsavedChanges} disabled={closing || organizationSaving || batchBusy || captureApplying || Boolean(collectionAction) || Boolean(tagAction) || Boolean(lifecycleAction) || restoringRevision !== null} onSelect={async (id) => { const opened = await selectDocument(id); if (opened) { graphReturnRef.current = false; setGraphMode(false); } return opened; }} onClose={closeDocumentTab} toolsOpen={toolsOpen} onToggleTools={() => setToolsOpen((value) => !value)} />
           {selectedId && <div className="workspace-location">
             <IconButton label="返回目录" disabled={closing} onClick={() => void closeDocument()}><Icon size={18}><path d="M20 12H4m6-6-6 6 6 6" /></Icon></IconButton>
-            <span>{folders.find((folder) => folder.id === currentDoc?.folderId)?.name ?? "目录"}</span><WorkspaceIcon name="chevron" size={13} />{titleEdit?.id === currentDoc?.id && titleEdit ? <input autoFocus className="breadcrumb-title-input" aria-label="文章标题" maxLength={1000} size={Math.max(1, Math.min(20, Array.from(titleEdit.title).length))} value={titleEdit.title} onChange={(event) => setTitleEdit({ ...titleEdit, title: event.target.value })} onBlur={() => setTitleEdit(null)} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); setTitleEdit(null); } if (event.key === "Enter") { event.preventDefault(); const edit = titleEdit; setTitleEdit(null); void renameDocument(edit, edit.title); } }} /> : <Button type="button" className="breadcrumb-title" aria-label="修改标题" title={currentDoc?.title || "双击修改标题"} disabled={!currentDoc || organizationLocked || metadataDirty || paperDirty} onDoubleClick={() => { if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "F2") { event.preventDefault(); if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); } }}>{Array.from(currentDoc?.title || "正在打开…").slice(0, 20).join("")}{Array.from(currentDoc?.title || "").length > 20 ? "…" : ""}</Button>}
+            <span>{folders.find((folder) => folder.id === currentDoc?.folderId)?.name ?? "目录"}</span><WorkspaceIcon name="chevron" size={13} />{titleEdit?.id === currentDoc?.id && titleEdit ? <input autoFocus className="breadcrumb-title-input" aria-label="文章标题" maxLength={1000} size={Math.max(1, Math.min(20, Array.from(titleEdit.title).length))} value={titleEdit.title} onChange={(event) => setTitleEdit({ ...titleEdit, title: event.target.value })} onBlur={() => setTitleEdit(null)} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); setTitleEdit(null); } if (event.key === "Enter") { event.preventDefault(); const edit = titleEdit; setTitleEdit(null); void renameDocument(edit, edit.title); } }} /> : <Button type="button" className="breadcrumb-title" aria-label={`修改标题：${currentDoc?.title || "正在打开…"}`} title={currentDoc?.title || "双击修改标题"} disabled={!currentDoc || organizationLocked || metadataDirty || paperDirty} onDoubleClick={() => { if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "F2") { event.preventDefault(); if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); } }}>{Array.from(currentDoc?.title || "正在打开…").slice(0, 20).join("")}{Array.from(currentDoc?.title || "").length > 20 ? "…" : ""}</Button>}
 
           </div>}
 

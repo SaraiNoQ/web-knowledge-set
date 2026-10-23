@@ -28,6 +28,7 @@ jobs:
     outputs:
       desktop: ${{ steps.paths.outputs.desktop }}
       runtime: ${{ steps.paths.outputs.runtime }}
+      linux_required: ${{ steps.paths.outputs.linux_required }}
       full: ${{ steps.paths.outputs.full }}
       plan: ${{ steps.paths.outputs.plan }}
     steps:
@@ -42,6 +43,8 @@ jobs:
         id: paths
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          # Owner-approved exception, limited to PR 21 and its v1.0.7 release.
+          MACOS_ONLY_RELEASE: "${{ github.event.pull_request.number == 21 || github.ref == 'refs/tags/v1.0.7' || (github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Merge pull request #21 from ')) }}"
           FULL_REQUESTED: ${{ inputs.full_validation == true || startsWith(github.ref, 'refs/tags/') || contains(github.event.pull_request.labels.*.name, 'validation:release') }}
         run: |
           node --input-type=module <<'JS'
@@ -53,8 +56,10 @@ jobs:
             ? execFileSync('git', ['diff', '--name-only', base, 'HEAD'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean)
             : process.env.FULL_REQUESTED === 'true' ? [] : execFileSync('git', ['diff', '--name-only', 'HEAD^', 'HEAD'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
           const plan = validationPlan(paths, process.env.FULL_REQUESTED === 'true');
-          appendFileSync(process.env.GITHUB_OUTPUT, `desktop=${plan.desktop}\nruntime=${plan.runtime}\nfull=${plan.full}\nplan=${JSON.stringify(plan)}\nworkflow=${plan.full || paths.some(p => p.startsWith('.github/workflows/') || p === 'scripts/check-workflows.sh')}\n`);
+          const macosOnly = process.env.MACOS_ONLY_RELEASE === 'true';
+          appendFileSync(process.env.GITHUB_OUTPUT, `desktop=${plan.desktop}\nruntime=${plan.runtime}\nlinux_required=${plan.runtime && !macosOnly}\nfull=${plan.full}\nplan=${JSON.stringify(plan)}\nworkflow=${plan.full || paths.some(p => p.startsWith('.github/workflows/') || p === 'scripts/check-workflows.sh')}\n`);
           appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Validation level: ${plan.full ? 'full release' : 'targeted'}\n\n\`\`\`json\n${JSON.stringify(plan, null, 2)}\n\`\`\`\n`);
+          if (macosOnly) appendFileSync(process.env.GITHUB_STEP_SUMMARY, '\nLinux intentionally skipped: owner-approved macOS-only acceptance for PR #21 / v1.0.7.\n');
           JS
       - name: Validate policy, mirrored docs and immutable migrations
         env:
@@ -67,7 +72,7 @@ jobs:
         run: bash scripts/check-workflows.sh
   linux:
     needs: policy
-    if: needs.policy.outputs.runtime == 'true'
+    if: needs.policy.outputs.linux_required == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: ${{ needs.policy.outputs.full == 'true' && 45 || 15 }}
     steps:
@@ -113,7 +118,7 @@ jobs:
           POLICY: ${{ needs.policy.result }}
           LINUX: ${{ needs.linux.result }}
           DESKTOP: ${{ needs.desktop.result }}
-          RUNTIME_REQUIRED: ${{ needs.policy.outputs.runtime }}
+          RUNTIME_REQUIRED: ${{ needs.policy.outputs.linux_required }}
           DESKTOP_REQUIRED: ${{ needs.policy.outputs.desktop }}
         run: |
           test "$POLICY" = success

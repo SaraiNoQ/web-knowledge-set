@@ -54,7 +54,7 @@ export function AppUpdater({ beforeOperation, disabled }: { beforeOperation: () 
     setMetadata(null);
     try {
       await updateRef.current?.close();
-      const update = await check({ allowDowngrades: false, timeout: 15_000 });
+      const update = await check({ timeout: 15_000 });
       updateRef.current = update;
       if (!update) {
         setPhase("current");

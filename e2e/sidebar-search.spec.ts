@@ -41,6 +41,7 @@ test("directory categories align with article tabs and reuse existing views", as
   await page.goto("/");
   const categories = page.getByLabel("目录分类", { exact: true });
   await expect(categories.getByRole("group", { name: "目录视图切换", exact: true }).getByRole("button")).toHaveCount(5);
+  await expect(categories.getByRole("button", { name: "收起资料目录", exact: true })).toBeVisible();
   await expect(categories.getByRole("button", { name: "全部资料", exact: true })).toHaveAttribute("aria-pressed", "true");
   for (const immersive of [false, true]) {
     if (immersive) await page.getByRole("button", { name: "专注阅读", exact: true }).click();
@@ -76,7 +77,7 @@ test("search opens body matches and category changes protect unsaved edits", asy
   await panel.locator(".library-search-snippets button").first().click();
   await expect(page.getByRole("navigation", { name: "已打开的文章" }).getByRole("button", { name: document.title, exact: true })).toBeVisible();
   await page.getByLabel("目录分类", { exact: true }).getByRole("button", { name: "搜索", exact: true }).click();
-  await expect(page.getByRole("button", { name: "修改标题", exact: true })).toHaveAttribute("title", document.title);
+  await expect(page.getByRole("button", { name: /^修改标题：/u })).toHaveAttribute("title", document.title);
   await page.getByLabel("目录分类", { exact: true }).getByRole("button", { name: "全部资料", exact: true }).click();
   await page.getByLabel("目录分类", { exact: true }).getByRole("button", { name: "搜索", exact: true }).click();
   await expect(page.getByRole("searchbox", { name: "搜索文档", exact: true })).toHaveValue("联邦原型");
@@ -124,7 +125,7 @@ test("quick actions search, open results, create named articles, and protect dra
   await expect(dialog.getByRole("option", { name: new RegExp(createTitle) })).toBeVisible();
   await dialog.getByRole("combobox", { name: "搜索资料或输入文章标题", exact: true }).press("Shift+Enter");
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "修改标题", exact: true })).toHaveAttribute("title", createTitle);
+  await expect(page.getByRole("button", { name: /^修改标题：/u })).toHaveAttribute("title", createTitle);
 
   await railSearch.click();
   const enterTitle = `回车创建的快捷文章${suffix}`;
@@ -133,7 +134,7 @@ test("quick actions search, open results, create named articles, and protect dra
   await expect(dialog.getByRole("option", { name: new RegExp(enterTitle) })).toBeVisible();
   await enterInput.press("Enter");
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "修改标题", exact: true })).toHaveAttribute("title", enterTitle);
+  await expect(page.getByRole("button", { name: /^修改标题：/u })).toHaveAttribute("title", enterTitle);
 
   await page.getByRole("button", { name: "编辑", exact: true }).click();
   const editor = page.getByRole("textbox", { name: "Markdown 编辑器" });
@@ -165,7 +166,7 @@ test("quick actions search, open results, create named articles, and protect dra
   await expect(editor).toHaveText("创建前必须保护的未保存正文");
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "修改标题", exact: true })).toHaveAttribute("title", enterTitle);
+  await expect(page.getByRole("button", { name: /^修改标题：/u })).toHaveAttribute("title", enterTitle);
   await expect(editor).toHaveText("创建前必须保护的未保存正文");
 });
 
@@ -390,7 +391,7 @@ test("mobile rail opens quick actions without leaving the current search or read
   const resultTitle = panel.locator(".library-search-result-title");
   await expect(resultTitle).toHaveText(document.title);
   await resultTitle.click();
-  await expect(page.getByRole("button", { name: "修改标题", exact: true })).toHaveText(document.title);
+  await expect(page.getByRole("button", { name: /^修改标题：/u })).toHaveText(document.title);
   await expect(panel).toBeHidden();
   const railSearch = page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷查找", exact: true });
   await railSearch.click();
@@ -400,7 +401,7 @@ test("mobile rail opens quick actions without leaving the current search or read
   await expect(quickActions.getByRole("combobox", { name: "搜索资料或输入文章标题", exact: true })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(quickActions).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "修改标题", exact: true })).toHaveAttribute("title", document.title);
+  await expect(page.getByRole("button", { name: /^修改标题：/u })).toHaveAttribute("title", document.title);
   await page.getByRole("button", { name: "编辑", exact: true }).click();
   const editor = page.getByRole("textbox", { name: "Markdown 编辑器" });
   await editor.fill("手机搜索返回之前尚未保存的正文");

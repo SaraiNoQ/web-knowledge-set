@@ -1,6 +1,6 @@
 [package]
 name = "zhiye"
-version = "1.0.6"
+version = "1.0.7"
 description = "A local-first web knowledge library"
 authors = ["Zhiye contributors"]
 edition = "2021"
@@ -20,7 +20,8 @@ tauri = { version = "2", features = [] }
 tauri-plugin-deep-link = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
-tauri-plugin-updater = "2"
+# Pin the upstream ZIP security fix until it reaches a crates.io release.
+tauri-plugin-updater = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "ba98bfadc4c868c9a7e1a226c83af528e1f11b89" }
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

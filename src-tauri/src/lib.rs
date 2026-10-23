@@ -242,7 +242,9 @@ fn restart_after_update(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn change_data_directory(app: tauri::AppHandle) -> Result<launcher::DataDirectoryChoice, String> {
+async fn change_data_directory(
+    app: tauri::AppHandle,
+) -> Result<launcher::DataDirectoryChoice, String> {
     let choice = launcher::stage_data_directory_change(&app)?;
     if !choice.configured {
         return Ok(choice);

@@ -232,7 +232,7 @@ test("paper translation drafts and reader state survive immersive switching", as
   const { paper } = await (await upload).json();
   try {
     await expect(page.getByText("一篇 E2E 论文。", { exact: true })).toBeVisible({ timeout: 15_000 });
-    await page.getByRole("button", { name: "修改标题", exact: true }).dblclick();
+    await page.getByRole("button", { name: /^修改标题：/u }).dblclick();
     await page.getByRole("textbox", { name: "文章标题", exact: true }).fill("论文标题同步测试");
     await page.getByRole("textbox", { name: "文章标题", exact: true }).press("Enter");
     await expect(page.locator(".paper-reader-header h1")).toHaveText("论文标题同步测试");
