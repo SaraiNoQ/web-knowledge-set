@@ -82,6 +82,8 @@ jobs:
           node-version: 24.19.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Use the official HTTPS archive for browser dependencies
+        run: sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt /etc/apt/sources.list
       - name: Execute only the selected checks
         env:
           VALIDATION_PLAN: ${{ needs.policy.outputs.plan }}
