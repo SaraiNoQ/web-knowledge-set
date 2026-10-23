@@ -50,6 +50,7 @@ test("imports a paper and opens the bilingual page reader", async ({ page }) => 
   await expect(page.locator(".paper-reader-block p")).toHaveCSS("font-size", "20px");
   await expect(page.locator(".paper-reader-zoom span")).toHaveText("100%");
   await page.reload();
+  await page.locator(".directory-title").filter({ hasText: /^E2E 论文$/ }).click();
   await expect(page.locator(".paper-reader-block p")).toHaveCSS("font-size", "20px");
 
 
