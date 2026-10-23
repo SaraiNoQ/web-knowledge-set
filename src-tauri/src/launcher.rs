@@ -207,11 +207,11 @@ fn data_state(data_dir: &Path) -> Result<DataState, String> {
 fn process_exists(pid: u32) -> bool {
     #[cfg(unix)]
     {
-        return Command::new("/bin/kill")
+        Command::new("/bin/kill")
             .args(["-0", &pid.to_string()])
             .status()
             .map(|status| status.success())
-            .unwrap_or(true);
+            .unwrap_or(true)
     }
     #[cfg(not(unix))]
     {
@@ -234,10 +234,14 @@ fn clear_or_reject_source_lock(data_dir: &Path) -> Result<(), String> {
         if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 4 * 1024 {
             return Err("源知识库迁移锁不安全或已损坏。".to_string());
         }
-        let lock_value = serde_json::from_slice::<LockReservation>(&fs::read(lock).map_err(|_| "无法读取源知识库迁移锁。".to_string())?)
-            .map_err(|_| "无法解析源知识库迁移锁。".to_string())?;
+        let lock_value = serde_json::from_slice::<LockReservation>(
+            &fs::read(lock).map_err(|_| "无法读取源知识库迁移锁。".to_string())?,
+        )
+        .map_err(|_| "无法解析源知识库迁移锁。".to_string())?;
         if process_exists(lock_value.pid) {
-            return Err("源知识库仍被其他进程占用，请关闭其他织页或本地 Web 服务后重试。".to_string());
+            return Err(
+                "源知识库仍被其他进程占用，请关闭其他织页或本地 Web 服务后重试。".to_string(),
+            );
         }
         fs::remove_file(lock).map_err(|_| "无法清理已退出进程的源知识库迁移锁。".to_string())?;
     }
@@ -260,10 +264,14 @@ fn reserve_source_lock(data_dir: &Path) -> Result<SourceLockReservation, String>
     options.write(true).create_new(true);
     #[cfg(unix)]
     options.mode(0o600);
-    let mut file = options
-        .open(&path)
-        .map_err(|_| "源知识库仍被其他进程占用，请关闭其他织页或本地 Web 服务后重试。".to_string())?;
-    if file.write_all(&bytes).and_then(|_| file.sync_all()).is_err() {
+    let mut file = options.open(&path).map_err(|_| {
+        "源知识库仍被其他进程占用，请关闭其他织页或本地 Web 服务后重试。".to_string()
+    })?;
+    if file
+        .write_all(&bytes)
+        .and_then(|_| file.sync_all())
+        .is_err()
+    {
         let _ = fs::remove_file(&path);
         return Err("无法保存源知识库迁移锁。".to_string());
     }
@@ -466,8 +474,10 @@ fn read_pending_migration(path: &Path) -> Result<Option<PendingMigration>, Strin
     if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 16 * 1024 {
         return Err("数据目录迁移状态不安全或已损坏。".to_string());
     }
-    let value = serde_json::from_slice(&fs::read(path).map_err(|_| "数据目录迁移状态无法读取。".to_string())?)
-        .map_err(|_| "数据目录迁移状态已损坏。".to_string())?;
+    let value = serde_json::from_slice(
+        &fs::read(path).map_err(|_| "数据目录迁移状态无法读取。".to_string())?,
+    )
+    .map_err(|_| "数据目录迁移状态已损坏。".to_string())?;
     Ok(Some(value))
 }
 
@@ -617,7 +627,9 @@ fn pending_target_directory(path: &Path) -> Result<PathBuf, String> {
             fs::canonicalize(path).map_err(|_| "迁移目标目录无法解析。".to_string())
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let parent = path.parent().ok_or_else(|| "迁移目标路径无效。".to_string())?;
+            let parent = path
+                .parent()
+                .ok_or_else(|| "迁移目标路径无效。".to_string())?;
             let metadata = fs::symlink_metadata(parent)
                 .map_err(|_| "迁移目标目录的父目录无法访问。".to_string())?;
             if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -630,13 +642,16 @@ fn pending_target_directory(path: &Path) -> Result<PathBuf, String> {
 }
 
 fn tree_is_subset(source: &Path, target: &Path) -> Result<bool, String> {
-    let source_metadata = fs::symlink_metadata(source).map_err(|_| "迁移源路径无法访问。".to_string())?;
-    let target_metadata = fs::symlink_metadata(target).map_err(|_| "迁移目标路径无法访问。".to_string())?;
+    let source_metadata =
+        fs::symlink_metadata(source).map_err(|_| "迁移源路径无法访问。".to_string())?;
+    let target_metadata =
+        fs::symlink_metadata(target).map_err(|_| "迁移目标路径无法访问。".to_string())?;
     if source_metadata.file_type().is_symlink() || target_metadata.file_type().is_symlink() {
         return Ok(false);
     }
     if source_metadata.is_dir() && target_metadata.is_dir() {
-        for entry in fs::read_dir(target).map_err(|_| "无法读取迁移目标目录。".to_string())? {
+        for entry in fs::read_dir(target).map_err(|_| "无法读取迁移目标目录。".to_string())?
+        {
             let entry = entry.map_err(|_| "无法读取迁移目标目录。".to_string())?;
             if !tree_is_subset(&source.join(entry.file_name()), &entry.path())? {
                 return Ok(false);
@@ -651,7 +666,9 @@ fn tree_is_subset(source: &Path, target: &Path) -> Result<bool, String> {
 }
 
 fn cleanup_migration_staging(target: &Path) -> Result<(), String> {
-    let parent = target.parent().ok_or_else(|| "迁移目标路径无效。".to_string())?;
+    let parent = target
+        .parent()
+        .ok_or_else(|| "迁移目标路径无效。".to_string())?;
     let name = target
         .file_name()
         .ok_or_else(|| "迁移目标路径无效。".to_string())?
@@ -672,7 +689,10 @@ fn cleanup_migration_staging(target: &Path) -> Result<(), String> {
 }
 
 fn reset_partial_target(source: &Path, target: &Path) -> Result<(), String> {
-    for (source_path, target_path) in storage_paths(source).iter().zip(storage_paths(target).iter()) {
+    for (source_path, target_path) in storage_paths(source)
+        .iter()
+        .zip(storage_paths(target).iter())
+    {
         let target_exists = fs::symlink_metadata(target_path).is_ok();
         if !target_exists {
             continue;
@@ -1198,16 +1218,32 @@ mod tests {
         )
         .unwrap();
 
-        let resolved = resolve_data_directory(&launcher, &legacy_launcher, &default, &legacy_default).unwrap();
+        let resolved =
+            resolve_data_directory(&launcher, &legacy_launcher, &default, &legacy_default).unwrap();
         assert_eq!(resolved, fs::canonicalize(&target).unwrap());
-        assert_eq!(fs::read_to_string(target.join("zhiye.sqlite3")).unwrap(), "database");
-        assert_eq!(fs::read_to_string(target.join("snapshots/nested/page.html")).unwrap(), "snapshot");
-        assert_eq!(fs::read_to_string(root.join("moved-backups/manifest")).unwrap(), "backup");
-        assert_eq!(fs::read_to_string(root.join("moved-diagnostics/log")).unwrap(), "diagnostic");
+        assert_eq!(
+            fs::read_to_string(target.join("zhiye.sqlite3")).unwrap(),
+            "database"
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("snapshots/nested/page.html")).unwrap(),
+            "snapshot"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("moved-backups/manifest")).unwrap(),
+            "backup"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("moved-diagnostics/log")).unwrap(),
+            "diagnostic"
+        );
         assert!(!source.exists());
         assert!(!root.join("library-backups").exists());
         assert!(!migration_path(&launcher).exists());
-        assert_eq!(read_launcher(&launcher).unwrap(), Some(fs::canonicalize(&target).unwrap()));
+        assert_eq!(
+            read_launcher(&launcher).unwrap(),
+            Some(fs::canonicalize(&target).unwrap())
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1246,9 +1282,13 @@ mod tests {
         )
         .unwrap();
 
-        let resolved = resolve_data_directory(&launcher, &legacy_launcher, &default, &legacy_default).unwrap();
+        let resolved =
+            resolve_data_directory(&launcher, &legacy_launcher, &default, &legacy_default).unwrap();
         assert_eq!(resolved, fs::canonicalize(&target).unwrap());
-        assert_eq!(fs::read_to_string(target.join("snapshots/page.html")).unwrap(), "snapshot");
+        assert_eq!(
+            fs::read_to_string(target.join("snapshots/page.html")).unwrap(),
+            "snapshot"
+        );
         assert!(!stale.exists());
         assert!(!source.exists());
         fs::remove_dir_all(root).unwrap();
@@ -1279,8 +1319,13 @@ mod tests {
         )
         .unwrap();
 
-        assert!(resolve_data_directory(&launcher, &legacy_launcher, &default, &legacy_default).is_err());
-        assert_eq!(fs::read_to_string(source.join("zhiye.sqlite3")).unwrap(), "database");
+        assert!(
+            resolve_data_directory(&launcher, &legacy_launcher, &default, &legacy_default).is_err()
+        );
+        assert_eq!(
+            fs::read_to_string(source.join("zhiye.sqlite3")).unwrap(),
+            "database"
+        );
         assert!(target.read_dir().unwrap().next().is_none());
         assert!(migration_path(&launcher).exists());
         fs::remove_dir_all(root).unwrap();
@@ -1298,7 +1343,11 @@ mod tests {
         second.release().unwrap();
         fs::write(
             companion_paths(&source)[2].clone(),
-            serde_json::to_vec(&LockReservation { pid: u32::MAX, token: "stale".to_string() }).unwrap(),
+            serde_json::to_vec(&LockReservation {
+                pid: u32::MAX,
+                token: "stale".to_string(),
+            })
+            .unwrap(),
         )
         .unwrap();
         let recovered = reserve_source_lock(&source).unwrap();
