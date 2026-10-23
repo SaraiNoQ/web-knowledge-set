@@ -40,7 +40,8 @@ test("directory categories align with article tabs and reuse existing views", as
   const document = await seed(request, "顶部分类验收文章", "顶部分类验收正文", true);
   await page.goto("/");
   const categories = page.getByLabel("目录分类", { exact: true });
-  await expect(categories.getByRole("button")).toHaveCount(5);
+  await expect(categories.locator(".sidebar-category-toggle").getByRole("button")).toHaveCount(5);
+  await expect(categories.getByRole("button", { name: "收起资料目录", exact: true })).toBeVisible();
   await expect(categories.getByRole("button", { name: "全部资料", exact: true })).toHaveAttribute("aria-pressed", "true");
   for (const immersive of [false, true]) {
     if (immersive) await page.getByRole("button", { name: "专注阅读", exact: true }).click();
