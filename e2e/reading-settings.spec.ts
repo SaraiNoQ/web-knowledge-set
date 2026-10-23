@@ -58,6 +58,15 @@ test("settings retain AI fields across categories and save the reading margin", 
   const styleRow = await page.locator(".reading-control").first().boundingBox();
   const description = await page.locator(".reading-style-description").boundingBox();
   expect(description!.y - styleRow!.y - styleRow!.height).toBeGreaterThanOrEqual(12);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    const style = await page.getByRole("combobox", { name: "页面风格", exact: true }).boundingBox();
+    const font = await page.getByRole("combobox", { name: "字体", exact: true }).boundingBox();
+    expect(style!.width).toBe(font!.width);
+    expect(style!.height).toBe(font!.height);
+    expect(style!.x).toBe(font!.x);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.screenshot({ path: "/tmp/zhiye-reading-settings-desktop.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: "/tmp/zhiye-reading-settings-mobile.png", fullPage: true });

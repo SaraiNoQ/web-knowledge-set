@@ -558,7 +558,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
               </div>}
         </div>
         <aside className={"knowledge-map-detail " + (selected ? "is-open" : "")} aria-label="资料详情">
-          <div className="map-detail-head"><span className="eyebrow">SELECTED NODE</span>{selected && <Button type="button" className="map-detail-close" onClick={() => { setSelectedId(null); setLocalMode(false); }} aria-label="关闭详情">×</Button>}</div>
+          {selected && <div className="map-detail-head"><Button type="button" className="map-detail-close" onClick={() => { setSelectedId(null); setLocalMode(false); }} aria-label="关闭详情">×</Button></div>}
           {selected ? <>
             <span className={"map-kind-mark " + selected.kind} aria-hidden="true" />
             <h3>{selected.title || "未命名资料"}</h3>

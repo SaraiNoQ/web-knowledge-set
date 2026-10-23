@@ -40,7 +40,7 @@ test("directory categories align with article tabs and reuse existing views", as
   const document = await seed(request, "顶部分类验收文章", "顶部分类验收正文", true);
   await page.goto("/");
   const categories = page.getByLabel("目录分类", { exact: true });
-  await expect(categories.getByRole("button")).toHaveCount(5);
+  await expect(categories.getByRole("group", { name: "目录视图切换", exact: true }).getByRole("button")).toHaveCount(5);
   await expect(categories.getByRole("button", { name: "全部资料", exact: true })).toHaveAttribute("aria-pressed", "true");
   for (const immersive of [false, true]) {
     if (immersive) await page.getByRole("button", { name: "专注阅读", exact: true }).click();
@@ -465,4 +465,22 @@ test("search input and custom field menus reuse the existing compact controls", 
   await expect(panel.getByText("没找到织片，试试换词或调整范围。", { exact: true })).toBeVisible();
   await chooseSearchOption(page, "搜索范围", "正文");
   await expect(panel.locator(".library-search-result-title")).toHaveText(document.title);
+});
+
+
+test("search explains source scope only when selected", async ({ page }) => {
+  await page.goto("/");
+  const panel = await search(page, "");
+  await expect(panel.getByRole("heading", { name: "搜索选项", exact: true })).toHaveCount(0);
+  const help = panel.getByText("查找链接、作者和来源备注。", { exact: true });
+  await expect(help).toHaveCount(0);
+  await panel.getByRole("button", { name: "搜索设置", exact: true }).click();
+  await chooseSearchOption(page, "搜索范围", "来源信息");
+  await expect(help).toBeVisible();
+  await expect(panel.getByRole("combobox", { name: "搜索范围", exact: true })).toHaveAccessibleDescription(/查找链接、作者和来源备注。/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(help).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await chooseSearchOption(page, "搜索范围", "标题");
+  await expect(help).toHaveCount(0);
 });
