@@ -1849,6 +1849,7 @@ test("desktop Markdown opens in preview and reopening a source-linked file prese
           return [{ kind: "markdown", token: "preview-file", name: "preview-file.md" }];
         }
         if (command === "read_external_text") return { name: "preview-file.md", content: '---\nsource: "https://example.com/finder-preview"\n---\n# Finder preview\n\nOriginal file content.' };
+        if (command === "discard_external_tokens") { window.dispatchEvent(new Event("test:discarded")); return null; }
         if (command === "updater_configured") return false;
         if (command === "get_data_directory") return "/tmp/zhiye-test";
         throw new Error(`Unexpected desktop command: ${command}`);
@@ -1880,6 +1881,22 @@ test("desktop Markdown opens in preview and reopening a source-linked file prese
     return { markdown: document.markdown, copies: list.items.filter((item: { title: string }) => item.title === "preview-file").length };
   }, id)).toEqual({ markdown: "Preserved library edits.", copies: 1 });
   await expect(page.getByRole("dialog", { name: "导入" })).toHaveCount(0);
+  await page.getByRole("button", { name: "导入", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "导入", exact: true });
+  await dialog.getByRole("button", { name: "Markdown", exact: true }).click();
+  await dialog.getByLabel("选择 Markdown 文件").setInputFiles({ name: "staged.md", mimeType: "text/markdown", buffer: Buffer.from("Staged content") });
+  await dialog.getByRole("button", { name: "检查内容" }).click();
+  await expect(dialog.locator(".bulk-preview-list")).toContainText("staged");
+  const externalRequests: string[] = [];
+  page.on("request", (request) => { if (request.method() === "POST" && request.url().includes("/api/imports/")) externalRequests.push(request.url()); });
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    window.addEventListener("test:discarded", () => resolve(), { once: true });
+    window.dispatchEvent(new Event("test:open-markdown"));
+  }));
+  await expect(page.getByText("请先完成或关闭当前导入窗口，再重新打开 Markdown 文件。", { exact: true })).toBeVisible();
+  await expect(dialog.locator(".bulk-preview-list")).toContainText("staged");
+  expect(externalRequests).toEqual([]);
+
 });
 
 test("desktop updater confirms, verifies a backup, reports progress, and keeps failures retryable", async ({ page }) => {

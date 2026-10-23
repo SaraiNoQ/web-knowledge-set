@@ -2165,6 +2165,10 @@ export default function App() {
       const kind = fileIntents[0]!.kind;
       if (fileIntents.some((intent) => intent.kind !== kind)) throw new Error("一次只能打开一种导入文件。");
       if (safetyOpen) throw new Error("请先退出备份恢复界面，再重新打开或拖入文件。");
+      if (kind === "markdown" && (bulkImportOpen || paperImportOpen || paperImportBusy || uploadPreparing)) {
+        toast.error("请先完成或关闭当前导入窗口，再重新打开 Markdown 文件。");
+        return;
+      }
       if (bulkImportBusy) throw new Error("当前导入完成后，请重新打开或拖入文件。");
       const files: File[] = [];
       for (const intent of fileIntents) {
