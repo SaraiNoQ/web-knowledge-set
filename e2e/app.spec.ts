@@ -1821,14 +1821,60 @@ test("routes desktop capture and file intents through existing imports", async (
     };
     return value.items.some((item) => item.sourceUrl === "https://example.com/desktop-warm-link");
   })).toBe(true);
-  const dialog = page.getByRole("dialog", { name: "导入" });
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByText("已从桌面接收 1 个文件")).toBeVisible();
-  await expect(dialog.getByText("已添加 1 个文件")).toBeVisible();
-  await dialog.getByRole("button", { name: "检查内容" }).click();
-  await expect(dialog.locator(".bulk-preview-list")).toContainText("desktop-note");
-  await dialog.getByRole("button", { name: "开始导入" }).click();
-  await expect(dialog.getByText(/新增 1/u)).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "导入" })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(async () => {
+    const value = await fetch("/api/documents?page=1").then((response) => response.json());
+    return value.items.some((item: { title: string }) => item.title === "desktop-note");
+  })).toBe(true);
+});
+
+test("desktop Markdown opens in preview and reopening a source-linked file preserves existing edits", async ({ page }) => {
+  await page.route("**/api/settings/onboarding", (route) => route.fulfill({ json: { completed: true, revision: 1 } }));
+  await page.addInitScript(() => {
+    let pending = true;
+    window.addEventListener("test:open-markdown", () => {
+      pending = true;
+      window.dispatchEvent(new Event("zhiye:external-intents-ready"));
+    });
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {
+      invoke: async (command: string) => {
+        if (command === "take_external_intents") {
+          if (!pending) return [];
+          pending = false;
+          return [{ kind: "markdown", token: "preview-file", name: "preview-file.md" }];
+        }
+        if (command === "read_external_text") return { name: "preview-file.md", content: '---\nsource: "https://example.com/finder-preview"\n---\n# Finder preview\n\nOriginal file content.' };
+        if (command === "updater_configured") return false;
+        if (command === "get_data_directory") return "/tmp/zhiye-test";
+        throw new Error(`Unexpected desktop command: ${command}`);
+      },
+    } });
+  });
+  await page.goto("/");
+  const preview = page.getByLabel("Markdown 预览", { exact: true });
+  await expect(preview).toContainText("Original file content.");
+  await expect(page.getByRole("dialog", { name: "导入" })).toHaveCount(0);
+  const id = await page.evaluate(async () => {
+    const list = await fetch("/api/documents?page=1").then((response) => response.json());
+    const item = list.items.find((value: { title: string }) => value.title === "preview-file");
+    const current = await fetch(`/api/documents/${item.id}`);
+    const document = await current.json();
+    const response = await fetch(`/api/documents/${item.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json", "x-zhiye-data-epoch": current.headers.get("x-zhiye-data-epoch")! },
+      body: JSON.stringify({ markdown: "Preserved library edits.", revision: document.revision }),
+    });
+    if (!response.ok) throw new Error(`Edit failed: ${response.status}`);
+    return item.id as string;
+  });
+  const reopened = page.waitForResponse((response) => /\/api\/imports\/[^/]+\/apply$/u.test(response.url()) && response.request().method() === "POST");
+  await page.evaluate(() => window.dispatchEvent(new Event("test:open-markdown")));
+  expect((await reopened).ok()).toBe(true);
+  await expect.poll(() => page.evaluate(async (documentId) => {
+    const document = await fetch(`/api/documents/${documentId}`).then((response) => response.json());
+    const list = await fetch("/api/documents?page=1").then((response) => response.json());
+    return { markdown: document.markdown, copies: list.items.filter((item: { title: string }) => item.title === "preview-file").length };
+  }, id)).toEqual({ markdown: "Preserved library edits.", copies: 1 });
+  await expect(page.getByRole("dialog", { name: "导入" })).toHaveCount(0);
 });
 
 test("desktop updater confirms, verifies a backup, reports progress, and keeps failures retryable", async ({ page }) => {

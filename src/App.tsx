@@ -2176,6 +2176,35 @@ export default function App() {
         ? unsupportedImportFileMessage(kind)
         : importFileLimitError(kind, accepted);
       if (error) throw new Error(error);
+      if (kind === "markdown") {
+        if (closeAttemptRef.current || lifecycleAction || restoringRevision !== null) throw new Error("请完成当前操作后重新打开文件。");
+        const guard = beginNavigation();
+        setBulkImportBusy(true);
+        let batchId: string | undefined;
+        try {
+          const preview = await api.previewImport({
+            kind: "markdown",
+            files: await Promise.all(accepted.map(async (file) => ({ path: file.name, content: await file.text() }))),
+          });
+          batchId = preview.id;
+          const result = await api.applyImport(preview.id, "skip");
+          setListRefresh((value) => value + 1);
+          void loadCollections();
+          if (result.counts.failed || result.counts.conflicts) toast.error(`有 ${result.counts.failed + result.counts.conflicts} 个文件未能导入，请检查文件后重试。`);
+          const documentId = result.items.find((item) => item.documentId)?.documentId;
+          if (documentId && canApplyNavigation(guard)) {
+            const document = await api.getDocument(documentId);
+            if (canApplyNavigation(guard) && await confirmDiscardChanges("当前修改尚未保存，确定打开 Markdown 文档吗？") && await revealDocument(document, guard)) {
+              setCloudEditing(false);
+              setMode("preview");
+            }
+          }
+        } finally {
+          setBulkImportBusy(false);
+          if (batchId) await api.cancelImport(batchId).catch(() => undefined);
+        }
+        return;
+      }
       if (bulkImportPreview && !await cancelBulkPreview()) return;
       clearBulkImport();
       setBulkImportKind(kind);
@@ -2183,8 +2212,9 @@ export default function App() {
       setBulkImportOpen(true);
       setBulkImportNotice(`已从桌面接收 ${accepted.length} 个文件，请检查后导入。`);
     } catch (error) {
-      setBulkImportError(userErrorFrom(error, "无法读取桌面导入文件，请检查文件后重试。"));
-      setBulkImportOpen(true);
+      const message = userErrorFrom(error, "无法读取桌面导入文件，请检查文件后重试。");
+      if (fileIntents.every((intent) => intent.kind === "markdown")) toast.error(message);
+      else { setBulkImportError(message); setBulkImportOpen(true); }
     } finally {
       if (pendingTokens.size) {
         try {
