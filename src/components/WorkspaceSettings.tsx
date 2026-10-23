@@ -9,7 +9,7 @@ export function WorkspaceSettings({ cloud, semanticRefresh, onClose, readingMarg
   readingMargin: number; onReadingMarginChange: (value: number) => void;
   readingText: ReadingTextSettings; onReadingTextChange: (value: ReadingTextSettings) => void;
 }) {
-  const [section, setSection] = useState("ai");
+  const [section, setSection] = useState("reading");
   const readingSettingsRef = useRef<HTMLDivElement>(null);
   const [numberDraft, setNumberDraft] = useState({ fontSize: String(readingText.fontSize), lineHeight: String(readingText.lineHeight), letterSpacing: String(readingText.letterSpacing) });
   useEffect(() => setNumberDraft({ fontSize: String(readingText.fontSize), lineHeight: String(readingText.lineHeight), letterSpacing: String(readingText.letterSpacing) }), [readingText]);

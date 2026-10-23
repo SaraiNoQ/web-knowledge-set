@@ -21,6 +21,9 @@ test("settings retain AI fields across categories and save the reading margin", 
   await expect(page.getByText("已保存", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await expect(page.getByRole("heading", { name: "设置", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "阅读外观", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("heading", { name: "阅读外观", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "智能设置", exact: true }).click();
   await page.getByRole("button", { name: "在线服务", exact: true }).click();
   const model = page.getByRole("textbox", { name: "在线模型", exact: true });
   await model.fill("unsaved-model");
@@ -50,8 +53,11 @@ test("settings retain AI fields across categories and save the reading margin", 
   await page.reload();
   await expect(page.locator(".app-shell")).toHaveCSS("--reading-margin", "50");
   await page.getByRole("button", { name: "设置", exact: true }).click();
-  await page.getByRole("button", { name: "阅读外观", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "阅读外观", exact: true })).toBeVisible();
   await margin.fill("0");
+  const styleRow = await page.locator(".reading-control").first().boundingBox();
+  const description = await page.locator(".reading-style-description").boundingBox();
+  expect(description!.y - styleRow!.y - styleRow!.height).toBeGreaterThanOrEqual(12);
   await page.screenshot({ path: "/tmp/zhiye-reading-settings-desktop.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: "/tmp/zhiye-reading-settings-mobile.png", fullPage: true });
