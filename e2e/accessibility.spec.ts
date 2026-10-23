@@ -100,6 +100,7 @@ test("has no serious or critical accessibility violations in primary workflows",
     await page.getByRole("button", { name: "关闭导入" }).click();
 
     await page.getByRole("button", { name: "设置", exact: true }).click();
+    await page.getByRole("button", { name: "智能设置", exact: true }).click();
     await expect(page.getByRole("heading", { name: "智能设置" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "相关资料" })).toBeVisible();
     await expect(page.getByRole("checkbox", { name: "自动推荐" })).not.toBeChecked();
