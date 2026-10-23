@@ -363,7 +363,7 @@ export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChan
       <header className="paper-reader-header">
         <Button type="button" className="paper-reader-back" onClick={onClose}>← 返回列表</Button>
         <div><span className="eyebrow">PAPER READER · {paper.status.toUpperCase()}</span><h1>{title || paper.title || "未命名论文"}</h1><p>{paper.author || "作者待查"} · {paper.sourceUrl}</p></div>
-        <div className="paper-reader-actions"><span className="paper-reader-type">PAPER</span>{readOnly && <span className="paper-reader-type">只读</span>}{editing ? <><Button density="compact" onClick={() => { setEditing(false); if (page) setDraftBlocks(page.translationBlocks); }}>取消</Button><Button density="compact" variant="primary" onClick={() => void save()} disabled={saving}>{saving ? "保存中…" : "保存本页"}</Button></> : <Button density="compact" variant="primary" onClick={() => setEditing(true)} disabled={!page || processing || readOnly}>编辑译文</Button>}</div>
+        <div className="paper-reader-actions"><span className="paper-reader-type">PAPER</span>{readOnly && <span className="paper-reader-type">只读</span>}{editing ? <><Button density="compact" onClick={() => { setEditing(false); if (page) setDraftBlocks(page.translationBlocks); }}>取消</Button><Button density="compact" variant="primary" onClick={() => void save()} disabled={saving}>{saving ? "保存中…" : "保存本页"}</Button></> : <Button density="compact" variant="primary" onClick={() => setEditing(true)} disabled={!page || processing || readOnly || creatingArticle}>编辑译文</Button>}</div>
       </header>
 
       {error && <div className="paper-reader-notice is-error" role="alert">{error}</div>}
