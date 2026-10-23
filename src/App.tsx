@@ -605,6 +605,13 @@ export default function App() {
   const navigatePreviewSource = useCallback((offset: number) => markdownEditorRef.current?.jumpTo(offset), []);
   const [openDocuments, setOpenDocuments] = useState<OpenDocumentTab[]>([]);
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
+  const [narrowWorkspace, setNarrowWorkspace] = useState(() => window.matchMedia("(max-width: 820px)").matches);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 820px)");
+    const update = () => setNarrowWorkspace(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
   const [sidebarSearch, setSidebarSearch] = useState(false);
   const [immersiveMode, setImmersiveMode] = useState(false);
   const [appearanceLoaded, setAppearanceLoaded] = useState(false);
@@ -831,6 +838,7 @@ export default function App() {
   const webArticleMode = cloudMode || desktopRuntime;
   const selectionEnabled = !cloudMode && !desktopRuntime;
   const workspaceVisible = !aiSettingsOpen && !safetyOpen && !diagnosticsOpen;
+  const directoryVisible = workspaceVisible && !graphMode && !libraryCollapsed && !(narrowWorkspace && selectedId);
   const immersiveActive = immersiveMode && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen && !guideOpen;
   useEffect(() => {
     if (runtimeMode === null) return;
@@ -3600,7 +3608,7 @@ export default function App() {
       <a className="skip-link" href="#library-panel">跳到资料库</a>
       <nav className="workspace-rail" aria-label="工作台导航">
         <Button type="button" className="rail-brand" aria-label="返回首页" disabled={closing} onClick={() => void returnToLibrary()}>织</Button>
-        <IconButton label="资料库" title={workspaceVisible && !graphMode && !libraryCollapsed ? "收起资料目录" : "展开资料目录"} ref={libraryRailRef} aria-expanded={workspaceVisible && !libraryCollapsed} aria-controls={workspaceVisible ? "library-panel" : undefined} aria-pressed={!libraryCollapsed && !sidebarSearch && !graphMode && libraryView === "all" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing} onClick={() => void toggleDirectory()}><WorkspaceIcon name="document" /></IconButton>
+        <IconButton label="资料库" title={directoryVisible ? "收起资料目录" : "展开资料目录"} ref={libraryRailRef} aria-expanded={directoryVisible} aria-controls={workspaceVisible ? "library-panel" : undefined} aria-pressed={!libraryCollapsed && !sidebarSearch && !graphMode && libraryView === "all" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing} onClick={() => void toggleDirectory()}><WorkspaceIcon name="document" /></IconButton>
         <IconButton label="快捷查找" aria-haspopup="dialog" aria-expanded={quickActionsOpen} disabled={closing} onClick={openQuickActions}><WorkspaceIcon name="quickSearch" /></IconButton>
         <IconButton label="知识地图" aria-pressed={graphMode} disabled={closing} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); void openKnowledgeMap(); }}><WorkspaceIcon name="map" /></IconButton>
         <IconButton label="导入" disabled={closing} onClick={() => { if (!bulkImportPreview) setBulkImportKind(cloudMode ? "markdown" : "urls"); setBulkImportOpen(true); }}><WorkspaceIcon name="import" /></IconButton>

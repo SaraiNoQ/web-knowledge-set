@@ -64,6 +64,27 @@ test("category tabs replace duplicate rail entries and collapsed directory leave
   }
 });
 
+test("directory hints follow the mobile reader and viewport changes", async ({ page, request }) => {
+  const listing = await request.get("/api/documents");
+  const headers = { Origin: "http://127.0.0.1:4174", "X-Zhiye-Data-Epoch": listing.headers()["x-zhiye-data-epoch"] };
+  const title = `目录提示-${Date.now()}`;
+  expect((await request.post("/api/documents", { headers, data: { title } })).ok()).toBe(true);
+  await page.goto("/");
+  await page.locator(".directory-document-row").getByRole("button", { name: title, exact: true }).click();
+  const directory = page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "资料库", exact: true });
+  for (const width of [1440, 820, 821, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(directory).toHaveAttribute("title", width <= 820 ? "展开资料目录" : "收起资料目录");
+    await expect(directory).toHaveAttribute("aria-expanded", String(width > 820));
+    if (width <= 820) await expect(page.locator(".library-panel")).toBeHidden();
+    else await expect(page.locator(".library-panel")).toBeVisible();
+  }
+  await directory.click();
+  await expect(page.locator(".library-panel")).toBeVisible();
+  await expect(directory).toHaveAttribute("title", "收起资料目录");
+  await expect(directory).toHaveAttribute("aria-expanded", "true");
+});
+
 test("compact reader exposes safe title editing from breadcrumb and directory", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "快捷查找", exact: true }).click();
