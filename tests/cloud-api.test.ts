@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { unzipSync } from "fflate";
+import { unzipSync, zipSync, strToU8 } from "fflate";
 
 import { handleRequest, type CloudEnv } from "../cloud/worker.js";
 import {
@@ -2374,4 +2374,128 @@ test("cloud Markdown imports preserve long translations within the row budget", 
   assert.equal(largeApplied.counts.created, 1);
   assert.equal((db.sqlite.prepare("SELECT markdown FROM cloud_documents WHERE id=?").get(largeApplied.items[0].documentId) as { markdown: string }).markdown, largeContent);
   assert.equal((await preview("中".repeat(640_000))).counts.invalid, 1);
+});
+
+
+test("cloud deep mixed pagination bounds D1 result rows and preserves filters and ordering", async () => {
+  const { env, db } = sqliteEnvironment();
+  const date = "2026-08-18T00:00:00.000Z";
+  for (let i = 0; i < 180; i += 1) {
+    const id = `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+    const title = i % 3 === 0 ? "世界" : i % 3 === 1 ? "Alpha" : "😀";
+    if (i % 2 === 0) insertCapturedDocument(db, id, title, "body");
+    else db.sqlite.prepare("INSERT INTO cloud_capture_jobs(id,url,status,created_at,updated_at) VALUES(?,?,'queued',?,?)").run(id, title, date, date);
+  }
+  // Captures already materialized as documents must never appear twice.
+  db.sqlite.prepare("INSERT INTO cloud_capture_jobs(id,url,status,created_at,updated_at) VALUES('00000000-0000-4000-8000-000000000000','duplicate','queued',?,?)").run(date, date);
+  let largestResult = 0;
+  const prepare = db.prepare.bind(db);
+  db.prepare = (sql: string) => {
+    const wrap = (statement: D1Statement): D1Statement => ({
+      bind: (...values: unknown[]) => wrap(statement.bind(...values)),
+      first: () => statement.first(), run: () => statement.run(),
+      all: async <T>() => {
+        const result = await statement.all<T>();
+        largestResult = Math.max(largestResult, result.results.length);
+        return result;
+      },
+    });
+    return wrap(prepare(sql)) as ReturnType<typeof prepare>;
+  };
+  for (const sort of ["title", "created", "updated"]) {
+    const order = sort === "title" ? "lower(title) COLLATE BINARY, id" : `${sort}At DESC, id`;
+    const expected = db.sqlite.prepare(`SELECT * FROM (
+      SELECT id,title,created_at AS createdAt,updated_at AS updatedAt FROM cloud_documents
+      UNION ALL SELECT id,url AS title,created_at AS createdAt,updated_at AS updatedAt FROM cloud_capture_jobs j
+      WHERE NOT EXISTS(SELECT 1 FROM cloud_documents d WHERE d.id=j.id)
+    ) ORDER BY ${order}`).all() as Array<{ id: string }>;
+    const actual: string[] = [];
+    for (let page = 1; page <= 6; page += 1) {
+      const response = await handleRequest(new Request(`https://app.example.com/api/documents?page=${page}&sort=${sort}`), env);
+      assert.equal(response.status, 200, await response.clone().text());
+      const body = await response.json() as { items: Array<{ id: string }>; total: number };
+      assert.equal(body.total, 180);
+      actual.push(...body.items.map((item) => item.id));
+    }
+    assert.deepEqual(actual, expected.map((item) => item.id));
+  }
+  assert.ok(largestResult <= 30, `D1 returned ${largestResult} rows`);
+  for (const query of ["favorite=true", "tag=absent", "from=2027-01-01", "trash=only"]) {
+    const response = await handleRequest(new Request(`https://app.example.com/api/documents?${query}`), env);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json() as { total: number }).total, 0);
+  }
+  const invalid = await handleRequest(new Request("https://app.example.com/api/documents?page=9007199254740991"), env);
+  assert.equal(invalid.status, 400);
+});
+
+test("cloud backup rejects oversized record counts before reading bodies", async () => {
+  const { env, db, bucket } = sqliteEnvironment();
+  for (let i = 0; i < 33; i += 1) insertCapturedDocument(db, `doc-${i}`, "Title", "body");
+  const queries: string[] = [];
+  const prepare = db.prepare.bind(db);
+  db.prepare = (sql: string) => { queries.push(sql); return prepare(sql); };
+  const epoch = String((db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get() as { value: string }).value);
+  const response = await handleRequest(new Request("https://app.example.com/api/data-safety/backups", {
+    method: "POST", headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch }, body: "{}",
+  }), env);
+  assert.equal(response.status, 413);
+  assert.ok(!queries.some((sql) => /SELECT.*markdown/isu.test(sql)));
+  assert.equal(bucket.objects.size, 0);
+  assert.equal((db.sqlite.prepare("SELECT COUNT(*) AS n FROM cloud_documents").get() as { n: number }).n, 33);
+});
+
+test("cloud ZIP budgets reject declared and actual expansion before staging writes", async () => {
+  const { env, db, bucket, imagesBucket } = sqliteEnvironment();
+  const epoch = String((db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get() as { value: string }).value);
+  const manifest = strToU8(JSON.stringify({ format: "zhiye-cloud-backup", version: 1, createdAt: "2026-08-18T00:00:00.000Z", documents: [], derivedResults: [], llmSettings: null }));
+  const valid = zipSync({ "manifest.json": manifest });
+  const post = (bytes: Uint8Array) => handleRequest(new Request("https://app.example.com/api/data-safety/backups/import", {
+    method: "POST", headers: { "Content-Type": "application/vnd.zhiye.cloud-backup+zip", "X-Zhiye-Data-Epoch": epoch }, body: Uint8Array.from(bytes),
+  }), env);
+  const declared = valid.slice();
+  const view = new DataView(declared.buffer);
+  for (let i = 0; i < declared.length - 4; i += 1) {
+    if (view.getUint32(i, true) === 0x02014b50) view.setUint32(i + 24, 97 * 1024 * 1024, true);
+  }
+  assert.equal((await post(declared)).status, 413);
+  // Lie in both headers: streaming output must reject the size mismatch
+  // immediately, without retaining the entire expanded entry.
+  const expanded = zipSync({ "manifest.json": new Uint8Array(8 * 1024 * 1024 + 1) });
+  const expandedView = new DataView(expanded.buffer);
+  for (let i = 0; i < expanded.length - 4; i += 1) {
+    const signature = expandedView.getUint32(i, true);
+    if (signature === 0x04034b50) expandedView.setUint32(i + 22, 1, true);
+    if (signature === 0x02014b50) expandedView.setUint32(i + 24, 1, true);
+  }
+  assert.equal((await post(expanded)).status, 400);
+  assert.equal((await post(valid.subarray(0, valid.length - 22))).status, 400);
+  assert.equal(bucket.objects.size, 0);
+  assert.equal(imagesBucket.objects.size, 0);
+  assert.equal(String((db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get() as { value: string }).value), epoch);
+  assert.equal((await post(valid)).status, 201);
+});
+
+
+test("cloud imported IDs preserve historical locale tie ordering across pages", async () => {
+  const { env, db } = sqliteEnvironment();
+  const date = "2026-09-10T00:00:00.000Z";
+  const ids = Array.from({ length: 40 }, (_, i) => ["a", "A", "_a", "é", "世界"][i % 5] + String(i));
+  for (const [i, id] of ids.entries()) {
+    if (i % 2 === 0) insertCapturedDocument(db, id, "same", "body");
+    else db.sqlite.prepare("INSERT INTO cloud_capture_jobs(id,url,status,created_at,updated_at) VALUES(?,'same','queued',?,?)").run(id, date, date);
+  }
+  for (const sort of ["title", "created", "updated"]) {
+    for (const page of [1, 2]) {
+      // Oracle reproduces the old per-source SQL prefix followed by JS merge.
+      const documents = db.sqlite.prepare("SELECT id FROM cloud_documents ORDER BY id LIMIT ?").all(page * 30) as Array<{ id: string }>;
+      const jobs = db.sqlite.prepare("SELECT id FROM cloud_capture_jobs ORDER BY id LIMIT ?").all(page * 30) as Array<{ id: string }>;
+      const expected = [...documents, ...jobs].sort((left, right) => left.id.localeCompare(right.id))
+        .slice((page - 1) * 30, page * 30).map((row) => row.id);
+      const response = await handleRequest(new Request(`https://app.example.com/api/documents?page=${page}&sort=${sort}`), env);
+      assert.equal(response.status, 200);
+      const body = await response.json() as { items: Array<{ id: string }> };
+      assert.deepEqual(body.items.map((row) => row.id), expected);
+    }
+  }
 });

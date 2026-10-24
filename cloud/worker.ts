@@ -1,6 +1,9 @@
 import {
   CloudHttpError,
   createArticle,
+  documentListQuery,
+  documentSummary,
+  type DocumentSummaryRow,
   createFolder,
   permanentlyDeleteDocument,
   createPairingCode,
@@ -32,7 +35,10 @@ import {
   createCapture,
   getCaptureJob,
   handleCaptureQueue,
+  captureListQuery,
   listCaptureJobs,
+  jobDocument,
+  type CaptureJobRow,
   permanentlyDeleteCaptureJob,
   retryCapture,
   restoreCaptureJob,
@@ -53,7 +59,6 @@ export interface CloudEnv extends CaptureEnv {
 }
 
 const DATA_EPOCH_HEADER = "X-Zhiye-Data-Epoch";
-const sortEncoder = new TextEncoder();
 const SECURITY_HEADERS = {
   "Content-Security-Policy": [
     "default-src 'self'",
@@ -85,6 +90,7 @@ function json(body: unknown, status = 200, epoch?: string) {
   });
 }
 
+const sortEncoder = new TextEncoder();
 function sqliteNoCaseCompare(left: string, right: string) {
   const normalize = (value: string) => sortEncoder.encode(value.replace(/[A-Z]/gu, (letter) => letter.toLowerCase()));
   const leftBytes = normalize(left);
@@ -350,23 +356,56 @@ async function api(request: Request, env: CloudEnv, url: URL) {
       // Pending captures are articles, and the local service lists them as
       // article-kind documents too, so only a paper view drops them.
       if (!url.searchParams.get("q") && !url.searchParams.get("status") && url.searchParams.get("kind") !== "paper") {
-        const limit = page * 30;
-        const [documents, jobs] = await Promise.all([
-          listCloudDocuments(env.DB, url, { limit, offset: 0 }),
-          listCaptureJobs(env.DB, url, { limit, offset: 0 }),
-        ]);
-        const offset = (page - 1) * 30;
-        const sort = url.searchParams.get("sort");
-        type ListedDocument = { id: string; title: string; createdAt: string; updatedAt: string };
-        const compare = sort === "title"
-          ? (left: ListedDocument, right: ListedDocument) => sqliteNoCaseCompare(left.title, right.title) || left.id.localeCompare(right.id)
-          : sort === "created"
-            ? (left: ListedDocument, right: ListedDocument) => right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id)
-            : (left: ListedDocument, right: ListedDocument) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id);
-        const items = [...documents.items, ...jobs.items]
-          .sort(compare)
-          .slice(offset, offset + 30);
-        return json({ ...documents, items, total: documents.total + jobs.total }, 200, epoch);
+        const documents = documentListQuery(url);
+        const jobs = captureListQuery(url);
+        const sources = `SELECT id, 'document' AS source, title, created_at AS createdAt, updated_at AS updatedAt
+          FROM cloud_documents ${documents.where}
+          UNION ALL
+          SELECT j.id, 'job' AS source, j.url AS title, j.created_at AS createdAt, j.updated_at AS updatedAt
+          FROM cloud_capture_jobs j ${jobs.where}`;
+        const values = [...documents.values, ...jobs.values];
+        const order = url.searchParams.get("sort") === "title" ? "lower(title) COLLATE BINARY, id" :
+          url.searchParams.get("sort") === "created" ? "createdAt DESC, id" : "updatedAt DESC, id";
+        // Imported backups may contain arbitrary IDs. SQLite binary ordering
+        // matches the historical localeCompare tie-break for canonical UUIDs,
+        // but not for all imported strings; retain the old merge for those.
+        const uuidPattern = [8, 4, 4, 4, 12].map((length) => "[0-9a-f]".repeat(length)).join("-");
+        const count = await env.DB.prepare(`SELECT COUNT(*) AS count,
+          COALESCE(SUM(CASE WHEN id NOT GLOB ? OR length(createdAt)<>24 OR length(updatedAt)<>24 THEN 1 ELSE 0 END), 0) AS legacySort
+          FROM (${sources})`).bind(uuidPattern, ...values).first<{ count: number; legacySort: number }>();
+        if (count?.legacySort) {
+          const [documentPage, jobPage] = await Promise.all([
+            listCloudDocuments(env.DB, url, { limit: page * 30, offset: 0 }),
+            listCaptureJobs(env.DB, url, { limit: page * 30, offset: 0 }),
+          ]);
+          type Item = { id: string; title: string; createdAt: string; updatedAt: string };
+          const sort = url.searchParams.get("sort");
+          const compare = sort === "title"
+            ? (left: Item, right: Item) => sqliteNoCaseCompare(left.title, right.title) || left.id.localeCompare(right.id)
+            : sort === "created"
+              ? (left: Item, right: Item) => right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id)
+              : (left: Item, right: Item) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id);
+          const items = [...documentPage.items, ...jobPage.items].sort(compare).slice((page - 1) * 30, page * 30);
+          return json({ ...documentPage, items, total: documentPage.total + jobPage.total }, 200, epoch);
+        }
+        const rows = await
+          // Apply pagination before retrieving either source's summary. Only 30
+          // rows cross the D1 boundary, regardless of the requested page number.
+          env.DB.prepare(`WITH selected AS (SELECT * FROM (${sources}) ORDER BY ${order} LIMIT 30 OFFSET ?)
+            SELECT selected.*, d.kind, d.source_url AS sourceUrl, d.final_url AS finalUrl,
+              d.canonical_url AS canonicalUrl, d.author, d.favorite,
+              CASE WHEN selected.source='document' THEN d.status ELSE j.status END AS status,
+              CASE WHEN selected.source='document' THEN d.folder_id ELSE j.folder_id END AS folderId,
+              CASE WHEN selected.source='document' THEN d.revision ELSE j.revision END AS revision,
+              CASE WHEN selected.source='document' THEN d.deleted_at ELSE j.deleted_at END AS deletedAt,
+              j.url, j.error_code AS errorCode
+            FROM selected LEFT JOIN cloud_documents d ON selected.source='document' AND d.id=selected.id
+            LEFT JOIN cloud_capture_jobs j ON selected.source='job' AND j.id=selected.id
+            ORDER BY ${order.replace(/\b(title|id|createdAt|updatedAt)\b/gu, "selected.$1")}`)
+            .bind(...values, (page - 1) * 30).all<DocumentSummaryRow & { source: string; url: string; errorCode: string | null }>();
+        const items = rows.results.map((row) => row.source === "document" ? documentSummary(row) :
+          jobDocument({ ...row, status: row.status as CaptureJobRow["status"] }));
+        return json({ items, page, pageSize: 30, total: count?.count ?? 0 }, 200, epoch);
       }
       return json(await listCloudDocuments(env.DB, url), 200, epoch);
     }

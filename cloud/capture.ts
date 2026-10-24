@@ -136,7 +136,7 @@ async function fetchCaptureResource(input: string, alternate = false): Promise<C
   throw new CloudHttpError(502, "HTTP_ERROR", "Capture redirect did not terminate");
 }
 
-interface CaptureJobRow {
+export interface CaptureJobRow {
   id: string;
   url: string;
   status: "queued" | "fetching" | "failed";
@@ -148,7 +148,7 @@ interface CaptureJobRow {
   updatedAt: string;
 }
 
-function jobDocument(row: CaptureJobRow) {
+export function jobDocument(row: CaptureJobRow) {
   return {
     id: row.id, title: row.url, sourceUrl: row.url, finalUrl: null, canonicalUrl: row.url, author: null,
     status: row.status, warning: null, errorCode: row.errorCode, errorMessage: null, tags: [], collections: [], favorite: false,
@@ -188,7 +188,7 @@ export async function getCaptureJob(db: D1Database, id: string) {
   return row ? jobDocument(row) : null;
 }
 
-export async function listCaptureJobs(db: D1Database, url: URL, window = { limit: 30, offset: 0 }) {
+export function captureListQuery(url: URL) {
   const folder = documentFolderFilter(url);
   const conditions = [documentTrashFilter(url) ? "j.deleted_at IS NOT NULL" : "j.deleted_at IS NULL",
     "NOT EXISTS (SELECT 1 FROM cloud_documents d WHERE d.id = j.id)"];
@@ -213,10 +213,15 @@ export async function listCaptureJobs(db: D1Database, url: URL, window = { limit
   }
   const where = `WHERE ${conditions.join(" AND ")}`;
   const values = [...(folder.folderId ? [folder.folderId] : []), ...dateValues];
-  const count = await db.prepare(`SELECT COUNT(*) AS count FROM cloud_capture_jobs j ${where}`)
-    .bind(...values).first<{ count: number }>();
   const sort = url.searchParams.get("sort") === "title" ? "lower(j.url) COLLATE BINARY ASC, j.id" :
     url.searchParams.get("sort") === "created" ? "j.created_at DESC, j.id" : "j.updated_at DESC, j.id";
+  return { where, values, sort };
+}
+
+export async function listCaptureJobs(db: D1Database, url: URL, window = { limit: 30, offset: 0 }) {
+  const { where, values, sort } = captureListQuery(url);
+  const count = await db.prepare(`SELECT COUNT(*) AS count FROM cloud_capture_jobs j ${where}`)
+    .bind(...values).first<{ count: number }>();
   const rows = await db.prepare(`SELECT j.id, j.url, j.status, j.error_code AS errorCode, j.folder_id AS folderId, j.revision,
     j.deleted_at AS deletedAt, j.created_at AS createdAt, j.updated_at AS updatedAt FROM cloud_capture_jobs j ${where}
     ORDER BY ${sort} LIMIT ? OFFSET ?`)
