@@ -11,6 +11,7 @@ import type {
   CaptureQueueStatus,
   CreateDocumentResponse,
   DataSafetyStatus,
+  StartupStatus,
   DiagnosticReport,
   DeleteCollectionResponse,
   DeleteFolderResponse,
@@ -513,6 +514,10 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ filters, revision }),
     });
+  },
+
+  getStartupStatus(signal?: AbortSignal) {
+    return request<StartupStatus>("/api/startup-status", { signal });
   },
 
   getDataSafety(signal?: AbortSignal) {

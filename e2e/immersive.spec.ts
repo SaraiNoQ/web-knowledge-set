@@ -119,6 +119,7 @@ test("recovery mode keeps its full navigation even with a saved immersive prefer
     data: { immersiveMode: true },
     headers: { Origin: "http://127.0.0.1:4174", "X-Zhiye-Data-Epoch": current.headers()["x-zhiye-data-epoch"] },
   });
+  await page.route("**/api/startup-status", (route) => route.fulfill({ json: { mode: "recovery", maintenance: false } }));
   await page.route("**/api/data-safety", async (route) => {
     const response = await route.fetch();
     const body = await response.json();

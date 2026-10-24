@@ -27,6 +27,8 @@ import type {
   CaptureStatus,
   DocumentAsset,
   DocumentDraft,
+  DocumentFilters,
+  StartupStatus,
   DocumentRevision,
   DocumentSummary,
   DerivedResultType,
@@ -72,6 +74,14 @@ import { userErrorFrom, userErrorMessage } from "./error-messages";
 import { assetHashFromUri, markdownUrlTransform } from "./markdown-url";
 
 declare const __APP_VERSION__: string;
+
+// Event handlers keep their identity for memoized workspace panels while always
+// using the state from the latest committed render.
+function useStableCallback<Args extends unknown[], Result>(callback: (...args: Args) => Result) {
+  const ref = useRef(callback);
+  useLayoutEffect(() => { ref.current = callback; });
+  return useCallback((...args: Args) => ref.current(...args), []);
+}
 
 type EditorMode = "edit" | "split" | "preview";
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
@@ -563,8 +573,84 @@ function CaptureHistoryPanel({
 }
 
 export default function App() {
+  const [ready, setReady] = useState<{ mode: "local" | "cloud"; safety: StartupStatus | null } | null>(null);
+  const [maintenance, setMaintenance] = useState(false);
+  const [closeNotice, setCloseNotice] = useState("");
+  const [closePending, setClosePending] = useState(false);
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer: number | undefined;
+    setError("");
+    const waitForLibrary = async () => {
+      try {
+        const status = await api.getStartupStatus(controller.signal);
+        if (controller.signal.aborted) return;
+        if (!status.maintenance) { setReady({ mode: "local", safety: status }); return; }
+      } catch (cause) {
+        if (controller.signal.aborted) return;
+        if (!(cause instanceof ApiRequestError && cause.status === 503 && cause.code === "MAINTENANCE")) {
+          setError(userErrorFrom(cause, "连接失败，请重试。"));
+          return;
+        }
+      }
+      setMaintenance(true);
+      timer = window.setTimeout(() => void waitForLibrary(), 1_000);
+    };
+    void api.getRuntimeMode(controller.signal).then((mode) => {
+      if (controller.signal.aborted) return;
+      if (mode === "cloud") setReady({ mode, safety: null });
+      else void waitForLibrary();
+    }).catch((cause: unknown) => { if (!controller.signal.aborted) setError(userErrorFrom(cause, "连接失败，请重试。")); });
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [attempt]);
+  useEffect(() => {
+    if (ready) return;
+    // No draft exists yet. Do not acknowledge a close while startup maintenance
+    // still owns the database; the native close timeout leaves the window open.
+    let active = true;
+    let pending: string | null = null;
+    const onClose = (event: Event) => {
+      if (!error) { setCloseNotice("知识库正在启动，请完成后再次关闭窗口。"); return; }
+      const attemptId = (event as CustomEvent<{ attemptId?: unknown }>).detail?.attemptId;
+      if (typeof attemptId !== "string" || !/^[1-9]\d{0,19}$/u.test(attemptId)) {
+        setCloseNotice("关闭请求缺少有效标识，请再次关闭窗口重试。");
+        return;
+      }
+      if (pending) return;
+      pending = attemptId;
+      setClosePending(true);
+      // An initialization error must not trap the user in the window. The
+      // authenticated service still waits for maintenance before acknowledging.
+      void api.desktopCloseReady(attemptId).catch((cause: unknown) => {
+        if (active && pending === attemptId) {
+          pending = null;
+          setClosePending(false);
+          setCloseNotice(userErrorFrom(cause, "关闭失败，请再次重试。"));
+        }
+      });
+    };
+    const onTimeout = (event: Event) => {
+      if ((event as CustomEvent<{ attemptId?: unknown }>).detail?.attemptId !== pending) return;
+      pending = null;
+      setClosePending(false);
+      setCloseNotice("关闭确认超时，请再次关闭窗口重试。");
+    };
+    window.addEventListener("zhiye:close-requested", onClose);
+    window.addEventListener("zhiye:close-timeout", onTimeout);
+    return () => { active = false; window.removeEventListener("zhiye:close-requested", onClose); window.removeEventListener("zhiye:close-timeout", onTimeout); };
+  }, [ready, error]);
+  if (ready) return <WorkspaceApp initialRuntime={ready.mode} initialStartup={ready.safety} initialCloseNotice={closeNotice} />;
+  return <main className="onboarding-loading" aria-live="polite"><span className="brand-seal">知</span>{error
+    ? <><p role="alert">无法打开知识库：{error}</p><Button disabled={closePending} onClick={() => setAttempt((value) => value + 1)}>重试</Button></>
+    : <p>{maintenance ? "正在整理知识库，请稍候…" : "正在打开知识库…"}</p>}{closeNotice && <p role="status">{closeNotice}</p>}</main>;
+}
+
+function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { initialRuntime: "local" | "cloud"; initialStartup: StartupStatus | null; initialCloseNotice: string }) {
   const dialogs = useDialogs();
   const toast = useToast();
+  useEffect(() => { if (initialCloseNotice) toast.error(initialCloseNotice); }, [initialCloseNotice, toast]);
   const [items, setItems] = useState<DocumentSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [pageSize, setPageSize] = useState(30);
@@ -694,7 +780,7 @@ export default function App() {
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [onboarding, setOnboarding] = useState<OnboardingState | "unavailable" | null>(null);
   const [offline, setOffline] = useState(() => !navigator.onLine);
-  const [runtimeMode, setRuntimeMode] = useState<"local" | "cloud" | null>(null);
+  const runtimeMode = initialRuntime;
   const [browserPairingCount, setBrowserPairingCount] = useState<number | null>(null);
   const [cloudEditing, setCloudEditing] = useState(false);
   const [safetyRecovery, setSafetyRecovery] = useState(false);
@@ -783,13 +869,6 @@ export default function App() {
     setOrganizationConflict(value);
   }, []);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    void api.getRuntimeMode(controller.signal)
-      .then(setRuntimeMode)
-      .catch(() => { if (!controller.signal.aborted) setRuntimeMode(location.hostname === "zhiye.sarainoq.cn" ? "cloud" : "local"); });
-    return () => controller.abort();
-  }, []);
 
   useEffect(() => {
     const update = () => setOffline(!navigator.onLine);
@@ -810,13 +889,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void api.getDataSafety().then((value) => {
-      if (value.mode === "recovery") {
-        setSafetyRecovery(true);
-        setSafetyOpen(true);
-      }
-    }).catch(() => undefined);
-  }, []);
+    if (initialStartup?.mode === "recovery") {
+      setSafetyRecovery(true);
+      setSafetyOpen(true);
+    }
+  }, [initialStartup]);
 
   useEffect(() => setDerivedOpen(false), [selectedId]);
 
@@ -2896,7 +2973,7 @@ export default function App() {
       value = batchCollectionId;
       if (!value) return;
     }
-    if (batchAction === "trash" && !await dialogs.confirm(`将当前页选中的 ${selectedIds.size} 张织片移入回收站？之后可以恢复。`, {
+    if (batchAction === "trash" && !await dialogs.confirm(`将全部已选的 ${selectedIds.size} 张织片（包括其他页的选择）移入回收站？之后可以恢复。`, {
       title: "批量删除", confirmLabel: "删除资料", tone: "danger",
     })) return;
     if (batchBusy || (inTrash && listLoading) || organizationInFlight.current || (inTrash && itemsContextRef.current !== listContextKey)) return;
@@ -2916,7 +2993,7 @@ export default function App() {
           value,
         });
         if (listContextRef.current === requestContext) {
-          setBatchNotice(`已处理当前页选中的 ${result.affectedDocuments} 张织片。`);
+          setBatchNotice(`已处理全部已选的 ${result.affectedDocuments} 张织片。`);
           if (selectedIdRef.current && (batchAction === "trash" || batchAction === "restore")) {
             invalidateNavigation();
             dismissSelectedDocument();
@@ -3576,6 +3653,25 @@ export default function App() {
     }
   };
 
+  const directoryFilters = useMemo<Omit<DocumentFilters, "folderId" | "unfiled" | "page" | "trash">>(() => ({
+    q: query, scope: searchScope, kind: kindFilter, tag, collectionId: collectionFilter,
+    favorite: favoriteFilter, sort: sortOrder,
+  }), [query, searchScope, kindFilter, tag, collectionFilter, favoriteFilter, sortOrder]);
+  const directoryFoldersChanged = useStableCallback(() => { void refreshFoldersAndCurrent(); });
+  const directoryOpen = useStableCallback((id: string) => { void selectDocument(id); });
+  const directoryMove = useStableCallback(moveDocumentToFolder);
+  const directoryTrash = useStableCallback(trashDirectoryDocument);
+  const directoryRename = useStableCallback(promptRenameDocument);
+  const directoryCreateArticle = useStableCallback(() => createArticle().then(() => undefined));
+  const directoryCreatePaper = useStableCallback(() => { setPaperImportOpen(true); setPaperImportError(""); });
+  const directoryKeyDown = useStableCallback(handleListKeyDown);
+  const directorySelect = useStableCallback((document: DocumentSummary, checked: boolean) => {
+    selectionContextRef.current = listContextKey;
+    if (checked) selectedDocumentRevisionsRef.current.set(document.id, document.revision);
+    else selectedDocumentRevisionsRef.current.delete(document.id);
+    setSelectedIds((previous) => { const next = new Set(previous); if (checked) next.add(document.id); else next.delete(document.id); return next; });
+  });
+
   const hasActiveFilters = Boolean(query || tag || collectionFilter || favoriteFilter !== undefined);
   const filteredDescription = useMemo(() => {
     const parts = [
@@ -3860,33 +3956,25 @@ export default function App() {
           {!inTrash ? <><LibraryDirectory
             total={total}
             folders={folders}
-            filters={{
-              q: query, scope: searchScope, kind: kindFilter, tag, collectionId: collectionFilter,
-              favorite: favoriteFilter, sort: sortOrder,
-            }}
+            filters={directoryFilters}
             refreshKey={listRefresh}
-            onFoldersChanged={() => void refreshFoldersAndCurrent()}
-            onOpen={(id) => void selectDocument(id)}
-            onMove={moveDocumentToFolder}
-            onTrash={trashDirectoryDocument}
-            onRename={promptRenameDocument}
-            onCreateArticle={() => createArticle().then(() => undefined)}
-            onCreatePaper={() => { setPaperImportOpen(true); setPaperImportError(""); }}
+            onFoldersChanged={directoryFoldersChanged}
+            onOpen={directoryOpen}
+            onMove={directoryMove}
+            onTrash={directoryTrash}
+            onRename={directoryRename}
+            onCreateArticle={directoryCreateArticle}
+            onCreatePaper={directoryCreatePaper}
             selectedId={selectedId}
             activeFolderId={currentDoc?.id === selectedId ? currentDoc.folderId : items.find((item) => item.id === selectedId)?.folderId}
             selectedIds={selectedIds}
             selectionDisabled={batchBusy}
             listRef={libraryListRef}
-            onListKeyDown={handleListKeyDown}
-            onSelect={selectionEnabled ? (document, checked) => {
-              selectionContextRef.current = listContextKey;
-              if (checked) selectedDocumentRevisionsRef.current.set(document.id, document.revision);
-              else selectedDocumentRevisionsRef.current.delete(document.id);
-              setSelectedIds((previous) => { const next = new Set(previous); if (checked) next.add(document.id); else next.delete(document.id); return next; });
-            } : undefined}
+            onListKeyDown={directoryKeyDown}
+            onSelect={selectionEnabled ? directorySelect : undefined}
           />
             {!!selectedIds.size && selectionEnabled && <div className="bulk-toolbar" aria-label="选中知识批量操作">
-              <span className="batch-selection-summary">已选 <strong>{selectedIds.size}</strong> 篇</span>
+              <span className="batch-selection-summary">已选 <strong>{selectedIds.size}</strong> 篇（包括其他页）</span>
               <Select density="compact" aria-label="批量操作" disabled={batchBusy} value={batchAction} onChange={(event) => setBatchAction(event.target.value as BatchDocumentAction | "")}><option value="">批量操作</option><option value="add-tag">添加标签</option><option value="remove-tag">移除标签</option><option value="add-collection">加入专题</option><option value="remove-collection">移出专题</option><option value="archive">归档</option><option value="unarchive">取消归档</option><option value="trash">删除资料</option></Select>
               {(batchAction === "add-collection" || batchAction === "remove-collection") && <Select density="compact" aria-label="批量操作专题" disabled={batchBusy} value={batchCollectionId} onChange={(event) => setBatchCollectionId(event.target.value)}><option value="">选择专题</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</Select>}
               <Button type="button" onClick={() => void runBatchAction()} disabled={batchBusy || !batchAction}>{batchBusy ? "处理中…" : "执行操作"}</Button>
@@ -3982,11 +4070,11 @@ export default function App() {
                 {conflict && <div className="conflict-banner" role="alert"><div><strong>这张织片已在别处更新</strong><span>你的文字仍保留在编辑器中。请复制需要保留的内容，然后载入最新版。</span></div><Button type="button" onClick={() => { installCurrentDocument(conflict); updateListItem(conflict); setDraft(draftOf(conflict)); setConflict(null); setSaveState("idle"); }}>载入最新版</Button></div>}
                 <div ref={editorGridRef} className={`editor-grid mode-${mode}`} onScrollCapture={markPaneScroll}>
                   {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><PaneLabel>MARKDOWN</PaneLabel><MarkdownEditor ref={markdownEditorRef} toolbarHost={markdownToolbarHost} value={draft.markdown} onChange={(markdown) => setDraft((value) => value ? { ...value, markdown } : value)} readOnly={saveState === "saving" || organizationSaving} /></section>}
-                  {mode !== "edit" && <section className="preview-pane" aria-label="Markdown 预览" tabIndex={0}><PaneLabel>PREVIEW</PaneLabel>{draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : EMPTY_DOCUMENT_ASSETS} onNavigateSource={mode === "split" && draft.markdown === deferredDraftMarkdown ? navigatePreviewSource : undefined} /> : <StatePanel kind="empty" title="暂无正文" />}</section>}
+                  {mode !== "edit" && longPreviewAllowed && <section className="preview-pane" aria-label="Markdown 预览" tabIndex={0}><PaneLabel>PREVIEW</PaneLabel>{draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : EMPTY_DOCUMENT_ASSETS} onNavigateSource={mode === "split" && draft.markdown === deferredDraftMarkdown ? navigatePreviewSource : undefined} /> : <StatePanel kind="empty" title="暂无正文" />}</section>}
                 </div>
               </div> : <>
                 <div className="pane-label">READ ONLY · MARKDOWN</div>
-                {currentDoc.markdown.trim() ? <MarkdownPreview markdown={currentDoc.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : EMPTY_DOCUMENT_ASSETS} /> : <StatePanel kind="empty" title="暂无正文" />}
+                {!longPreviewAllowed ? <StatePanel kind="empty" title="长文预览已暂停"><Button type="button" onClick={() => setLongPreviewDocumentId(currentDoc.id)}>打开预览</Button></StatePanel> : currentDoc.markdown.trim() ? <MarkdownPreview markdown={currentDoc.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : EMPTY_DOCUMENT_ASSETS} /> : <StatePanel kind="empty" title="暂无正文" />}
               </>}
               </section>
             </>

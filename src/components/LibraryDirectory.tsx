@@ -1,5 +1,5 @@
 import { WorkspaceIcon } from "./ui/WorkspaceIcon";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
 import type { DragEvent, KeyboardEventHandler, ReactNode, Ref } from "react";
 
 import type { DocumentFilters, DocumentSummary, KnowledgeFolder } from "../../shared/types";
@@ -147,9 +147,11 @@ interface Branch {
   items: DocumentSummary[];
   loading: boolean;
   total: number;
+  page: number;
+  pageSize: number;
 }
 
-export function LibraryDirectory({
+export const LibraryDirectory = memo(function LibraryDirectory({
   total,
   folders,
   filters,
@@ -193,6 +195,7 @@ export function LibraryDirectory({
   const [expanded, setExpanded] = useState<string[]>([]);
   const [branches, setBranches] = useState<Record<string, Branch>>({});
   const controllers = useRef(new Map<string, AbortController>());
+  const branchPages = useRef(new Map<string, number>());
   const createButton = useRef<HTMLButtonElement>(null);
   const createMenu = useRef<HTMLDivElement>(null);
   const createMenuId = useId();
@@ -205,26 +208,23 @@ export function LibraryDirectory({
     window.removeEventListener("scroll", closeCreateMenu, true);
   }, [closeCreateMenu]);
 
-  const loadBranch = useCallback(async (key: string) => {
+  const loadBranch = useCallback(async (key: string, requestedPage = 1) => {
     controllers.current.get(key)?.abort();
     const controller = new AbortController();
     controllers.current.set(key, controller);
-    setBranches((current) => ({ ...current, [key]: { ...(current[key] ?? { items: [], total: 0 }), context: filterKey, loading: true, error: "" } }));
+    setBranches((current) => ({ ...current, [key]: { ...(current[key] ?? { items: [], total: 0, page: 1, pageSize: 30 }), context: filterKey, loading: true, error: "" } }));
     try {
-      const items: DocumentSummary[] = [];
-      let page = 1;
-      let total = 0;
-      // ponytail: reuse the bounded REST pages; switch to a snapshot cursor if concurrent library growth makes offset scans insufficient.
-      do {
-        const result = await api.listDocuments({ ...filters, page, ...(key === "unfiled" ? { unfiled: true } : { folderId: key }) }, controller.signal);
-        items.push(...result.items);
-        total = result.total;
-        if (!result.items.length || page * result.pageSize >= total) break;
-        page += 1;
-      } while (!controller.signal.aborted);
-      if (!controller.signal.aborted) setBranches((current) => ({ ...current, [key]: { items: [...new Map(items.map((item) => [item.id, item])).values()], total, context: filterKey, loading: false, error: "" } }));
+      const query = { ...filters, ...(key === "unfiled" ? { unfiled: true } : { folderId: key }) };
+      let result = await api.listDocuments({ ...query, page: requestedPage }, controller.signal);
+      // Deletion or a moving sort boundary can remove the last page while it is open.
+      const lastPage = Math.max(1, Math.ceil(result.total / result.pageSize));
+      if (requestedPage > lastPage) result = await api.listDocuments({ ...query, page: lastPage }, controller.signal);
+      if (!controller.signal.aborted) {
+        branchPages.current.set(key, result.page);
+        setBranches((current) => ({ ...current, [key]: { items: result.items, total: result.total, page: result.page, pageSize: result.pageSize, context: filterKey, loading: false, error: "" } }));
+      }
     } catch (error) {
-      if (!controller.signal.aborted) setBranches((current) => ({ ...current, [key]: { ...(current[key] ?? { items: [], total: 0 }), context: filterKey, loading: false, error: (error as Error).message } }));
+      if (!controller.signal.aborted) setBranches((current) => ({ ...current, [key]: { ...(current[key] ?? { items: [], total: 0, page: 1, pageSize: 30 }), context: filterKey, loading: false, error: (error as Error).message } }));
     } finally {
       if (controllers.current.get(key) === controller) controllers.current.delete(key);
     }
@@ -240,7 +240,7 @@ export function LibraryDirectory({
   useEffect(() => {
     if (!pollingKey) return;
     const timer = window.setInterval(() => {
-      for (const key of pollingKey.split("\0")) if (!controllers.current.has(key)) void loadBranch(key);
+      for (const key of pollingKey.split("\0")) if (!controllers.current.has(key)) void loadBranch(key, branchPages.current.get(key) ?? 1);
     }, 2_500);
     return () => window.clearInterval(timer);
   }, [pollingKey, loadBranch]);
@@ -249,6 +249,7 @@ export function LibraryDirectory({
     if (expanded.includes(key)) {
       controllers.current.get(key)?.abort();
       controllers.current.delete(key);
+      branchPages.current.delete(key);
       setBranches((values) => { const next = { ...values }; delete next[key]; return next; });
       setExpanded(expanded.filter((value) => value !== key));
       return;
@@ -259,6 +260,7 @@ export function LibraryDirectory({
       if (removed) {
         controllers.current.get(removed)?.abort();
         controllers.current.delete(removed);
+        branchPages.current.delete(removed);
         setBranches((values) => { const retained = { ...values }; delete retained[removed]; return retained; });
       }
       toast.success("已自动收起最早打开的分组，最多同时展开 6 个。");
@@ -302,7 +304,16 @@ export function LibraryDirectory({
 
   const deleteFolder = async (folder: KnowledgeFolder) => {
     if (!await dialogs.confirm(`删除“${folder.name}”？其中 ${folder.documentCount} 张织片会保留并移到“未分组”。`, { title: "删除分组", confirmLabel: "删除分组", tone: "danger" })) return;
-    try { await api.deleteFolder(folder.id); setExpanded((current) => current.filter((key) => key !== folder.id)); toast.success(`已删除“${folder.name}”，知识仍保留。`); onFoldersChanged(); }
+    try {
+      await api.deleteFolder(folder.id);
+      controllers.current.get(folder.id)?.abort();
+      controllers.current.delete(folder.id);
+      branchPages.current.delete(folder.id);
+      setBranches((values) => { const next = { ...values }; delete next[folder.id]; return next; });
+      setExpanded((current) => current.filter((key) => key !== folder.id));
+      toast.success(`已删除“${folder.name}”，知识仍保留。`);
+      onFoldersChanged();
+    }
     catch (error) { toast.error((error as Error).message); }
   };
 
@@ -313,6 +324,15 @@ export function LibraryDirectory({
       if (!value?.id || value.folderId === folderId) return;
       await onMove(value, folderId);
     } catch { toast.error("无法识别拖动的知识，请使用“移动到…”操作。"); }
+  };
+
+  const pagination = (key: string, label: string, branch: Branch | undefined) => {
+    if (!branch || branch.total <= branch.pageSize) return null;
+    return <nav aria-label={`${label}分页`}>
+      <Button type="button" disabled={branch.loading || branch.page <= 1} onClick={() => void loadBranch(key, branch.page - 1)}>上一页</Button>
+      <span aria-live="polite">第 {branch.page} / {Math.max(1, Math.ceil(branch.total / branch.pageSize))} 页 · {branch.total} 篇</span>
+      <Button type="button" disabled={branch.loading || branch.page * branch.pageSize >= branch.total} onClick={() => void loadBranch(key, branch.page + 1)}>下一页</Button>
+    </nav>;
   };
 
   const root = branches.unfiled;
@@ -330,6 +350,7 @@ export function LibraryDirectory({
           onTrash={onTrash} onRename={onRename}
           checkbox={onSelect ? <label className="row-select"><span className="sr-only">选择 {document.title || "未命名织片"}</span><input type="checkbox" disabled={selectionDisabled || root.loading || root.context !== filterKey} checked={selectedIds?.has(document.id) ?? false} onChange={(event) => onSelect(document, event.target.checked)} /></label> : undefined}
         />)}
+        {pagination("unfiled", "未分组", root)}
       </div>
       {folders.map((folder) => {
         const key = folder.id;
@@ -351,10 +372,11 @@ export function LibraryDirectory({
               onTrash={onTrash} onRename={onRename}
               checkbox={onSelect ? <label className="row-select"><span className="sr-only">选择 {document.title || "未命名织片"}</span><input type="checkbox" disabled={selectionDisabled || branch.loading || branch.context !== filterKey} checked={selectedIds?.has(document.id) ?? false} onChange={(event) => onSelect(document, event.target.checked)} /></label> : undefined}
             />)}
+            {pagination(key, folder.name, branch)}
           </div>}
         </section>;
       })}
     </div>
     <span className="sr-only" aria-live="polite">已展开 {expanded.length} 个分组</span>
   </section>;
-}
+});

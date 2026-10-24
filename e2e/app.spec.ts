@@ -723,6 +723,7 @@ test("opens one keyboard-accessible help and about dialog in normal and recovery
   await page.keyboard.press("Escape");
 
   await page.route("**/api/settings/onboarding", (route) => route.fulfill({ status: 503, contentType: "application/json", body: '{"error":{"code":"DATA_UNAVAILABLE","message":"recovery"}}' }));
+  await page.route("**/api/startup-status", (route) => route.fulfill({ json: { mode: "recovery", maintenance: false } }));
   await page.route("**/api/data-safety", async (route) => {
     const response = await route.fetch();
     const body = await response.json() as Record<string, unknown>;
