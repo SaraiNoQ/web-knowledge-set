@@ -1,0 +1,581 @@
+{
+  "baseline_sha": "1a6eb0500c07d14da40b289bdd66e0e3d1f74934",
+  "code_sha": "b6ea62b452fe5d750fc8cf6573a70179ffc5f3cd",
+  "branch": "codex/performance-optimization",
+  "environment": {
+    "node": "24.19.0",
+    "pnpm": "11.7.0",
+    "os": "Debian 13.6 Linux x86_64",
+    "cpu": "Intel Xeon Platinum 8573C",
+    "visible_cpus": 5,
+    "cgroup_cpu_max": "400000 100000",
+    "memory_limit_bytes": 17179869184
+  },
+  "checks": {
+    "typecheck": "passed",
+    "build": "passed",
+    "tests_ts": {
+      "total": 234,
+      "pass": 233,
+      "fail": 1,
+      "failure": "dynamic pages use sandboxed Chromium; same failure on baseline; browser unavailable"
+    },
+    "policy_tests": {
+      "total": 25,
+      "pass": 25
+    },
+    "cloud_dry_run": "both passed; not deployed",
+    "browser_install": "failed: official CDN 403 Domain forbidden",
+    "e2e": "not run",
+    "native_desktop": "not run"
+  },
+  "outputs": {
+    "baseline-audit.json": {
+      "node": "v24.19.0",
+      "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "scenarios": [
+        {
+          "documents": 1000,
+          "bodyChars": 8460,
+          "bodyUtf8Bytes": 9900,
+          "queries": {
+            "recent": {
+              "medianMs": 9.24,
+              "p95Ms": 19.44,
+              "samples": 15
+            },
+            "title": {
+              "medianMs": 31.61,
+              "p95Ms": 48.7,
+              "samples": 15
+            },
+            "bodyHit": {
+              "medianMs": 21.09,
+              "p95Ms": 60.84,
+              "samples": 15
+            },
+            "bodyMiss": {
+              "medianMs": 17.77,
+              "p95Ms": 182.35,
+              "samples": 15
+            },
+            "literalCjk": {
+              "medianMs": 29.04,
+              "p95Ms": 48.88,
+              "samples": 15
+            },
+            "deepPage": {
+              "medianMs": 3.9,
+              "p95Ms": 5.73,
+              "samples": 15
+            }
+          },
+          "timerDelayAcrossFiveSyncQueriesMs": 80.76
+        },
+        {
+          "documents": 10000,
+          "bodyChars": 8460,
+          "bodyUtf8Bytes": 9900,
+          "queries": {
+            "recent": {
+              "medianMs": 34.11,
+              "p95Ms": 44.96,
+              "samples": 15
+            },
+            "title": {
+              "medianMs": 272.81,
+              "p95Ms": 316.19,
+              "samples": 15
+            },
+            "bodyHit": {
+              "medianMs": 178.97,
+              "p95Ms": 226.34,
+              "samples": 15
+            },
+            "bodyMiss": {
+              "medianMs": 154.21,
+              "p95Ms": 165.22,
+              "samples": 15
+            },
+            "literalCjk": {
+              "medianMs": 177.68,
+              "p95Ms": 185.76,
+              "samples": 15
+            },
+            "deepPage": {
+              "medianMs": 38.86,
+              "p95Ms": 42.49,
+              "samples": 15
+            }
+          },
+          "timerDelayAcrossFiveSyncQueriesMs": 752.18
+        }
+      ],
+      "backup": {
+        "databaseBytes": 195100672,
+        "history": [
+          {
+            "backups": 1,
+            "medianMs": 935.82,
+            "p95Ms": 939.72,
+            "samples": 3
+          },
+          {
+            "backups": 2,
+            "medianMs": 1931.18,
+            "p95Ms": 1936.15,
+            "samples": 3
+          },
+          {
+            "backups": 3,
+            "medianMs": 2789.15,
+            "p95Ms": 2819.25,
+            "samples": 3
+          }
+        ]
+      }
+    },
+    "optimized-audit.json": {
+      "node": "v24.19.0",
+      "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "scenarios": [
+        {
+          "documents": 1000,
+          "bodyChars": 8460,
+          "bodyUtf8Bytes": 9900,
+          "queries": {
+            "recent": {
+              "medianMs": 3.68,
+              "p95Ms": 4.67,
+              "samples": 15
+            },
+            "title": {
+              "medianMs": 28.89,
+              "p95Ms": 31.69,
+              "samples": 15
+            },
+            "bodyHit": {
+              "medianMs": 19.35,
+              "p95Ms": 22.22,
+              "samples": 15
+            },
+            "bodyMiss": {
+              "medianMs": 1.61,
+              "p95Ms": 2.42,
+              "samples": 15
+            },
+            "literalCjk": {
+              "medianMs": 19.36,
+              "p95Ms": 25.55,
+              "samples": 15
+            },
+            "deepPage": {
+              "medianMs": 3.91,
+              "p95Ms": 4.53,
+              "samples": 15
+            }
+          },
+          "timerDelayAcrossFiveSyncQueriesMs": 8.52
+        },
+        {
+          "documents": 10000,
+          "bodyChars": 8460,
+          "bodyUtf8Bytes": 9900,
+          "queries": {
+            "recent": {
+              "medianMs": 30.65,
+              "p95Ms": 35.44,
+              "samples": 15
+            },
+            "title": {
+              "medianMs": 271.86,
+              "p95Ms": 308.87,
+              "samples": 15
+            },
+            "bodyHit": {
+              "medianMs": 178.2,
+              "p95Ms": 183.17,
+              "samples": 15
+            },
+            "bodyMiss": {
+              "medianMs": 11.52,
+              "p95Ms": 13.77,
+              "samples": 15
+            },
+            "literalCjk": {
+              "medianMs": 179.17,
+              "p95Ms": 185.72,
+              "samples": 15
+            },
+            "deepPage": {
+              "medianMs": 39.36,
+              "p95Ms": 45.34,
+              "samples": 15
+            }
+          },
+          "timerDelayAcrossFiveSyncQueriesMs": 61.86
+        }
+      ],
+      "backup": {
+        "databaseBytes": 195100672,
+        "history": [
+          {
+            "backups": 1,
+            "medianMs": 960,
+            "p95Ms": 966.13,
+            "samples": 3
+          },
+          {
+            "backups": 2,
+            "medianMs": 1891.22,
+            "p95Ms": 1933.58,
+            "samples": 3
+          },
+          {
+            "backups": 3,
+            "medianMs": 3022.82,
+            "p95Ms": 3467.93,
+            "samples": 3
+          }
+        ]
+      }
+    },
+    "first-round-baseline-audit.json": {
+      "node": "v24.19.0",
+      "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "scenarios": [
+        {
+          "documents": 1000,
+          "bodyChars": 8460,
+          "bodyUtf8Bytes": 9900,
+          "queries": {
+            "recent": {
+              "medianMs": 5.09,
+              "p95Ms": 14.66,
+              "samples": 15
+            },
+            "title": {
+              "medianMs": 29.08,
+              "p95Ms": 105.78,
+              "samples": 15
+            },
+            "bodyHit": {
+              "medianMs": 19.94,
+              "p95Ms": 21.63,
+              "samples": 15
+            },
+            "bodyMiss": {
+              "medianMs": 16.45,
+              "p95Ms": 120.23,
+              "samples": 15
+            },
+            "literalCjk": {
+              "medianMs": 17.86,
+              "p95Ms": 24.23,
+              "samples": 15
+            },
+            "deepPage": {
+              "medianMs": 3.91,
+              "p95Ms": 7.13,
+              "samples": 15
+            }
+          },
+          "timerDelayAcrossFiveSyncQueriesMs": 77.94
+        },
+        {
+          "documents": 10000,
+          "bodyChars": 8460,
+          "bodyUtf8Bytes": 9900,
+          "queries": {
+            "recent": {
+              "medianMs": 30.81,
+              "p95Ms": 35.81,
+              "samples": 15
+            },
+            "title": {
+              "medianMs": 334.2,
+              "p95Ms": 532.01,
+              "samples": 15
+            },
+            "bodyHit": {
+              "medianMs": 221.28,
+              "p95Ms": 312.65,
+              "samples": 15
+            },
+            "bodyMiss": {
+              "medianMs": 154.04,
+              "p95Ms": 167.28,
+              "samples": 15
+            },
+            "literalCjk": {
+              "medianMs": 181.69,
+              "p95Ms": 199.49,
+              "samples": 15
+            },
+            "deepPage": {
+              "medianMs": 40.86,
+              "p95Ms": 48.65,
+              "samples": 15
+            }
+          },
+          "timerDelayAcrossFiveSyncQueriesMs": 796.72
+        }
+      ],
+      "backup": {
+        "databaseBytes": 195100672,
+        "history": [
+          {
+            "backups": 1,
+            "medianMs": 999.15,
+            "p95Ms": 1007.3,
+            "samples": 3
+          },
+          {
+            "backups": 2,
+            "medianMs": 1994.17,
+            "p95Ms": 2089.52,
+            "samples": 3
+          },
+          {
+            "backups": 3,
+            "medianMs": 2931.93,
+            "p95Ms": 3009.19,
+            "samples": 3
+          }
+        ]
+      }
+    },
+    "rejected-first-candidate-audit.json": {
+      "node": "v24.19.0",
+      "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "scenarios": [
+        {
+          "documents": 1000,
+          "bodyChars": 8460,
+          "bodyUtf8Bytes": 9900,
+          "queries": {
+            "recent": {
+              "medianMs": 3.7,
+              "p95Ms": 6.56,
+              "samples": 15
+            },
+            "title": {
+              "medianMs": 31.21,
+              "p95Ms": 37.46,
+              "samples": 15
+            },
+            "bodyHit": {
+              "medianMs": 41.13,
+              "p95Ms": 46.51,
+              "samples": 15
+            },
+            "bodyMiss": {
+              "medianMs": 4.51,
+              "p95Ms": 8.25,
+              "samples": 15
+            },
+            "literalCjk": {
+              "medianMs": 29.84,
+              "p95Ms": 38.26,
+              "samples": 15
+            },
+            "deepPage": {
+              "medianMs": 4.18,
+              "p95Ms": 4.83,
+              "samples": 15
+            }
+          },
+          "timerDelayAcrossFiveSyncQueriesMs": 24.93
+        },
+        {
+          "documents": 10000,
+          "bodyChars": 8460,
+          "bodyUtf8Bytes": 9900,
+          "queries": {
+            "recent": {
+              "medianMs": 29.24,
+              "p95Ms": 36.11,
+              "samples": 15
+            },
+            "title": {
+              "medianMs": 312.94,
+              "p95Ms": 1254.51,
+              "samples": 15
+            },
+            "bodyHit": {
+              "medianMs": 997.16,
+              "p95Ms": 1455.76,
+              "samples": 15
+            },
+            "bodyMiss": {
+              "medianMs": 55.16,
+              "p95Ms": 60.66,
+              "samples": 15
+            },
+            "literalCjk": {
+              "medianMs": 300.19,
+              "p95Ms": 319.2,
+              "samples": 15
+            },
+            "deepPage": {
+              "medianMs": 39.43,
+              "p95Ms": 52.64,
+              "samples": 15
+            }
+          },
+          "timerDelayAcrossFiveSyncQueriesMs": 271.13
+        }
+      ],
+      "backup": {
+        "databaseBytes": 195100672,
+        "history": [
+          {
+            "backups": 1,
+            "medianMs": 979.48,
+            "p95Ms": 1013.19,
+            "samples": 3
+          },
+          {
+            "backups": 2,
+            "medianMs": 1891.84,
+            "p95Ms": 1929.64,
+            "samples": 3
+          },
+          {
+            "backups": 3,
+            "medianMs": 2835.82,
+            "p95Ms": 2862.39,
+            "samples": 3
+          }
+        ]
+      }
+    },
+    "baseline-library.json": {
+      "documents": 10100,
+      "databaseBytes": 20467712,
+      "scale": {
+        "markdownBytes": 1048576,
+        "batchItems": 100,
+        "portableResourceBytes": 103809024,
+        "portableArchiveBytes": 103832980
+      },
+      "p95Ms": {
+        "recent": 4.16,
+        "englishSearch": 15.65,
+        "chineseSearch": 18.8,
+        "titleSort": 5.63,
+        "combined": 17.1,
+        "longMarkdownWrite": 87.02,
+        "longMarkdownRead": 1.71
+      },
+      "elapsedMs": {
+        "batchImport": 49.55,
+        "portableExport": 1905.86,
+        "portableImport": 585.22
+      }
+    },
+    "optimized-library.json": {
+      "documents": 10100,
+      "databaseBytes": 20467712,
+      "scale": {
+        "markdownBytes": 1048576,
+        "batchItems": 100,
+        "portableResourceBytes": 103809024,
+        "portableArchiveBytes": 103832980
+      },
+      "p95Ms": {
+        "recent": 3.67,
+        "englishSearch": 15.01,
+        "chineseSearch": 17.59,
+        "titleSort": 5.36,
+        "combined": 11.25,
+        "longMarkdownWrite": 102.19,
+        "longMarkdownRead": 2.45
+      },
+      "elapsedMs": {
+        "batchImport": 47.05,
+        "portableExport": 1908.2,
+        "portableImport": 606.07
+      }
+    },
+    "baseline-knowledge-map.json": {
+      "platform": "linux x64",
+      "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "cores": 5,
+      "node": "v24.19.0",
+      "documents": 1000,
+      "dimensions": 1024,
+      "metadataMs": 27.8,
+      "metadataBytes": 336111,
+      "fullGraphMs": 944.6,
+      "progressiveIndexUpdatesMs": 4652,
+      "edges": 2096
+    },
+    "optimized-knowledge-map.json": {
+      "platform": "linux x64",
+      "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "cores": 5,
+      "node": "v24.19.0",
+      "documents": 1000,
+      "dimensions": 1024,
+      "metadataMs": 34.9,
+      "metadataBytes": 336111,
+      "fullGraphMs": 1169.4,
+      "progressiveIndexUpdatesMs": 5397.9,
+      "edges": 2096
+    },
+    "benchmark-execution.json": [
+      {
+        "name": "baseline",
+        "benchmark": "audit",
+        "exit_code": 0,
+        "wall_seconds": 53.565
+      },
+      {
+        "name": "optimized",
+        "benchmark": "audit",
+        "exit_code": 0,
+        "wall_seconds": 65.839,
+        "note": "rejected first candidate, not final implementation"
+      },
+      {
+        "name": "baseline",
+        "benchmark": "library",
+        "exit_code": 0,
+        "wall_seconds": 5.491
+      },
+      {
+        "name": "optimized",
+        "benchmark": "library",
+        "exit_code": 0,
+        "wall_seconds": 5.308
+      },
+      {
+        "name": "baseline",
+        "benchmark": "knowledge-map",
+        "exit_code": 0,
+        "wall_seconds": 7.093
+      },
+      {
+        "name": "optimized",
+        "benchmark": "knowledge-map",
+        "exit_code": 0,
+        "wall_seconds": 8.34
+      }
+    ],
+    "benchmark-final-execution.json": [
+      {
+        "name": "baseline",
+        "benchmark": "audit-final",
+        "exit_code": 0,
+        "wall_seconds": 48.995
+      },
+      {
+        "name": "optimized",
+        "benchmark": "audit-final",
+        "exit_code": 0,
+        "wall_seconds": 45.014
+      }
+    ]
+  }
+}

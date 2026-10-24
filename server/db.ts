@@ -3358,7 +3358,27 @@ export class KnowledgeDatabase {
       const sourceFields = ["d.source_url", "COALESCE(d.final_url, '')", "COALESCE(d.canonical_url, '')", "COALESCE(d.author, '')", "d.source_note"];
       const fields = scope === "title" ? ["d.title"] : scope === "body" ? ["d.markdown"] :
         scope === "source" ? sourceFields : ["d.title", "d.markdown", ...sourceFields];
-      // ponytail: paper JSON stays searchable without rebuilding the shared FTS table; add a unified FTS index when scans become measurable.
+      // Use the existing trigram index only as a necessary-condition prefilter.
+      // The literal predicates below remain authoritative (short words, punctuation,
+      // case and terms in different paper blocks must keep their existing meaning).
+      // Source/all searches include fields absent from this index, so keep their scan.
+      const indexedTerms = searchTerms(filters.q).flatMap((term) => term.includes("\0") ? [] :
+        term.match(/[a-zA-Z0-9\u3400-\u9fff]{3,}/gu) ?? []);
+      // Probe one trigram, not a long phrase with expensive positional joins.
+      // Common terms fall back to the original scan after a bounded probe;
+      // materializing a full-library posting list can be slower than scanning.
+      const candidate = indexedTerms.sort((left, right) => right.length - left.length)[0]?.slice(0, 3);
+      if (candidate && (scope === "title" || scope === "body")) {
+        const column = scope === "title" ? "title" : "markdown";
+        const candidates = this.sql.prepare("SELECT rowid FROM documents_fts WHERE documents_fts MATCH ? LIMIT 257")
+          .all(`${column} : "${candidate}"`);
+        if (candidates.length <= 256) {
+          where.push(`d.rowid IN (SELECT value FROM json_each(?)${
+            scope === "body" ? " UNION SELECT paper_document.rowid FROM papers p JOIN documents paper_document ON paper_document.id = p.id" : ""
+          })`);
+          params.push(JSON.stringify(candidates.map((row) => row.rowid)));
+        }
+      }
       params.push(JSON.stringify(searchTerms(filters.q).map((term) => filters.caseSensitive ? term : `%${escapeLike(term)}%`)));
       const match = (field: string) => filters.caseSensitive
         ? `instr(${field}, search_term.value) > 0` : `${field} LIKE search_term.value ESCAPE '\\'`;

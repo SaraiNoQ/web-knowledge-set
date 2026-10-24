@@ -421,6 +421,44 @@ test("search filters preserve literal text, case, trash boundaries and bounded e
   } finally { fixture.close(); }
 });
 
+test("indexed literal candidates preserve scan results across short, CJK, punctuation and case queries", () => {
+  const fixture = database();
+  try {
+    const bodies = ["Alpha 中文知识 100% a_b \\path", "alpha 中文 100x aXb path", "ALPHA 中文知识库 quoted\"word", "école CAFÉ Straße", "alpha beta", "alphaBeta", "ab 中文 💡", "zero\0suffix"];
+    for (let index = 0; index < 80; index += 1) {
+      const text = bodies[index % bodies.length]!;
+      const document = fixture.db.createArticle(`${text} ${index}`);
+      fixture.db.updateDocument(document.id, document.revision, { markdown: text });
+    }
+    assert.ok(fixture.db.listDocuments({ q: "alpha", scope: "body" }).total > 30);
+    const queries = ["alpha", "Alpha", "中文", "中文知识", "知识库", "100%", "a_b", "\\path", 'quoted"word', "école", "CAFÉ", "Straße", "💡", "ab", "alpha beta", "中文知识 100%", "missing-token", "zero\0suffix"];
+    for (const scope of ["title", "body"] as const) {
+      for (const caseSensitive of [false, true]) {
+        for (const q of queries) {
+          const field = scope === "title" ? "title" : "markdown";
+          const terms = q.trim().split(/\s+/u).map((term) => caseSensitive ? term : `%${term.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`);
+          const predicate = caseSensitive ? `instr(${field}, term.value) > 0` : `${field} LIKE term.value ESCAPE '\\'`;
+          const expected = fixture.db.sql.prepare(`SELECT id FROM documents WHERE deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM json_each(?) term WHERE NOT (${predicate})) ORDER BY title COLLATE NOCASE, id`).all(JSON.stringify(terms)).map((row) => row.id);
+          const first = fixture.db.listDocuments({ q, scope, caseSensitive, sort: "title" });
+          const actual = [...first.items];
+          for (let page = 2; actual.length < first.total; page += 1) actual.push(...fixture.db.listDocuments({ q, scope, caseSensitive, sort: "title", page }).items);
+          assert.equal(first.total, expected.length, `${scope}/${caseSensitive}/${q}`);
+          assert.deepEqual(actual.map((row) => row.id), expected, `${scope}/${caseSensitive}/${q}`);
+        }
+      }
+    }
+    const editable = fixture.db.createArticle("Before indexed mutation");
+    const updated = fixture.db.updateDocument(editable.id, editable.revision, { markdown: "NewNeedle", title: "After indexed mutation" });
+    assert.equal(updated.kind, "updated");
+    assert.equal(fixture.db.listDocuments({ q: "NewNeedle", scope: "body" }).items[0]?.id, editable.id);
+    assert.equal(fixture.db.listDocuments({ q: "Before", scope: "title" }).total, 0);
+    const repeated = fixture.db.createArticle("Repeated content");
+    fixture.db.updateDocument(repeated.id, repeated.revision, { markdown: "x".repeat(200_000) });
+    assert.deepEqual(fixture.db.listDocuments({ q: "x".repeat(500), scope: "body" }).items.map((item) => item.id), [repeated.id]);
+    assert.equal(fixture.db.listDocuments({ q: `${"x".repeat(499)}y`, scope: "body" }).total, 0);
+  } finally { fixture.close(); }
+});
+
 test("paper search returns current page text and source excerpts, excluding internal JSON fields", () => {
   const fixture = database();
   try {
@@ -447,6 +485,26 @@ test("paper search returns current page text and source excerpts, excluding inte
     }
     const source = fixture.db.listDocuments({ q: "paper-only.example", scope: "source" });
     assert.ok(source.items[0]?.searchMatches?.includes("https://paper-only.example/research.pdf"));
+  } finally { fixture.close(); }
+});
+
+test("common trigram searches retain complete paged results beyond the candidate budget", () => {
+  const fixture = database();
+  try {
+    for (let index = 0; index < 300; index += 1) {
+      const document = fixture.db.createArticle(`Common title ${String(index).padStart(3, "0")}`);
+      fixture.db.updateDocument(document.id, document.revision, { markdown: "Common body 中文知识" });
+    }
+    for (const scope of ["title", "body"] as const) {
+      const ids = new Set<string>();
+      for (let page = 1; page <= 10; page += 1) {
+        const result = fixture.db.listDocuments({ q: "Common", scope, sort: "title", page });
+        assert.equal(result.total, 300);
+        assert.equal(result.items.length, 30);
+        result.items.forEach((item) => ids.add(item.id));
+      }
+      assert.equal(ids.size, 300);
+    }
   } finally { fixture.close(); }
 });
 

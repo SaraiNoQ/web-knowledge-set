@@ -22,6 +22,7 @@ import {
   writeSync,
 } from "node:fs";
 import { constants as fsConstants } from "node:fs";
+import { copyFile, open } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { crc32 } from "node:zlib";
@@ -398,6 +399,15 @@ function syncPath(path: string) {
     fsyncSync(descriptor);
   } finally {
     closeSync(descriptor);
+  }
+}
+
+async function syncPathAsync(path: string) {
+  const file = await open(path, "r");
+  try {
+    await file.sync();
+  } finally {
+    await file.close();
   }
 }
 
@@ -1116,7 +1126,7 @@ export async function createBackup(options: CreateBackupOptions): Promise<Verifi
     await backup(options.database, databasePath);
     normalizeDatabaseCopy(databasePath);
     chmodSync(databasePath, 0o600);
-    syncPath(databasePath);
+    await syncPathAsync(databasePath);
     const contents = inspectDatabase(databasePath);
 
     const snapshotsDir = join(temporaryPath, "snapshots");
@@ -1130,9 +1140,9 @@ export async function createBackup(options: CreateBackupOptions): Promise<Verifi
       const source = sourceSnapshotPath(dataDir, path);
       const destination = backupFilePath(temporaryPath, path);
       ensureRegularFile(source, "MISSING_SNAPSHOT");
-      copyFileSync(source, destination, fsConstants.COPYFILE_EXCL);
+      await copyFile(source, destination, fsConstants.COPYFILE_EXCL);
       chmodSync(destination, 0o600);
-      syncPath(destination);
+      await syncPathAsync(destination);
       const stat = ensureRegularFile(destination);
       files.push({ path, bytes: stat.size, sha256: await sha256File(destination) });
     }
@@ -1141,9 +1151,9 @@ export async function createBackup(options: CreateBackupOptions): Promise<Verifi
         const source = sourceAssetPath(dataDir, path);
         const destination = backupFilePath(temporaryPath, path);
         ensureRegularFile(source, "MISSING_ASSET");
-        copyFileSync(source, destination, fsConstants.COPYFILE_EXCL);
+        await copyFile(source, destination, fsConstants.COPYFILE_EXCL);
         chmodSync(destination, 0o600);
-        syncPath(destination);
+        await syncPathAsync(destination);
         const stat = ensureRegularFile(destination);
         files.push({ path, bytes: stat.size, sha256: await sha256File(destination) });
       }
@@ -1161,13 +1171,13 @@ export async function createBackup(options: CreateBackupOptions): Promise<Verifi
     };
     const manifestPath = join(temporaryPath, MANIFEST_FILE);
     writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
-    syncPath(manifestPath);
-    syncPath(snapshotsDir);
-    syncPath(assetsDir);
-    syncPath(temporaryPath);
+    await syncPathAsync(manifestPath);
+    await syncPathAsync(snapshotsDir);
+    await syncPathAsync(assetsDir);
+    await syncPathAsync(temporaryPath);
     const verified = await verifyBackup(temporaryPath);
     renameSync(temporaryPath, finalPath);
-    syncPath(backupRoot);
+    await syncPathAsync(backupRoot);
     return { ...verified, path: finalPath };
   } catch (error) {
     rmSync(temporaryPath, { recursive: true, force: true });

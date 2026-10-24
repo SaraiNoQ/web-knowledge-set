@@ -504,7 +504,7 @@ export async function createClip(db: D1Database, tokenHash: string, input: Retur
   return { documentId: id };
 }
 
-interface DocumentSummaryRow {
+export interface DocumentSummaryRow {
   id: string;
   kind: "article" | "paper";
   sourceUrl: string;
@@ -527,7 +527,7 @@ interface DocumentRow extends DocumentSummaryRow {
   sourceNote: string;
 }
 
-function summary(row: DocumentSummaryRow) {
+export function documentSummary(row: DocumentSummaryRow) {
   return {
     id: row.id,
     kind: row.kind,
@@ -556,10 +556,11 @@ const summaryColumns = `id, source_url AS sourceUrl, final_url AS finalUrl, cano
   kind, title, author, status, folder_id AS folderId, favorite, revision, deleted_at AS deletedAt,
   created_at AS createdAt, updated_at AS updatedAt`;
 
-export async function listDocuments(db: D1Database, url: URL, window?: { limit: number; offset: number }) {
+export function documentListQuery(url: URL) {
   const pageValue = url.searchParams.get("page") || "1";
   if (!/^[1-9]\d*$/u.test(pageValue)) throw new CloudHttpError(400, "INVALID_PAGE", "page must be a positive integer");
   const page = Number.parseInt(pageValue, 10);
+  if (!Number.isSafeInteger(page * 30)) throw new CloudHttpError(400, "INVALID_PAGE", "page exceeds the supported range");
   const query = url.searchParams.get("q")?.trim() || "";
   if (query.length > 500) throw new CloudHttpError(400, "INVALID_QUERY", "query is too long");
   const conditions: string[] = [];
@@ -626,16 +627,21 @@ export async function listDocuments(db: D1Database, url: URL, window?: { limit: 
   }
   if (from && to && from > to) throw new CloudHttpError(400, "INVALID_DATE_RANGE", "from must not be after to");
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  const count = await db.prepare(`SELECT COUNT(*) AS count FROM cloud_documents ${where}`)
-    .bind(...values).first<{ count: number }>();
   const sort = url.searchParams.get("sort") === "title" ? "lower(title) COLLATE BINARY ASC, id ASC" :
     url.searchParams.get("sort") === "created" ? "created_at DESC, id ASC" : "updated_at DESC, id ASC";
+  return { page, query, scope, caseSensitive, where, values, sort };
+}
+
+export async function listDocuments(db: D1Database, url: URL, window?: { limit: number; offset: number }) {
+  const { page, query, scope, caseSensitive, where, values, sort } = documentListQuery(url);
+  const count = await db.prepare(`SELECT COUNT(*) AS count FROM cloud_documents ${where}`)
+    .bind(...values).first<{ count: number }>();
   const contextTerms = JSON.stringify(searchTerms(query));
   const rows = await db.prepare(
     `SELECT ${summaryColumns}${query ? `, ${searchExcerptSql("markdown", caseSensitive)} AS markdown, ${searchExcerptSql("source_note", caseSensitive)} AS sourceNote, COALESCE((SELECT p.source_url FROM cloud_papers p WHERE p.id = cloud_documents.id), '') AS paperSourceUrl` : ""} FROM cloud_documents ${where} ORDER BY ${sort} LIMIT ? OFFSET ?`,
   ).bind(...(query ? [contextTerms, contextTerms] : []), ...values, window?.limit ?? 30, window?.offset ?? (page - 1) * 30).all<DocumentSummaryRow & { markdown?: string; sourceNote?: string; paperSourceUrl?: string }>();
   const items = await Promise.all(rows.results.map(async (row) => {
-    const item = summary(row);
+    const item = documentSummary(row);
     if (!query) return item;
     const sources = [row.paperSourceUrl || "", row.sourceUrl, row.finalUrl || "", row.canonicalUrl || "", row.author || "", row.sourceNote || ""];
     const texts = scope === "title" ? [row.title] : scope === "body" ? [row.markdown || ""] :
@@ -661,7 +667,7 @@ export async function getDocument(db: D1Database, id: string) {
      FROM cloud_documents WHERE id = ?`,
   )
     .bind(id).first<DocumentRow>();
-  return row ? { ...summary(row), publishedAt: row.publishedAt, markdown: row.markdown, captureMode: null, sourceNote: row.sourceNote } : null;
+  return row ? { ...documentSummary(row), publishedAt: row.publishedAt, markdown: row.markdown, captureMode: null, sourceNote: row.sourceNote } : null;
 }
 
 export async function createArticle(db: D1Database, title: string) {

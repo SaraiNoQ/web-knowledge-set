@@ -1,4 +1,4 @@
-import { Zip, ZipPassThrough, unzipSync } from "fflate";
+import { Zip, ZipPassThrough, Unzip, UnzipInflate, unzipSync, type UnzipFile } from "fflate";
 
 import { CloudHttpError, MAX_CLOUD_ROW_TEXT_BYTES, type D1Database, type D1Statement } from "./extension";
 import { validateStoredLlmSettings } from "./ai";
@@ -325,6 +325,15 @@ async function requestBytes(request: Request, maxBytes = MAX_ARCHIVE_BYTES) {
 
 async function snapshot(db: D1Database, images: R2Bucket): Promise<Archive> {
   if (!db.batch) throw new CloudHttpError(503, "CLOUD_BATCH_UNAVAILABLE", "D1 batch API is unavailable");
+  // Reject an oversized library before loading any Markdown or derived text.
+  // This is only a fast rejection: retain the snapshot's authoritative check
+  // below because concurrent writes can occur after this count.
+  const count = await db.prepare(`SELECT
+    (SELECT COUNT(*) FROM cloud_folders) + (SELECT COUNT(*) FROM cloud_documents) +
+    (SELECT COUNT(*) FROM cloud_derived_results) AS count`).first<{ count: number }>();
+  if ((count?.count ?? 0) > MAX_ARCHIVE_RECORDS) {
+    throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds 32 records");
+  }
   const [folders, documents, derived, settings] = await db.batch([
     db.prepare("SELECT * FROM cloud_folders ORDER BY created_at"),
     db.prepare("SELECT id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note, revision, created_at, updated_at, folder_id, deleted_at, favorite FROM cloud_documents ORDER BY created_at"),
@@ -532,13 +541,62 @@ function streamArchiveZip(archive: Archive, images: R2Bucket): ReadableStream<Ui
 
 /** Parse an uploaded `.zhiye-cloud-backup` ZIP container into its manifest and asset bytes. */
 function parseCloudZip(bytes: Uint8Array): { archive: Archive; assetBytes: Map<string, Uint8Array>; paperBytes: Map<string, Uint8Array> } {
-  let unpacked: Record<string, Uint8Array>;
-  try { unpacked = unzipSync(bytes); }
-  catch { throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup ZIP is invalid"); }
+  const unpacked: Record<string, Uint8Array> = Object.create(null);
+  const entries = new Set<string>();
+  const declaredSizes = new Map<string, number>();
+  const active = new Set<UnzipFile>();
   let total = 0;
-  for (const value of Object.values(unpacked)) {
-    total += value.byteLength;
-    if (total > MAX_CLOUD_ZIP_UNPACKED_BYTES) throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup unpacked data exceeds the archive budget");
+  const tooLarge = () => new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup unpacked data exceeds the archive budget");
+  const unzip = new Unzip((file) => {
+    if (!declaredSizes.has(file.name)) throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup ZIP has an unlisted entry");
+    if (entries.has(file.name)) throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup ZIP has duplicate entries");
+    entries.add(file.name);
+    const limit = file.name === "manifest.json" ? MAX_ARCHIVE_BYTES : MAX_CLOUD_ZIP_UNPACKED_BYTES;
+    if (file.originalSize !== undefined && (file.originalSize > limit || file.originalSize > MAX_CLOUD_ZIP_UNPACKED_BYTES - total)) throw tooLarge();
+    active.add(file);
+    // The central directory was budget-checked without inflating. Write into
+    // that bounded allocation directly instead of retaining chunks plus a
+    // second full-size concatenation buffer.
+    const value = new Uint8Array(declaredSizes.get(file.name)!);
+    let size = 0;
+    file.ondata = (error, chunk, final) => {
+      if (error) throw error;
+      size += chunk.byteLength;
+      total += chunk.byteLength;
+      if (size > limit || total > MAX_CLOUD_ZIP_UNPACKED_BYTES) throw tooLarge();
+      if (size > value.byteLength) throw new Error("ZIP entry exceeds its declared size");
+      value.set(chunk, size - chunk.byteLength);
+      if (final) {
+        if (size !== value.byteLength) throw new Error("ZIP entry size mismatch");
+        unpacked[file.name] = value;
+        active.delete(file);
+      }
+    };
+    file.start();
+  });
+  unzip.register(UnzipInflate);
+  try {
+    // Read only the central directory first. A false filter skips every
+    // extraction/allocation in unzipSync, including declared oversized files.
+    let declaredTotal = 0;
+    unzipSync(bytes, { filter: (file) => {
+      if (declaredSizes.has(file.name)) throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup ZIP has duplicate entries");
+      const limit = file.name === "manifest.json" ? MAX_ARCHIVE_BYTES : MAX_CLOUD_ZIP_UNPACKED_BYTES;
+      declaredTotal += file.originalSize;
+      if (file.originalSize > limit || declaredTotal > MAX_CLOUD_ZIP_UNPACKED_BYTES) throw tooLarge();
+      declaredSizes.set(file.name, file.originalSize);
+      return false;
+    } });
+    // Small compressed input slices bound inflation between budget checks,
+    // including streaming ZIP entries whose originalSize is not declared.
+    for (let offset = 0; offset < bytes.byteLength; offset += 1024) {
+      unzip.push(bytes.subarray(offset, offset + 1024), offset + 1024 >= bytes.byteLength);
+    }
+    if (active.size || entries.size !== declaredSizes.size) throw new Error("incomplete ZIP entry");
+  } catch (error) {
+    for (const file of active) file.terminate();
+    if (error instanceof CloudHttpError) throw error;
+    throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup ZIP is invalid");
   }
   const manifest = unpacked["manifest.json"];
   if (!manifest) throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup ZIP is missing its manifest");

@@ -723,6 +723,7 @@ test("opens one keyboard-accessible help and about dialog in normal and recovery
   await page.keyboard.press("Escape");
 
   await page.route("**/api/settings/onboarding", (route) => route.fulfill({ status: 503, contentType: "application/json", body: '{"error":{"code":"DATA_UNAVAILABLE","message":"recovery"}}' }));
+  await page.route("**/api/startup-status", (route) => route.fulfill({ json: { mode: "recovery", maintenance: false } }));
   await page.route("**/api/data-safety", async (route) => {
     const response = await route.fetch();
     const body = await response.json() as Record<string, unknown>;
@@ -1608,7 +1609,7 @@ test("imports, restores history, trashes, restores, searches, exports, and block
   await expect(page.getByLabel("选择 人工整理标题")).toBeChecked();
   await chooseUiOption(page, "批量操作", "取消归档");
   await page.getByRole("button", { name: "执行操作", exact: true }).click();
-  await expect(page.getByText("已处理当前页选中的 1 张织片。")).toBeVisible();
+  await expect(page.getByText("已处理全部已选的 1 张织片。")).toBeVisible();
   await page.locator("#library-panel").getByRole("button", { name: "人工整理标题", exact: true }).click();
   await expect(page.getByRole("region", { name: "文档工作台" }).getByRole("button", { name: "归档", exact: true })).toBeVisible();
 

@@ -163,19 +163,6 @@ const startup = await runStartup<StartupValue, VerifiedBackup>({
   verifyPreMigrationBackup: (backup) => verifyBackup(backup.path),
   applyMigrations: (path) => migrateDatabase(path),
   open: (path) => ({ database: openDatabase(path), recoveryError: null }),
-  async afterOpen(value) {
-    if (!value.database) return;
-    try {
-      await reconcileBackupRecords(value.database, backupRoot);
-    } catch (error) {
-      diagnostics.log({ level: "error", event: "backup_reconciliation_failed", code: diagnosticCode(error) });
-    }
-    try {
-      await ensureDailyAutomaticBackup(value.database, dataDir, backupRoot);
-    } catch (error) {
-      diagnostics.log({ level: "error", event: "automatic_backup_failed", code: diagnosticCode(error) });
-    }
-  },
   closeOnError: (value) => value.database?.close(),
   recoverOnError: (error) => ({ database: null, recoveryError: error }),
 });
@@ -194,6 +181,30 @@ const app = createApp({
   diagnostics,
   onDesktopCloseReady: desktop ? (attemptId) => console.log(`ZHIYE_CLOSE_READY ${attemptId}`) : undefined,
 });
+let closing = false;
+let releaseStartupMaintenance!: () => void;
+const serviceListening = new Promise<void>((resolveListening) => {
+  releaseStartupMaintenance = resolveListening;
+});
+// Reserve maintenance before any HTTP request can observe a ready database. The
+// expensive work waits for listen/READY so the desktop startup watchdog can stop.
+const startupMaintenance = app.startStartupMaintenance(async (database) => {
+  await serviceListening;
+  if (closing) return;
+  try {
+    await reconcileBackupRecords(database, backupRoot);
+  } catch (error) {
+    diagnostics.log({ level: "error", event: "backup_reconciliation_failed", code: diagnosticCode(error) });
+  }
+  if (closing) return;
+  try {
+    await ensureDailyAutomaticBackup(database, dataDir, backupRoot);
+  } catch (error) {
+    diagnostics.log({ level: "error", event: "automatic_backup_failed", code: diagnosticCode(error) });
+  }
+}).catch((error: unknown) => {
+  diagnostics.log({ level: "error", event: "automatic_backup_failed", code: diagnosticCode(error) });
+});
 const vite = dev
   ? await (await import("vite")).createServer({ server: { middlewareMode: true }, appType: "spa" })
   : null;
@@ -206,15 +217,17 @@ const server = createServer((request, response) => {
   }
 });
 
-let closing = false;
 const desktopInput = desktop ? createInterface({ input: process.stdin }) : null;
 async function close(exitCode = 0) {
   if (closing) return;
   closing = true;
+  app.beginShutdown();
+  releaseStartupMaintenance();
   diagnostics.log({ level: "info", event: "service_stopping", count: exitCode });
   await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
   await vite?.close();
   await app.close();
+  await startupMaintenance;
   desktopInput?.close();
   releaseLock();
   process.exitCode = exitCode;
@@ -240,4 +253,5 @@ server.listen(requestedPort, "127.0.0.1", () => {
     : `http://127.0.0.1:${address.port}/launch?token=${encodeURIComponent(app.bootstrapToken)}`;
   diagnostics.log({ level: "info", event: "service_ready", mode: desktop ? "desktop" : "web" });
   console.log(`ZHIYE_READY ${launchUrl}`);
+  releaseStartupMaintenance();
 });

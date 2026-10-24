@@ -26,6 +26,7 @@ import type {
   PaperBlock,
   RecentFilter,
   StartDerivedTaskInput,
+  StartupStatus,
   TranslationLanguage,
 } from "../shared/types.js";
 import { TRANSLATION_LANGUAGES } from "../shared/types.js";
@@ -1272,9 +1273,12 @@ function serveStatic(request: IncomingMessage, response: ServerResponse, pathnam
   const safe = requested === root || requested.startsWith(`${root}${sep}`);
   let file = safe && existsSync(requested) && statSync(requested).isFile() ? requested : join(root, "index.html");
   if (!file.startsWith(`${root}${sep}`) || !existsSync(file) || !statSync(file).isFile()) return false;
+  // Only build-generated, content-addressed assets may outlive a page load.
+  // HTML (including SPA fallbacks) and non-versioned files must remain fresh.
+  const immutableAsset = file === requested && /^\/assets\/[^/]+-[a-zA-Z0-9_-]{8,}\.(?:js|mjs|css|woff2?|ttf|svg|png|webp)$/u.test(decoded);
   response.writeHead(200, {
     "Content-Type": contentTypes[extname(file).toLowerCase()] ?? "application/octet-stream",
-    "Cache-Control": "no-store",
+    "Cache-Control": immutableAsset ? "private, max-age=31536000, immutable" : "no-store",
     ...securityHeaders(),
   });
   if (request.method === "HEAD") response.end();
@@ -1615,6 +1619,12 @@ export function createApp(options: AppOptions) {
         }
         response.writeHead(204, { "Cache-Control": "no-store", ...securityHeaders() });
         response.end();
+        return;
+      }
+
+      if (pathname === "/api/startup-status" && request.method === "GET") {
+        const startupStatus: StartupStatus = { mode: db ? "ready" : "recovery", maintenance: Boolean(maintenanceKind) };
+        sendJson(response, 200, startupStatus);
         return;
       }
 
@@ -3248,6 +3258,8 @@ export function createApp(options: AppOptions) {
   };
 
   let closed = false;
+  let shutdownRequested = false;
+  let startupMaintenanceStarted = false;
   return {
     handler,
     get db() {
@@ -3255,9 +3267,31 @@ export function createApp(options: AppOptions) {
       return db;
     },
     bootstrapToken: auth.bootstrapToken,
+    async startStartupMaintenance(operation: (database: KnowledgeDatabase) => Promise<void>) {
+      if (closed || shutdownRequested || startupMaintenanceStarted || !db) return;
+      startupMaintenanceStarted = true;
+      const database = db;
+      // Take the same lock as manual maintenance before the server accepts requests.
+      // Pausing synchronously also prevents the queued capture worker from starting.
+      const capturePaused = worker.pause();
+      try {
+        await runMaintenance("startup", async () => {
+          await capturePaused;
+          await operation(database);
+        });
+      } finally {
+        if (!closed && !shutdownRequested) worker.resume();
+      }
+    },
+    beginShutdown() {
+      // HTTP requests must drain before SQLite closes, but maintenance must not
+      // start a fresh capture while the server is already shutting down.
+      shutdownRequested = true;
+    },
     async close() {
       if (closed) return;
       closed = true;
+      shutdownRequested = true;
       await maintenanceDone;
       await derivedTasks.stop();
       await paperTasks.pause();

@@ -679,6 +679,12 @@ export interface DataSafetyHealth {
   recentBackup: BackupRecord | null;
 }
 
+/** Lightweight startup gate; does not run database or filesystem diagnostics. */
+export interface StartupStatus {
+  mode: "ready" | "recovery";
+  maintenance: boolean;
+}
+
 export interface DataSafetyStatus {
   mode: "ready" | "recovery";
   maintenance: boolean;
