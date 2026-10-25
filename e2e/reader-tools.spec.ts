@@ -93,19 +93,27 @@ for (const source of ["preview", "editor"] as const) test(`reader selection surv
   // A changed native DOM range outside a new reading gesture must not replace the captured text.
   await page.locator(".markdown-preview p").nth(1).evaluate((element) => { const range = document.createRange(); range.selectNodeContents(element); getSelection()!.removeAllRanges(); getSelection()!.addRange(range); document.querySelector(".reader-tool-float h2")!.dispatchEvent(new KeyboardEvent("keyup", { key: "Alt", bubbles: true })); });
   await expect(floating.getByLabel("待翻译选区")).toHaveText(quote);
+  let tool = floating;
+  if (source === "preview") {
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "展开侧栏", exact: true }).click();
+    tool = page.getByRole("complementary", { name: "右侧功能区" });
+    await tool.getByRole("button", { name: "划词翻译", exact: true }).click();
+    await expect(tool.getByLabel("待翻译选区")).toHaveText(quote);
+  }
   let sent = "", release = () => {};
   const held = new Promise<void>((resolve) => { release = resolve; });
   await page.route("**/api/reader-tools/documents/*/translate", async (route) => { sent = route.request().postDataJSON().text; await held; await route.fulfill({ contentType: "application/x-ndjson", body: '{"type":"delta","text":"kept translation"}\n{"type":"done"}\n' }); });
   try {
-    await floating.getByRole("button", { name: "翻译选区", exact: true }).click();
+    await tool.getByRole("button", { name: "翻译选区", exact: true }).click();
     await expect.poll(() => sent).toBe(quote);
     const top = await scroll.evaluate((element) => element.scrollTop);
     await scroll.hover(); await page.mouse.wheel(0, 700);
     await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(top);
-    await expect(floating.getByLabel("待翻译选区")).toHaveText(quote);
+    await expect(tool.getByLabel("待翻译选区")).toHaveText(quote);
   } finally { release(); }
-  await expect(floating.getByLabel("选区译文")).toHaveText("kept translation");
-  await expect(floating.getByRole("button", { name: "保存译文摘录" })).toBeEnabled();
+  await expect(tool.getByLabel("选区译文")).toHaveText("kept translation");
+  await expect(tool.getByRole("button", { name: "保存译文摘录" })).toBeEnabled();
 });
 
 test("reader tool can be enabled and disabled independently and resets across documents", async ({ page, request }) => {
