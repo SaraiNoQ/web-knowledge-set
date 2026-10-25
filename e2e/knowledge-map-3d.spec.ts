@@ -56,7 +56,7 @@ test.beforeEach(async ({ page }) => {
       if (type === "webgl2" && result && !stats.contexts.includes(result)) stats.contexts.push(result);
       return result;
     } as typeof context;
-    const isMap = (gl: WebGL2RenderingContext) => gl.canvas instanceof HTMLCanvasElement && gl.canvas.closest(".map-3d");
+    const isMap = (gl: WebGL2RenderingContext) => gl.canvas instanceof HTMLCanvasElement && gl.canvas.isConnected && gl.canvas.closest(".map-3d");
     const clear = WebGL2RenderingContext.prototype.clear;
     WebGL2RenderingContext.prototype.clear = function (...args) {
       if (isMap(this)) { stats.frames += 1; stats.drawCalls = 0; stats.instances = 0; if (stats.measuring) stats.times.push(performance.now()); }

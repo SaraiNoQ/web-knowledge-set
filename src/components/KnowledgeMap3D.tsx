@@ -170,6 +170,7 @@ export default function KnowledgeMap3D(props: Props) {
         const node = instance.node;
         const title = node.type === "folder" ? `${node.name} · ${node.count}` : node.title || "未命名资料";
         const label = document.createElement("span");
+        label.hidden = true;
         label.textContent = title.length > 28 ? title.slice(0, 27) + "…" : title;
         labelLayer.append(label);
         nodeLabels.set(id, label);
