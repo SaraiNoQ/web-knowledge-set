@@ -120,6 +120,8 @@ for (const source of ["preview", "editor"] as const) test(`reader selection surv
   await expect(tool.getByRole("button", { name: "保存译文摘录" })).toBeEnabled();
   if (source === "preview") {
     await paragraph.scrollIntoViewIfNeeded();
+    // Deliver the programmatic scroll before starting a fresh selection gesture.
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     const left = await paragraph.evaluate((element) => { const range = document.createRange(); range.selectNodeContents(element); getSelection()!.removeAllRanges(); getSelection()!.addRange(range); element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); return range.getBoundingClientRect().left; });
     const ribbon = page.getByRole("toolbar", { name: "选区操作" }); await expect(ribbon).toBeVisible();
     await expect.poll(async () => Math.abs((await ribbon.boundingBox())!.x - Math.max(8, Math.min(left, 1440 - 230)))).toBeLessThan(1);
