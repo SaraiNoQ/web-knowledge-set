@@ -65,11 +65,11 @@ function TranslationView({ api, selection, active = true }: ReaderToolViewProps)
     api.storage.set("glossary", next); refresh(); setGlossaryError("");
   };
   return <div className="selection-translation">
-    <label>目标语言<Select value={language} disabled={Boolean(settingsError)} onChange={(event) => saveSetting("language", event.target.value as TranslationLanguage)}>{Object.entries(TRANSLATION_LANGUAGES).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</Select></label>
+    <div className="selection-translation-controls"><label>目标语言<Select aria-label="目标语言" value={language} disabled={Boolean(settingsError)} onChange={(event) => saveSetting("language", event.target.value as TranslationLanguage)}>{Object.entries(TRANSLATION_LANGUAGES).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</Select></label>
+    <div className="reader-tool-actions"><Button disabled={!selection || busy || Boolean(settingsError)} onClick={() => void translate()}>翻译选区</Button>{busy && <Button onClick={() => { request.current?.abort(); generation.current += 1; setBusy(false); setComplete(false); }}>取消</Button>}</div></div>
     <label className="translation-automatic"><input type="checkbox" checked={automatic} disabled={Boolean(settingsError)} onChange={(event) => saveSetting("automatic", event.target.checked)} />稳定选区后自动翻译</label>
     <p className="translation-hint">开启后，仅在工具打开时把稳定选区发给已配置的模型。</p>
     {selection ? <blockquote aria-label="待翻译选区">{selection.anchor.quote}</blockquote> : <p>先在正文、编辑器或论文中选择文字。</p>}
-    <div className="reader-tool-actions"><Button disabled={!selection || busy || Boolean(settingsError)} onClick={() => void translate()}>翻译选区</Button>{busy && <Button onClick={() => { request.current?.abort(); generation.current += 1; setBusy(false); setComplete(false); }}>取消</Button>}</div>
     {busy && <p role="status">正在翻译…</p>}
     {output && <pre className="selection-translation-output" aria-label="选区译文">{output}</pre>}
     {(error || settingsError) && <p className="error-text" role="alert">{settingsError || error}</p>}

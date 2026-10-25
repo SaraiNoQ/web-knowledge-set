@@ -14,8 +14,7 @@ export function ReaderToolSettings() {
   const state = useSyncExternalStore(readerTools.subscribe, readerTools.getSnapshot);
   const toast = useToast();
   return <section className="reader-tool-settings" aria-label="阅读工具设置"><h2>阅读工具</h2>{builtinReaderTools.map(({ manifest }) => <div key={manifest.id}>
-    <label><input type="checkbox" checked={state.enabled.includes(manifest.id)} onChange={(event) => { try { readerTools.enable(manifest.id, event.target.checked); } catch { toast.error("设置已生效，但未能保存。刷新后可能恢复原设置。"); } }} />{manifest.name}</label>
-    <p>选择文字后翻译，也可按 Alt+T。仅翻译选中文字。</p>
+    <label className="ai-enable"><input type="checkbox" aria-label={manifest.name} aria-describedby={`reader-tool-description-${manifest.id}`} checked={state.enabled.includes(manifest.id)} onChange={(event) => { try { readerTools.enable(manifest.id, event.target.checked); } catch { toast.error("设置已生效，但未能保存。刷新后可能恢复原设置。"); } }} /><span><strong>{manifest.name}</strong><small id={`reader-tool-description-${manifest.id}`}>选择文字后翻译，也可按 Alt+T。仅翻译选中文字。</small></span></label>
     {state.errors[manifest.id] && <p role="status">{state.errors[manifest.id]} <Button onClick={() => readerTools.retry(manifest.id)}>重试</Button></p>}
   </div>)}</section>;
 }

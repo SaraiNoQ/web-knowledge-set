@@ -25,6 +25,10 @@ for (const narrow of [false, true]) test(`reader tools ${narrow ? "mobile" : "de
   await expect(ribbon).toBeVisible(); await ribbon.getByRole("button", { name: "翻译", exact: true }).click();
   const floating = page.getByRole("dialog", { name: "划词翻译", exact: true });
   await expect(floating).toBeVisible(); await expect(floating.getByLabel("待翻译选区")).toHaveText("selected words");
+  const languageBounds = (await floating.getByRole("combobox", { name: "目标语言", exact: true }).boundingBox())!;
+  const translateBounds = (await floating.getByRole("button", { name: "翻译选区", exact: true }).boundingBox())!;
+  expect(translateBounds.x).toBeGreaterThanOrEqual(languageBounds.x + languageBounds.width);
+  expect(Math.abs(translateBounds.y + translateBounds.height - languageBounds.y - languageBounds.height)).toBeLessThan(2);
   expect(translations).toBe(0);
   await floating.getByRole("button", { name: "翻译选区", exact: true }).click();
   await expect.poll(() => translations).toBe(1);
@@ -38,7 +42,14 @@ for (const narrow of [false, true]) test(`reader tools ${narrow ? "mobile" : "de
   await expect.poll(async () => (await (await request.get(`/api/reader-tools/documents/${first.document.id}/data`)).json()).annotations.length).toBe(1);
   await page.keyboard.press("Escape"); await expect(floating).toBeHidden();
   if (!narrow) {
-    const editor = page.getByLabel("Markdown 编辑器"); await editor.press("Control+Home"); await editor.press("Control+Shift+End"); await expect(ribbon).toBeVisible(); await editor.press("ArrowRight"); await expect(ribbon).toBeHidden();
+    const editor = page.getByLabel("Markdown 编辑器");
+    await editor.press("Control+Home"); await editor.press("Control+Shift+End");
+    await expect(ribbon).toBeVisible();
+    // Wait for CodeMirror's measured selection, rather than the previous preview ribbon.
+    await page.keyboard.press("Alt+t");
+    await expect(floating.getByLabel("待翻译选区")).toHaveText(markdown);
+    await page.keyboard.press("Escape");
+    await editor.press("ArrowRight"); await expect(ribbon).toBeHidden();
   }
   if (await page.getByRole("button", { name: "展开侧栏", exact: true }).isVisible()) await page.getByRole("button", { name: "展开侧栏", exact: true }).click();
   const sidebar = page.getByRole("complementary", { name: "右侧功能区" });
@@ -116,6 +127,8 @@ for (const source of ["preview", "editor"] as const) test(`reader selection surv
   await expect(tool.getByRole("button", { name: "保存译文摘录" })).toBeEnabled();
   if (source === "preview") {
     await paragraph.scrollIntoViewIfNeeded();
+    // Deliver the programmatic scroll before starting a fresh selection gesture.
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     const left = await paragraph.evaluate((element) => { const range = document.createRange(); range.selectNodeContents(element); getSelection()!.removeAllRanges(); getSelection()!.addRange(range); element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); return range.getBoundingClientRect().left; });
     const ribbon = page.getByRole("toolbar", { name: "选区操作" }); await expect(ribbon).toBeVisible();
     await expect.poll(async () => Math.abs((await ribbon.boundingBox())!.x - Math.max(8, Math.min(left, 1440 - 230)))).toBeLessThan(1);
@@ -133,6 +146,8 @@ test("reader tool can be enabled and disabled independently and resets across do
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("button", { name: "阅读工具", exact: true }).click();
   const enabled = page.getByRole("checkbox", { name: "划词翻译" }); await enabled.check();
+  await expect(enabled).toHaveCSS("accent-color", "rgb(189, 65, 44)");
+  await expect(page.locator(".reader-tool-settings .ai-enable strong")).toHaveText("划词翻译");
   await page.getByRole("button", { name: "返回列表", exact: true }).click();
   await page.keyboard.press("Alt+t"); await expect(page.getByRole("dialog", { name: "划词翻译", exact: true })).toBeVisible();
   await expect(page.getByRole("dialog", { name: "划词翻译", exact: true }).getByRole("heading", { name: "划词翻译" })).toBeFocused();
