@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { MarkdownStyleSelect } from "./MarkdownStyleSelect";
 import { AiSettings } from "./AiSettings";
 import { Button, Select } from "./ui/Controls";
+import { ReaderToolSettings } from "../reader-tools/ReaderSidebar";
 import { DEFAULT_READING_MARGIN, normalizeReadingMargin, saveReadingMargin, DEFAULT_READING_TEXT, READING_FONTS, READING_STYLES, normalizeReadingText, saveReadingText, type ReadingTextSettings } from "../reading-preferences";
 
 export function WorkspaceSettings({ cloud, semanticRefresh, onClose, readingMargin, onReadingMarginChange, readingText, onReadingTextChange }: {
@@ -42,6 +43,7 @@ export function WorkspaceSettings({ cloud, semanticRefresh, onClose, readingMarg
       <nav className="settings-navigation" aria-label="设置分类">
         <Button type="button" aria-current={section === "reading" ? "page" : undefined} onClick={() => setSection("reading")}>阅读外观</Button>
         <Button type="button" aria-current={section === "ai" ? "page" : undefined} onClick={() => setSection("ai")}>智能设置</Button>
+        <Button type="button" aria-current={section === "tools" ? "page" : undefined} onClick={() => setSection("tools")}>阅读工具</Button>
       </nav>
       <div className="settings-content">
         <section hidden={section !== "reading"} aria-labelledby="reading-settings-title">
@@ -60,6 +62,7 @@ export function WorkspaceSettings({ cloud, semanticRefresh, onClose, readingMarg
           </div>
         </section>
         <div hidden={section !== "ai"}><AiSettings embedded cloud={cloud} semanticRefresh={semanticRefresh} onClose={onClose} /></div>
+        <div hidden={section !== "tools"}><ReaderToolSettings /></div>
       </div>
     </div>
   </main>;

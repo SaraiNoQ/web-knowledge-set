@@ -159,7 +159,7 @@ export default function KnowledgeMap3D(props: Props) {
       oldHighlights = highlights;
       for (const line of lines) {
         const material = line.material as LineBasicMaterial;
-        material.color.set(line.userData.semantic ? (latest.current.dark ? "#bba2d5" : "#675d85") : (latest.current.dark ? "#c5bdae" : "#6d6758"));
+        material.color.set(line.userData.type === "manual" ? (latest.current.dark ? "#f08a72" : "#b64b3b") : line.userData.semantic ? (latest.current.dark ? "#bba2d5" : "#675d85") : (latest.current.dark ? "#c5bdae" : "#6d6758"));
       }
       nodeLabels.clear();
       labelLayer.replaceChildren();
@@ -223,8 +223,9 @@ export default function KnowledgeMap3D(props: Props) {
         batches.push(mesh);
         scene.add(mesh);
       }
-      for (const semantic of [false, true]) {
-        const edges = data.links.filter((edge) => (edge.type === "semantic") === semantic);
+      for (const type of ["folder", "semantic", "manual"] as const) {
+        const semantic = type === "semantic";
+        const edges = data.links.filter((edge) => edge.type === type);
         const positions: number[] = [];
         const ends: Array<{ id: string; vertex: number }> = [];
         for (const edge of edges) {
@@ -239,6 +240,7 @@ export default function KnowledgeMap3D(props: Props) {
         const geometry = new BufferGeometry().setAttribute("position", attribute);
         const line = new LineSegments(geometry, semantic ? new LineDashedMaterial({ dashSize: 3, gapSize: 2, transparent: true, opacity: 0.6 }) : new LineBasicMaterial({ transparent: true, opacity: 0.4 }));
         line.userData.semantic = semantic;
+        line.userData.type = type;
         if (semantic) line.computeLineDistances();
         line.frustumCulled = false;
         for (const end of ends) { const list = edgeEnds.get(end.id) ?? []; list.push({ attribute, vertex: end.vertex }); edgeEnds.set(end.id, list); }

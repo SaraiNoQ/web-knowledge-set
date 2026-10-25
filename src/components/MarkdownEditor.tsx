@@ -15,6 +15,8 @@ import {
 } from "@codemirror/view";
 import { INLINE_FORMATS, inlineFormat, inlineFormatActive, blockFormat, insertFormat, type BlockFormat, type InsertFormat } from "../markdown-commands";
 import { IconButton, Select } from "./ui/Controls";
+import { sourceAnchorRange, type SourceAnchor } from "../../shared/reader-tools";
+import { publishEditorSelection, clearEditorSelection } from "../reader-tools/selection";
 
 const showFormats = StateEffect.define<boolean>();
 const formatsVisible = StateField.define<boolean>({
@@ -103,7 +105,7 @@ const paperTheme = EditorView.theme({
   ".cm-focused": { outline: "none" },
 });
 
-export interface MarkdownEditorHandle { jumpTo: (offset: number) => void }
+export interface MarkdownEditorHandle { jumpTo: (offset: number) => void; locateAnchor: (anchor: SourceAnchor) => boolean }
 
 export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(function MarkdownEditor({ value, onChange, readOnly = false, toolbarHost }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -114,6 +116,13 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
     const position = Math.max(0, Math.min(offset, view.state.doc.length));
     view.dispatch({ selection: { anchor: position }, effects: EditorView.scrollIntoView(position, { y: "start" }) });
     view.focus();
+  }, locateAnchor(anchor) {
+    const view = viewRef.current;
+    if (!view) return false;
+    const range = sourceAnchorRange(view.state.doc.toString(), anchor);
+    if (!range) return false;
+    view.dispatch({ selection: { anchor: range.from, head: range.to }, effects: EditorView.scrollIntoView(range.from, { y: "center" }) });
+    view.focus(); return true;
   } }), []);
   const onChangeRef = useRef(onChange);
   const readOnlyCompartment = useRef(new Compartment());
@@ -161,6 +170,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
           EditorView.updateListener.of((update) => {
             if (update.docChanged) onChangeRef.current(update.state.doc.toString());
             if (update.docChanged || update.selectionSet) {
+              const selection = update.state.selection.main;
+              if (selection.empty) clearEditorSelection();
+              if (!selection.empty) update.view.requestMeasure({
+                read: (view) => view.coordsAtPos(view.state.selection.main.to),
+                write: (bounds, view) => { const selected = view.state.selection.main; if (!selected.empty && bounds) publishEditorSelection(view.state.doc.toString(), selected.from, selected.to, { left: bounds.left, top: bounds.top, width: bounds.right - bounds.left, height: bounds.bottom - bounds.top }); },
+              });
               const active = INLINE_FORMATS.filter((item) => inlineFormatActive(update.state, item.id)).map((item) => item.id);
               const canUndo = undoDepth(update.state) > 0, canRedo = redoDepth(update.state) > 0;
               setTools((previous) => previous.undo === canUndo && previous.redo === canRedo && previous.active.join() === active.join() ? previous : { active, undo: canUndo, redo: canRedo });

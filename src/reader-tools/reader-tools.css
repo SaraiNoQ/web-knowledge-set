@@ -1,0 +1,34 @@
+.reader-overlay-host { position: fixed; inset: 0; z-index: 28; pointer-events: none; }
+.reader-tool-float, .reader-selection-actions { pointer-events: auto; background: var(--paper); box-shadow: 0 8px 28px rgb(39 35 28 / .22); }
+.reader-tool-float { position: absolute; width: min(390px, calc(100vw - 16px)); max-height: calc(100dvh - 32px); display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; }
+.reader-tool-float > header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; cursor: move; touch-action: none; border-bottom: 1px solid var(--line); }
+.reader-tool-float h2 { font: 500 15px/1.5 var(--font-sans); margin: 0; }
+.reader-tool-float-body { padding: 16px; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+.reader-selection-actions { position: absolute; display: flex; gap: 4px; padding: 4px; border-radius: 8px; }
+.reader-tool-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.reader-tool-actions .ui-button { font-size: 12px; }
+.reader-send-preview { max-height: 32dvh; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.selection-translation label, .reading-data-panel label { display: grid; gap: 6px; font-size: 12px; }
+.selection-translation blockquote, .reading-data-panel blockquote { margin: 14px 0; padding: 0 0 0 10px; border-left: 1px solid var(--line); color: var(--ink-soft); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow-y: auto; font-size: 13px; }
+.selection-translation-output, .reading-data-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 14px/1.8 var(--font-sans); }
+.selection-translation-output { max-height: 38dvh; overflow-y: auto; }
+.reader-sidebar-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 4px 12px; border-bottom: 1px solid var(--line); }
+.reader-sidebar-tabs .ui-button { padding: 4px 7px; font-size: 11px; }
+.reader-sidebar-tabs [aria-pressed=true] { color: var(--accent); background: var(--accent-soft); }
+.reader-sidebar-content { padding: 8px 6px; overflow-wrap: anywhere; }
+.reading-data-panel { font-size: 13px; }
+.reading-data-panel section + section { margin-top: 28px; }
+.reading-data-panel h3 { font: 500 14px/1.5 var(--font-sans); margin: 10px 0; }
+.document-tools .reading-data-panel li { display: block; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.reading-data-panel textarea { width: 100%; min-height: 72px; resize: vertical; padding: 8px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); font: inherit; }
+.reading-data-panel label { margin: 12px 0; }
+.reading-data-panel small { color: var(--ink-soft); }
+.reading-data-panel nav { display: flex; align-items: center; gap: 8px; margin-top: 18px; }
+.reader-tool-settings label { display: flex; align-items: center; gap: 8px; }
+.paper-reader-page-surface { position: relative; width: fit-content; }
+.paper-text-layer { position: absolute; inset: 0; overflow: clip; line-height: 1; text-align: initial; text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0; caret-color: CanvasText; z-index: 1; }
+.paper-text-layer :is(span, br) { position: absolute; white-space: pre; color: transparent; cursor: text; transform-origin: 0 0; }
+.paper-text-layer { --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size)); }
+.paper-text-layer > :not(.markedContent), .paper-text-layer .markedContent span:not(.markedContent) { z-index: 1; --font-height: 0; --scale-x: 1; --rotate: 0deg; font-size: calc(var(--text-scale-factor) * var(--font-height)); transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
+.paper-text-layer .markedContent { display: contents; }
+.paper-text-layer ::selection { background: var(--accent-soft, #e5c9b7); color: transparent; }

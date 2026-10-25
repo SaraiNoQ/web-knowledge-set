@@ -6,6 +6,7 @@ import type { StatementSync } from "node:sqlite";
 import { unzipSync } from "fflate";
 
 import { BackupError, createBackup, type VerifiedBackup } from "./backup.js";
+import { parseReadingSnapshot, insertAnnotationSql, annotationValues, insertConnectionSql, connectionValues, type ReadingSnapshot } from "../shared/reading-snapshot.js";
 import { CURRENT_SCHEMA_VERSION, KnowledgeDatabase, derivedTargetLanguage } from "./db.js";
 import type { BackupRecord, DerivedResultType } from "../shared/types.js";
 import { TRANSLATION_LANGUAGES } from "../shared/types.js";
@@ -89,7 +90,8 @@ interface CloudDerivedAsset {
 }
 
 interface CloudArchive {
-  version: 1 | 2 | 3 | 4 | 5;
+  version: 1 | 2 | 3 | 4 | 5 | 7;
+  readingData: ReadingSnapshot;
   createdAt: string;
   folders: CloudFolder[];
   documents: CloudDocument[];
@@ -145,10 +147,13 @@ function parseCloudArchive(bytes: Uint8Array): CloudArchive {
   }
   if (!record(value)) fail("INVALID_BACKUP_ARCHIVE", "Cloud backup must be an object");
   const version = value.version;
-  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5) {
+  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 7) {
     fail("UNSUPPORTED_FORMAT", "Unsupported cloud backup format version");
   }
   if (value.format !== FORMAT) fail("INVALID_BACKUP_ARCHIVE", "Cloud backup format is unknown");
+  if (version === 7 && ["papers", "paperExtractions", "paperPages", "paperFiles"].some((key) => !Array.isArray(value[key]) || value[key].length)) {
+    fail("UNSUPPORTED_FORMAT", "Cloud paper archives cannot yet be converted to desktop backups");
+  }
   if (!timestamp(value.createdAt)) fail("INVALID_BACKUP_ARCHIVE", "Cloud backup createdAt is invalid");
   if (!Array.isArray(value.documents) || !Array.isArray(value.derivedResults)) {
     fail("INVALID_BACKUP_ARCHIVE", "Cloud backup must contain documents and derivedResults");
@@ -264,7 +269,7 @@ function parseCloudArchive(bytes: Uint8Array): CloudArchive {
   }
 
   let assets: CloudDerivedAsset[] = [];
-  if (version === 5) {
+  if (version >= 5) {
     if (!Array.isArray(value.assets)) fail("INVALID_BACKUP_ARCHIVE", "Cloud backup assets are invalid");
     const seen = new Set<string>();
     assets = value.assets.map((entry, index) => {
@@ -278,8 +283,11 @@ function parseCloudArchive(bytes: Uint8Array): CloudArchive {
     });
   }
 
+  let readingData: ReadingSnapshot = { annotations: [], connections: [] };
+  if (version === 7) try { readingData = parseReadingSnapshot(value.readingData, documentIds); } catch { fail("INVALID_BACKUP_ARCHIVE", "Cloud backup reading data is invalid"); }
   return {
-    version: version as 1 | 2 | 3 | 4 | 5,
+    readingData,
+    version: version as CloudArchive["version"],
     createdAt: value.createdAt as string,
     folders: parsedFolders,
     documents: parsedDocuments,
@@ -360,6 +368,8 @@ function ingest(database: KnowledgeDatabase, archive: CloudArchive) {
       ingestDerivedResult(insertDerived, result);
     }
 
+    for (const row of archive.readingData.annotations) sql.prepare(insertAnnotationSql).run(...annotationValues(row));
+    for (const row of archive.readingData.connections) sql.prepare(insertConnectionSql).run(...connectionValues(row));
     if (archive.llmSettings) {
       sql.prepare(
         `INSERT INTO app_settings(key, value, revision, updated_at)

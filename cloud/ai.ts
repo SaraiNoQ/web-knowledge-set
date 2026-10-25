@@ -12,6 +12,8 @@ import type {
   TranslationLanguage,
 } from "../shared/types";
 import { CloudHttpError, getDocument, jsonObject, type D1Database } from "./extension";
+import { consumeCompletionStream, readableChunks, LlmStreamError } from "../shared/llm-stream";
+import { parseSelectionTranslation, ReaderInputError, selectionTranslationPrompt } from "../shared/reader-tools";
 
 const encoder = new TextEncoder();
 
@@ -72,6 +74,66 @@ interface TranslationSegment {
 interface LlmSettingsValue extends Omit<LlmSettings, "revision" | "apiKeyConfigured"> {}
 
 export interface CloudReply { status?: number; body: unknown }
+
+export async function translateReaderSelection(request: Request, db: D1Database, documentId: string, epoch: string) {
+  let input;
+  try { input = parseSelectionTranslation(await jsonObject(request, 32_768)); }
+  catch (cause) { if (cause instanceof ReaderInputError) throw new CloudHttpError(400, "INVALID_READER_TOOL_REQUEST", "Invalid selected text or language"); throw cause; }
+  const row = await settingsRow(db);
+  if (!row.value.enabled) throw new CloudHttpError(409, "LLM_DISABLED", "AI is disabled");
+  if (row.revision !== input.settingsRevision) throw new CloudHttpError(409, "LLM_SETTINGS_CONFLICT", "AI settings changed");
+  const selected = row.value.remote;
+  const endpointUrl = endpoint(selected.endpointUrl);
+  const modelName = model(selected.model);
+  const key = llmRequestKey(request);
+  const guard = async () => {
+    const state = await db.prepare(`SELECT
+      (SELECT revision FROM cloud_documents WHERE id=?) AS documentRevision,
+      (SELECT deleted_at FROM cloud_documents WHERE id=?) AS deletedAt,
+      (SELECT status FROM cloud_documents WHERE id=?) AS status,
+      (SELECT value FROM app_settings WHERE key='data_epoch') AS epoch,
+      (SELECT revision FROM app_settings WHERE key='llm_settings') AS settingsRevision`).bind(documentId, documentId, documentId)
+      .first<{ documentRevision: number | null; deletedAt: string | null; status: string | null; epoch: string; settingsRevision: number }>();
+    if (state?.epoch !== epoch) throw new CloudHttpError(409, "STALE_DATA_EPOCH", "Knowledge base changed");
+    if (state.deletedAt || state.status !== "ready" || state.documentRevision !== input.revision) throw new CloudHttpError(409, "REVISION_CONFLICT", "Document changed");
+    if (state.settingsRevision !== input.settingsRevision) throw new CloudHttpError(409, "LLM_SETTINGS_CONFLICT", "AI settings changed");
+  };
+  await guard();
+  const controller = new AbortController();
+  const signal = AbortSignal.any([controller.signal, request.signal, AbortSignal.timeout(60_000)]);
+  let closed = false;
+  const body = new ReadableStream<Uint8Array>({
+    async start(stream) {
+      const packet = (value: unknown) => { if (!closed) stream.enqueue(encoder.encode(JSON.stringify(value) + "\n")); };
+      try {
+        const response = await fetch(endpointUrl, { method: "POST", redirect: "manual", signal,
+          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "text/event-stream, application/json" },
+          body: JSON.stringify({ model: modelName, temperature: 0, stream: true, max_tokens: 4096,
+            ...(endpointUrl === "https://api.deepseek.com/chat/completions" ? { thinking: { type: "disabled" } } : {}),
+            messages: [{ role: "system", content: selectionTranslationPrompt(input.language) }, { role: "user", content: input.text }] }) });
+        if (!response.ok || response.status >= 300) throw new LlmStreamError(response.status === 429 ? "LLM_RATE_LIMITED" : "LLM_HTTP_ERROR");
+        if (response.headers.get("content-type")?.toLowerCase().startsWith("text/event-stream") && response.body) {
+          let checkedAt = 0;
+          // One snapshot query per bounded output batch, rather than per token.
+          await consumeCompletionStream(readableChunks(response.body), key, async (text) => { if (Date.now() - checkedAt >= 750) { await guard(); checkedAt = Date.now(); } signal.throwIfAborted(); packet({ type: "delta", text }); }, signal);
+        } else {
+          if (!response.headers.get("content-type")?.toLowerCase().startsWith("application/json")) throw new LlmStreamError("LLM_INVALID_RESPONSE");
+          const payload = JSON.parse(await limitedText(response)) as { choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }> };
+          const output = payload.choices?.[0]?.message?.content;
+          if (typeof output !== "string" || !output.trim() || output.length > 64_000 || output.includes(key) || payload.choices?.[0]?.finish_reason !== "stop") throw new LlmStreamError("LLM_INVALID_RESPONSE");
+          await guard(); signal.throwIfAborted();
+          packet({ type: "delta", text: output });
+        }
+        await guard();
+        signal.throwIfAborted();
+        packet({ type: "done" });
+      } catch (cause) { packet({ type: "error", code: cause instanceof LlmStreamError ? cause.code : cause instanceof CloudHttpError ? cause.code : "LLM_NETWORK_ERROR" }); }
+      finally { if (!closed) { closed = true; stream.close(); } controller.abort(); }
+    },
+    cancel() { closed = true; controller.abort(); },
+  });
+  return new Response(body, { headers: { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store", "X-Zhiye-Data-Epoch": epoch } });
+}
 
 function changes(result: { meta: { changes?: number } }) {
   return result.meta.changes ?? 0;

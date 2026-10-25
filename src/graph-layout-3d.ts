@@ -3,7 +3,7 @@ import { forceCenter, forceLink, forceManyBody, forceSimulation } from "d3-force
 
 export interface NetworkLayoutInput {
   nodes: Array<{ id: string; position?: [number, number, number] }>;
-  links: Array<{ source: string; target: string; type: "folder" | "semantic" }>;
+  links: Array<{ source: string; target: string; type: "folder" | "semantic" | "manual" }>;
 }
 
 export function layoutNetwork3D(input: NetworkLayoutInput) {
@@ -18,8 +18,8 @@ export function layoutNetwork3D(input: NetworkLayoutInput) {
   const links = input.links.map((edge) => ({ ...edge }));
   const simulation = forceSimulation(nodes, 3).stop()
     .force("link", forceLink(links).id((node) => node.id)
-      .distance((edge) => edge.type === "semantic" ? 40 : 110)
-      .strength((edge) => edge.type === "semantic" ? 0.4 : 0.045))
+      .distance((edge) => edge.type === "folder" ? 110 : 40)
+      .strength((edge) => edge.type === "folder" ? 0.045 : 0.4))
     .force("charge", forceManyBody().strength(-45))
     .force("center", forceCenter())
     .alphaDecay(0.045);

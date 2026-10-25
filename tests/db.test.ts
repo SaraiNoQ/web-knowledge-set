@@ -58,7 +58,7 @@ test("v14 recent filters persist in the local database", () => {
     sort: "updated",
   }];
   try {
-    assert.equal(CURRENT_SCHEMA_VERSION, 19);
+    assert.equal(CURRENT_SCHEMA_VERSION, 20);
     assert.deepEqual(fixture.db.getRecentFilters(), { filters: [], revision: 0 });
     assert.deepEqual(fixture.db.getOnboarding(), { completed: false, revision: 0 });
     assert.deepEqual(fixture.db.setOnboarding(true, 0), {
@@ -1745,6 +1745,8 @@ test("schema inspection is read-only and rejects future or incomplete histories"
     const raw = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));
     raw.exec(`
       PRAGMA foreign_keys = OFF;
+      DROP TABLE reading_annotations;
+      DROP TABLE document_connections;
       DROP TABLE semantic_chunks;
       DROP TABLE semantic_indexes;
       DROP INDEX documents_folder_updated;
@@ -1788,17 +1790,10 @@ test("schema inspection is read-only and rejects future or incomplete histories"
         UNIQUE(batch_id, item_index)
       );
       CREATE INDEX import_items_batch ON import_items(batch_id, item_index);
-      DELETE FROM schema_migrations WHERE version BETWEEN ${CURRENT_SCHEMA_VERSION - 5} AND ${CURRENT_SCHEMA_VERSION};
+      DELETE FROM schema_migrations WHERE version >= 14;
     `);
     raw.close();
-    assert.deepEqual(inspectDatabaseSchema(dataDir).pendingVersions, [
-      CURRENT_SCHEMA_VERSION - 5,
-      CURRENT_SCHEMA_VERSION - 4,
-      CURRENT_SCHEMA_VERSION - 3,
-      CURRENT_SCHEMA_VERSION - 2,
-      CURRENT_SCHEMA_VERSION - 1,
-      CURRENT_SCHEMA_VERSION,
-    ]);
+    assert.deepEqual(inspectDatabaseSchema(dataDir).pendingVersions, Array.from({ length: CURRENT_SCHEMA_VERSION - 13 }, (_, index) => index + 14));
     assert.equal(migrateDatabase(dataDir).status, "current");
 
     const future = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));

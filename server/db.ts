@@ -4,6 +4,8 @@ import { chmodSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readdi
 import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { escapeLike, paperPageTextSql, paperTextMatch, searchExcerptSql, searchMatches, searchTerms } from "../shared/search.js";
+import { READING_DATA_SCHEMA } from "../shared/reading-data.js";
+import { parseReadingSnapshot, insertAnnotationSql, annotationValues, insertConnectionSql, connectionValues } from "../shared/reading-snapshot.js";
 
 import type {
   AppearanceSettings,
@@ -674,6 +676,7 @@ const migrations = [
     PRIMARY KEY (document_id, chunk_index)
   );
   `,
+  READING_DATA_SCHEMA,
 ];
 
 export const CURRENT_SCHEMA_VERSION = migrations.length;
@@ -3276,8 +3279,41 @@ export class KnowledgeDatabase {
         .run(strategy, now(), id);
       const applied = this.sql.prepare("SELECT * FROM import_batches WHERE id = ?").get(id) as unknown as ImportBatchRow;
       const appliedRows = this.sql.prepare("SELECT * FROM import_items WHERE batch_id = ? ORDER BY item_index").all(id) as unknown as ImportItemRow[];
+      // Still inside transaction(this.sql): a reading-data failure rolls back documents and import status together.
+      this.importReadingData(appliedRows);
       return this.importApplyResult(applied, appliedRows);
     });
+  }
+
+  private importReadingData(rows: ImportItemRow[]) {
+    const entries = rows.flatMap((row) => {
+      const payload = JSON.parse(row.payload_json) as ImportPayload;
+      return payload.type === "markdown" && payload.readingData ? [{ row, data: payload.readingData }] : [];
+    });
+    if (!entries.length) return;
+    const snapshot = parseReadingSnapshot({ annotations: entries.flatMap(({ data }) => data.annotations), connections: entries.flatMap(({ data }) => data.connections) }, new Set(entries.map(({ data }) => data.documentId)));
+    const destinations = new Map(entries.filter(({ row }) => row.result_document_id && ["created", "updated", "skipped"].includes(row.result_status ?? "")).map(({ row, data }) => [data.documentId, row.result_document_id!]));
+    const changed = new Set(entries.filter(({ row }) => row.result_status === "created" || row.result_status === "updated").map(({ data }) => data.documentId));
+    const stableId = (...parts: string[]) => createHash("sha256").update(JSON.stringify(parts)).digest("hex");
+    for (const entry of snapshot.annotations) {
+      const documentId = destinations.get(entry.documentId);
+      if (!documentId || !changed.has(entry.documentId)) continue;
+      const doc = this.getDocument(documentId);
+      if (!doc || doc.deletedAt) throw new Error("Imported reading document is unavailable");
+      const existing = this.sql.prepare("SELECT document_id AS documentId FROM reading_annotations WHERE id=?").get(entry.id);
+      const id = !existing || existing.documentId === documentId ? entry.id : stableId(entry.id, documentId);
+      this.sql.prepare(insertAnnotationSql.replace("INSERT INTO", "INSERT OR IGNORE INTO")).run(...annotationValues({ ...entry, id, documentId, sourceRevision: doc.revision }));
+    }
+    for (const entry of snapshot.connections) {
+      const first = destinations.get(entry.sourceId), second = destinations.get(entry.targetId);
+      if (!changed.has(entry.sourceId) && !changed.has(entry.targetId)) continue;
+      if (!first || !second || first === second) throw new Error("关联资料导入失败或被合并，请修正冲突后重试此批次。");
+      const [sourceId, targetId] = [first, second].sort();
+      if ([sourceId, targetId].some((id) => { const doc = this.getDocument(id); return !doc || doc.deletedAt; })) throw new Error("关联资料已进入回收站，请重新预检后导入。");
+      const existing = this.sql.prepare("SELECT source_id AS sourceId, target_id AS targetId FROM document_connections WHERE id=?").get(entry.id);
+      const id = !existing || (existing.sourceId === sourceId && existing.targetId === targetId) ? entry.id : stableId(entry.id, sourceId, targetId);
+      this.sql.prepare(insertConnectionSql.replace("INSERT INTO", "INSERT OR IGNORE INTO")).run(...connectionValues({ ...entry, id, sourceId, targetId }));
+    }
   }
 
   private importApplyResult(batch: ImportBatchRow, rows: ImportItemRow[]): ImportApplyResult {

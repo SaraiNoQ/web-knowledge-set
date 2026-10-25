@@ -18,9 +18,11 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import type { AssetMimeType, ImportPreview, KnowledgeDocument } from "../shared/types.js";
 import { detectImageMime } from "./assets.js";
 import type { ImportPayload, KnowledgeDatabase, PreparedImportItem } from "./db.js";
+import { annotationColumns, annotationFromRow, connectionColumns, connectionFromRow } from "../shared/reading-data.js";
+import { parseReadingSnapshot, type ReadingSnapshot } from "../shared/reading-snapshot.js";
 
 const FORMAT = "zhiye-portable";
-const FORMAT_VERSION = 1;
+const FORMAT_VERSION = 2;
 const MAX_ARCHIVE_BYTES = 100 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 25 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 200 * 1024 * 1024;
@@ -68,9 +70,10 @@ interface PortableDocument {
 
 interface PortableManifest {
   format: typeof FORMAT;
-  version: typeof FORMAT_VERSION;
+  version: 1 | typeof FORMAT_VERSION;
   createdAt: string;
   documents: PortableDocument[];
+  readingData?: ReadingSnapshot;
 }
 
 interface ParsedPortableDocument extends PortableDocument {
@@ -262,9 +265,16 @@ export async function createPortableBundle(database: KnowledgeDatabase, document
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
+  const selectedIds = JSON.stringify(manifestDocuments.map(({ id }) => id));
+  const readingData: ReadingSnapshot = {
+    annotations: database.sql.prepare(`SELECT ${annotationColumns} FROM reading_annotations WHERE document_id IN (SELECT value FROM json_each(?)) ORDER BY id`).all(selectedIds).map(annotationFromRow),
+    connections: database.sql.prepare(`SELECT ${connectionColumns} FROM document_connections WHERE source_id IN (SELECT value FROM json_each(?)) AND target_id IN (SELECT value FROM json_each(?)) ORDER BY id`).all(selectedIds, selectedIds).map(connectionFromRow),
+  };
+  const hasReading = readingData.annotations.length + readingData.connections.length > 0;
   const manifest: PortableManifest = {
     format: FORMAT,
-    version: FORMAT_VERSION,
+    version: hasReading ? FORMAT_VERSION : 1,
+    ...(hasReading ? { readingData } : {}),
     createdAt: new Date().toISOString(),
     documents: manifestDocuments,
   };
@@ -516,7 +526,7 @@ async function parseManifest(files: Record<string, Uint8Array>, signal?: AbortSi
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new PortableError(400, "INVALID_MANIFEST", "Manifest must be an object");
   const input = raw as Record<string, unknown>;
-  if (input.format !== FORMAT || input.version !== FORMAT_VERSION || !Array.isArray(input.documents) || input.documents.length > MAX_DOCUMENTS) {
+  if (input.format !== FORMAT || (input.version !== 1 && input.version !== FORMAT_VERSION) || (input.version === 1 && Object.hasOwn(input, "readingData")) || !Array.isArray(input.documents) || input.documents.length > MAX_DOCUMENTS) {
     throw new PortableError(400, "UNSUPPORTED_BUNDLE", "Portable bundle format or version is unsupported");
   }
   stringValue(input.createdAt, "createdAt", 50);
@@ -617,7 +627,11 @@ async function parseManifest(files: Record<string, Uint8Array>, signal?: AbortSi
   if (expected.size !== Object.keys(files).length || Object.keys(files).some((path) => !expected.has(path))) {
     throw new PortableError(400, "UNEXPECTED_ZIP_ENTRY", "ZIP contains files not declared by the manifest");
   }
-  return { documents, assetPaths: [...new Set(documents.flatMap(({ assets }) => assets.map(({ path }) => path)))] };
+  const ids = new Set(documents.map(({ id }) => id));
+  if (ids.size !== documents.length) throw new PortableError(400, "INVALID_MANIFEST", "Document IDs must be unique");
+  let readingData: ReadingSnapshot = { annotations: [], connections: [] };
+  if (input.version === 2) try { readingData = parseReadingSnapshot(input.readingData, ids); } catch { throw new PortableError(400, "INVALID_MANIFEST", "Reading records or references are invalid"); }
+  return { documents, readingData, assetPaths: [...new Set(documents.flatMap(({ assets }) => assets.map(({ path }) => path)))] };
 }
 
 export async function stagePortableBundle(database: KnowledgeDatabase, archive: Uint8Array, signal?: AbortSignal): Promise<ImportPreview> {
@@ -640,6 +654,9 @@ export async function stagePortableBundle(database: KnowledgeDatabase, archive: 
     }
     const descriptor = openSync(stagingPath, "r");
     try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
+    const readingByDocument = new Map(parsed.documents.map(({ id }) => [id, { documentId: id, annotations: [] as ReadingSnapshot["annotations"], connections: [] as ReadingSnapshot["connections"] }]));
+    for (const row of parsed.readingData.annotations) readingByDocument.get(row.documentId)!.annotations.push(row);
+    for (const row of parsed.readingData.connections) readingByDocument.get(row.sourceId)!.connections.push(row);
     const items: PreparedImportItem[] = parsed.documents.map((document) => ({
       label: document.title,
       sourceUrl: document.sourceUrl,
@@ -661,6 +678,7 @@ export async function stagePortableBundle(database: KnowledgeDatabase, archive: 
         archivedAt: document.archivedAt,
         sourceNote: document.sourceNote,
         markdown: document.originalMarkdown,
+        readingData: readingByDocument.get(document.id)!,
         assets: [...new Map(document.assets.map((asset) => [asset.sourceUrl, asset])).values()],
       } satisfies Extract<ImportPayload, { type: "markdown" }>,
     }));
