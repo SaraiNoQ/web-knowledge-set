@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { api as coreApi, readerDataApi, streamSelectionTranslation } from "../api";
 import { READER_SELECTION_MAX_CHARS, type ReaderSelection } from "../../shared/reader-tools";
 import { builtinReaderTools, readerTools, readerToolStorage, type ReaderToolApi, type ReaderToolManifest } from "./runtime";
-import { captureReaderSelection } from "./selection";
+import { beginReaderSelection, captureReaderSelection } from "./selection";
 import { Button, IconButton } from "../components/ui/Controls";
 import { useToast } from "../components/ui/Feedback";
 
@@ -39,6 +39,7 @@ export function ReaderToolsHost() {
   const state = useSyncExternalStore(readerTools.subscribe, readerTools.getSnapshot);
   const toast = useToast();
   const [modal, setModal] = useState(false);
+  const [hiddenSelection, setHiddenSelection] = useState<ReaderSelection | null>(null);
   const active = useRef(new Map<string, { controller: AbortController; retry: number }>());
   useEffect(() => {
     const update = () => setModal(Boolean(document.querySelector("dialog[open]")));
@@ -46,11 +47,14 @@ export function ReaderToolsHost() {
       if (records.some((record) => record.type === "attributes" || [...record.addedNodes, ...record.removedNodes].some((node) => node instanceof Element && (node.matches("dialog") || node.querySelector("dialog"))))) update();
     });
     observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["open"] }); update();
-    document.addEventListener("pointerup", captureReaderSelection);
-    document.addEventListener("keyup", captureReaderSelection);
-    const scroll = () => { if (!readerTools.getSnapshot().overlay) readerTools.setSelection(null); };
+    const capture = (event: Event) => { if (captureReaderSelection(event)) setHiddenSelection(null); };
+    document.addEventListener("pointerdown", beginReaderSelection);
+    document.addEventListener("pointercancel", beginReaderSelection);
+    document.addEventListener("pointerup", capture);
+    document.addEventListener("keyup", capture);
+    const scroll = () => setHiddenSelection(readerTools.getSnapshot().selection);
     document.addEventListener("scroll", scroll, true);
-    return () => { observer.disconnect(); document.removeEventListener("pointerup", captureReaderSelection); document.removeEventListener("keyup", captureReaderSelection); document.removeEventListener("scroll", scroll, true); };
+    return () => { observer.disconnect(); document.removeEventListener("pointerdown", beginReaderSelection); document.removeEventListener("pointercancel", beginReaderSelection); document.removeEventListener("pointerup", capture); document.removeEventListener("keyup", capture); document.removeEventListener("scroll", scroll, true); };
   }, []);
   useEffect(() => {
     for (const [id, value] of active.current) if (!state.enabled.includes(id) || value.retry !== (state.retries[id] ?? 0)) { value.controller.abort(); active.current.delete(id); readerTools.unregister(id); }
@@ -100,7 +104,7 @@ export function ReaderToolsHost() {
     return () => document.removeEventListener("keydown", key);
   }, [state.tools]);
   const selection = state.selection, tool = state.overlay ? state.tools[state.overlay] : null;
-  const ribbon = selection && state.context && !state.context.blockedReason && !state.overlay && !modal ? <div className="reader-selection-actions" role="toolbar" aria-label="选区操作" style={{ left: Math.max(8, Math.min(selection.rect.left, innerWidth - 230)), top: Math.max(8, Math.min(innerHeight - 50, selection.rect.top + selection.rect.height + 8)) }} onPointerDown={(event) => event.preventDefault()}>
+  const ribbon = selection && selection !== hiddenSelection && state.context && !state.context.blockedReason && !state.overlay && !modal ? <div className="reader-selection-actions" role="toolbar" aria-label="选区操作" style={{ left: Math.max(8, Math.min(selection.rect.left, innerWidth - 230)), top: Math.max(8, Math.min(innerHeight - 50, selection.rect.top + selection.rect.height + 8)) }} onPointerDown={(event) => event.preventDefault()}>
     <Button onClick={() => void readerDataApi.annotate(selection.documentId, selection.revision, selection.anchor).then(() => { toast.success("摘录已保存。"); window.dispatchEvent(new Event("zhiye:reading-data-changed")); }, (cause) => toast.error((cause as Error).message))}>保存摘录</Button>
     {Object.entries(state.tools).map(([id, entry]) => <Button key={id} onClick={() => readerTools.open(id)}>{entry.module.selectionAction.title}</Button>)}
   </div> : null;
