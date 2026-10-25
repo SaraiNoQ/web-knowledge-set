@@ -89,6 +89,10 @@ import { createPaperTasks } from "./paper.js";
 import { SemanticError, SemanticTasks, semanticApiKeyInput, semanticSettingsInput } from "./semantic.js";
 import { parseSemanticVectorIds } from "../shared/semantic.js";
 import { safeFetchBinary } from "./safe-fetch.js";
+import { studyAdapter } from "../shared/study-adapter.js";
+import { handleStudyApi } from "../shared/study-http.js";
+import { prepareQuestion, parseStudyAnswer, QUESTION_PROMPT } from "../shared/study-analysis.js";
+import { checkLocalSource } from "./study.js";
 import {
   createPortableBundle,
   PortableError,
@@ -2771,6 +2775,23 @@ export function createApp(options: AppOptions) {
           paperTasks.resume();
         }
         return;
+      }
+
+      if (pathname.startsWith("/api/study/")) {
+        const enteringEpoch=dataEpoch,body=request.method==="GET"?undefined:await mutationBody(request),controller=new AbortController();
+        const abort=()=>controller.abort();response.once("close",abort);
+        const db=studyAdapter({documentsTable:"documents",all:async(sql,values)=>requireDatabase().sql.prepare(sql).all(...values as import("node:sqlite").SQLInputValue[]),run:async(sql,values)=>{assertDataEpoch(enteringEpoch);return Number(requireDatabase().sql.prepare(sql).run(...values as import("node:sqlite").SQLInputValue[]).changes);},batch:async(statements)=>{
+          assertDataEpoch(enteringEpoch);const sql=requireDatabase().sql;sql.exec("BEGIN IMMEDIATE");try{for(const s of statements)sql.prepare(s.sql).all(...s.values as import("node:sqlite").SQLInputValue[]);sql.exec("COMMIT");}catch(error){sql.exec("ROLLBACK");throw error;}
+        }});
+        try {
+          const result=await handleStudyApi(request.method??"GET",requestUrl,body,db,{source:async(url,signal)=>{assertDataEpoch(enteringEpoch);return checkLocalSource(url,signal);},question:async(topicId,q,revision,settingsRevision,signal,scope)=>{
+            const prepared=await prepareQuestion(db,topicId,q,revision,scope);await prepared.verify();assertDataEpoch(enteringEpoch);
+            if(!prepared.evidence.length)return {answer:"当前专题没有找到足够证据，请补充资料或缩小问题。",citations:[],refused:true};
+            const text=await derivedTasks.answerQuestion(prepared.payload,settingsRevision,QUESTION_PROMPT,signal,()=>enteringEpoch===dataEpoch&&!maintenanceKind);
+            await prepared.verify();assertDataEpoch(enteringEpoch);signal.throwIfAborted();return parseStudyAnswer(text,prepared.evidence);
+          }},controller.signal);assertDataEpoch(enteringEpoch);sendJson(response,200,result);
+        } catch(error) { if(error instanceof ReaderInputError)throw new HttpError(400,"INVALID_STUDY_REQUEST",error.message);if(error instanceof ReadingDataError)throw new HttpError(error.status,error.code,error.message);if(/malformed JSON|STUDY_CONFLICT/iu.test(String((error as Error).message)))throw new HttpError(409,"REVISION_CONFLICT","记录已变化，请刷新后重试。");throw error; }
+        finally{response.off("close",abort);controller.abort();}return;
       }
 
       const readingData = /^\/api\/reader-tools\/documents\/([^/]+)\/(data|annotations|connections)(?:\/([^/]+))?$/u.exec(pathname);

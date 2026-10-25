@@ -20,9 +20,11 @@ import { detectImageMime } from "./assets.js";
 import type { ImportPayload, KnowledgeDatabase, PreparedImportItem } from "./db.js";
 import { annotationColumns, annotationFromRow, connectionColumns, connectionFromRow } from "../shared/reading-data.js";
 import { parseReadingSnapshot, type ReadingSnapshot } from "../shared/reading-snapshot.js";
+import { captureStudySnapshot, emptyStudySnapshot, hasStudyData, parseStudySnapshot, type StudySnapshot } from "../shared/study-snapshot.js";
+import { PORTABLE_STUDY_FILE, readPortableStudyData, studyRecordCount } from "./study-portable.js";
 
 const FORMAT = "zhiye-portable";
-const FORMAT_VERSION = 2;
+const FORMAT_VERSION = 3;
 const MAX_ARCHIVE_BYTES = 100 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 25 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 200 * 1024 * 1024;
@@ -70,10 +72,11 @@ interface PortableDocument {
 
 interface PortableManifest {
   format: typeof FORMAT;
-  version: 1 | typeof FORMAT_VERSION;
+  version: 1 | 2 | typeof FORMAT_VERSION;
   createdAt: string;
   documents: PortableDocument[];
   readingData?: ReadingSnapshot;
+  studyData?: StudySnapshot;
 }
 
 interface ParsedPortableDocument extends PortableDocument {
@@ -191,6 +194,7 @@ export async function createPortableBundle(database: KnowledgeDatabase, document
   const documents = database.documentsForPortableExport(documentIds);
   const entries: Record<string, Uint8Array> = {};
   const manifestDocuments: PortableDocument[] = [];
+  const exportedRevisions = new Map<string, number>();
   let totalBytes = 0;
   let entryCount = 0;
   const addEntry = (path: string, body: Uint8Array, expectedBytes = body.length) => {
@@ -204,6 +208,7 @@ export async function createPortableBundle(database: KnowledgeDatabase, document
   };
   const bodies = new Map<string, Buffer>();
   for (const document of documents) {
+    exportedRevisions.set(document.id, document.revision);
     if (signal?.aborted) throw aborted();
     if (manifestDocuments.length >= MAX_DOCUMENTS) throw new PortableError(413, "EXPORT_LIMIT", "Portable export has too many documents");
     if (Buffer.byteLength(document.markdown) > MAX_ENTRY_BYTES) throw new PortableError(413, "EXPORT_LIMIT", "Portable document exceeds the entry size limit");
@@ -271,10 +276,14 @@ export async function createPortableBundle(database: KnowledgeDatabase, document
     connections: database.sql.prepare(`SELECT ${connectionColumns} FROM document_connections WHERE source_id IN (SELECT value FROM json_each(?)) AND target_id IN (SELECT value FROM json_each(?)) ORDER BY id`).all(selectedIds, selectedIds).map(connectionFromRow),
   };
   const hasReading = readingData.annotations.length + readingData.connections.length > 0;
+  const studyData = parseStudySnapshot(await captureStudySnapshot(async (sql, values) => database.sql.prepare(sql).all(...values as never[]), { documents: new Set(manifestDocuments.map(({ id }) => id)), portable: true, includeEmptyTopics: documentIds === undefined }), new Set(manifestDocuments.map(({ id }) => id)), readingData);
+  for (const [id, revision] of exportedRevisions) { const current = database.getDocument(id); if (!current || current.deletedAt || current.revision !== revision) throw new PortableError(409, "EXPORT_CHANGED", "Documents changed during export; retry the bundle"); }
+  const hasStudy = hasStudyData(studyData);
   const manifest: PortableManifest = {
     format: FORMAT,
-    version: hasReading ? FORMAT_VERSION : 1,
-    ...(hasReading ? { readingData } : {}),
+    version: hasStudy ? FORMAT_VERSION : hasReading ? 2 : 1,
+    ...(hasReading || hasStudy ? { readingData } : {}),
+    ...(hasStudy ? { studyData } : {}),
     createdAt: new Date().toISOString(),
     documents: manifestDocuments,
   };
@@ -526,7 +535,7 @@ async function parseManifest(files: Record<string, Uint8Array>, signal?: AbortSi
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new PortableError(400, "INVALID_MANIFEST", "Manifest must be an object");
   const input = raw as Record<string, unknown>;
-  if (input.format !== FORMAT || (input.version !== 1 && input.version !== FORMAT_VERSION) || (input.version === 1 && Object.hasOwn(input, "readingData")) || !Array.isArray(input.documents) || input.documents.length > MAX_DOCUMENTS) {
+  if (input.format !== FORMAT || (input.version !== 1 && input.version !== 2 && input.version !== FORMAT_VERSION) || (input.version === 1 && Object.hasOwn(input, "readingData")) || (input.version !== 3 && Object.hasOwn(input, "studyData")) || !Array.isArray(input.documents) || input.documents.length > MAX_DOCUMENTS) {
     throw new PortableError(400, "UNSUPPORTED_BUNDLE", "Portable bundle format or version is unsupported");
   }
   stringValue(input.createdAt, "createdAt", 50);
@@ -630,8 +639,10 @@ async function parseManifest(files: Record<string, Uint8Array>, signal?: AbortSi
   const ids = new Set(documents.map(({ id }) => id));
   if (ids.size !== documents.length) throw new PortableError(400, "INVALID_MANIFEST", "Document IDs must be unique");
   let readingData: ReadingSnapshot = { annotations: [], connections: [] };
-  if (input.version === 2) try { readingData = parseReadingSnapshot(input.readingData, ids); } catch { throw new PortableError(400, "INVALID_MANIFEST", "Reading records or references are invalid"); }
-  return { documents, readingData, assetPaths: [...new Set(documents.flatMap(({ assets }) => assets.map(({ path }) => path)))] };
+  if (input.version === 2 || input.version === 3) try { readingData = parseReadingSnapshot(input.readingData, ids); } catch { throw new PortableError(400, "INVALID_MANIFEST", "Reading records or references are invalid"); }
+  let studyData = emptyStudySnapshot();
+  if (input.version === 3) try { studyData = parseStudySnapshot(input.studyData, ids, readingData); if (studyData.tables.study_merge_history.length || studyData.tables.study_source_checks.length) throw new Error(); } catch { throw new PortableError(400, "INVALID_MANIFEST", "Research records or references are invalid"); }
+  return { documents, readingData, studyData, assetPaths: [...new Set(documents.flatMap(({ assets }) => assets.map(({ path }) => path)))] };
 }
 
 export async function stagePortableBundle(database: KnowledgeDatabase, archive: Uint8Array, signal?: AbortSignal): Promise<ImportPreview> {
@@ -643,6 +654,7 @@ export async function stagePortableBundle(database: KnowledgeDatabase, archive: 
   const stagingName = database.createImportStaging();
   const stagingPath = database.importStagingPath(stagingName);
   try {
+    if (hasStudyData(parsed.studyData)) writeFileSync(join(stagingPath, PORTABLE_STUDY_FILE), JSON.stringify(parsed.studyData), { mode: 0o600, flag: "wx", flush: true });
     const stagedHashes = new Set<string>();
     for (const path of parsed.assetPaths) {
       if (signal?.aborted) throw aborted();
@@ -657,7 +669,7 @@ export async function stagePortableBundle(database: KnowledgeDatabase, archive: 
     const readingByDocument = new Map(parsed.documents.map(({ id }) => [id, { documentId: id, annotations: [] as ReadingSnapshot["annotations"], connections: [] as ReadingSnapshot["connections"] }]));
     for (const row of parsed.readingData.annotations) readingByDocument.get(row.documentId)!.annotations.push(row);
     for (const row of parsed.readingData.connections) readingByDocument.get(row.sourceId)!.connections.push(row);
-    const items: PreparedImportItem[] = parsed.documents.map((document) => ({
+    const items: PreparedImportItem[] = parsed.documents.map((document, index) => ({
       label: document.title,
       sourceUrl: document.sourceUrl,
       warnings: [],
@@ -679,10 +691,11 @@ export async function stagePortableBundle(database: KnowledgeDatabase, archive: 
         sourceNote: document.sourceNote,
         markdown: document.originalMarkdown,
         readingData: readingByDocument.get(document.id)!,
+        ...(index === 0 && hasStudyData(parsed.studyData) ? { studyData: parsed.studyData } : {}),
         assets: [...new Map(document.assets.map((asset) => [asset.sourceUrl, asset])).values()],
       } satisfies Extract<ImportPayload, { type: "markdown" }>,
     }));
-    return database.createImportBatch("bundle", items, { stagingPath: stagingName, assetCount: stagedHashes.size });
+    return { ...database.createImportBatch("bundle", items, { stagingPath: stagingName, assetCount: stagedHashes.size }), ...(hasStudyData(parsed.studyData) ? { studyRecords: studyRecordCount(parsed.studyData) } : {}) };
   } catch (error) {
     rmSync(stagingPath, { recursive: true, force: true });
     throw error;
@@ -695,6 +708,7 @@ export function promotePortableAssets(database: KnowledgeDatabase, batchId: stri
   const created: string[] = [];
   try {
     for (const name of readdirSync(staging)) {
+      if (name === PORTABLE_STUDY_FILE) { try { readPortableStudyData(staging); } catch { throw new PortableError(422, "STAGING_INVALID", "Research staging data changed after preview"); } continue; }
       if (!/^[a-f0-9]{64}$/u.test(name) || name !== basename(name)) throw new PortableError(422, "STAGING_INVALID", "Bundle staging contains an unsafe file");
       const source = join(staging, name);
       if (!lstatSync(source).isFile()) throw new PortableError(422, "STAGING_INVALID", "Bundle staging entry is not a regular file");

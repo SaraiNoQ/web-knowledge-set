@@ -87,7 +87,7 @@ function currentCloudLlmCredential() {
   return storage ? loadCloudLlmCredential(storage) : null;
 }
 
-function cloudLlmHeaders(endpointUrl: string): Record<string, string> {
+export function cloudLlmHeaders(endpointUrl: string): Record<string, string> {
   return cloudRuntime ? cloudLlmCredentialHeaders(currentCloudLlmCredential(), endpointUrl) : {};
 }
 
@@ -159,7 +159,7 @@ async function requestResponse(path: string, init: RequestInit = {}, replaceData
   return response;
 }
 
-async function request<T>(path: string, init: RequestInit = {}, replaceDataEpoch = false): Promise<T> {
+export async function request<T>(path: string, init: RequestInit = {}, replaceDataEpoch = false): Promise<T> {
   const response = await requestResponse(path, init, replaceDataEpoch);
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;

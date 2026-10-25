@@ -1,32 +1,48 @@
 import type { ComponentType } from "react";
-import type { ReaderSelection, SourceAnchor } from "../../shared/reader-tools";
+import type { ReaderSelection, SourceAnchor, TranslationGlossaryEntry } from "../../shared/reader-tools";
 import type { TranslationLanguage } from "../../shared/types";
+import type { QuestionCitation } from "../../shared/study-types";
+import { createReaderToolStorage, type ToolStorageMigrations, type ToolStorageBackend } from "./tool-storage";
 
 export interface ReaderContext { id: string; title: string; revision: number; kind: "article" | "paper"; folderId: string | null; blockedReason: string | null; }
 export interface ReaderToolManifest {
   id: string; name: string; version: string; hostApiVersion: 1;
+  storageVersion?: number;
   permissions: Array<"selection.read" | "translation.request" | "storage.own" | "annotations.create">;
 }
+export interface ReaderToolCapabilities {
+  platform: "local" | "cloud" | "desktop";
+  hostApiVersion: 1;
+  permissions: ReaderToolManifest["permissions"];
+  maxSelectionCharacters: number;
+  storageSchemaVersion: number;
+  storageQuotaBytes: number;
+  translationCache: { entries: number; bytes: number; ttlMs: number };
+}
+export interface ReaderTranslationOptions { glossary?: TranslationGlossaryEntry[]; glossaryRevision?: number }
 export interface ReaderToolApi {
   selection(): ReaderSelection | null;
-  translate(selection: ReaderSelection, language: TranslationLanguage, onText: (text: string) => void, signal: AbortSignal): Promise<void>;
-  storage: { get<T>(key: string, fallback: T): T; set(key: string, value: unknown): void };
+  capabilities(): Promise<ReaderToolCapabilities>;
+  translate(selection: ReaderSelection, language: TranslationLanguage, onText: (text: string) => void, signal: AbortSignal, options?: ReaderTranslationOptions): Promise<void>;
+  storage: { get<T>(key: string, fallback: T): T; set(key: string, value: unknown): void; subscribe(listener: () => void): () => void };
   saveExcerpt(selection: ReaderSelection, translation: string, note: string): Promise<void>;
   close(): void;
 }
-export interface ReaderToolViewProps { api: ReaderToolApi; selection: ReaderSelection | null; }
+export interface ReaderToolViewProps { api: ReaderToolApi; selection: ReaderSelection | null; active?: boolean; }
 export interface ReaderToolModule {
   manifest: ReaderToolManifest;
+  storageMigrations?: ToolStorageMigrations;
   command: { id: string; title: string; key?: string; altKey?: boolean };
   selectionAction: { title: string };
   Overlay: ComponentType<ReaderToolViewProps>;
   Panel: ComponentType<ReaderToolViewProps>;
 }
-export const builtinReaderTools = [{ manifest: { id: "translation", name: "划词翻译", version: "1.0.0", hostApiVersion: 1,
+export const builtinReaderTools = [{ manifest: { id: "translation", name: "划词翻译", version: "1.0.0", hostApiVersion: 1, storageVersion: 1,
   permissions: ["selection.read", "translation.request", "storage.own", "annotations.create"] } satisfies ReaderToolManifest,
   load: () => import("./translation").then((module) => module.translationTool) }];
 
 interface Snapshot {
+  contextVersion: number;
   context: ReaderContext | null;
   selection: ReaderSelection | null;
   enabled: string[];
@@ -37,16 +53,16 @@ interface Snapshot {
 }
 let initial: string[] = [];
 try { initial = JSON.parse(localStorage.getItem("zhiye.reader-tools.enabled") ?? "[]").filter((id: unknown) => builtinReaderTools.some((tool) => tool.manifest.id === id)); } catch {}
-let snapshot: Snapshot = { context: null, selection: null, enabled: initial, overlay: null, tools: {}, errors: {}, retries: {} };
+let snapshot: Snapshot = { contextVersion: 0, context: null, selection: null, enabled: initial, overlay: null, tools: {}, errors: {}, retries: {} };
 const listeners = new Set<() => void>();
 const publish = (change: Partial<Snapshot>) => { snapshot = { ...snapshot, ...change }; for (const listener of listeners) listener(); };
-let actions = { openDocument: (_id: string) => {}, locateEditor: (_anchor: SourceAnchor) => false };
+let actions: {openDocument:(id:string)=>void;locateEditor:(anchor:SourceAnchor)=>boolean;openEvidence?:(citation:QuestionCitation)=>void} = { openDocument: (_id: string) => {}, locateEditor: (_anchor: SourceAnchor) => false };
 export const readerTools = {
   subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
   getSnapshot: () => snapshot,
   setContext(context: ReaderContext | null) {
     if (JSON.stringify(snapshot.context) === JSON.stringify(context)) return;
-    publish({ context, selection: null, overlay: null });
+    publish({ contextVersion: snapshot.contextVersion + 1, context, selection: null, overlay: null });
   },
   setSelection(selection: ReaderSelection | null) {
     if (selection && (selection.documentId !== snapshot.context?.id || selection.revision !== snapshot.context.revision)) return;
@@ -68,13 +84,23 @@ export const readerTools = {
   retry(id: string) { publish({ retries: { ...snapshot.retries, [id]: (snapshot.retries[id] ?? 0) + 1 } }); },
   configure(value: typeof actions) { actions = value; },
   openDocument(id: string) { actions.openDocument(id); },
+  openEvidence(citation:QuestionCitation) { if(actions.openEvidence)actions.openEvidence(citation);else actions.openDocument(citation.documentId); },
   locateEditor(anchor: SourceAnchor) { return actions.locateEditor(anchor); },
 };
 
-export function readerToolStorage(id: string): ReaderToolApi["storage"] {
-  const prefix = `zhiye.reader-tool.${id}.`;
+export function readerToolStorage(id: string, schemaVersion = 1, migrations: ToolStorageMigrations = {}, backend: ToolStorageBackend = {
+  get length() { return localStorage.length; }, key: (index) => localStorage.key(index), getItem: (key) => localStorage.getItem(key),
+  setItem: (key, value) => localStorage.setItem(key, value), removeItem: (key) => localStorage.removeItem(key),
+}): ReaderToolApi["storage"] {
+  const store = createReaderToolStorage(id, backend, schemaVersion, migrations), prefix = `zhiye.reader-tool.${id}.`;
   return {
-    get<T>(key: string, fallback: T): T { try { return JSON.parse(localStorage.getItem(prefix + key) ?? "null") ?? fallback; } catch { return fallback; } },
-    set(key, value) { const text = JSON.stringify(value); if (text.length > 16_384 || key.length > 100) throw new Error("工具设置过大。"); localStorage.setItem(prefix + key, text); },
+    get: store.get,
+    set(key, value) { store.set(key, value); window.dispatchEvent(new CustomEvent("zhiye:reader-tool-settings", { detail: id })); },
+    subscribe(listener) {
+      const local = (event: Event) => { if ((event as CustomEvent<string>).detail === id) listener(); };
+      const external = (event: StorageEvent) => { if (event.key === null || event.key.startsWith(prefix)) listener(); };
+      window.addEventListener("zhiye:reader-tool-settings", local); window.addEventListener("storage", external);
+      return () => { window.removeEventListener("zhiye:reader-tool-settings", local); window.removeEventListener("storage", external); };
+    },
   };
 }

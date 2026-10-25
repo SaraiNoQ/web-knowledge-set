@@ -27,6 +27,8 @@ const llmServer = createServer(async (request, response) => {
     ? JSON.stringify({ paper: { title: "E2E 论文", authors: ["测试作者"] }, pages: [{ pageNumber: 1, blocks: [{ id: "p1-b1", type: "paragraph", original: "An e2e paper.", translation: "一篇 E2E 论文。", assetIds: [] }] }] })
     : system.includes("This is a connection test")
     ? "ZHIYE_OK"
+    : system.includes("supplied evidence")
+    ? (() => { const evidence=JSON.parse(String(body.messages?.[1]?.content??"{}")).evidence as Array<{id:string;text:string}>;return JSON.stringify(evidence?.length?{answer:`根据原文：${evidence[0]!.text} [${evidence[0]!.id}]`,citations:[evidence[0]!.id],refused:false}:{answer:"现有证据不足，无法回答。",citations:[],refused:true}); })()
     : system.includes("Translate only")
     ? JSON.stringify((JSON.parse(body.messages?.[1]?.content || "[]") as Array<{ id: string; text: string }>)
       .map(({ id, text }) => ({ id, text: `译文：${text}` })))
@@ -37,7 +39,7 @@ const llmServer = createServer(async (request, response) => {
       : "## 本地摘要\n\n这是确定性的测试摘要。[不可点击](https://model.example.test/)\n\n![不得请求](https://model.example.test/pixel.png)\n\n<script>window.__modelXss = true</script>";
   setTimeout(() => {
     response.writeHead(200, { "Content-Type": "application/json" });
-    response.end(JSON.stringify({ choices: [{ message: { content } }], usage: { prompt_tokens: 12, completion_tokens: 8, total_tokens: 20 } }));
+    response.end(JSON.stringify({ choices: [{ message: { content }, finish_reason:"stop" }], usage: { prompt_tokens: 12, completion_tokens: 8, total_tokens: 20 } }));
   }, 1_200);
 });
 llmServer.listen(4175, "127.0.0.1");

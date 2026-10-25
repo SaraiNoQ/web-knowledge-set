@@ -7,6 +7,8 @@ import { Button, IconButton, Input } from "../components/ui/Controls";
 import { useDialogs, useToast } from "../components/ui/Feedback";
 import type { DocumentSummary } from "../../shared/types";
 import type { ReadingAnnotation } from "../../shared/reader-tools";
+import { ReaderRecommendations, ConnectionEvidenceEditor } from "./ReaderRecommendations";
+import { studyApi } from "../study/api";
 
 export function ReaderToolSettings() {
   const state = useSyncExternalStore(readerTools.subscribe, readerTools.getSnapshot);
@@ -24,13 +26,6 @@ function ReadingDataPanel() {
   const [refresh, setRefresh] = useState(0), [page, setPage] = useState(1);
   const [search, setSearch] = useState(""), [results, setResults] = useState<DocumentSummary[]>([]), [target, setTarget] = useState<DocumentSummary | null>(null), [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [related, setRelated] = useState<DocumentSummary[]>([]);
-  useEffect(() => {
-    if (!context?.folderId) { setRelated([]); return; }
-    const controller = new AbortController();
-    void api.listDocuments({ folderId: context.folderId, page: 1 }, controller.signal).then((value) => { if (!controller.signal.aborted) setRelated(value.items.filter((item) => item.id !== context.id).slice(0, 5)); }).catch(() => { if (!controller.signal.aborted) setRelated([]); });
-    return () => controller.abort();
-  }, [context?.id, context?.folderId]);
   useEffect(() => { setPage(1); setTarget(null); setSearch(""); setNote(""); }, [context?.id]);
   useEffect(() => {
     const changed = () => setRefresh((value) => value + 1);
@@ -62,14 +57,14 @@ function ReadingDataPanel() {
   };
   return <div className="reading-data-panel">
     {context.blockedReason && <p role="status">{context.blockedReason}</p>}
-    {related.length > 0 && <section><h3>同组资料</h3><p>来自你的同一分组，可打开核实后建立关联。</p><ul>{related.map((item) => <li key={item.id}><Button onClick={() => readerTools.openDocument(item.id)}>{item.title || "未命名资料"}</Button></li>)}</ul></section>}
+    <ReaderRecommendations key={`${context.id}:${refresh}`} documentId={context.id} revision={context.revision} />
     {error && <p role="alert" className="error-text">{error} <Button onClick={() => setRefresh((value) => value + 1)}>重新载入</Button></p>}
     <section><h3>摘录与笔记 {data?.totalAnnotations ?? ""}</h3>{data?.annotations.length ? <ul>{data.annotations.map((entry) => <li key={entry.id}>
       <blockquote>{entry.anchor.quote}</blockquote>{entry.translation && <pre>{entry.translation}</pre>}{entry.note && <p>{entry.note}</p>}
       {entry.sourceRevision !== context.revision && <small>原文版本已更新，定位时会重新校验。</small>}
-      <div className="reader-tool-actions"><Button onClick={() => void revealReaderAnchor(entry.anchor).then((found) => { if (!found) toast.error("无法唯一定位原文；内容可能已修改，或当前页面无法读取文字。"); })}>定位原文</Button><Button disabled={busy} onClick={() => void edit(entry)}>编辑笔记</Button><Button disabled={busy} onClick={() => void dialogs.confirm("删除此摘录、译文及笔记？", { title: "删除摘录", tone: "danger", confirmLabel: "删除" }).then((ok) => { if (ok) void perform(() => readerDataApi.remove(context.id, entry)); })}>删除</Button></div>
+      <div className="reader-tool-actions"><Button onClick={() => void revealReaderAnchor(entry.anchor).then((found) => { if (!found) toast.error("无法唯一定位原文；内容可能已修改，或当前页面无法读取文字。"); })}>定位原文</Button><Button disabled={busy} onClick={() => void edit(entry)}>编辑笔记</Button><Button disabled={busy} onClick={() => void perform(async () => { await studyApi.scheduleReview(entry.id); toast.success("已加入摘录复习。"); })}>加入复习</Button><Button disabled={busy} onClick={() => void dialogs.confirm("删除此摘录、译文及笔记？", { title: "删除摘录", tone: "danger", confirmLabel: "删除" }).then((ok) => { if (ok) void perform(() => readerDataApi.remove(context.id, entry)); })}>删除</Button></div>
     </li>)}</ul> : <p>本页暂无摘录。在正文中选择文字后可保存。</p>}</section>
-    <section><h3>人工关联 {data?.totalConnections ?? ""}</h3>{data?.connections.length ? <ul>{data.connections.map((entry) => <li key={entry.id}><Button onClick={() => readerTools.openDocument(entry.peer.id)}>{entry.peer.title || "未命名资料"}</Button>{entry.note && <p>{entry.note}</p>}<Button disabled={busy} onClick={() => void dialogs.confirm("解除这两篇资料的关联？正文不会删除。", { title: "解除关联", confirmLabel: "解除关联" }).then((ok) => { if (ok) void perform(() => readerDataApi.disconnect(context.id, entry)); })}>解除关联</Button></li>)}</ul> : <p>本页暂无人工关联。</p>}
+    <section><h3>人工关联 {data?.totalConnections ?? ""}</h3>{data?.connections.length ? <ul>{data.connections.map((entry) => <li key={entry.id}><Button onClick={() => readerTools.openDocument(entry.peer.id)}>{entry.peer.title || "未命名资料"}</Button>{entry.note && <p>{entry.note}</p>}<ConnectionEvidenceEditor documentId={context.id} revision={context.revision} connection={entry} annotations={data?.annotations ?? []} onSaved={() => { setRefresh((value) => value + 1); window.dispatchEvent(new Event("zhiye:reading-data-changed")); }} /><Button disabled={busy} onClick={() => void dialogs.confirm("解除这两篇资料的关联？正文不会删除。", { title: "解除关联", confirmLabel: "解除关联" }).then((ok) => { if (ok) void perform(() => readerDataApi.disconnect(context.id, entry)); })}>解除关联</Button></li>)}</ul> : <p>本页暂无人工关联。</p>}
       <label>查找要关联的资料<Input value={search} onChange={(event) => { setSearch(event.target.value); setTarget(null); }} placeholder="搜索标题" /></label>
       {results.length > 0 && !target && <ul className="connection-search">{results.map((item) => <li key={item.id}><Button onClick={() => setTarget(item)}>{item.title || "未命名资料"}</Button></li>)}</ul>}
       {target && <p>关联到：{target.title}</p>}<label>关联说明<textarea value={note} maxLength={2000} onChange={(event) => setNote(event.target.value)} /></label>
@@ -79,13 +74,13 @@ function ReadingDataPanel() {
   </div>;
 }
 
-export function ReaderSidebar({ outline, onClose }: { outline: ReactNode; onClose: () => void }) {
+export function ReaderSidebar({ outline, onClose, onOpenStudy }: { outline: ReactNode; onClose: () => void; onOpenStudy?: () => void }) {
   const state = useSyncExternalStore(readerTools.subscribe, readerTools.getSnapshot);
   const [tab, setTab] = useState("outline");
   const tool = state.tools[tab];
   return <aside id="document-tools" className="document-tools reader-sidebar" aria-label="右侧功能区">
     <header><h2>{tab === "outline" ? "大纲" : tab === "notes" ? "摘录与关联" : tool?.module.manifest.name ?? "阅读工具"}</h2><IconButton label={tab === "outline" ? "收起大纲" : "收起阅读工具"} onClick={onClose}>×</IconButton></header>
-    <nav className="reader-sidebar-tabs" aria-label="阅读功能"><Button aria-pressed={tab === "outline"} onClick={() => setTab("outline")}>大纲</Button><Button aria-pressed={tab === "notes"} onClick={() => setTab("notes")}>摘录关联</Button>{Object.entries(state.tools).map(([id, entry]) => <Button key={id} aria-pressed={tab === id} onClick={() => setTab(id)}>{entry.module.manifest.name}</Button>)}</nav>
-    <div className="reader-sidebar-content">{tab === "outline" ? outline : tab === "notes" ? <ReadingDataPanel key={state.context?.id ?? "empty"} /> : tool ? <ReaderToolBoundary key={tab} onClose={() => setTab("outline")}><tool.module.Panel api={tool.api} selection={state.selection} /></ReaderToolBoundary> : <ReaderToolSettings />}</div>
+    <nav className="reader-sidebar-tabs" aria-label="阅读功能"><Button aria-pressed={tab === "outline"} onClick={() => setTab("outline")}>大纲</Button><Button aria-pressed={tab === "notes"} onClick={() => setTab("notes")}>摘录关联</Button>{onOpenStudy && <Button onClick={onOpenStudy}>专题与复习</Button>}{Object.entries(state.tools).map(([id, entry]) => <Button key={id} aria-pressed={tab === id} onClick={() => setTab(id)}>{entry.module.manifest.name}</Button>)}</nav>
+    <div className="reader-sidebar-content">{tab === "outline" ? outline : tab === "notes" ? <ReadingDataPanel key={state.context?.id ?? "empty"} /> : tool ? <ReaderToolBoundary key={tab} onClose={() => setTab("outline")}><tool.module.Panel api={tool.api} selection={state.selection} active={!state.overlay} /></ReaderToolBoundary> : <ReaderToolSettings />}</div>
   </aside>;
 }

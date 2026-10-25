@@ -74,6 +74,7 @@ interface TranslationSegment {
 interface LlmSettingsValue extends Omit<LlmSettings, "revision" | "apiKeyConfigured"> {}
 
 export interface CloudReply { status?: number; body: unknown }
+export { endpoint as modelEndpoint, model as modelName };
 
 export async function translateReaderSelection(request: Request, db: D1Database, documentId: string, epoch: string) {
   let input;
@@ -110,7 +111,7 @@ export async function translateReaderSelection(request: Request, db: D1Database,
           headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "text/event-stream, application/json" },
           body: JSON.stringify({ model: modelName, temperature: 0, stream: true, max_tokens: 4096,
             ...(endpointUrl === "https://api.deepseek.com/chat/completions" ? { thinking: { type: "disabled" } } : {}),
-            messages: [{ role: "system", content: selectionTranslationPrompt(input.language) }, { role: "user", content: input.text }] }) });
+            messages: [{ role: "system", content: selectionTranslationPrompt(input.language, input.glossary) }, { role: "user", content: input.text }] }) });
         if (!response.ok || response.status >= 300) throw new LlmStreamError(response.status === 429 ? "LLM_RATE_LIMITED" : "LLM_HTTP_ERROR");
         if (response.headers.get("content-type")?.toLowerCase().startsWith("text/event-stream") && response.body) {
           let checkedAt = 0;

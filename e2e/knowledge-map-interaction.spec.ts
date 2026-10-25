@@ -206,5 +206,5 @@ test("a new content version cancels an unfinished graph instead of waiting behin
   await expect.poll(() => page.evaluate(() => window.mapEvidence.terminated)).toBeGreaterThan(terminated);
   await page.locator(".map-accessible-list summary").click();
   await page.locator(".map-accessible-list li").first().getByRole("button").click();
-  await expect(page.locator(".map-detail-related").first()).toContainText("相似分数 1.00");
+  await expect(page.locator(".map-detail-related").filter({ has: page.getByRole("heading", { name: "内容相近", exact: true }) })).toContainText("相似分数 1.00");
 });

@@ -27,6 +27,10 @@ import { handleImportApi } from "./import";
 import { handleAiApi, translateReaderSelection } from "./ai";
 import { createReadingRepository, ReadingDataError } from "../shared/reading-data";
 import { ReaderInputError } from "../shared/reader-tools";
+import { studyAdapter } from "../shared/study-adapter";
+import { handleStudyApi } from "../shared/study-http";
+import { prepareQuestion, parseStudyAnswer, QUESTION_PROMPT } from "../shared/study-analysis";
+import { answerCloudQuestion, checkCloudSource } from "./study";
 import { handleTitleApi } from "./title";
 import { handleSemanticApi } from "./semantic";
 import { deletePaperSource, handlePaperApi, paperSource, paperSourceHash } from "./paper";
@@ -125,6 +129,19 @@ async function api(request: Request, env: CloudEnv, url: URL) {
   }
   if (epoch.startsWith("restore:")) {
     return json({ error: { code: "CLOUD_MAINTENANCE", message: "Cloud restore is in progress" } }, 503);
+  }
+  if(url.pathname.startsWith("/api/study/")) {
+    if(request.method!=="GET"&&request.headers.get(DATA_EPOCH_HEADER)!==epoch)return json({error:{code:"STALE_DATA_EPOCH",message:"资料库已变化，请刷新。"}},409,epoch);
+    const body=request.method==="GET"?undefined:await jsonObject(request,192*1024),database=epochGuardedDatabase(env.DB,epoch);
+    if(await dataEpoch(env)!==epoch)throw new CloudHttpError(409,"STALE_DATA_EPOCH","资料库已变化。");
+    const db=studyAdapter({documentsTable:"cloud_documents",all:async(sql,values)=>(await database.prepare(sql).bind(...values).all<Record<string,unknown>>()).results,run:async(sql,values)=>(await database.prepare(sql).bind(...values).run()).meta.changes??0,batch:async(statements)=>{if(!database.batch)throw new CloudHttpError(503,"CLOUD_BATCH_UNAVAILABLE","数据库暂不可用。");await database.batch(statements.map(s=>database.prepare(s.sql).bind(...s.values)));}});
+    try {
+      const result=await handleStudyApi(request.method,url,body,db,{source:async(url,signal)=>{if(await dataEpoch(env)!==epoch)throw new CloudHttpError(409,"STALE_DATA_EPOCH","资料库已变化。");return checkCloudSource(url,signal);},question:async(topicId,q,revision,settingsRevision,signal,scope)=>{
+        const prepared=await prepareQuestion(db,topicId,q,revision,scope);await prepared.verify();
+        if(!prepared.evidence.length)return {answer:"当前专题没有找到足够证据，请补充资料或缩小问题。",citations:[],refused:true};
+        const text=await answerCloudQuestion(request,env.DB,prepared.payload,settingsRevision,QUESTION_PROMPT,epoch);await prepared.verify();signal.throwIfAborted();return parseStudyAnswer(text,prepared.evidence);
+      }},request.signal);return json(result,200,epoch);
+    } catch(error){if(error instanceof ReaderInputError)throw new CloudHttpError(400,"INVALID_STUDY_REQUEST",error.message);if(error instanceof ReadingDataError)throw new CloudHttpError(error.status,error.code,error.message);if(/malformed JSON|STUDY_CONFLICT/iu.test(String((error as Error).message)))throw new CloudHttpError(409,"REVISION_CONFLICT","记录已变化，请刷新后重试。");throw error;}
   }
   const readingData = /^\/api\/reader-tools\/documents\/([^/]+)\/(data|annotations|connections)(?:\/([^/]+))?$/u.exec(url.pathname);
   if (readingData) {

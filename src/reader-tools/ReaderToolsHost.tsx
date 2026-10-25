@@ -1,11 +1,16 @@
 import { Component, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api as coreApi, readerDataApi, streamSelectionTranslation } from "../api";
-import { READER_SELECTION_MAX_CHARS, type ReaderSelection } from "../../shared/reader-tools";
+import { READER_SELECTION_MAX_CHARS, parseTranslationGlossary, type ReaderSelection } from "../../shared/reader-tools";
 import { builtinReaderTools, readerTools, readerToolStorage, type ReaderToolApi, type ReaderToolManifest } from "./runtime";
 import { beginReaderSelection, captureReaderSelection } from "./selection";
 import { Button, IconButton } from "../components/ui/Controls";
 import { useToast } from "../components/ui/Feedback";
+import { TranslationCache } from "./translation-cache";
+import { READER_TOOL_STORAGE_BYTES } from "./tool-storage";
+
+const translationCache = new TranslationCache();
+const translating = new Set<string>();
 
 export class ReaderToolBoundary extends Component<{ children: ReactNode; onClose?: () => void }, { failed: boolean }> {
   state = { failed: false };
@@ -57,7 +62,7 @@ export function ReaderToolsHost() {
     return () => { observer.disconnect(); document.removeEventListener("pointerdown", beginReaderSelection); document.removeEventListener("pointercancel", beginReaderSelection); document.removeEventListener("pointerup", capture); document.removeEventListener("keyup", capture); document.removeEventListener("scroll", scroll, true); };
   }, []);
   useEffect(() => {
-    for (const [id, value] of active.current) if (!state.enabled.includes(id) || value.retry !== (state.retries[id] ?? 0)) { value.controller.abort(); active.current.delete(id); readerTools.unregister(id); }
+    for (const [id, value] of active.current) if (!state.enabled.includes(id) || value.retry !== (state.retries[id] ?? 0)) { value.controller.abort(); active.current.delete(id); readerTools.unregister(id); translationCache.clear(); }
     for (const item of builtinReaderTools) {
       const id = item.manifest.id;
       if (!state.enabled.includes(id) || active.current.has(id)) continue;
@@ -68,30 +73,58 @@ export function ReaderToolsHost() {
         const current = readerTools.getSnapshot();
         if (!current.context || current.context.id !== selection.documentId || current.context.revision !== selection.revision || current.context.blockedReason || JSON.stringify(current.selection?.anchor) !== JSON.stringify(selection.anchor)) throw new Error(current.context?.blockedReason || "文档或选区已变化，请重新选择文字。");
       };
-      const storage = readerToolStorage(id);
+      let storage = readerToolStorage(id, item.manifest.storageVersion);
       const toolApi: ReaderToolApi = {
         selection: () => { permit("selection.read"); return readerTools.getSnapshot().selection; },
-        storage: { get: (key, fallback) => { permit("storage.own"); return storage.get(key, fallback); }, set: (key, value) => { permit("storage.own"); storage.set(key, value); } },
+        async capabilities() {
+          controller.signal.throwIfAborted();
+          const mode = await coreApi.getRuntimeMode(controller.signal);
+          return { platform: "__TAURI_INTERNALS__" in globalThis ? "desktop" : mode, hostApiVersion: 1,
+            permissions: [...item.manifest.permissions], maxSelectionCharacters: READER_SELECTION_MAX_CHARS,
+            storageSchemaVersion: item.manifest.storageVersion ?? 1, storageQuotaBytes: READER_TOOL_STORAGE_BYTES,
+            translationCache: { entries: 32, bytes: 512 * 1024, ttlMs: 5 * 60_000 } };
+        },
+        storage: { get: (key, fallback) => { permit("storage.own"); return storage.get(key, fallback); }, set: (key, value) => { permit("storage.own"); storage.set(key, value); }, subscribe(listener) {
+          permit("storage.own"); const unsubscribe = storage.subscribe(listener);
+          controller.signal.addEventListener("abort", unsubscribe, { once: true });
+          return () => { unsubscribe(); controller.signal.removeEventListener("abort", unsubscribe); };
+        } },
         close: readerTools.close,
         async saveExcerpt(selection, translation, note) { permit("annotations.create"); valid(selection); await readerDataApi.annotate(selection.documentId, selection.revision, selection.anchor, note, translation); window.dispatchEvent(new Event("zhiye:reading-data-changed")); },
-        async translate(selection, language, onText, signal) {
+        async translate(selection, language, onText, signal, options = {}) {
           permit("translation.request"); valid(selection);
           if (selection.anchor.quote.length > READER_SELECTION_MAX_CHARS) throw new Error(`每次最多翻译 ${READER_SELECTION_MAX_CHARS} 个字符，请缩短选区。`);
           const requestSignal = AbortSignal.any([signal, controller.signal]);
           const settings = await coreApi.getLlmSettings(requestSignal);
           if (!settings.enabled) throw new Error("请先在智能设置中启用 AI。");
+          const contextVersion = readerTools.getSnapshot().contextVersion;
+          const glossary = parseTranslationGlossary(options.glossary ?? []);
+          if (options.glossaryRevision !== undefined && (!Number.isSafeInteger(options.glossaryRevision) || options.glossaryRevision < 0)) throw new Error("术语表版本无效。");
           valid(selection); requestSignal.throwIfAborted();
-          await streamSelectionTranslation(selection.documentId, { text: selection.anchor.quote, revision: selection.revision, language, settingsRevision: settings.revision }, (text) => { valid(selection); requestSignal.throwIfAborted(); onText(text); }, requestSignal);
+          const model = settings[settings.target];
+          const cacheKey = JSON.stringify([contextVersion, selection.documentId, selection.revision, selection.anchor.quote, language, settings.target, model.endpointUrl, model.model, settings.revision, settings.apiKeyConfigured, options.glossaryRevision ?? 0, glossary]);
+          const cached = translationCache.get(cacheKey);
+          if (cached !== null) { valid(selection); requestSignal.throwIfAborted(); onText(cached); return; }
+          if (translating.has(cacheKey)) throw new Error("相同选区正在另一个阅读工具中翻译，请稍候。");
+          translating.add(cacheKey);
+          let output = "";
+          try {
+            await streamSelectionTranslation(selection.documentId, { text: selection.anchor.quote, revision: selection.revision, language, settingsRevision: settings.revision, ...(glossary.length ? { glossary } : {}) }, (text) => { valid(selection); requestSignal.throwIfAborted(); output += text; onText(text); }, requestSignal);
+            valid(selection); requestSignal.throwIfAborted();
+            if (readerTools.getSnapshot().contextVersion !== contextVersion) throw new Error("文档上下文已变化，请重新选择文字。");
+            translationCache.set(cacheKey, output);
+          } finally { translating.delete(cacheKey); }
         },
       };
       void item.load().then((module) => {
         if (controller.signal.aborted) return;
-        if (module.manifest.id !== id || module.manifest.hostApiVersion !== 1 || module.manifest.permissions.some((permission) => !item.manifest.permissions.includes(permission))) throw new Error("Incompatible reader tool");
+        if (module.manifest.id !== id || module.manifest.hostApiVersion !== 1 || (module.manifest.storageVersion ?? 1) !== (item.manifest.storageVersion ?? 1) || module.manifest.permissions.some((permission) => !item.manifest.permissions.includes(permission))) throw new Error("Incompatible reader tool");
+        storage = readerToolStorage(id, module.manifest.storageVersion, module.storageMigrations);
         readerTools.register(id, module, toolApi);
       }).catch(() => { if (!controller.signal.aborted) readerTools.fail(id); });
     }
   }, [state.enabled, state.retries]);
-  useEffect(() => () => { for (const value of active.current.values()) value.controller.abort(); active.current.clear(); for (const item of builtinReaderTools) readerTools.unregister(item.manifest.id); readerTools.setContext(null); }, []);
+  useEffect(() => () => { for (const value of active.current.values()) value.controller.abort(); active.current.clear(); translationCache.clear(); for (const item of builtinReaderTools) readerTools.unregister(item.manifest.id); readerTools.setContext(null); }, []);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (document.querySelector("dialog[open]") || !readerTools.getSnapshot().context) return;
@@ -108,5 +141,5 @@ export function ReaderToolsHost() {
     <Button onClick={() => void readerDataApi.annotate(selection.documentId, selection.revision, selection.anchor).then(() => { toast.success("摘录已保存。"); window.dispatchEvent(new Event("zhiye:reading-data-changed")); }, (cause) => toast.error((cause as Error).message))}>保存摘录</Button>
     {Object.entries(state.tools).map(([id, entry]) => <Button key={id} onClick={() => readerTools.open(id)}>{entry.module.selectionAction.title}</Button>)}
   </div> : null;
-  return createPortal(<div className="reader-overlay-host" style={{ visibility: modal ? "hidden" : undefined }}>{ribbon}{tool && state.context && <FloatingTool key={`${state.overlay}:${state.context.id}:${state.context.revision}`} title={tool.module.manifest.name} onClose={readerTools.close}><ReaderToolBoundary onClose={readerTools.close}><tool.module.Overlay api={tool.api} selection={selection} /></ReaderToolBoundary></FloatingTool>}</div>, document.body);
+  return createPortal(<div className="reader-overlay-host" style={{ visibility: modal ? "hidden" : undefined }}>{ribbon}{tool && state.context && <FloatingTool key={`${state.overlay}:${state.context.id}:${state.context.revision}`} title={tool.module.manifest.name} onClose={readerTools.close}><ReaderToolBoundary onClose={readerTools.close}><tool.module.Overlay api={tool.api} selection={selection} active /></ReaderToolBoundary></FloatingTool>}</div>, document.body);
 }

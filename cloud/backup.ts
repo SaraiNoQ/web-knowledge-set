@@ -5,6 +5,9 @@ import { validateStoredLlmSettings } from "./ai";
 import { TRANSLATION_LANGUAGES } from "../shared/types";
 import { parseReadingSnapshot, insertAnnotationSql, annotationValues, insertConnectionSql, connectionValues, type ReadingSnapshot } from "../shared/reading-snapshot";
 import { annotationColumns, annotationFromRow, connectionColumns, connectionFromRow } from "../shared/reading-data";
+import { STUDY_TABLES } from "../shared/study-store";
+import { connectionEvidenceColumns, connectionEvidenceFromRow } from "../shared/related";
+import { emptyStudySnapshot, hasStudyData, parseStudySnapshot, studyRestoreStatements, studyRawBytesExpression, STUDY_SNAPSHOT_MAX_BYTES, STUDY_SNAPSHOT_MAX_RECORDS, type StudySnapshot } from "../shared/study-snapshot";
 
 const encoder = new TextEncoder();
 const MAX_ARCHIVE_BYTES = 8 * 1024 * 1024;
@@ -70,7 +73,8 @@ interface ArchiveV6 extends Omit<ArchiveV5, "version"> {
 }
 
 interface ArchiveV7 extends Omit<ArchiveV6, "version"> { version: 7; readingData: ReadingSnapshot }
-type Archive = ArchiveV1 | ArchiveV2 | ArchiveV3 | ArchiveV4 | ArchiveV5 | ArchiveV6 | ArchiveV7;
+interface ArchiveV8 extends Omit<ArchiveV7, "version"> { version: 8; studyData: StudySnapshot }
+type Archive = ArchiveV1 | ArchiveV2 | ArchiveV3 | ArchiveV4 | ArchiveV5 | ArchiveV6 | ArchiveV7 | ArchiveV8;
 
 function assetHashRefs(markdown: unknown): string[] {
   if (typeof markdown !== "string") return [];
@@ -125,8 +129,8 @@ function parseArchive(bytes: Uint8Array): Archive {
   const version = typeof raw.version === "number" ? raw.version : 0;
   const topFields = version === 1
     ? ["format", "version", "createdAt", "documents", "derivedResults", "llmSettings"]
-    : ["format", "version", "createdAt", "folders", "documents", "derivedResults", "llmSettings", ...(version >= 5 ? ["assets"] : []), ...(version >= 6 ? ["papers", "paperExtractions", "paperPages", "paperFiles"] : []), ...(version === 7 ? ["readingData"] : [])];
-  if ((version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7) || !exact(raw, topFields) || raw.format !== "zhiye-cloud-backup" ||
+    : ["format", "version", "createdAt", "folders", "documents", "derivedResults", "llmSettings", ...(version >= 5 ? ["assets"] : []), ...(version >= 6 ? ["papers", "paperExtractions", "paperPages", "paperFiles"] : []), ...(version >= 7 ? ["readingData"] : []), ...(version === 8 ? ["studyData"] : [])];
+  if ((version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8) || !exact(raw, topFields) || raw.format !== "zhiye-cloud-backup" ||
     !timestamp(raw.createdAt) || !Array.isArray(raw.documents) || !Array.isArray(raw.derivedResults) ||
     (version !== 1 && !Array.isArray(raw.folders))) {
     throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup schema is invalid");
@@ -179,7 +183,7 @@ function parseArchive(bytes: Uint8Array): Archive {
     const note = row.source_note;
     const folderId = result.version === 1 ? null : row.folder_id;
     const deletedAt = result.version >= 3 ? row.deleted_at : null;
-    const favorite = result.version === 4 ? row.favorite : 0;
+    const favorite = result.version >= 4 ? row.favorite : 0;
     const expectedFields = result.version === 1 ? documentFields : result.version === 2 ? [...documentFields, "folder_id"] : result.version === 3 ? [...documentFields, "folder_id", "deleted_at"] : [...documentFields, "folder_id", "deleted_at", "favorite"];
     if (!exact(row, expectedFields) || !identifier(id) || documentIds.has(id) ||
       !safeUrl(row.source_url) || ![row.final_url, row.canonical_url].every((entry) => entry == null || safeUrl(entry)) ||
@@ -231,10 +235,14 @@ function parseArchive(bytes: Uint8Array): Archive {
     }
     validateStoredLlmSettings(result.llmSettings.value);
   }
-  if (result.version === 7) {
+  if (result.version === 7 || result.version === 8) {
     try { result.readingData = parseReadingSnapshot(result.readingData, documentIds); }
     catch { throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup reading data is invalid"); }
     if (folders.length + result.documents.length + result.derivedResults.length + result.readingData.annotations.length + result.readingData.connections.length > MAX_ARCHIVE_RECORDS) throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds 32 records");
+  }
+  if (result.version === 8) {
+    try { result.studyData = parseStudySnapshot(result.studyData, documentIds, result.readingData); }
+    catch { throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup research data is invalid"); }
   }
   return result;
 }
@@ -339,17 +347,21 @@ async function snapshot(db: D1Database, images: R2Bucket): Promise<Archive> {
   const count = await db.prepare(`SELECT
     (SELECT COUNT(*) FROM cloud_folders) + (SELECT COUNT(*) FROM cloud_documents) +
     (SELECT COUNT(*) FROM cloud_derived_results) + (SELECT COUNT(*) FROM reading_annotations) +
-    (SELECT COUNT(*) FROM document_connections) AS count`).first<{ count: number }>();
+    (SELECT COUNT(*) FROM document_connections) AS count,
+    ${[...STUDY_TABLES.map(({ name }) => name), "reading_connection_evidence"].map((name) => `(SELECT COUNT(*) FROM ${name})`).join("+")} AS studyCount,${studyRawBytesExpression} AS studyBytes`).first<{ count: number; studyCount: number; studyBytes: number }>();
   if ((count?.count ?? 0) > MAX_ARCHIVE_RECORDS) {
     throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds 32 records");
   }
-  const [folders, documents, derived, settings, annotations, connections] = await db.batch([
+  if ((count?.studyCount ?? 0) > STUDY_SNAPSHOT_MAX_RECORDS || (count?.studyBytes ?? 0) > STUDY_SNAPSHOT_MAX_BYTES) throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup research data exceeds its budget");
+  const [folders, documents, derived, settings, annotations, connections, ...studyRows] = await db.batch([
     db.prepare("SELECT * FROM cloud_folders ORDER BY created_at"),
     db.prepare("SELECT id, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note, revision, created_at, updated_at, folder_id, deleted_at, favorite FROM cloud_documents ORDER BY created_at"),
     db.prepare("SELECT * FROM cloud_derived_results ORDER BY created_at"),
     db.prepare("SELECT value, revision FROM app_settings WHERE key = 'llm_settings'"),
     db.prepare(`SELECT ${annotationColumns} FROM reading_annotations ORDER BY id`),
     db.prepare(`SELECT ${connectionColumns} FROM document_connections ORDER BY id`),
+    ...STUDY_TABLES.map(({ name, columns }) => db.prepare(`SELECT ${columns.join(",")} FROM ${name} LIMIT ${STUDY_SNAPSHOT_MAX_RECORDS + 1}`)),
+    db.prepare(`SELECT ${connectionEvidenceColumns} FROM reading_connection_evidence LIMIT ${STUDY_SNAPSHOT_MAX_RECORDS + 1}`),
   ]);
   if (folders.results.length + documents.results.length + derived.results.length + annotations.results.length + connections.results.length > MAX_ARCHIVE_RECORDS) {
     throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds 32 records");
@@ -363,10 +375,16 @@ async function snapshot(db: D1Database, images: R2Bucket): Promise<Archive> {
   const assets = await referencedAssets(db, base.documents, images);
   const papers = await db.prepare("SELECT * FROM cloud_papers ORDER BY created_at").all<Record<string, unknown>>();
   const readingData = { annotations: (annotations.results as Record<string, unknown>[]).map(annotationFromRow), connections: (connections.results as Record<string, unknown>[]).map(connectionFromRow) };
+  let studyData = emptyStudySnapshot();
+  for (const [index, spec] of STUDY_TABLES.entries()) studyData.tables[spec.name] = studyRows[index]!.results as Record<string, unknown>[];
+  studyData.connectionEvidence = (studyRows[STUDY_TABLES.length]!.results as Record<string, unknown>[]).map(connectionEvidenceFromRow);
+  try { studyData = parseStudySnapshot(studyData, new Set(base.documents.map((row) => String(row.id))), readingData); }
+  catch { throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup research data is inconsistent or exceeds its size budget"); }
+  const attachStudy = (archive: ArchiveV5 | ArchiveV6 | ArchiveV7): Archive => hasStudyData(studyData) ? { papers: [], paperExtractions: [], paperPages: [], paperFiles: [], ...archive, version: 8, readingData, studyData } : archive;
   const hasReading = readingData.annotations.length + readingData.connections.length > 0;
-  if (!papers.results.length) return hasReading
+  if (!papers.results.length) return attachStudy(hasReading
     ? { ...base, version: 7, assets, papers: [], paperExtractions: [], paperPages: [], paperFiles: [], readingData }
-    : { ...base, version: 5, assets };
+    : { ...base, version: 5, assets });
   const paperExtractions = await db.prepare("SELECT * FROM cloud_paper_extractions ORDER BY created_at").all<Record<string, unknown>>();
   const paperPages = await db.prepare("SELECT * FROM cloud_paper_pages ORDER BY paper_id, page_number").all<Record<string, unknown>>();
   const paperFiles = await db.prepare("SELECT hash, mime, bytes, r2_key FROM cloud_paper_files ORDER BY hash").all<Record<string, unknown>>();
@@ -379,7 +397,7 @@ async function snapshot(db: D1Database, images: R2Bucket): Promise<Archive> {
     paperPages: paperPages.results,
     paperFiles: paperFiles.results as ArchiveV6["paperFiles"],
   };
-  return hasReading ? { ...paperArchive, version: 7, readingData } : paperArchive;
+  return attachStudy(hasReading ? { ...paperArchive, version: 7, readingData } : paperArchive);
 }
 
 async function createBackup(db: D1Database, bucket: R2Bucket, images: R2Bucket, reason: "manual" | "pre-restore" = "manual") {
@@ -452,6 +470,7 @@ async function restoreArchive(db: D1Database, archive: Archive, reservation: str
     db.prepare("DELETE FROM cloud_paper_extractions"),
     db.prepare("DELETE FROM cloud_papers"),
     db.prepare("DELETE FROM cloud_paper_files"),
+    db.prepare("DELETE FROM study_topics"),
     db.prepare("DELETE FROM cloud_documents"),
     db.prepare("DELETE FROM cloud_folders"),
     db.prepare("DELETE FROM app_settings WHERE key IN ('semantic_settings', 'semantic_runtime')"),
@@ -459,7 +478,7 @@ async function restoreArchive(db: D1Database, archive: Archive, reservation: str
   if (archive.version !== 1) for (const row of archive.folders) statements.push(db.prepare(`INSERT INTO cloud_folders(
     id, name, created_at, updated_at
   ) VALUES (?, ?, ?, ?)`).bind(field(row, "id"), field(row, "name"), field(row, "created_at"), field(row, "updated_at")));
-  const paperIds = new Set(archive.version === 6 || archive.version === 7 ? archive.papers.map((row) => String(row.id)) : []);
+  const paperIds = new Set(archive.version === 6 || archive.version === 7 || archive.version === 8 ? archive.papers.map((row) => String(row.id)) : []);
   for (const row of archive.documents) statements.push(db.prepare(`INSERT INTO cloud_documents(
     id, kind, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note, folder_id, favorite, revision, created_at, updated_at, deleted_at
   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
@@ -467,7 +486,7 @@ async function restoreArchive(db: D1Database, archive: Archive, reservation: str
     row.published_at ?? null, field(row, "markdown"), field(row, "status"), field(row, "source_note"), archive.version === 1 ? null : row.folder_id,
     archive.version >= 4 ? field(row, "favorite") : 0, field(row, "revision"), field(row, "created_at"), field(row, "updated_at"), archive.version >= 3 ? row.deleted_at : null,
   ));
-  if (archive.version === 6 || archive.version === 7) {
+  if (archive.version === 6 || archive.version === 7 || archive.version === 8) {
     for (const row of archive.paperFiles) statements.push(db.prepare("INSERT INTO cloud_paper_files(hash, mime, bytes, r2_key, created_at) VALUES (?, ?, ?, ?, ?)").bind(row.hash, row.mime, row.bytes, row.r2_key, new Date().toISOString()));
     for (const row of archive.papers) statements.push(db.prepare(`INSERT INTO cloud_papers(id, source_kind, source_url, original_file_name, source_hash, page_count, status, extraction_id, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(row.id, row.source_kind, row.source_url ?? null, row.original_file_name ?? null, row.source_hash, row.page_count ?? null, row.status, row.extraction_id ?? null, row.created_at, row.updated_at));
@@ -476,10 +495,11 @@ async function restoreArchive(db: D1Database, archive: Archive, reservation: str
     for (const row of archive.paperPages) statements.push(db.prepare(`INSERT INTO cloud_paper_pages(paper_id, extraction_id, page_number, original_json, translation_json, revision, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(row.paper_id, row.extraction_id, row.page_number, row.original_json, row.translation_json, row.revision, row.created_at, row.updated_at));
   }
-  if (archive.version === 7) {
+  if (archive.version === 7 || archive.version === 8) {
     for (const row of archive.readingData.annotations) statements.push(db.prepare(insertAnnotationSql).bind(...annotationValues(row)));
     for (const row of archive.readingData.connections) statements.push(db.prepare(insertConnectionSql).bind(...connectionValues(row)));
   }
+  if (archive.version === 8) for (const statement of studyRestoreStatements(archive.studyData)) statements.push(db.prepare(statement.sql).bind(...statement.values));
   for (const row of archive.derivedResults) statements.push(db.prepare(`INSERT INTO cloud_derived_results(
     id, document_id, type, target_language, model, endpoint_id, prompt_version, input_hash, output, duration_ms,
     usage_json, source_chars, sent_chars, truncated, pinned, source_revision, created_at
