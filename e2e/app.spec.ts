@@ -610,6 +610,8 @@ test("knowledge map shows model-ranked semantic neighbors and applies the thresh
   await expect(detail).toContainText("语义主题乙");
   await detail.locator(".map-detail-related").first().getByRole("button", { name: /语义主题乙/u }).click();
   await expect(detail.getByRole("heading", { name: "语义主题乙" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "全部资料" })).toHaveAttribute("aria-pressed", "true");
+  await detail.getByRole("button", { name: "聚焦关联", exact: true }).click();
   await expect(page.getByRole("button", { name: "当前关联" })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "全部资料" }).click();
   await expect(page.getByRole("button", { name: "全部资料" })).toHaveAttribute("aria-pressed", "true");

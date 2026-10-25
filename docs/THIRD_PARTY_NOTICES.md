@@ -233,6 +233,7 @@ This inventory is generated from the locked production dependency metadata. Bund
 | style-to-js | 1.1.21 | MIT | Mark | https://github.com/remarkablemark/style-to-js#readme |
 | style-to-object | 1.0.14 | MIT | Mark | https://github.com/remarkablemark/style-to-object#readme |
 | temml | 0.13.5 | MIT | — | https://temml.org |
+| three | 0.186.1 | MIT | mrdoob | https://threejs.org/ |
 | tinycolor2 | 1.6.0 | MIT | Brian Grinstead | https://github.com/bgrins/TinyColor#readme |
 | trim-lines | 3.0.1 | MIT | Titus Wormer | https://github.com/wooorm/trim-lines#readme |
 | trough | 2.2.0 | MIT | Titus Wormer | https://github.com/wooorm/trough#readme |
