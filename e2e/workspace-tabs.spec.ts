@@ -151,6 +151,7 @@ for (const cloud of [false, true]) {
     const tabs = page.getByRole("navigation", { name: "已打开的文章" });
     await expect(tabs.locator(".document-tab-select")).toHaveCount(2);
     const tabTitle = tabs.locator(".document-tab-select").first();
+    await expect(tabTitle).toHaveCSS("justify-content", "flex-start");
     await tabTitle.hover();
     await expect(tabTitle).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await expect(tabTitle).toHaveCSS("box-shadow", "none");
