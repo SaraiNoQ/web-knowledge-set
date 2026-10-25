@@ -116,7 +116,8 @@ test("PDF text selection has source anchors; long floating content stays reachab
   await page.route("**/api/reader-tools/documents/*/translate", (route) => route.fulfill({ contentType: "application/x-ndjson", body: JSON.stringify({ type: "delta", text: "较长的选区译文。".repeat(1800) }) + '\n{"type":"done"}\n' }));
   await floating.getByRole("button", { name: "翻译选区", exact: true }).click();
   await expect(floating.getByRole("button", { name: "保存译文摘录" })).toBeEnabled();
-  const bounds = await floating.boundingBox(); expect(bounds!.y).toBeGreaterThanOrEqual(0); expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(600);
+  await expect.poll(async () => { const bounds = await floating.boundingBox(); return bounds ? bounds.y + bounds.height : Infinity; }).toBeLessThanOrEqual(600);
+  expect((await floating.boundingBox())!.y).toBeGreaterThanOrEqual(0);
   await floating.getByRole("button", { name: "保存译文摘录" }).scrollIntoViewIfNeeded(); await expect(floating.getByRole("button", { name: "保存译文摘录" })).toBeInViewport();
   await page.screenshot({ path: testInfo.outputPath("translation-long-short-window.png") });
 });
