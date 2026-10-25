@@ -33,6 +33,8 @@ import { TRANSLATION_LANGUAGES } from "../shared/types.js";
 import { PAPER_MAX_PAGES, PAPER_PAGE_IMAGE_MAX_BYTES, PAPER_PAGE_IMAGE_TYPE } from "../shared/paper.js";
 import { cacheDocumentAssets, type AssetFetchFunction } from "./assets.js";
 import { createAuth } from "./auth.js";
+import { parseSelectionTranslation, ReaderInputError } from "../shared/reader-tools.js";
+import { createReadingRepository, ReadingDataError } from "../shared/reading-data.js";
 import {
   BACKUP_ARCHIVE_MIME,
   BackupError,
@@ -2768,6 +2770,65 @@ export function createApp(options: AppOptions) {
           derivedTasks.resume();
           paperTasks.resume();
         }
+        return;
+      }
+
+      const readingData = /^\/api\/reader-tools\/documents\/([^/]+)\/(data|annotations|connections)(?:\/([^/]+))?$/u.exec(pathname);
+      if (readingData) {
+        const id = decodeId(readingData[1]), entry = readingData[3] ? decodeId(readingData[3]) : "";
+        const enteringEpoch = dataEpoch;
+        const repository = createReadingRepository({ documentsTable: "documents",
+          document: async (value) => requireDatabase().getDocument(value),
+          all: async (sql, values) => requireDatabase().sql.prepare(sql).all(...values as import("node:sqlite").SQLInputValue[]),
+          run: async (sql, values) => { assertDataEpoch(enteringEpoch); return Number(requireDatabase().sql.prepare(sql).run(...values as import("node:sqlite").SQLInputValue[]).changes); },
+        });
+        try {
+          let result: unknown;
+          if (readingData[2] === "data" && request.method === "GET" && !entry) result = await repository.list(id, Number(requestUrl.searchParams.get("page") ?? 1), requestUrl.searchParams.get("projection") !== "connections");
+          else {
+            const body = await mutationBody(request);
+            if (readingData[2] === "annotations" && request.method === "POST" && !entry) result = await repository.createAnnotation(id, body);
+            else if (readingData[2] === "annotations" && request.method === "PATCH" && entry) result = await repository.updateAnnotation(id, entry, body);
+            else if (readingData[2] === "annotations" && request.method === "DELETE" && entry) result = await repository.deleteAnnotation(id, entry, body);
+            else if (readingData[2] === "connections" && request.method === "POST" && !entry) result = await repository.connect(id, body);
+            else if (readingData[2] === "connections" && request.method === "DELETE" && entry) result = await repository.disconnect(id, entry, body);
+            else throw new HttpError(405, "METHOD_NOT_ALLOWED", "Unsupported reading data action");
+          }
+          sendJson(response, 200, result);
+        } catch (cause) {
+          if (cause instanceof ReaderInputError) throw new HttpError(400, "INVALID_READER_TOOL_REQUEST", cause.message);
+          if (cause instanceof ReadingDataError) throw new HttpError(cause.status, cause.code, cause.message);
+          throw cause;
+        }
+        return;
+      }
+
+      const selectionTranslation = pathname.match(/^\/api\/reader-tools\/documents\/([^/]+)\/translate$/u);
+      if (selectionTranslation && request.method === "POST") {
+        const body = await mutationBody(request);
+        let input;
+        try { input = parseSelectionTranslation(body); } catch (cause) {
+          if (cause instanceof ReaderInputError) throw new HttpError(400, "INVALID_READER_TOOL_REQUEST", "Invalid selected text or language");
+          throw cause;
+        }
+        const enteringEpoch = dataEpoch;
+        const controller = new AbortController();
+        const cancel = () => controller.abort();
+        response.once("close", cancel);
+        const packet = (value: unknown) => {
+          if (response.destroyed || controller.signal.aborted) return;
+          if (!response.headersSent) response.writeHead(200, { ...securityHeaders(), "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store", [DATA_EPOCH_HEADER]: enteringEpoch });
+          response.write(JSON.stringify(value) + "\n");
+        };
+        try {
+          await derivedTasks.translateSelection(decodeId(selectionTranslation[1]), input, (text) => packet({ type: "delta", text }), controller.signal, () => enteringEpoch === dataEpoch && !maintenanceKind);
+          packet({ type: "done" });
+          response.end();
+        } catch (cause) {
+          if (!response.headersSent && !response.destroyed) throw cause;
+          packet({ type: "error", code: cause instanceof LlmError ? cause.code : "LLM_NETWORK_ERROR" });
+          response.end();
+        } finally { response.off("close", cancel); controller.abort(); }
         return;
       }
 

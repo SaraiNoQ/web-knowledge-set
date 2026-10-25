@@ -793,6 +793,7 @@ export type ImportPayload =
     archivedAt: string | null;
     sourceNote: string;
     markdown: string;
+    readingData?: { documentId: string; annotations: import("./reader-tools.js").ReadingAnnotation[]; connections: import("./reader-tools.js").DocumentConnection[] };
     assets?: Array<{
       path: string;
       sha256: string;

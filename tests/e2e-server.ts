@@ -12,9 +12,17 @@ const dataDir = join(root, "data");
 const llmServer = createServer(async (request, response) => {
   const chunks: Buffer[] = [];
   for await (const chunk of request) chunks.push(Buffer.from(chunk));
-  const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { messages?: Array<{ content?: unknown }> };
+  const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { stream?: boolean; messages?: Array<{ content?: unknown }> };
   const system = typeof body.messages?.[0]?.content === "string" ? body.messages[0].content : "";
   const paperRequest = Array.isArray(body.messages?.[1]?.content);
+  if (body.stream && system.includes("user's selected text")) {
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    const parts = ["选区译文：", String(body.messages?.[1]?.content ?? "")];
+    let index = 0;
+    const timer = setInterval(() => { if (index < parts.length) response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: parts[index++] } }] })}\n\n`); else { clearInterval(timer); response.end("data: [DONE]\n\n"); } }, 200);
+    response.once("close", () => clearInterval(timer));
+    return;
+  }
   const content = paperRequest
     ? JSON.stringify({ paper: { title: "E2E 论文", authors: ["测试作者"] }, pages: [{ pageNumber: 1, blocks: [{ id: "p1-b1", type: "paragraph", original: "An e2e paper.", translation: "一篇 E2E 论文。", assetIds: [] }] }] })
     : system.includes("This is a connection test")

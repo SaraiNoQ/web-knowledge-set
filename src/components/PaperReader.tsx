@@ -73,6 +73,8 @@ function PaperZoom({ zoom, onZoom }: { zoom: number; onZoom: (value: number) => 
 function PaperCanvas({ paperId, pageNumber, zoom, onZoom }: { paperId: string; pageNumber: number; zoom: number; onZoom: (value: number) => void }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const textRef = useRef<HTMLDivElement>(null);
+  const textTask = useRef<{ cancel: () => void } | null>(null);
   const renderChain = useRef<Promise<void>>(Promise.resolve());
   const renderTask = useRef<{ cancel: () => void } | null>(null);
   const [document_, setDocument] = useState<PDFDocumentProxy | null>(null);
@@ -147,6 +149,15 @@ function PaperCanvas({ paperId, pageNumber, zoom, onZoom }: { paperId: string; p
         const task = page.render({ canvas, canvasContext: canvas.getContext("2d")!, viewport, transform: backing === 1 ? undefined : [backing, 0, 0, backing, 0, 0] });
         renderTask.current = task;
         await task.promise;
+        if (cancelled || !textRef.current) return;
+        const { TextLayer } = await import("pdfjs-dist");
+        if (cancelled || !textRef.current) return;
+        const container = textRef.current;
+        container.replaceChildren();
+        container.style.setProperty("--total-scale-factor", String(viewport.scale));
+        const layer = new TextLayer({ textContentSource: page.streamTextContent(), container, viewport });
+        textTask.current = layer;
+        await layer.render();
       })
       .catch((cause: unknown) => {
         // A render cancelled by the next zoom, page, or resize is expected.
@@ -157,6 +168,8 @@ function PaperCanvas({ paperId, pageNumber, zoom, onZoom }: { paperId: string; p
     return () => {
       cancelled = true;
       renderTask.current?.cancel();
+      textTask.current?.cancel();
+      textRef.current?.replaceChildren();
     };
   }, [document_, pageNumber, zoom, paneWidth]);
 
@@ -165,13 +178,13 @@ function PaperCanvas({ paperId, pageNumber, zoom, onZoom }: { paperId: string; p
       <div className="paper-reader-page-label"><span>ORIGINAL PDF · p.{pageNumber}</span><PaperZoom zoom={zoom} onZoom={onZoom} /></div>
       <div className="paper-reader-pdf-scroll" ref={scrollRef}>
         {error && <div className="paper-reader-pdf-error" role="alert">{error}</div>}
-        <canvas ref={canvasRef} aria-label={`原始 PDF 第 ${pageNumber} 页`} />
+        <div className="paper-reader-page-surface" data-reader-page={pageNumber}><canvas ref={canvasRef} aria-label={`原始 PDF 第 ${pageNumber} 页`} /><div className="paper-text-layer" ref={textRef} aria-label={`原始 PDF 第 ${pageNumber} 页文字`} /></div>
       </div>
     </div>
   );
 }
 
-export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChange, onDirtyChange, onCreateArticle }: { paperId: string; title?: string; autoStart?: boolean; onClose: () => void; onRevisionChange: (paperId: string, revision: number) => void; onDirtyChange?: (dirty: boolean) => void; onCreateArticle: (title: string, markdown: string) => Promise<boolean> }) {
+export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChange, onDirtyChange, onCreateArticle }: { paperId: string; title?: string; autoStart?: boolean; onClose: () => void; onRevisionChange: (paperId: string, revision: number, status: PaperDocument["status"]) => void; onDirtyChange?: (dirty: boolean) => void; onCreateArticle: (title: string, markdown: string) => Promise<boolean> }) {
   const [paper, setPaper] = useState<PaperDocument | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [draftBlocks, setDraftBlocks] = useState<PaperBlock[]>([]);
@@ -191,6 +204,15 @@ export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChan
   const resumed = useRef<string | null>(null);
   const columnsRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ startX: number; startRatio: number; usable: number } | null>(null);
+  useEffect(() => {
+    const reveal = (event: Event) => {
+      const { documentId, pageNumber: requested } = (event as CustomEvent<{ documentId: string; pageNumber: number }>).detail;
+      if (documentId !== paperId || !paper || editing || !Number.isSafeInteger(requested) || requested < 1 || requested > (paper.pageCount || paper.pages.length || 1)) return;
+      event.preventDefault(); setPageNumber(requested);
+    };
+    window.addEventListener("zhiye:reveal-paper-page", reveal);
+    return () => window.removeEventListener("zhiye:reveal-paper-page", reveal);
+  }, [paperId, paper, editing]);
 
   const clampSplit = (value: number) => Math.max(SPLIT_MIN, Math.min(SPLIT_MAX, value));
 
@@ -254,7 +276,7 @@ export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChan
       const next = await api.getPaper(paperId, signal);
       if (signal?.aborted || sequence !== loadSequence.current) return;
       setPaper(next);
-      onRevisionChange(paperId, next.revision);
+      onRevisionChange(paperId, next.revision, next.status);
       if (next.pages.length && pageNumber > next.pages.length) setPageNumber(next.pages.length);
       setError("");
     } catch (cause) {
@@ -330,7 +352,7 @@ export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChan
       const updated = await api.updatePaperPage(paperId, page.pageNumber, page.revision, draftBlocks);
       const nextPaper = paper ? { ...paper, pages: paper.pages.map((value) => value.pageNumber === updated.pageNumber ? updated : value), revision: updated.documentRevision, updatedAt: new Date().toISOString() } : null;
       setPaper(nextPaper);
-      if (nextPaper) onRevisionChange(paperId, nextPaper.revision);
+      if (nextPaper) onRevisionChange(paperId, nextPaper.revision, nextPaper.status);
       setEditing(false);
       setNotice("本页译文已保存。");
     } catch (cause) {
@@ -392,9 +414,9 @@ export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChan
                 onPointerDown={startSplitDrag}
                 onKeyDown={resizeSplit}
               />
-              <article className="paper-reader-translation" style={{ "--paper-translation-font-size": `${translationFontSize}px` } as CSSProperties}>
+              <article data-reader-page={pageNumber} className="paper-reader-translation" style={{ "--paper-translation-font-size": `${translationFontSize}px` } as CSSProperties}>
                 <div className="paper-reader-page-label"><span>中文对照 · 第 {pageNumber} 页</span></div>
-                <div className="paper-reader-translation-scroll">{page ? <div className="paper-reader-blocks">{draftBlocks.map((block, index) => editing ? <label key={block.id} className="paper-reader-block paper-reader-block--edit"><span>{labelForBlock(block.type)} · {index + 1}</span><textarea value={block.translation} onChange={(event) => setDraftBlocks((current) => current.map((value) => value.id === block.id ? { ...value, translation: event.target.value } : value))} rows={Math.max(2, Math.min(8, Math.ceil(block.translation.length / 36)))} /></label> : <section key={block.id} className="paper-reader-block"><span>{labelForBlock(block.type)}</span><p>{block.translation || "（此块暂无译文）"}</p></section>)}</div> : <p className="paper-reader-empty">本页尚未生成译文。</p>}</div>
+                <div className="paper-reader-translation-scroll">{page ? <div className="paper-reader-blocks">{draftBlocks.map((block, index) => editing ? <label key={block.id} className="paper-reader-block paper-reader-block--edit"><span>{labelForBlock(block.type)} · {index + 1}</span><textarea value={block.translation} onChange={(event) => setDraftBlocks((current) => current.map((value) => value.id === block.id ? { ...value, translation: event.target.value } : value))} rows={Math.max(2, Math.min(8, Math.ceil(block.translation.length / 36)))} /></label> : <section key={block.id} data-reader-block={block.id} className="paper-reader-block"><span aria-hidden="true">{labelForBlock(block.type)}</span><p>{block.translation || "（此块暂无译文）"}</p></section>)}</div> : <p className="paper-reader-empty">本页尚未生成译文。</p>}</div>
               </article>
             </div>
           </div>

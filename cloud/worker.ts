@@ -24,7 +24,9 @@ import {
   type D1Database,
 } from "./extension";
 import { handleImportApi } from "./import";
-import { handleAiApi } from "./ai";
+import { handleAiApi, translateReaderSelection } from "./ai";
+import { createReadingRepository, ReadingDataError } from "../shared/reading-data";
+import { ReaderInputError } from "../shared/reader-tools";
 import { handleTitleApi } from "./title";
 import { handleSemanticApi } from "./semantic";
 import { deletePaperSource, handlePaperApi, paperSource, paperSourceHash } from "./paper";
@@ -123,6 +125,41 @@ async function api(request: Request, env: CloudEnv, url: URL) {
   }
   if (epoch.startsWith("restore:")) {
     return json({ error: { code: "CLOUD_MAINTENANCE", message: "Cloud restore is in progress" } }, 503);
+  }
+  const readingData = /^\/api\/reader-tools\/documents\/([^/]+)\/(data|annotations|connections)(?:\/([^/]+))?$/u.exec(url.pathname);
+  if (readingData) {
+    if (request.method !== "GET" && request.headers.get(DATA_EPOCH_HEADER) !== epoch) return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed" } }, 409, epoch);
+    const database = request.method === "GET" ? env.DB : epochGuardedDatabase(env.DB, epoch);
+    const repository = createReadingRepository({ documentsTable: "cloud_documents", document: (id) => getDocument(database, id),
+      all: async (sql, values) => (await database.prepare(sql).bind(...values).all<Record<string, unknown>>()).results,
+      run: async (sql, values) => (await database.prepare(sql).bind(...values).run()).meta.changes ?? 0 });
+    try {
+      const id = decodeURIComponent(readingData[1]), entry = readingData[3] ? decodeURIComponent(readingData[3]) : "";
+      let result: unknown;
+      if (readingData[2] === "data" && request.method === "GET" && !entry) result = await repository.list(id, Number(url.searchParams.get("page") ?? 1), url.searchParams.get("projection") !== "connections");
+      else {
+        const body = await jsonObject(request, 64 * 1024);
+        if (readingData[2] === "annotations" && request.method === "POST" && !entry) result = await repository.createAnnotation(id, body);
+        else if (readingData[2] === "annotations" && request.method === "PATCH" && entry) result = await repository.updateAnnotation(id, entry, body);
+        else if (readingData[2] === "annotations" && request.method === "DELETE" && entry) result = await repository.deleteAnnotation(id, entry, body);
+        else if (readingData[2] === "connections" && request.method === "POST" && !entry) result = await repository.connect(id, body);
+        else if (readingData[2] === "connections" && request.method === "DELETE" && entry) result = await repository.disconnect(id, entry, body);
+        else throw new CloudHttpError(405, "METHOD_NOT_ALLOWED", "Unsupported reading data action");
+      }
+      return json(result, 200, epoch);
+    } catch (cause) {
+      if (cause instanceof ReaderInputError) throw new CloudHttpError(400, "INVALID_READER_TOOL_REQUEST", cause.message);
+      if (cause instanceof ReadingDataError) throw new CloudHttpError(cause.status, cause.code, cause.message);
+      throw cause;
+    }
+  }
+  const selectionTranslation = /^\/api\/reader-tools\/documents\/([^/]+)\/translate$/u.exec(url.pathname);
+  if (selectionTranslation && request.method === "POST") {
+    if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed" } }, 409, epoch);
+    const response = await translateReaderSelection(request, env.DB, decodeURIComponent(selectionTranslation[1]), epoch);
+    const headers = new Headers(response.headers);
+    for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
+    return new Response(response.body, { status: response.status, headers });
   }
   if (url.pathname.startsWith("/api/semantic/") || url.pathname.startsWith("/api/settings/semantic") || url.pathname === "/api/knowledge-map/vectors") {
     if (request.method !== "GET" && request.headers.get(DATA_EPOCH_HEADER) !== epoch) {

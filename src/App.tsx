@@ -56,6 +56,8 @@ import { DataSafety } from "./components/DataSafety";
 import { Diagnostics } from "./components/Diagnostics";
 import { DerivedKnowledge, type DerivedMode } from "./components/DerivedKnowledge";
 import { DocumentOutline } from "./components/DocumentOutline";
+import { ReaderSidebar } from "./reader-tools/ReaderSidebar";
+import { useReaderContext } from "./reader-tools/useReaderContext";
 import { MarkdownStyleSelect } from "./components/MarkdownStyleSelect";
 import { MarkdownEditor, type MarkdownEditorHandle } from "./components/MarkdownEditor";
 import { LibrarySearch } from "./components/LibrarySearch";
@@ -1154,10 +1156,10 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
     setSourceMetadata(metadata);
   }, []);
 
-  const updateCurrentPaperRevision = useCallback((paperId: string, revision: number) => {
+  const updateCurrentPaperRevision = useCallback((paperId: string, revision: number, status: PaperDocument["status"]) => {
     const current = currentDocRef.current;
-    if (!current || current.id !== paperId || current.kind !== "paper" || revision <= current.revision) return;
-    const updated = { ...current, revision };
+    if (!current || current.id !== paperId || current.kind !== "paper" || revision < current.revision || (revision === current.revision && status === current.status)) return;
+    const updated = { ...current, revision, status };
     currentDocRef.current = updated;
     setCurrentDoc(updated);
   }, []);
@@ -3734,6 +3736,10 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
   }
 
   const workspaceClassName = ["workspace", selectedId ? "has-selection" : "", libraryCollapsed ? "library-collapsed" : "", graphMode ? "is-map-mode" : ""].filter(Boolean).join(" ");
+  useReaderContext(currentDoc && currentDoc.id === selectedId && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen && !guideOpen ? {
+    id: currentDoc.id, title: currentDoc.title, revision: currentDoc.revision, kind: currentDoc.kind, folderId: currentDoc.folderId,
+    blockedReason: derivedBlockedReason,
+  } : null, directoryOpen, (anchor) => markdownEditorRef.current?.locateAnchor(anchor) ?? false);
   if (onboarding === null || runtimeMode === null || !appearanceLoaded) {
     return <main className="onboarding-loading" aria-live="polite"><span className="brand-seal">知</span><p>正在打开知识库…</p></main>;
   }
@@ -4271,7 +4277,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
               )}
             </>
           ) : null}
-          </div>{toolsOpen && <DocumentOutline key={currentDoc?.id ?? "empty"} markdown={currentDoc?.kind === "article" ? (webArticleMode && !cloudEditing ? currentDoc.markdown : draft?.markdown ?? currentDoc.markdown) : ""} onClose={() => { setToolsOpen(false); window.requestAnimationFrame(() => readerPanelRef.current?.querySelector<HTMLButtonElement>(".document-tabbar > .ui-icon-button")?.focus()); }} onNavigate={(offset) => {
+          </div>{toolsOpen && <ReaderSidebar onClose={() => { setToolsOpen(false); window.requestAnimationFrame(() => readerPanelRef.current?.querySelector<HTMLButtonElement>(".document-tabbar > .ui-icon-button")?.focus()); }} outline={<DocumentOutline embedded key={currentDoc?.id ?? "empty"} markdown={currentDoc?.kind === "article" ? (webArticleMode && !cloudEditing ? currentDoc.markdown : draft?.markdown ?? currentDoc.markdown) : ""} onClose={() => { setToolsOpen(false); window.requestAnimationFrame(() => readerPanelRef.current?.querySelector<HTMLButtonElement>(".document-tabbar > .ui-icon-button")?.focus()); }} onNavigate={(offset) => {
             const heading = readerPanelRef.current?.querySelector<HTMLElement>(`[data-heading-offset="${offset}"]`);
             if (heading) {
               const toolbar = readerPanelRef.current?.querySelector<HTMLElement>(".editor-toolbar");
@@ -4279,7 +4285,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
               heading.scrollIntoView({ block: "start" });
             }
             else markdownEditorRef.current?.jumpTo(offset);
-          }} />}</div>
+          }} />} />}</div>
           {showBackToTitle && <Button type="button" className="back-to-title" aria-label="回到顶部" onClick={() => documentHeadRef.current?.scrollIntoView({ block: "start" })}><Icon size={20}><path d="m6 10 6-6 6 6M12 4v16" /></Icon></Button>}
         </section>
       </main>

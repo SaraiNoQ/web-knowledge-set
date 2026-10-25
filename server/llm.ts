@@ -33,6 +33,8 @@ import {
 } from "../shared/title.js";
 import { derivedInputHash, type KnowledgeDatabase } from "./db.js";
 import { isPublicIp } from "./url-security.js";
+import { consumeCompletionStream, LlmStreamError } from "../shared/llm-stream.js";
+import { selectionTranslationPrompt, type SelectionTranslationInput } from "../shared/reader-tools.js";
 
 const MAX_INPUT_CHARS = 40_000;
 const MAX_TRANSLATION_SOURCE_CHARS = 1_000_000;
@@ -654,6 +656,7 @@ type CompletionRequest =
   | { kind: "derived"; preview: DerivedTaskPreview; sentText: string }
   | { kind: "probe"; target: { kind: LlmEndpointKind; url: string }; model: string }
   | { kind: "title"; target: { kind: LlmEndpointKind; url: string }; model: string; system: string; sentText: string }
+  | { kind: "selection"; target: { kind: LlmEndpointKind; url: string }; model: string; system: string; sentText: string }
   | { kind: "paper"; target: { kind: LlmEndpointKind; url: string }; model: string; system: string; pdf: Buffer }
   | { kind: "paper-images"; target: { kind: LlmEndpointKind; url: string }; model: string; system: string; instruction: string; pages: Buffer[] };
 
@@ -663,6 +666,7 @@ async function requestCompletion(
   signal: AbortSignal,
   resolver: ResolveLlmTarget,
   timeoutMs: number,
+  onText?: (text: string) => void,
 ) {
   const targetInput = input.kind === "derived" ? input.preview.target : input.target;
   const model = input.kind === "derived" ? input.preview.model : input.model;
@@ -715,7 +719,7 @@ async function requestCompletion(
           })),
         ] },
       ]
-    : input.kind === "title"
+    : input.kind === "title" || input.kind === "selection"
       ? [
         { role: "system", content: input.system },
         { role: "user", content: input.sentText },
@@ -727,12 +731,13 @@ async function requestCompletion(
   const body = Buffer.from(JSON.stringify({
     model,
     temperature: 0,
-    ...(input.kind === "probe" ? { max_tokens: 16 } : input.kind === "title" ? { max_tokens: TITLE_MAX_TOKENS } : input.kind === "paper" ? { max_tokens: 32_000 } : input.kind === "paper-images" ? { max_tokens: PAPER_BATCH_MAX_TOKENS } : {}),
+    ...(onText ? { stream: true } : {}),
+    ...(input.kind === "probe" ? { max_tokens: 16 } : input.kind === "selection" ? { max_tokens: 4096 } : input.kind === "title" ? { max_tokens: TITLE_MAX_TOKENS } : input.kind === "paper" ? { max_tokens: 32_000 } : input.kind === "paper-images" ? { max_tokens: PAPER_BATCH_MAX_TOKENS } : {}),
     ...(input.kind === "paper" || input.kind === "paper-images" ? { response_format: { type: "json_object" } } : {}),
     // DeepSeek can spend the whole output budget on reasoning before writing any
     // content, which for a per-page extraction means an empty reply. This
     // mirrors what the title path does on the same endpoint.
-    ...((input.kind === "paper" || input.kind === "paper-images") && target.url.href === "https://api.deepseek.com/chat/completions"
+    ...((input.kind === "paper" || input.kind === "paper-images" || input.kind === "selection") && target.url.href === "https://api.deepseek.com/chat/completions"
       ? { thinking: { type: "disabled" } }
       : {}),
     messages,
@@ -747,7 +752,7 @@ async function requestCompletion(
       lookup: (_hostname, _options, callback) => callback(null, target.address, target.family),
       signal: requestSignal,
       headers: {
-        Accept: "application/json",
+        Accept: onText ? "text/event-stream, application/json" : "application/json",
         "Accept-Encoding": "identity",
         "Content-Type": "application/json",
         "Content-Length": String(body.length),
@@ -790,6 +795,17 @@ async function requestCompletion(
   if (encoding && encoding !== "identity") {
     response.destroy();
     throw new LlmError(502, "LLM_COMPRESSION_REJECTED", "Compressed LLM responses are not allowed");
+  }
+  if (onText && (response.headers["content-type"] ?? "").toLowerCase().startsWith("text/event-stream")) {
+    try {
+      const output = await consumeCompletionStream(response, apiKey, onText, requestSignal);
+      return { output, usage: null, durationMs: Date.now() - started, finishReason: "stop" };
+    } catch (cause) {
+      if (cause instanceof LlmError) throw cause;
+      if (signal.aborted) throw new LlmError(409, "LLM_CANCELLED", "Selection translation cancelled");
+      if (timeoutSignal.aborted) throw new LlmError(504, "LLM_TIMEOUT", "Selection translation timed out");
+      throw new LlmError(502, cause instanceof LlmStreamError ? cause.code : "LLM_NETWORK_ERROR", "Selection translation failed");
+    } finally { response.destroy(); }
   }
   if (!(response.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
     response.destroy();
@@ -851,6 +867,10 @@ async function requestCompletion(
   }
   if (apiKey && output.includes(apiKey)) {
     throw new LlmError(502, "LLM_SECRET_ECHO", "Model response contained a credential and was discarded");
+  }
+  if (onText) {
+    if (first.finish_reason !== "stop" || !output.trim() || output.length > 64_000) throw new LlmError(502, first.finish_reason === "length" ? "LLM_RESPONSE_TOO_LARGE" : "LLM_INVALID_RESPONSE", "Selected-text translation was incomplete");
+    onText(output);
   }
   return {
     output,
@@ -1214,6 +1234,29 @@ export function createDerivedTasks(options: {
     settings,
     apiKeyStatus,
     preview,
+    async translateSelection(documentId: string, input: SelectionTranslationInput, onText: (text: string) => void, signal: AbortSignal, isCurrent: () => boolean) {
+      if (stopped || pauseDepth > 0) throw new LlmError(503, "LLM_STOPPING", "LLM is unavailable");
+      if (active) throw new LlmError(409, "LLM_BUSY", "Another LLM operation is running");
+      const current = settings();
+      if (!current.enabled) throw new LlmError(409, "LLM_DISABLED", "AI is disabled");
+      if (current.revision !== input.settingsRevision) throw new LlmError(409, "LLM_SETTINGS_CONFLICT", "AI settings changed");
+      const selected = current[current.target];
+      const key = current.target === "remote" ? apiKeyFor(selected.endpointUrl) : "";
+      if ((current.target === "remote" && !key) || !selected.model || !selected.endpointUrl || (current.target === "local" && !current.local.trusted)) throw new LlmError(409, "LLM_NOT_CONFIGURED", "AI is not configured");
+      const guard = () => {
+        if (!isCurrent()) throw new LlmError(409, "STALE_DATA_EPOCH", "Knowledge base changed");
+        const doc = options.database().getDocument(documentId);
+        if (!doc || doc.deletedAt || doc.status !== "ready" || doc.revision !== input.revision) throw new LlmError(409, "REVISION_CONFLICT", "Document changed");
+      };
+      guard();
+      const controller = new AbortController();
+      const requestSignal = AbortSignal.any([controller.signal, signal]);
+      const done = requestCompletion({ kind: "selection", target: { kind: current.target, url: selected.endpointUrl }, model: selected.model,
+        system: selectionTranslationPrompt(input.language), sentText: input.text }, key, requestSignal, resolver, timeoutMs,
+      (text) => { guard(); onText(text); });
+      active = { controller, done };
+      try { await done; guard(); } finally { if (active?.done === done) active = null; }
+    },
     async testConnection(input: LlmConnectionTestInput, signal: AbortSignal): Promise<LlmConnectionTestResult> {
       if (stopped || pauseDepth > 0) throw new LlmError(503, "LLM_STOPPING", "LLM tasks are temporarily unavailable");
       if (active) throw new LlmError(409, "LLM_BUSY", "Another LLM operation is already running");

@@ -137,6 +137,21 @@ test("importCloudJsonBackup converts a cloud archive into a restorable .zhiye-ba
   }
 });
 
+test("cloud v7 conversion retains reading records and rejects paper archives without partial import", async () => {
+  const fixture = workspace();
+  try {
+    const original = cloudArchive(), documentId = original.documents[0]!.id, peerId = uuid(), stamp = original.createdAt;
+    const [sourceId, targetId] = [documentId, peerId].sort();
+    const readingData = { annotations: [{ id: uuid(), documentId, sourceRevision: 1, anchor: { quote: "Cloud body", prefix: "", suffix: "", source: "preview" }, note: "retained", translation: "译文", revision: 1, createdAt: stamp, updatedAt: stamp }], connections: [{ id: uuid(), sourceId, targetId, note: "supports", revision: 1, createdAt: stamp, updatedAt: stamp }] };
+    const archive = { ...original, version: 7, assets: [], papers: [], paperExtractions: [], paperPages: [], paperFiles: [], documents: [...original.documents, { ...original.documents[0]!, id: peerId, source_url: "https://example.com/peer", final_url: null }], readingData };
+    const record = await importCloudJsonBackup(fixture.db, fixture.dataDir, fixture.backupRoot, new TextEncoder().encode(JSON.stringify(archive)), CURRENT_SCHEMA_VERSION);
+    const copy = new DatabaseSync(join(fixture.backupRoot, record.directoryName!, "database.sqlite3"), { readOnly: true });
+    try { assert.equal(copy.prepare("SELECT note FROM reading_annotations").get()?.note, "retained"); assert.equal(copy.prepare("SELECT note FROM document_connections").get()?.note, "supports"); assert.deepEqual(copy.prepare("PRAGMA foreign_key_check").all(), []); } finally { copy.close(); }
+    await assert.rejects(importCloudJsonBackup(fixture.db, fixture.dataDir, fixture.backupRoot, new TextEncoder().encode(JSON.stringify({ ...archive, papers: [{ id: documentId }] })), CURRENT_SCHEMA_VERSION), /paper archives/u);
+    assert.equal(fixture.db.sql.prepare("SELECT COUNT(*) AS n FROM documents").get()?.n, 0);
+  } finally { fixture.db.close(); rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
 test("importCloudJsonBackup accepts a cloud default llm revision of 0", async (t) => {
   const { root, dataDir, backupRoot, db } = workspace();
   t.after(() => {

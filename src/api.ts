@@ -59,6 +59,7 @@ import type {
 } from "../shared/types";
 import { isAbortError, userErrorMessage } from "./error-messages";
 import { PAPER_PAGE_IMAGE_TYPE } from "../shared/paper";
+import type { ReadingAnnotation, DocumentConnection, SelectionTranslationInput, SourceAnchor } from "../shared/reader-tools";
 import {
   cloudLlmCredentialHeaders,
   cloudLlmCredentialMatches,
@@ -177,6 +178,56 @@ export interface DocumentPatch {
   folderId?: string | null;
   revision: number;
 }
+
+export interface ReaderDataSnapshot {
+  page: number; totalAnnotations: number; totalConnections: number;
+  annotations: ReadingAnnotation[];
+  connections: Array<DocumentConnection & { peer: { id: string; title: string; kind: string } }>;
+}
+
+export async function streamSelectionTranslation(documentId: string, input: SelectionTranslationInput, onText: (text: string) => void, signal: AbortSignal) {
+  const settings = await api.getLlmSettings(signal);
+  const response = await requestResponse(`/api/reader-tools/documents/${encodeURIComponent(documentId)}/translate`, {
+    method: "POST", headers: cloudLlmHeaders(settings.remote.endpointUrl), body: JSON.stringify(input), signal,
+  });
+  if (!response.body) throw new ApiRequestError("翻译服务没有返回内容。", 502, "LLM_INVALID_RESPONSE");
+  const reader = response.body.getReader(), decoder = new TextDecoder("utf-8", { fatal: true });
+  let buffer = "", complete = false, total = 0;
+  const consume = (line: string) => {
+    if (!line.trim()) return;
+    const packet = JSON.parse(line) as { type?: string; text?: unknown; code?: string };
+    if (packet.type === "error") throw new ApiRequestError(userErrorMessage(packet.code ?? "LLM_NETWORK_ERROR"), 502, packet.code);
+    if (packet.type === "done") { complete = true; return; }
+    if (packet.type !== "delta" || typeof packet.text !== "string" || complete) throw new ApiRequestError("翻译响应格式无效。", 502, "LLM_INVALID_RESPONSE");
+    total += packet.text.length;
+    if (total > 64_000) throw new ApiRequestError("译文过长，请缩短选区。", 502, "LLM_RESPONSE_TOO_LARGE");
+    onText(packet.text);
+  };
+  try {
+    while (true) {
+      signal.throwIfAborted();
+      const value = await reader.read();
+      if (value.done) break;
+      buffer += decoder.decode(value.value, { stream: true });
+      let end: number;
+      while ((end = buffer.indexOf("\n")) >= 0) { consume(buffer.slice(0, end)); buffer = buffer.slice(end + 1); }
+      if (buffer.length > 256_000) throw new ApiRequestError("翻译响应过长。", 502, "LLM_RESPONSE_TOO_LARGE");
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) consume(buffer);
+    if (!complete) throw new ApiRequestError("翻译中断，请重试。", 502, "LLM_INVALID_RESPONSE");
+  } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
+}
+
+export const readerDataApi = {
+  connections: (id: string, signal?: AbortSignal) => request<ReaderDataSnapshot>(`/api/reader-tools/documents/${encodeURIComponent(id)}/data?projection=connections`, { signal }),
+  list: (id: string, signal?: AbortSignal, page = 1) => request<ReaderDataSnapshot>(`/api/reader-tools/documents/${encodeURIComponent(id)}/data?page=${page}`, { signal }),
+  annotate: (id: string, revision: number, anchor: SourceAnchor, note = "", translation = "") => request<ReadingAnnotation>(`/api/reader-tools/documents/${encodeURIComponent(id)}/annotations`, { method: "POST", body: JSON.stringify({ revision, anchor, note, translation }) }),
+  update: (id: string, annotation: ReadingAnnotation, note: string) => request<ReadingAnnotation>(`/api/reader-tools/documents/${encodeURIComponent(id)}/annotations/${encodeURIComponent(annotation.id)}`, { method: "PATCH", body: JSON.stringify({ revision: annotation.revision, note }) }),
+  remove: (id: string, annotation: ReadingAnnotation) => request(`/api/reader-tools/documents/${encodeURIComponent(id)}/annotations/${encodeURIComponent(annotation.id)}`, { method: "DELETE", body: JSON.stringify({ revision: annotation.revision }) }),
+  connect: (id: string, revision: number, targetId: string, note: string) => request(`/api/reader-tools/documents/${encodeURIComponent(id)}/connections`, { method: "POST", body: JSON.stringify({ revision, targetId, note }) }),
+  disconnect: (id: string, connection: DocumentConnection) => request(`/api/reader-tools/documents/${encodeURIComponent(id)}/connections/${encodeURIComponent(connection.id)}`, { method: "DELETE", body: JSON.stringify({ revision: connection.revision }) }),
+};
 
 export interface RestoreBackupResult {
   backupId: string;

@@ -23,6 +23,10 @@ const ERROR_MESSAGES: Readonly<Record<string, string>> = {
   RESTORE_INTERRUPTED: "云端恢复中断，收取已停止。请手动重试。",
 
   REVISION_CONFLICT: "其他窗口已修改，请查看最新版本。",
+  ANNOTATION_CONFLICT: "摘录已被修改、删除或移入垃圾箱，请重新载入。",
+  CONNECTION_CONFLICT: "关联已被修改、解除或移入垃圾箱，请重新载入。",
+  ANNOTATION_NOT_FOUND: "摘录已不存在，请重新载入。",
+  INVALID_READER_TOOL_REQUEST: "选区或阅读记录无效，请缩短选区并重试。",
   FOLDER_NAME_CONFLICT: "分组名称重复，请换个名称。",
   FOLDER_NOT_FOUND: "分组已不存在，请刷新后重试。",
   INVALID_FOLDER_ID: "分组无效或已删除，请刷新后重试。",

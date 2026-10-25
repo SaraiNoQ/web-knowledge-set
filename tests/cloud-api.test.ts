@@ -87,15 +87,75 @@ class SqliteD1Database implements D1Database {
 function migratedCloudDatabase() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
-  for (let version = 1; version <= 12; version += 1) {
+  for (let version = 1; version <= 13; version += 1) {
     sqlite.exec(readFileSync(new URL(`../cloud/migrations/${String(version).padStart(4, "0")}_${[
       "cloud_core", "browser_extension", "cloud_ai", "cloud_backups", "cloud_capture", "cloud_folders", "cloud_trash", "cloud_favorites",
       "cloud_papers", "cloud_paper_content_mode",
-      "semantic_indexes", "cloud_imports",
+      "semantic_indexes", "cloud_imports", "reading_data",
     ][version - 1]}.sql`, import.meta.url), "utf8"));
   }
   return new SqliteD1Database(sqlite);
 }
+
+test("reading data cloud API and v7 backup preserve notes, links and rollback failed restores", async () => {
+  const { env, db, bucket } = sqliteEnvironment();
+  const stamp = "2026-10-25T00:00:00.000Z";
+  for (const id of ["reader-a", "reader-b"]) db.sqlite.prepare("INSERT INTO cloud_documents(id,source_url,title,markdown,status,source_note,revision,created_at,updated_at) VALUES (?,? ,?,'selected words','ready','',1,?,?)").run(id, `https://example.com/${id}`, id, stamp, stamp);
+  const headers = () => ({ "Content-Type": "application/json", "X-Zhiye-Data-Epoch": String(db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get()?.value) });
+  const call = (path: string, body: unknown) => handleRequest(new Request(`https://app.example.com${path}`, { method: "POST", headers: headers(), body: JSON.stringify(body) }), env);
+  try {
+    const anchor = { quote: "selected words", prefix: "", suffix: "", source: "preview" };
+    assert.equal((await call("/api/reader-tools/documents/reader-a/annotations", { anchor })).status, 400);
+    assert.equal((await call("/api/reader-tools/documents/reader-a/annotations", { revision: 2, anchor })).status, 409);
+    const noteResponse = await call("/api/reader-tools/documents/reader-a/annotations", { revision: 1, anchor, note: "my evidence" });
+    assert.equal(noteResponse.status, 200, await noteResponse.clone().text());
+    assert.equal((await call("/api/reader-tools/documents/reader-a/connections", { revision: 1, targetId: "reader-b", note: "supports" })).status, 200);
+    const backwards = await handleRequest(new Request("https://app.example.com/api/reader-tools/documents/reader-b/data?projection=connections"), env);
+    assert.equal((await backwards.json() as { connections: Array<{ peer: { id: string } }> }).connections[0]?.peer.id, "reader-a");
+    const created = await call("/api/data-safety/backups", {}); assert.equal(created.status, 201, await created.clone().text());
+    const backupId = (await created.json() as { id: string }).id;
+    const archive = JSON.parse(new TextDecoder().decode(bucket.objects.get(`backups/${backupId}.zhiye-cloud-backup`)!.bytes));
+    assert.equal(archive.version, 7); assert.equal(archive.readingData.annotations.length, 1); assert.equal(archive.readingData.connections.length, 1);
+    db.sqlite.exec("UPDATE reading_annotations SET note='latest note'");
+    db.failBatchOn = /INSERT INTO reading_annotations/u;
+    const failed = await call(`/api/data-safety/backups/${backupId}/restore`, {}); assert.equal(failed.status, 500);
+    assert.equal(db.sqlite.prepare("SELECT note FROM reading_annotations").get()?.note, "latest note");
+    assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS n FROM document_connections").get()?.n, 1);
+    db.failBatchOn = null;
+    const restored = await call(`/api/data-safety/backups/${backupId}/restore`, {}); assert.equal(restored.status, 200, await restored.clone().text());
+    assert.equal(db.sqlite.prepare("SELECT note FROM reading_annotations").get()?.note, "my evidence");
+    assert.deepEqual(db.sqlite.prepare("PRAGMA foreign_key_check").all(), []);
+    const invalid = { ...archive, readingData: { ...archive.readingData, connections: [{ ...archive.readingData.connections[0], targetId: "missing" }] } };
+    const rejected = await handleRequest(new Request("https://app.example.com/api/data-safety/backups/import", { method: "POST", headers: { ...headers(), "Content-Type": "application/vnd.zhiye.cloud-backup+json" }, body: JSON.stringify(invalid) }), env);
+    assert.equal(rejected.status, 400); assert.equal(db.sqlite.prepare("SELECT note FROM reading_annotations").get()?.note, "my evidence");
+  } finally { db.sqlite.close(); }
+});
+
+test("selection translation cloud streams only selected text and stops when settings change", async () => {
+  const { env, db } = sqliteEnvironment();
+  const stamp = "2026-10-25T00:00:00.000Z";
+  db.sqlite.prepare("INSERT INTO cloud_documents(id,source_url,title,markdown,status,source_note,revision,created_at,updated_at) VALUES ('reader','https://example.com/reader','Secret title','whole-document-secret','ready','',1,?,?)").run(stamp, stamp);
+  db.sqlite.prepare("UPDATE app_settings SET value=?, revision=1 WHERE key='llm_settings'").run(JSON.stringify({ enabled: true, target: "remote", remote: { endpointUrl: "https://api.openai.com/v1/chat/completions", model: "test" }, local: { endpointUrl: "", model: "", trusted: false } }));
+  const originalFetch = globalThis.fetch;
+  let sent = "", cancelled = false;
+  const key = "test-key-for-selection";
+  globalThis.fetch = async (_url, init) => {
+    sent = String(init?.body); assert.equal(new Headers(init?.headers).get("Authorization"), `Bearer ${key}`);
+    let timer: ReturnType<typeof setTimeout>;
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "x".repeat(80) } }] })}\n\n`));
+        timer = setTimeout(() => { db.sqlite.exec("UPDATE app_settings SET revision=2 WHERE key='llm_settings'"); controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "must-not-arrive" } }] })}\n\ndata: [DONE]\n\n`)); }, 800);
+      }, cancel() { clearTimeout(timer); cancelled = true; },
+    }), { headers: { "Content-Type": "text/event-stream" } });
+  };
+  try {
+    const response = await handleRequest(new Request("https://app.example.com/api/reader-tools/documents/reader/translate", { method: "POST", headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": "cloud-1", "X-Zhiye-LLM-Key": key }, body: JSON.stringify({ text: "selected words", language: "zh-CN", revision: 1, settingsRevision: 1 }) }), env);
+    const output = await response.text();
+    assert.equal(response.status, 200, output); assert.ok(output.includes('"delta"')); assert.ok(output.includes("LLM_SETTINGS_CONFLICT")); assert.ok(!output.includes('"done"')); assert.ok(!output.includes("must-not-arrive")); assert.equal(cancelled, true);
+    assert.ok(sent.includes("selected words")); assert.ok(!sent.includes("whole-document-secret")); assert.ok(!sent.includes("Secret title"));
+  } finally { globalThis.fetch = originalFetch; db.sqlite.close(); }
+});
 
 function memoryBucket() {
   const objects = new Map<string, { bytes: Uint8Array; contentType?: string }>();
