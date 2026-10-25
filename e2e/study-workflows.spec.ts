@@ -58,6 +58,30 @@ test("research question cancellation and navigation cannot display a late answer
   const confirm = page.getByRole("alertdialog", { name: "未保存的专题笔记", exact: true }); await expect(confirm).toBeVisible(); await confirm.getByRole("button", { name: "取消", exact: true }).click(); await expect(workspace.getByRole("textbox", { name: "笔记", exact: true })).toHaveValue("未保存的综合笔记");
 });
 
+test("pending topic and tag saves lock editors and preserve the submitted values", async ({ page, request }) => {
+  const listing = await request.get("/api/documents"), headers = { Origin: "http://127.0.0.1:4174", "X-Zhiye-Data-Epoch": listing.headers()["x-zhiye-data-epoch"] };
+  const suffix = Date.now(), documentTitle = `保存资料${suffix}`;
+  const created = await (await request.post("/api/documents", { headers, data: { title: documentTitle } })).json();
+  const topic = await (await request.post("/api/study/topics", { headers, data: { name: `保存专题${suffix}` } })).json();
+  let releaseTopic = () => {}, releaseTags = () => {};
+  const heldTopic = new Promise<void>((resolve) => { releaseTopic = resolve; }), heldTags = new Promise<void>((resolve) => { releaseTags = resolve; });
+  await page.route(`**/api/study/topics/${topic.id}`, async (route) => { if (route.request().method() === "PATCH") await heldTopic; await route.continue(); });
+  await page.route(`**/api/study/documents/${created.document.id}/tags`, async (route) => { await heldTags; await route.continue(); });
+  await page.goto("/"); await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "研究", exact: true }).click();
+  const workspace = page.getByRole("region", { name: "研究工作台" }); await workspace.getByRole("complementary", { name: "专题列表" }).getByRole("button", { name: topic.name, exact: true }).click();
+  const name = workspace.getByRole("textbox", { name: "专题名称", exact: true }), note = workspace.getByRole("textbox", { name: "笔记", exact: true });
+  await name.fill(`${topic.name}已保存`); await note.fill("保存期间保留的综合笔记"); await workspace.getByRole("button", { name: "保存专题笔记", exact: true }).click();
+  await expect(name).toBeDisabled(); await expect(note).toBeDisabled();
+  releaseTopic(); await expect(name).toBeEnabled(); await expect(workspace.getByRole("heading", { name: `${topic.name}已保存`, exact: true })).toBeVisible();
+  await expect(note).toHaveValue("保存期间保留的综合笔记");
+  await workspace.getByRole("button", { name: "资料", exact: true }).click(); await workspace.getByRole("textbox", { name: "搜索资料", exact: true }).fill(documentTitle);
+  const row = workspace.locator(".study-document-list > li").filter({ has: page.getByRole("button", { name: documentTitle, exact: true }) }), tags = row.getByRole("textbox", { name: "主题标签", exact: true });
+  await tags.fill("saved-tag"); await row.getByRole("button", { name: "保存标签", exact: true }).click(); await expect(tags).toBeDisabled();
+  releaseTags(); await expect(tags).toBeEnabled(); await expect(tags).toHaveValue("saved-tag");
+  expect((await (await request.get(`/api/study/topics/${topic.id}`)).json()).note).toBe("保存期间保留的综合笔记");
+  expect((await (await request.get(`/api/study/documents?q=${encodeURIComponent(documentTitle)}`)).json()).items[0].tags).toEqual(["saved-tag"]);
+});
+
 test("reading position and read state persist without changing a selected translation passage", async ({ page, request }) => {
   const listing = await request.get("/api/documents"), headers = { Origin: "http://127.0.0.1:4174", "X-Zhiye-Data-Epoch": listing.headers()["x-zhiye-data-epoch"] };
   const title = `阅读进度${Date.now()}`, created = await (await request.post("/api/documents", { headers, data: { title } })).json();
