@@ -369,9 +369,10 @@ async function api(request: Request, env: CloudEnv, url: URL) {
         // Imported backups may contain arbitrary IDs. SQLite binary ordering
         // matches the historical localeCompare tie-break for canonical UUIDs,
         // but not for all imported strings; retain the old merge for those.
-        const uuidPattern = [8, 4, 4, 4, 12].map((length) => "[0-9a-f]".repeat(length)).join("-");
+        // D1 limits GLOB pattern length; keep shape and character checks separate.
+        const uuidPattern = [8, 4, 4, 4, 12].map((length) => "?".repeat(length)).join("-");
         const count = await env.DB.prepare(`SELECT COUNT(*) AS count,
-          COALESCE(SUM(CASE WHEN id NOT GLOB ? OR length(createdAt)<>24 OR length(updatedAt)<>24 THEN 1 ELSE 0 END), 0) AS legacySort
+          COALESCE(SUM(CASE WHEN id NOT GLOB ? OR length(replace(id, '-', ''))<>32 OR id GLOB '*[^0-9a-f-]*' OR length(createdAt)<>24 OR length(updatedAt)<>24 THEN 1 ELSE 0 END), 0) AS legacySort
           FROM (${sources})`).bind(uuidPattern, ...values).first<{ count: number; legacySort: number }>();
         if (count?.legacySort) {
           const [documentPage, jobPage] = await Promise.all([

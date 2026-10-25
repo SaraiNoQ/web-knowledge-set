@@ -2480,7 +2480,10 @@ test("cloud ZIP budgets reject declared and actual expansion before staging writ
 test("cloud imported IDs preserve historical locale tie ordering across pages", async () => {
   const { env, db } = sqliteEnvironment();
   const date = "2026-09-10T00:00:00.000Z";
-  const ids = Array.from({ length: 40 }, (_, i) => ["a", "A", "_a", "é", "世界"][i % 5] + String(i));
+  const ids = [
+    ...Array.from({ length: 40 }, (_, i) => ["a", "A", "_a", "é", "世界"][i % 5] + String(i)),
+    "00000000-0000-4000-8000-00000000000g", "0000000--0000-4000-8000-000000000000",
+  ];
   for (const [i, id] of ids.entries()) {
     if (i % 2 === 0) insertCapturedDocument(db, id, "same", "body");
     else db.sqlite.prepare("INSERT INTO cloud_capture_jobs(id,url,status,created_at,updated_at) VALUES(?,'same','queued',?,?)").run(id, date, date);
@@ -2498,4 +2501,42 @@ test("cloud imported IDs preserve historical locale tie ordering across pages", 
       assert.deepEqual(body.items.map((row) => row.id), expected);
     }
   }
+});
+
+
+test("cloud folder listing respects D1 GLOB limits for empty and populated folders", async () => {
+  const { env, db } = sqliteEnvironment();
+  const prepare = db.prepare.bind(db);
+  db.prepare = (sql: string) => {
+    // Production D1 rejects long patterns; Node SQLite and local D1 allow them.
+    for (const match of sql.matchAll(/GLOB '([^']*)'/gu)) assert.ok(match[1].length <= 50);
+    const statement = prepare(sql);
+    if (!sql.includes("GLOB ?")) return statement;
+    const bind = statement.bind.bind(statement);
+    statement.bind = (...values: unknown[]) => {
+      assert.ok(String(values[0]).length <= 50, "D1 GLOB pattern exceeds 50 bytes");
+      return bind(...values);
+    };
+    return statement;
+  };
+  const folderId = "8259b772-a51c-420b-a0d1-fa143687b41e";
+  const date = "2026-10-25T00:00:00.000Z";
+  db.sqlite.prepare("INSERT INTO cloud_folders(id,name,created_at,updated_at) VALUES(?,?,?,?)").run(folderId, "X-blog", date, date);
+  const request = () => handleRequest(new Request(`https://app.example.com/api/documents?scope=all&folderId=${folderId}&sort=updated&page=1`), env);
+  const empty = await request();
+  assert.equal(empty.status, 200, await empty.clone().text());
+  assert.deepEqual(await empty.json(), { items: [], page: 1, pageSize: 30, total: 0 });
+  const id = "00000000-0000-4000-8000-000000000001";
+  insertCapturedDocument(db, id, "Article", "body");
+  db.sqlite.prepare("UPDATE cloud_documents SET folder_id=? WHERE id=?").run(folderId, id);
+  const jobId = "00000000-0000-4000-8000-000000000002";
+  db.sqlite.prepare("INSERT INTO cloud_capture_jobs(id,url,status,created_at,updated_at,folder_id) VALUES(?,?,'queued',?,?,?)")
+    .run(jobId, "https://example.com/pending", date, date, folderId);
+  insertCapturedDocument(db, "00000000-0000-4000-8000-000000000003", "Outside folder", "body");
+  const response = await request();
+  assert.equal(response.status, 200, await response.clone().text());
+  const body = await response.json() as { items: Array<{ id: string; folderId: string }>; total: number };
+  assert.equal(body.total, 2);
+  assert.deepEqual(body.items.map((item) => item.id).sort(), [id, jobId]);
+  assert.ok(body.items.every((item) => item.folderId === folderId));
 });
