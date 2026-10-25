@@ -284,7 +284,10 @@ test("3D node dragging preserves the camera and survives a 2D round trip", async
   await page.mouse.down();
   await page.mouse.move(before.x + 60, before.y + 40, { steps: 12 });
   await page.mouse.up();
-  await expect.poll(async () => (await label.boundingBox())!.x - before.x).toBeGreaterThan(40);
+  await expect.poll(async () => {
+    const position = (await label.boundingBox())!;
+    return Math.hypot(position.x - before.x - 70, position.y - before.y - 40);
+  }).toBeLessThan(2);
   const moved = (await label.boundingBox())!;
   const layouts = await page.evaluate(() => window.map3dEvidence.layoutRequests);
   const folderAfter = (await folder.boundingBox())!;
@@ -292,8 +295,10 @@ test("3D node dragging preserves the camera and survives a 2D round trip", async
   await page.getByRole("group", { name: "地图维度" }).getByRole("button", { name: "2D", exact: true }).click();
   await switch3D(page);
   await expect(label).toBeVisible();
-  const returned = (await label.boundingBox())!;
-  expect(Math.hypot(returned.x - moved.x, returned.y - moved.y)).toBeLessThan(2);
+  await expect.poll(async () => {
+    const returned = (await label.boundingBox())!;
+    return Math.hypot(returned.x - moved.x, returned.y - moved.y);
+  }).toBeLessThan(2);
   expect(await page.evaluate(() => window.map3dEvidence.layoutRequests)).toBe(layouts);
   const group = (await folder.boundingBox())!;
   await page.mouse.click(group.x - 10, group.y);
