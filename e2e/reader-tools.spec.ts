@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { AxeBuilder } from "@axe-core/playwright";
 
-for (const narrow of [false, true]) test(`reader tools ${narrow ? "mobile" : "desktop"}: disclose selection, stream, save and link without changing Markdown`, async ({ page, request }, testInfo) => {
+for (const narrow of [false, true]) test(`reader tools ${narrow ? "mobile" : "desktop"}: translate directly, stream, save and link without changing Markdown`, async ({ page, request }, testInfo) => {
   await page.setViewportSize(narrow ? { width: 390, height: 844 } : { width: 1440, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.route("**/api/settings/onboarding", (route) => route.fulfill({ json: { completed: true, revision: 1 } }));
@@ -25,10 +25,10 @@ for (const narrow of [false, true]) test(`reader tools ${narrow ? "mobile" : "de
   await expect(ribbon).toBeVisible(); await ribbon.getByRole("button", { name: "翻译", exact: true }).click();
   const floating = page.getByRole("dialog", { name: "划词翻译", exact: true });
   await expect(floating).toBeVisible(); await expect(floating.getByLabel("待翻译选区")).toHaveText("selected words");
+  expect(translations).toBe(0);
   await floating.getByRole("button", { name: "翻译选区", exact: true }).click();
-  const confirm = page.getByRole("alertdialog", { name: "确认发送选区" });
-  await expect(confirm).toBeVisible(); expect(translations).toBe(0); await expect(confirm).toContainText("selected words");
-  await confirm.getByRole("button", { name: "发送选区", exact: true }).click();
+  await expect.poll(() => translations).toBe(1);
+  await expect(page.getByRole("alertdialog", { name: "确认发送选区" })).toHaveCount(0);
   await expect(floating.getByLabel("选区译文")).toHaveText("选区译文：selected words");
   await expect(floating.getByRole("button", { name: "保存译文摘录" })).toBeEnabled();
   expect((await new AxeBuilder({ page }).include(".reader-tool-float").analyze()).violations).toEqual([]);
@@ -114,7 +114,7 @@ test("PDF text selection has source anchors; long floating content stays reachab
   await select(); await ribbon.getByRole("button", { name: "翻译", exact: true }).click();
   const floating = page.getByRole("dialog", { name: "划词翻译", exact: true });
   await page.route("**/api/reader-tools/documents/*/translate", (route) => route.fulfill({ contentType: "application/x-ndjson", body: JSON.stringify({ type: "delta", text: "较长的选区译文。".repeat(1800) }) + '\n{"type":"done"}\n' }));
-  await floating.getByRole("button", { name: "翻译选区", exact: true }).click(); await page.getByRole("alertdialog", { name: "确认发送选区" }).getByRole("button", { name: "发送选区", exact: true }).click();
+  await floating.getByRole("button", { name: "翻译选区", exact: true }).click();
   await expect(floating.getByRole("button", { name: "保存译文摘录" })).toBeEnabled();
   const bounds = await floating.boundingBox(); expect(bounds!.y).toBeGreaterThanOrEqual(0); expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(600);
   await floating.getByRole("button", { name: "保存译文摘录" }).scrollIntoViewIfNeeded(); await expect(floating.getByRole("button", { name: "保存译文摘录" })).toBeInViewport();

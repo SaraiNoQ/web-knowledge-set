@@ -13,7 +13,7 @@ export function ReaderToolSettings() {
   const toast = useToast();
   return <section className="reader-tool-settings" aria-label="阅读工具设置"><h2>阅读工具</h2>{builtinReaderTools.map(({ manifest }) => <div key={manifest.id}>
     <label><input type="checkbox" checked={state.enabled.includes(manifest.id)} onChange={(event) => { try { readerTools.enable(manifest.id, event.target.checked); } catch { toast.error("设置已生效，但未能保存。刷新后可能恢复原设置。"); } }} />{manifest.name}</label>
-    <p>选择文字后翻译，也可按 Alt+T。发送前会显示准确范围。</p>
+    <p>选择文字后翻译，也可按 Alt+T。仅翻译选中文字。</p>
     {state.errors[manifest.id] && <p role="status">{state.errors[manifest.id]} <Button onClick={() => readerTools.retry(manifest.id)}>重试</Button></p>}
   </div>)}</section>;
 }

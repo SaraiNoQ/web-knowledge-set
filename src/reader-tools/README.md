@@ -2,7 +2,7 @@
 
 `runtime.ts` 是内置工具清单。新增模块后，在 `builtinReaderTools` 注册 manifest 和懒加载函数即可，无需把工具状态加入 `App.tsx`。
 
-模块实现 `ReaderToolModule`，提供 command、selectionAction、Panel 和 Overlay 四个入口。`translation.tsx` 是完整示例。宿主统一处理选区、文档版本、发送确认、命令、浮层位置、停用取消、异常隔离和自己的设置空间。组件中的流式结果保留在工具本身，按 80ms 合并刷新，不订阅整篇正文，也不逐段刷新 App。
+模块实现 `ReaderToolModule`，提供 command、selectionAction、Panel 和 Overlay 四个入口。`translation.tsx` 是完整示例。宿主统一处理选区校验、文档版本、命令、浮层位置、停用取消、异常隔离和自己的设置空间。组件中的流式结果保留在工具本身，按 80ms 合并刷新，不订阅整篇正文，也不逐段刷新 App。
 
 工具通过 `ReaderToolApi` 获取已声明的能力：当前选区、选区翻译、私有设置、保存摘录。核心保管数据库、模型密钥、版本冲突和恢复后的 data epoch；工具不能拿到这些内部对象。新增宿主能力仍需修改宿主。
 
