@@ -8,6 +8,9 @@ import type { SemanticGraphResult } from "../../shared/semantic-graph";
 import { SEMANTIC_GRAPH_MAX_NODES, semanticVectorKey } from "../../shared/semantic-graph";
 import type { KnowledgeMapNode, LibraryItemKind, SemanticVectorEntry } from "../../shared/types";
 import { api, readerDataApi, type ReaderDataSnapshot } from "../api";
+import { studyApi } from "../study/api";
+import { readerTools } from "../reader-tools/runtime";
+import type { RelatedResult, RelationType } from "../../shared/related";
 import type { Map3DHandle, Map3DState } from "./KnowledgeMap3D";
 
 const KnowledgeMap3D = lazy(() => import("./KnowledgeMap3D"));
@@ -32,7 +35,8 @@ interface Props {
 type MapItem = KnowledgeMapNode & { type: "document"; color: string };
 type FolderItem = { id: string; folderId: string; name: string; count: number; type: "folder"; color: string };
 export type MapNode = (MapItem | FolderItem) & { x?: number; y?: number; vx?: number; vy?: number };
-export type MapLink = { source: string; target: string; type: "folder" | "manual" } | { source: string; target: string; type: "semantic"; score: number };
+export type MapLink = { source: string; target: string; type: Exclude<RelationType, "semantic"> } | { source: string; target: string; type: "semantic"; score: number };
+const RELATION_LABELS: Record<RelationType, string> = { folder: "分组归属", manual: "人工关联", semantic: "内容相近", tag: "共同标签", citation: "引用", lexical: "词项匹配" };
 type ForceStrength = number | ((value: unknown, index: number, values: unknown[]) => number);
 type D3Force = ((alpha: number) => void) & {
   strength?: {
@@ -124,12 +128,20 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
   const [favorite, setFavorite] = useState<boolean | undefined>(libraryView === "favorites" ? true : undefined);
   const [includeArchived, setIncludeArchived] = useState(true);
   const [showFolders, setShowFolders] = useState(true);
+  const [relationTypes, setRelationTypes] = useState<Record<RelationType, boolean>>({ folder: true, manual: true, semantic: true, tag: true, citation: true, lexical: true });
+  const enabledRelationTypes = useMemo(() => (Object.keys(RELATION_LABELS) as RelationType[]).filter((type) => relationTypes[type]), [relationTypes]);
   const [localMode, setLocalMode] = useState(false);
   const [focusedGroup, setFocusedGroup] = useState<string | null>(null);
   const [listOpen, setListOpen] = useState(false);
   const [listPage, setListPage] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [manualData, setManualData] = useState<{ id: string; data?: ReaderDataSnapshot; error?: string } | null>(null);
+  const [relatedData, setRelatedData] = useState<{ id: string; key: string; data?: RelatedResult; error?: string } | null>(null);
+  const [relatedLoading, setRelatedLoading] = useState(false);
+  const relatedRequest = useRef<AbortController | null>(null);
+  const relatedQueryKey = JSON.stringify([selectedId, enabledRelationTypes, mapLoadRevision]);
+  const relatedScope = useRef({ key: relatedQueryKey, active });
+  relatedScope.current = { key: relatedQueryKey, active };
   const [semanticVectors, setSemanticVectors] = useState<SemanticVectorEntry[]>([]);
   const [semanticLoading, setSemanticLoading] = useState(false);
   const [semanticError, setSemanticError] = useState("");
@@ -138,6 +150,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
   const [paused, setPaused] = useState(false);
   const [dimension, setDimension] = useState<"2d" | "3d">("2d");
   const [renderError, setRenderError] = useState("");
+  const visibleLabels = useRef(new Set<string>());
   const [draggingNode, setDraggingNode] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [width, setWidth] = useState(0);
@@ -473,6 +486,37 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
     return () => controller.abort();
   }, [active, selectedId, mapLoadRevision]);
   const manual = manualData?.id === selectedId ? manualData : null;
+  useEffect(() => {
+    relatedRequest.current?.abort();
+    if (!active || !selectedId || !enabledRelationTypes.length) { setRelatedLoading(false); return; }
+    const controller = new AbortController();
+    relatedRequest.current = controller; setRelatedLoading(true);
+    const key = relatedQueryKey, id = selectedId;
+    const current = () => !controller.signal.aborted && relatedScope.current.active && relatedScope.current.key === key;
+    const timer = window.setTimeout(() => {
+      void studyApi.related(id, { limit: 20, types: enabledRelationTypes }, controller.signal).then((data) => { if (current()) setRelatedData({ id, key, data }); }, () => { if (current()) setRelatedData({ id, key, error: "关联证据暂不可用。" }); }).finally(() => { if (current()) setRelatedLoading(false); });
+    }, 150);
+    return () => { clearTimeout(timer); controller.abort(); relatedRequest.current?.abort(); };
+  }, [active, relatedQueryKey]);
+  const remoteRelated = relatedData?.id === selectedId && relatedData.key === relatedQueryKey ? relatedData : null;
+  const continueRelated = async () => {
+    const previous = remoteRelated?.data;
+    if (!active || !selectedId || !previous?.nextCursor || relatedLoading) return;
+    const controller = new AbortController(), key = relatedQueryKey, id = selectedId;
+    relatedRequest.current?.abort(); relatedRequest.current = controller; setRelatedLoading(true);
+    const current = () => !controller.signal.aborted && relatedScope.current.active && relatedScope.current.key === key;
+    try {
+      const next = await studyApi.related(id, { limit: 20, cursor: previous.nextCursor, types: enabledRelationTypes }, controller.signal);
+      if (!current()) return;
+      setRelatedData((stored) => {
+        if (stored?.key !== key || !stored.data) return stored;
+        const entries = new Map([...stored.data.items, ...next.items].map((entry) => [entry.document.id, entry]));
+        return { id, key, data: { ...next, scannedDocuments: stored.data.scannedDocuments + next.scannedDocuments, items: [...entries.values()].sort((a, b) => b.score - a.score).slice(0, 20) } };
+      });
+    } catch { if (current()) setRelatedData((stored) => stored?.key === key ? { ...stored, error: "继续检索失败，请重试。" } : stored); }
+    finally { if (current()) setRelatedLoading(false); }
+  };
+  const remotePeers = useMemo(() => (remoteRelated?.data?.items ?? []).flatMap((entry) => { const item = documentsById.get(entry.document.id); return item && entry.reasons.some((reason) => relationTypes[reason.type] && (reason.type !== "semantic" || (reason.score ?? 0) >= semanticThreshold)) ? [item] : []; }), [remoteRelated, documentsById, relationTypes, semanticThreshold]);
   const selectedManualPeers = useMemo(() => (manual?.data?.connections ?? []).flatMap((entry) => { const item = documentsById.get(entry.peer.id); return item ? [{ item, note: entry.note }] : []; }), [documentsById, manual]);
   const selectedSemanticPeers = useMemo(() => selected?.semanticState === "ready"
     && semanticGraphCurrent
@@ -495,9 +539,9 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
 
   const visibleDocuments = useMemo(() => {
     if (!localMode || !selected) return overviewDocuments;
-    const peers = new Map([...selectedFolderPeers, ...selectedSemanticPeers.map(({ item }) => item), ...selectedManualPeers.map(({ item }) => item)].map((item) => [item.id, item]));
+    const peers = new Map([...(relationTypes.folder ? selectedFolderPeers : []), ...(relationTypes.semantic ? selectedSemanticPeers.map(({ item }) => item) : []), ...(relationTypes.manual || relationTypes.citation ? selectedManualPeers.map(({ item }) => item) : []), ...remotePeers].map((item) => [item.id, item]));
     return [selected, ...peers.values()];
-  }, [localMode, selected, selectedFolderPeers, selectedSemanticPeers, selectedManualPeers, overviewDocuments]);
+  }, [localMode, selected, selectedFolderPeers, selectedSemanticPeers, selectedManualPeers, overviewDocuments, relationTypes, remotePeers]);
 
   const groupNodes = useMemo(() => {
     const counts = new Map<string, number>();
@@ -525,11 +569,11 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
     const visibleFolderIds = new Set(visibleDocuments.map((item) => item.folderId ?? ""));
     const folderItems = summaryMode ? groupNodes : showFolders ? groupNodes.filter((folder) => visibleFolderIds.has(folder.folderId)) : [];
     const folderIds = new Set(folderItems.map(({ folderId }) => folderId));
-    const folderLinks: MapLink[] = showFolders ? visibleDocuments.filter((item) => item.folderId && folderIds.has(item.folderId))
+    const folderLinks: MapLink[] = showFolders && relationTypes.folder ? visibleDocuments.filter((item) => item.folderId && folderIds.has(item.folderId))
       .map((item) => ({ source: item.id, target: "folder:" + item.folderId, type: "folder" })) : [];
     const visibleIds = new Set(visibleDocuments.map(({ id }) => id));
     const readyVisibleIds = new Set(visibleDocuments.filter(({ semanticState }) => semanticState === "ready").map(({ id }) => id));
-    const semanticLinks: MapLink[] = !semanticGraphCurrent ? [] : localSelectedId
+    const semanticLinks: MapLink[] = !semanticGraphCurrent || !relationTypes.semantic ? [] : localSelectedId
       ? (semanticGraph.neighbors[localSelectedId] ?? []).filter(({ id, score }) => score >= semanticThreshold && visibleIds.has(id))
         .map(({ id, score }) => ({ source: localSelectedId, target: id, type: "semantic", score }))
       : semanticGraph.edges.filter((edge) => edge.score >= semanticThreshold && visibleIds.has(edge.source) && visibleIds.has(edge.target) &&
@@ -542,13 +586,21 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
         if (position) Object.assign(node, position, { vx: 0, vy: 0 });
       }
     }
-    const manualLinks: MapLink[] = (manual?.data?.connections ?? []).filter((edge) => visibleIds.has(edge.sourceId) && visibleIds.has(edge.targetId)).map((edge) => ({ source: edge.sourceId, target: edge.targetId, type: "manual" }));
-    return { nodes, links: [...folderLinks, ...semanticLinks, ...manualLinks] };
-  }, [groupNodes, localSelectedId, semanticGraph, semanticGraphCurrent, semanticThreshold, showFolders, summaryMode, visibleDocuments, manual]);
+    const manualLinks: MapLink[] = (manual?.data?.connections ?? []).filter((edge) => visibleIds.has(edge.sourceId) && visibleIds.has(edge.targetId)).map((edge) => ({ source: edge.sourceId, target: edge.targetId, type: (remoteRelated?.data?.items.some((item) => item.reasons.some((reason) => reason.connectionId === edge.id && reason.type === "citation")) ? "citation" : "manual") as "citation" | "manual" })).filter((edge) => relationTypes[edge.type]);
+    const remoteLinks: MapLink[] = selectedId ? (remoteRelated?.data?.items ?? []).flatMap<MapLink>((entry) => {
+      if (!visibleIds.has(selectedId) || !visibleIds.has(entry.document.id)) return [];
+      const reason = [...entry.reasons].sort((a, b) => ["manual", "citation", "tag", "semantic", "folder", "lexical"].indexOf(a.type) - ["manual", "citation", "tag", "semantic", "folder", "lexical"].indexOf(b.type)).find((value) => relationTypes[value.type]);
+      if (!reason || (reason.type === "semantic" && (reason.score ?? 0) < semanticThreshold)) return [];
+      return [reason.type === "semantic" ? { source: selectedId, target: entry.document.id, type: "semantic", score: reason.score! } : { source: selectedId, target: entry.document.id, type: reason.type }];
+    }) : [];
+    const unique = new Map<string, MapLink>();
+    for (const link of [...folderLinks, ...semanticLinks, ...manualLinks, ...remoteLinks]) unique.set(`${link.type}:${[link.source, link.target].sort().join(":")}`, link);
+    return { nodes, links: [...unique.values()] };
+  }, [groupNodes, localSelectedId, semanticGraph, semanticGraphCurrent, semanticThreshold, showFolders, summaryMode, visibleDocuments, manual, remoteRelated, relationTypes, selectedId]);
 
   const semanticCalculationPending = documents.length <= SEMANTIC_GRAPH_MAX_NODES && (semanticLoading || (readyVectorIds.length > 0 && !semanticGraphCurrent && !semanticError));
   const semanticEmptyMessage = !selected || selected.semanticState === "unavailable" ? "尚未启用语义推荐，可先浏览同组资料。"
-    : documents.length > SEMANTIC_GRAPH_MAX_NODES ? "当前范围超过推荐上限，请用筛选缩小到 1,000 篇以内。"
+    : documents.length > SEMANTIC_GRAPH_MAX_NODES ? "大范围资料使用服务端邻域推荐，可在关联证据中查看。"
     : semanticError ? semanticError
     : selected.semanticState === "failed" ? "这篇资料的语义索引失败，请到智能设置重试。"
     : selected.kind === "paper" && selected.status !== "ready" ? "论文提取完成后才能建立语义索引。"
@@ -590,6 +642,33 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
     else graph.current?.pauseAnimation();
     setPaused(!paused);
   };
+  const labelNodesById = useMemo(() => new Map(graphData.nodes.map((node) => [node.id, node])), [graphData]);
+  const labelGroupIds = useMemo(() => graphData.nodes.filter((node) => node.type === "folder").slice(0, 20).map((node) => node.id), [graphData]);
+  const labelPeerIds = useMemo(() => {
+    const peers: string[] = [];
+    for (const edge of graphData.links) {
+      const source = typeof edge.source === "string" ? edge.source : (edge.source as MapNode).id, target = typeof edge.target === "string" ? edge.target : (edge.target as MapNode).id;
+      if (source === selectedId) peers.push(target); else if (target === selectedId) peers.push(source);
+      if (peers.length === 8) break;
+    }
+    return peers;
+  }, [graphData, selectedId]);
+
+  const prepareLabels = useCallback((ctx: CanvasRenderingContext2D, scale: number) => {
+    const candidates = [...new Set([selectedId, hoveredId, ...(!draggingNode && scale > .6 ? labelPeerIds : []), ...(!draggingNode ? labelGroupIds : [])].filter((id): id is string => Boolean(id)))];
+    const rectangles: Array<{ left: number; top: number; right: number; bottom: number }> = [];
+    visibleLabels.current.clear(); ctx.save();
+    for (const id of candidates) {
+      const node = labelNodesById.get(id); if (!node || node.x === undefined || node.y === undefined) continue;
+      const selected = id === selectedId, size = node.type === "folder" ? 5.2 : node.kind === "paper" ? 4.4 : 3.8;
+      const fontSize = Math.max(10, 12 / Math.max(scale, .7)); ctx.font = `${selected ? "600" : "450"} ${fontSize}px Georgia, serif`;
+      const text = node.type === "folder" ? `${shortTitle(node.name)} · ${node.count}` : shortTitle(node.title);
+      const rect = { left: node.x + size + 4, top: node.y - fontSize * .6, right: node.x + size + 8 + ctx.measureText(text).width, bottom: node.y + fontSize * .6 };
+      if (rectangles.some((other) => rect.left < other.right && rect.right > other.left && rect.top < other.bottom && rect.bottom > other.top)) continue;
+      rectangles.push(rect); visibleLabels.current.add(id);
+    }
+    ctx.restore();
+  }, [labelNodesById, labelGroupIds, labelPeerIds, selectedId, hoveredId, draggingNode]);
 
   const drawNode = useCallback((raw: object, ctx: CanvasRenderingContext2D, scale: number) => {
     const node = raw as MapNode & { x?: number; y?: number };
@@ -607,7 +686,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
       ctx.lineWidth = (isSelected ? 2.4 : 1.1) / Math.max(scale, .35);
       ctx.stroke();
     }
-    if (isSelected || node.id === hoveredId || (node.type === "folder" && !draggingNode)) {
+    if (visibleLabels.current.has(node.id)) {
       ctx.font = (isSelected ? "600 " : "450 ") + Math.max(10, 12 / Math.max(scale, .7)) + "px Georgia, serif";
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
@@ -636,11 +715,12 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
           <label><span>收藏</span><select value={favorite === undefined ? "all" : String(favorite)} onChange={(event) => setFavorite(event.target.value === "all" ? undefined : event.target.value === "true")}><option value="all">全部</option><option value="true">只看收藏</option><option value="false">排除收藏</option></select></label>
           {!cloud && <label className="map-check"><input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} /><span>显示归档</span></label>}
           <label className="map-check"><input type="checkbox" checked={showFolders || summaryMode} disabled={summaryMode} onChange={(event) => setShowFolders(event.target.checked)} /><span>显示分组</span></label>
-          <label className="map-threshold"><span>相似要求 · {semanticThreshold.toFixed(2)}</span><input aria-label="相似要求" type="range" min="0.3" max="0.9" step="0.01" value={semanticThreshold} disabled={!semanticEnabled || semanticLoading || items.length > SEMANTIC_GRAPH_MAX_NODES} onChange={(event) => setSemanticThreshold(Number(event.target.value))} /></label>
+          <fieldset className="map-relations"><legend>关系类型</legend>{(Object.entries(RELATION_LABELS) as Array<[RelationType, string]>).map(([type, label]) => <label key={type}><input type="checkbox" checked={relationTypes[type]} onChange={(event) => setRelationTypes((values) => ({ ...values, [type]: event.target.checked }))} />{label}</label>)}</fieldset>
+          <details className="map-advanced"><summary>高级筛选</summary><label className="map-threshold"><span>相似要求 · {semanticThreshold.toFixed(2)}</span><input aria-label="相似要求" type="range" min="0.3" max="0.9" step="0.01" value={semanticThreshold} disabled={!semanticEnabled || semanticLoading} onChange={(event) => setSemanticThreshold(Number(event.target.value))} /></label></details>
           <SegmentedControl label="查看范围" className="map-view-switch" value={localMode ? "local" : "all"} options={[{ value: "all", label: "全部资料" }, { value: "local", label: "当前关联", disabled: !selected }]} onChange={(value) => changeScope(value === "local", null)} />
           <div className="map-key"><span><i className="map-key-article" />文章</span><span><i className="map-key-paper" />论文</span><span><i className="map-key-folder" />分组</span><span><i className="map-key-line" />所属分组</span><span><i className="map-key-semantic" />内容相近</span></div>
           <p className="map-privacy-note">分数表示内容相似，不代表正确。<br />连线不表示引用或事实关系。</p>
-          {items.length > MAP_VISIBLE_DOCUMENTS && <p className="map-budget-note" role="status">{summaryMode ? "已按分组汇总，点击分组展开。" : !localMode && scopedDocuments.length > MAP_VISIBLE_DOCUMENTS ? "当前分组仅绘制前 1,000 篇，请搜索或从资料列表选择。" : "语义推荐限 1,000 篇，请用筛选缩小范围。"}</p>}
+          {items.length > MAP_VISIBLE_DOCUMENTS && <p className="map-budget-note" role="status">{summaryMode ? "已按分组汇总，点击分组展开。" : !localMode && scopedDocuments.length > MAP_VISIBLE_DOCUMENTS ? "当前分组仅绘制前 1,000 篇，请搜索或从资料列表选择。" : "选中资料后使用服务端邻域推荐；全库向量比较限 1,000 篇。"}</p>}
           {semanticCalculationPending && <p className="map-semantic-status" role="status">正在查找相近织片…</p>}
           {semanticEnabled && items.length <= SEMANTIC_GRAPH_MAX_NODES && !semanticCalculationPending && !readyVectorIds.length && !semanticError && <p className="map-semantic-status" role="status">处理完成后，会显示相近织片。</p>}
           {semanticError && <p className="map-semantic-status is-error" role="status">{semanticError}</p>}
@@ -664,6 +744,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
                   nodeId="id"
                   nodeLabel={(node: object) => { const item = node as MapNode; return item.type === "folder" ? `分组：${item.name} · ${item.count} 篇，点击展开` : (item.kind === "paper" ? "论文：" : "文章：") + item.title; }}
                   nodeCanvasObject={drawNode}
+                  onRenderFramePre={prepareLabels}
                   nodePointerAreaPaint={(raw: object, color: string, ctx: CanvasRenderingContext2D) => {
                     const node = raw as MapNode & { x?: number; y?: number };
                     if (node.x === undefined || node.y === undefined) return;
@@ -671,7 +752,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
                     ctx.fillStyle = color;
                     ctx.fillRect(node.x - radius, node.y - radius, radius * 2, radius * 2);
                   }}
-                  linkColor={(link: object) => (link as MapLink).type === "manual" ? (darkTheme ? "#f08a72" : "#b64b3b") : (link as MapLink).type === "semantic" ? (darkTheme ? "rgba(187, 162, 213, .7)" : "rgba(103, 93, 133, .58)") : (darkTheme ? "rgba(197, 189, 174, .5)" : "rgba(109, 103, 88, .44)")}
+                  linkColor={(link: object) => ({ manual: darkTheme ? "#f08a72" : "#b64b3b", semantic: darkTheme ? "#bba2d5" : "#675d85", citation: darkTheme ? "#8fb9df" : "#32678f", tag: darkTheme ? "#a9c39b" : "#537343", lexical: darkTheme ? "#d6ba87" : "#846832", folder: darkTheme ? "rgba(197, 189, 174, .5)" : "rgba(109, 103, 88, .44)" })[(link as MapLink).type]}
                   linkWidth={(link: object) => (link as MapLink).type === "manual" ? 2 : (link as MapLink).type === "semantic" ? 1.35 : 1.1}
                   linkLineDash={(link: object) => (link as MapLink).type === "semantic" ? [4, 3] : []}
                   linkVisibility={() => !draggingNode}
@@ -731,6 +812,15 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
             <h3>{selected.title || "未命名资料"}</h3>
             <dl className="map-metadata"><div><dt>类型</dt><dd>{selected.kind === "paper" ? "论文" : "文章"}</dd></div><div><dt>分组</dt><dd>{selected.folderName || "未分类"}</dd></div><div><dt>状态</dt><dd>{statusLabel(selected)}</dd></div><div><dt>推荐处理</dt><dd>{semanticStateLabel(selected)}</dd></div></dl>
             <Button type="button" className="map-focus-related" aria-pressed={localMode} onClick={() => changeScope(!localMode, null)}>{localMode ? "返回总览" : "聚焦关联"}</Button>
+            <section className="map-detail-related" aria-label="关联证据"><h4>关联证据</h4>
+              {remoteRelated?.data?.items.length ? <ul>{remoteRelated.data.items.filter((entry) => entry.reasons.some((reason) => relationTypes[reason.type])).map((entry) => <li key={entry.document.id}><div>
+                <Button onClick={() => documentsById.has(entry.document.id) ? setSelectedId(entry.document.id) : onOpenDocument(entry.document.id)}>{entry.document.title || "未命名资料"}</Button>
+                <p>{entry.reasons.filter((reason) => relationTypes[reason.type]).map((reason) => reason.type === "semantic" ? `正文向量相近 · ${reason.score!.toFixed(2)}` : reason.label).join("；")}</p>
+                {entry.evidence.slice(0, 2).map((evidence, index) => <div key={`${evidence.id}:${index}`}><blockquote>{evidence.anchor.quote}</blockquote><Button onClick={() => readerTools.openEvidence(evidence)}>查看原文：{evidence.title}</Button></div>)}
+              </div></li>)}</ul> : <p>{!enabledRelationTypes.length ? "请选择要展示的关系类型。" : remoteRelated?.error || (remoteRelated?.data ? "本次检索没有找到关联证据。" : "正在读取关联证据…")}</p>}
+              {remoteRelated?.error && remoteRelated.data && <p role="status">{remoteRelated.error}</p>}
+              {remoteRelated?.data?.nextCursor && <Button disabled={relatedLoading} onClick={() => void continueRelated()}>{relatedLoading ? "查找中…" : "继续查找关联证据"}</Button>}
+            </section>
             <section className="map-detail-related"><h4>人工关联</h4>{selectedManualPeers.length ? <ul>{selectedManualPeers.map(({ item, note }) => <li key={item.id}><Button onClick={() => setSelectedId(item.id)}><span>{item.title || "未命名资料"}<small>{note || "你建立的双向关联"}</small></span></Button></li>)}</ul> : <p>{manual?.error || (manual?.data ? "当前筛选范围内暂无人工关联。" : "正在读取人工关联…")}</p>}{manual?.data && manual.data.totalConnections > 20 && <small>地图展示最近 20 条，阅读器中可查看全部关联。</small>}<small>红色实线表示人工关联，不代表引用关系。</small></section>
             <section className="map-detail-related"><h4>内容相近</h4>{selectedSemanticPeers.length ? <ul>{selectedSemanticPeers.map(({ item, score }) => <li key={item.id}><Button type="button" onClick={() => setSelectedId(item.id)}><span>{item.title || "未命名资料"}<small>模型推荐{item.folderId && item.folderId === selected.folderId ? ` · 同属「${selected.folderName}」` : item.folderName ? ` · 来自「${item.folderName}」` : ""}</small></span><small>相似分数 {score.toFixed(2)}</small></Button></li>)}</ul> : <p>{semanticEmptyMessage}</p>}<small className="map-model-score-note">依据已保存正文的向量相似度推荐，不表示引用或内容正确。</small></section>
             <section className="map-detail-related"><h4>同组资料</h4>{selectedFolderPeers.length ? <><p>同属「{selected.folderName}」，依据你的分组。</p><ul>{selectedFolderPeers.map((peer) => <li key={peer.id}><Button type="button" onClick={() => setSelectedId(peer.id)}>{peer.title || "未命名资料"}<small>{peer.kind === "paper" ? "论文" : "文章"}</small></Button></li>)}</ul></> : <p>{selected.folderId ? "目前没有其他同分组资料。" : "这篇资料尚未分组。"}</p>}</section>

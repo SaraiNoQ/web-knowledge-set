@@ -33,7 +33,7 @@ import {
 } from "../shared/title.js";
 import { derivedInputHash, type KnowledgeDatabase } from "./db.js";
 import { isPublicIp } from "./url-security.js";
-import { consumeCompletionStream, LlmStreamError } from "../shared/llm-stream.js";
+import { consumeCompletionStream, LlmStreamError, jsonContainsSecret } from "../shared/llm-stream.js";
 import { selectionTranslationPrompt, type SelectionTranslationInput } from "../shared/reader-tools.js";
 
 const MAX_INPUT_CHARS = 40_000;
@@ -1252,10 +1252,24 @@ export function createDerivedTasks(options: {
       const controller = new AbortController();
       const requestSignal = AbortSignal.any([controller.signal, signal]);
       const done = requestCompletion({ kind: "selection", target: { kind: current.target, url: selected.endpointUrl }, model: selected.model,
-        system: selectionTranslationPrompt(input.language), sentText: input.text }, key, requestSignal, resolver, timeoutMs,
+        system: selectionTranslationPrompt(input.language, input.glossary), sentText: input.text }, key, requestSignal, resolver, timeoutMs,
       (text) => { guard(); onText(text); });
       active = { controller, done };
       try { await done; guard(); } finally { if (active?.done === done) active = null; }
+    },
+    async answerQuestion(payload: string, settingsRevision: number, system: string, signal: AbortSignal, isCurrent: () => boolean) {
+      if (stopped || pauseDepth > 0 || active) throw new LlmError(409,"LLM_BUSY","助手正在处理其他任务。");
+      const current=settings();if(!current.enabled)throw new LlmError(409,"LLM_DISABLED","AI is disabled");
+      if(current.revision!==settingsRevision)throw new LlmError(409,"LLM_SETTINGS_CONFLICT","AI settings changed");
+      if(payload.length>20000)throw new LlmError(400,"LLM_INPUT_TOO_LARGE","Question evidence is too large");
+      const selected=current[current.target],key=current.target==="remote"?apiKeyFor(selected.endpointUrl):"";
+      if(!selected.model||!selected.endpointUrl||(current.target==="remote"&&!key)||(current.target==="local"&&!current.local.trusted))throw new LlmError(409,"LLM_NOT_CONFIGURED","AI is not configured");
+      const controller=new AbortController(),combined=AbortSignal.any([signal,controller.signal]);
+      if(!isCurrent())throw new LlmError(409,"STALE_DATA_EPOCH","Knowledge base changed");
+      const done=requestCompletion({kind:"selection",target:{kind:current.target,url:selected.endpointUrl},model:selected.model,system,sentText:payload},key,combined,resolver,timeoutMs);
+      active={controller,done};
+      try { const result=await done;combined.throwIfAborted();if(!isCurrent())throw new LlmError(409,"STALE_DATA_EPOCH","Knowledge base changed");if(result.finishReason!=="stop")throw new LlmError(502,"LLM_INVALID_RESPONSE","Question response was incomplete");if(jsonContainsSecret(result.output,key))throw new LlmError(502,"LLM_SECRET_ECHO","Question response contained a credential");return result.output; }
+      finally {if(active?.done===done)active=null;}
     },
     async testConnection(input: LlmConnectionTestInput, signal: AbortSignal): Promise<LlmConnectionTestResult> {
       if (stopped || pauseDepth > 0) throw new LlmError(503, "LLM_STOPPING", "LLM tasks are temporarily unavailable");

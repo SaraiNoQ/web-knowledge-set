@@ -90,6 +90,7 @@ export default function KnowledgeMap3D(props: Props) {
     const edgeEnds = new Map<string, EdgeEnd[]>();
     const nodeLabels = new Map<string, HTMLSpanElement>();
     const color = new Color();
+    const labelMeasure = document.createElement("canvas").getContext("2d");
     const raycaster = new Raycaster();
     const pointer = new Vector2();
     const projected = new Vector3();
@@ -110,12 +111,16 @@ export default function KnowledgeMap3D(props: Props) {
         frame = 0;
         if (!latest.current.paused) controls.update();
         renderer.render(scene, camera);
+        const occupied: Array<{ left: number; top: number; right: number; bottom: number }> = [];
         for (const [id, label] of nodeLabels) {
           const instance = instances.get(id)!;
           projected.fromArray(instance.point).project(camera);
           const visible = projected.z > -1 && projected.z < 1 && Math.abs(projected.x) < 1 && Math.abs(projected.y) < 1;
-          label.hidden = !visible;
-          if (visible) label.style.transform = `translate(${(projected.x + 1) * latest.current.width / 2 + 10}px,${(1 - projected.y) * latest.current.height / 2}px)`;
+          const left = (projected.x + 1) * latest.current.width / 2 + 10, top = (1 - projected.y) * latest.current.height / 2;
+          const rect = { left, top, right: left + Number(label.dataset.labelWidth), bottom: top + 22 };
+          const collision = occupied.some((other) => rect.left < other.right && rect.right > other.left && rect.top < other.bottom && rect.bottom > other.top);
+          label.hidden = !visible || collision;
+          if (visible && !collision) { occupied.push(rect); label.style.transform = `translate(${left}px,${top}px)`; }
         }
       });
     };
@@ -159,11 +164,14 @@ export default function KnowledgeMap3D(props: Props) {
       oldHighlights = highlights;
       for (const line of lines) {
         const material = line.material as LineBasicMaterial;
-        material.color.set(line.userData.type === "manual" ? (latest.current.dark ? "#f08a72" : "#b64b3b") : line.userData.semantic ? (latest.current.dark ? "#bba2d5" : "#675d85") : (latest.current.dark ? "#c5bdae" : "#6d6758"));
+        material.color.set(line.userData.type === "manual" ? (latest.current.dark ? "#f08a72" : "#b64b3b") : line.userData.type === "citation" ? (latest.current.dark ? "#8fb9df" : "#32678f") : line.userData.type === "tag" ? (latest.current.dark ? "#a9c39b" : "#537343") : line.userData.type === "lexical" ? (latest.current.dark ? "#d6ba87" : "#846832") : line.userData.semantic ? (latest.current.dark ? "#bba2d5" : "#675d85") : (latest.current.dark ? "#c5bdae" : "#6d6758"));
       }
       nodeLabels.clear();
       labelLayer.replaceChildren();
-      const ids = new Set([...latest.current.data.nodes.filter((node) => node.type === "folder").slice(0, 20).map(({ id }) => id), ...highlights]);
+      if (labelMeasure) labelMeasure.font = `12px ${getComputedStyle(labelLayer).getPropertyValue("--font-serif") || "Georgia, serif"}`;
+      const selected = latest.current.selectedId;
+      const peers = latest.current.data.links.flatMap((edge) => endpoint(edge.source) === selected ? [endpoint(edge.target)] : endpoint(edge.target) === selected ? [endpoint(edge.source)] : []).slice(0, 8);
+      const ids = new Set([...highlights, ...peers, ...latest.current.data.nodes.filter((node) => node.type === "folder").slice(0, 20).map(({ id }) => id)]);
       for (const id of ids) {
         const instance = instances.get(id);
         if (!instance) continue;
@@ -172,6 +180,7 @@ export default function KnowledgeMap3D(props: Props) {
         const label = document.createElement("span");
         label.hidden = true;
         label.textContent = title.length > 28 ? title.slice(0, 27) + "…" : title;
+        label.dataset.labelWidth = String(Math.min(230, (labelMeasure?.measureText(label.textContent).width ?? Array.from(label.textContent).length * 12) + 8));
         labelLayer.append(label);
         nodeLabels.set(id, label);
       }
@@ -223,7 +232,7 @@ export default function KnowledgeMap3D(props: Props) {
         batches.push(mesh);
         scene.add(mesh);
       }
-      for (const type of ["folder", "semantic", "manual"] as const) {
+      for (const type of ["folder", "semantic", "manual", "tag", "citation", "lexical"] as const) {
         const semantic = type === "semantic";
         const edges = data.links.filter((edge) => edge.type === type);
         const positions: number[] = [];

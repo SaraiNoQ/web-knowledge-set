@@ -7,6 +7,8 @@ import { unzipSync } from "fflate";
 
 import { BackupError, createBackup, type VerifiedBackup } from "./backup.js";
 import { parseReadingSnapshot, insertAnnotationSql, annotationValues, insertConnectionSql, connectionValues, type ReadingSnapshot } from "../shared/reading-snapshot.js";
+import { emptyStudySnapshot, parseStudySnapshot, studyRestoreStatements, type StudySnapshot } from "../shared/study-snapshot.js";
+import { restoreLocalStudyTags } from "./study-portable.js";
 import { CURRENT_SCHEMA_VERSION, KnowledgeDatabase, derivedTargetLanguage } from "./db.js";
 import type { BackupRecord, DerivedResultType } from "../shared/types.js";
 import { TRANSLATION_LANGUAGES } from "../shared/types.js";
@@ -90,8 +92,9 @@ interface CloudDerivedAsset {
 }
 
 interface CloudArchive {
-  version: 1 | 2 | 3 | 4 | 5 | 7;
+  version: 1 | 2 | 3 | 4 | 5 | 7 | 8;
   readingData: ReadingSnapshot;
+  studyData: StudySnapshot;
   createdAt: string;
   folders: CloudFolder[];
   documents: CloudDocument[];
@@ -147,11 +150,12 @@ function parseCloudArchive(bytes: Uint8Array): CloudArchive {
   }
   if (!record(value)) fail("INVALID_BACKUP_ARCHIVE", "Cloud backup must be an object");
   const version = value.version;
-  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 7) {
+  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 7 && version !== 8) {
     fail("UNSUPPORTED_FORMAT", "Unsupported cloud backup format version");
   }
   if (value.format !== FORMAT) fail("INVALID_BACKUP_ARCHIVE", "Cloud backup format is unknown");
-  if (version === 7 && ["papers", "paperExtractions", "paperPages", "paperFiles"].some((key) => !Array.isArray(value[key]) || value[key].length)) {
+  if (version !== 8 && Object.hasOwn(value, "studyData")) fail("INVALID_BACKUP_ARCHIVE", "Research data requires cloud backup v8");
+  if ((version === 7 || version === 8) && ["papers", "paperExtractions", "paperPages", "paperFiles"].some((key) => !Array.isArray(value[key]) || value[key].length)) {
     fail("UNSUPPORTED_FORMAT", "Cloud paper archives cannot yet be converted to desktop backups");
   }
   if (!timestamp(value.createdAt)) fail("INVALID_BACKUP_ARCHIVE", "Cloud backup createdAt is invalid");
@@ -284,9 +288,12 @@ function parseCloudArchive(bytes: Uint8Array): CloudArchive {
   }
 
   let readingData: ReadingSnapshot = { annotations: [], connections: [] };
-  if (version === 7) try { readingData = parseReadingSnapshot(value.readingData, documentIds); } catch { fail("INVALID_BACKUP_ARCHIVE", "Cloud backup reading data is invalid"); }
+  if (version === 7 || version === 8) try { readingData = parseReadingSnapshot(value.readingData, documentIds); } catch { fail("INVALID_BACKUP_ARCHIVE", "Cloud backup reading data is invalid"); }
+  let studyData = emptyStudySnapshot();
+  if (version === 8) try { studyData = parseStudySnapshot(value.studyData, documentIds, readingData); } catch { fail("INVALID_BACKUP_ARCHIVE", "Cloud backup research data is invalid"); }
   return {
     readingData,
+    studyData,
     version: version as CloudArchive["version"],
     createdAt: value.createdAt as string,
     folders: parsedFolders,
@@ -370,6 +377,8 @@ function ingest(database: KnowledgeDatabase, archive: CloudArchive) {
 
     for (const row of archive.readingData.annotations) sql.prepare(insertAnnotationSql).run(...annotationValues(row));
     for (const row of archive.readingData.connections) sql.prepare(insertConnectionSql).run(...connectionValues(row));
+    for (const statement of studyRestoreStatements(archive.studyData)) sql.prepare(statement.sql).run(...statement.values as never[]);
+    restoreLocalStudyTags(sql);
     if (archive.llmSettings) {
       sql.prepare(
         `INSERT INTO app_settings(key, value, revision, updated_at)

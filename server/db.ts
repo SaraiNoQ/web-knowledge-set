@@ -5,7 +5,11 @@ import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { escapeLike, paperPageTextSql, paperTextMatch, searchExcerptSql, searchMatches, searchTerms } from "../shared/search.js";
 import { READING_DATA_SCHEMA } from "../shared/reading-data.js";
+import { STUDY_SCHEMA } from "../shared/study-store.js";
+import { CONNECTION_EVIDENCE_SCHEMA } from "../shared/related.js";
 import { parseReadingSnapshot, insertAnnotationSql, annotationValues, insertConnectionSql, connectionValues } from "../shared/reading-snapshot.js";
+import { parseStudySnapshot } from "../shared/study-snapshot.js";
+import { applyPortableStudyData, readPortableStudyData } from "./study-portable.js";
 
 import type {
   AppearanceSettings,
@@ -677,6 +681,7 @@ const migrations = [
   );
   `,
   READING_DATA_SCHEMA,
+  STUDY_SCHEMA + CONNECTION_EVIDENCE_SCHEMA,
 ];
 
 export const CURRENT_SCHEMA_VERSION = migrations.length;
@@ -3280,18 +3285,22 @@ export class KnowledgeDatabase {
       const applied = this.sql.prepare("SELECT * FROM import_batches WHERE id = ?").get(id) as unknown as ImportBatchRow;
       const appliedRows = this.sql.prepare("SELECT * FROM import_items WHERE batch_id = ? ORDER BY item_index").all(id) as unknown as ImportItemRow[];
       // Still inside transaction(this.sql): a reading-data failure rolls back documents and import status together.
-      this.importReadingData(appliedRows);
+      this.importReadingData(appliedRows, id, strategy);
       return this.importApplyResult(applied, appliedRows);
     });
   }
 
-  private importReadingData(rows: ImportItemRow[]) {
+  private importReadingData(rows: ImportItemRow[], batchId: string, strategy: ImportStrategy) {
     const entries = rows.flatMap((row) => {
       const payload = JSON.parse(row.payload_json) as ImportPayload;
-      return payload.type === "markdown" && payload.readingData ? [{ row, data: payload.readingData }] : [];
+      return payload.type === "markdown" && payload.readingData ? [{ row, data: payload.readingData, studyData: payload.studyData }] : [];
     });
-    if (!entries.length) return;
+    const stagedStudy = readPortableStudyData(this.getImportBundleStaging(batchId)), payloadStudy = entries.find((entry) => entry.studyData)?.studyData;
+    if (stagedStudy && payloadStudy && JSON.stringify(stagedStudy) !== JSON.stringify(payloadStudy)) throw new Error("研究暂存数据在预检后发生变化，请重新导入。");
+    const rawStudy = stagedStudy ?? payloadStudy ?? null;
+    if (!entries.length && !rawStudy) return;
     const snapshot = parseReadingSnapshot({ annotations: entries.flatMap(({ data }) => data.annotations), connections: entries.flatMap(({ data }) => data.connections) }, new Set(entries.map(({ data }) => data.documentId)));
+    const studyData = rawStudy ? parseStudySnapshot(rawStudy, new Set(entries.map(({ data }) => data.documentId)), snapshot) : null;
     const destinations = new Map(entries.filter(({ row }) => row.result_document_id && ["created", "updated", "skipped"].includes(row.result_status ?? "")).map(({ row, data }) => [data.documentId, row.result_document_id!]));
     const changed = new Set(entries.filter(({ row }) => row.result_status === "created" || row.result_status === "updated").map(({ data }) => data.documentId));
     const stableId = (...parts: string[]) => createHash("sha256").update(JSON.stringify(parts)).digest("hex");
@@ -3313,6 +3322,22 @@ export class KnowledgeDatabase {
       const existing = this.sql.prepare("SELECT source_id AS sourceId, target_id AS targetId FROM document_connections WHERE id=?").get(entry.id);
       const id = !existing || (existing.sourceId === sourceId && existing.targetId === targetId) ? entry.id : stableId(entry.id, sourceId, targetId);
       this.sql.prepare(insertConnectionSql.replace("INSERT INTO", "INSERT OR IGNORE INTO")).run(...connectionValues({ ...entry, id, sourceId, targetId }));
+    }
+    if (studyData) {
+      const annotations = new Map<string, string>(), connections = new Map<string, string>();
+      for (const entry of snapshot.annotations) {
+        const documentId = destinations.get(entry.documentId); if (!documentId) continue;
+        const existing = this.sql.prepare("SELECT document_id AS documentId FROM reading_annotations WHERE id=?").get(entry.id);
+        const id = !existing || existing.documentId === documentId ? entry.id : stableId(entry.id, documentId);
+        if (this.sql.prepare("SELECT 1 FROM reading_annotations WHERE id=? AND document_id=?").get(id, documentId)) annotations.set(entry.id, id);
+      }
+      for (const entry of snapshot.connections) {
+        const first = destinations.get(entry.sourceId), second = destinations.get(entry.targetId); if (!first || !second) continue;
+        const [sourceId, targetId] = [first, second].sort();
+        const row = this.sql.prepare("SELECT id FROM document_connections WHERE source_id=? AND target_id=?").get(sourceId, targetId);
+        if (row) connections.set(entry.id, String(row.id));
+      }
+      applyPortableStudyData(this.sql, studyData, snapshot, { documents: destinations, annotations, connections, strategy, batchId });
     }
   }
 

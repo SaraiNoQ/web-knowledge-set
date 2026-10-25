@@ -47,7 +47,7 @@ for (const narrow of [false, true]) test(`reader tools ${narrow ? "mobile" : "de
   await sidebar.getByRole("button", { name: "定位原文", exact: true }).click();
   await expect.poll(() => page.evaluate(() => getSelection()?.toString())).toBe("selected words");
   await sidebar.getByRole("textbox", { name: "查找要关联的资料" }).fill(peerTitle);
-  await sidebar.getByRole("button", { name: peerTitle, exact: true }).click();
+  await sidebar.locator(".connection-search").getByRole("button", { name: peerTitle, exact: true }).click();
   await sidebar.getByRole("textbox", { name: "关联说明" }).fill("同一研究问题");
   await sidebar.getByRole("button", { name: "建立关联", exact: true }).click();
   await expect.poll(async () => (await (await request.get(`/api/reader-tools/documents/${second.document.id}/data`)).json()).connections[0]?.note).toBe("同一研究问题");

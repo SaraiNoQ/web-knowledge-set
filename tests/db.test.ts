@@ -58,7 +58,7 @@ test("v14 recent filters persist in the local database", () => {
     sort: "updated",
   }];
   try {
-    assert.equal(CURRENT_SCHEMA_VERSION, 20);
+    assert.equal(CURRENT_SCHEMA_VERSION, 21);
     assert.deepEqual(fixture.db.getRecentFilters(), { filters: [], revision: 0 });
     assert.deepEqual(fixture.db.getOnboarding(), { completed: false, revision: 0 });
     assert.deepEqual(fixture.db.setOnboarding(true, 0), {
@@ -1745,6 +1745,16 @@ test("schema inspection is read-only and rejects future or incomplete histories"
     const raw = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));
     raw.exec(`
       PRAGMA foreign_keys = OFF;
+      DROP TABLE reading_connection_evidence;
+      DROP TABLE study_topic_annotations;
+      DROP TABLE study_topic_documents;
+      DROP TABLE study_topics;
+      DROP TABLE study_progress;
+      DROP TABLE study_reviews;
+      DROP TABLE study_document_tags;
+      DROP TABLE study_source_checks;
+      DROP TABLE study_merge_history;
+      DROP TABLE study_fingerprints;
       DROP TABLE reading_annotations;
       DROP TABLE document_connections;
       DROP TABLE semantic_chunks;

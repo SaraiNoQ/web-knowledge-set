@@ -482,6 +482,7 @@ export interface ImportPreview {
   createdAt: string;
   counts: { total: number; valid: number; duplicate: number; invalid: number; assets?: number };
   items: ImportPreviewItem[];
+  studyRecords?: number;
 }
 
 export interface ImportApplyItem {
@@ -794,6 +795,7 @@ export type ImportPayload =
     sourceNote: string;
     markdown: string;
     readingData?: { documentId: string; annotations: import("./reader-tools.js").ReadingAnnotation[]; connections: import("./reader-tools.js").DocumentConnection[] };
+    studyData?: import("./study-snapshot.js").StudySnapshot;
     assets?: Array<{
       path: string;
       sha256: string;

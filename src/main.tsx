@@ -12,6 +12,7 @@ import "./interaction-motion.css";
 import "./ui-system.css";
 import "./markdown-workspace.css";
 import "./reader-tools/reader-tools.css";
+import "./study/study.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

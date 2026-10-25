@@ -87,11 +87,11 @@ class SqliteD1Database implements D1Database {
 function migratedCloudDatabase() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
-  for (let version = 1; version <= 13; version += 1) {
+  for (let version = 1; version <= 14; version += 1) {
     sqlite.exec(readFileSync(new URL(`../cloud/migrations/${String(version).padStart(4, "0")}_${[
       "cloud_core", "browser_extension", "cloud_ai", "cloud_backups", "cloud_capture", "cloud_folders", "cloud_trash", "cloud_favorites",
       "cloud_papers", "cloud_paper_content_mode",
-      "semantic_indexes", "cloud_imports", "reading_data",
+      "semantic_indexes", "cloud_imports", "reading_data", "study_workflows",
     ][version - 1]}.sql`, import.meta.url), "utf8"));
   }
   return new SqliteD1Database(sqlite);
@@ -129,6 +129,26 @@ test("reading data cloud API and v7 backup preserve notes, links and rollback fa
     const rejected = await handleRequest(new Request("https://app.example.com/api/data-safety/backups/import", { method: "POST", headers: { ...headers(), "Content-Type": "application/vnd.zhiye.cloud-backup+json" }, body: JSON.stringify(invalid) }), env);
     assert.equal(rejected.status, 400); assert.equal(db.sqlite.prepare("SELECT note FROM reading_annotations").get()?.note, "my evidence");
   } finally { db.sqlite.close(); }
+});
+
+test("cloud v8 research backups restore atomically and old backups clear standalone research data", async () => {
+  const {env,db,bucket}=sqliteEnvironment(),stamp="2026-10-26T00:00:00.000Z";
+  db.sqlite.prepare("INSERT INTO cloud_documents(id,source_url,title,markdown,status,source_note,revision,created_at,updated_at) VALUES ('research','https://example.com/research','Research','Research evidence','ready','',1,?,?)").run(stamp,stamp);
+  const headers=()=>({"Content-Type":"application/json","X-Zhiye-Data-Epoch":String(db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get()?.value)});
+  const post=(path:string,data:unknown,method="POST")=>handleRequest(new Request(`https://app.example.com${path}`,{method,headers:headers(),body:JSON.stringify(data)}),env);
+  try {
+    const old=await post("/api/data-safety/backups",{});assert.equal(old.status,201);const oldId=(await old.json() as {id:string}).id;
+    const created=await post("/api/study/topics",{name:"Research topic"});assert.equal(created.status,200,await created.clone().text());let topic=await created.json() as {id:string;revision:number};
+    const updated=await post(`/api/study/topics/${topic.id}`,{revision:topic.revision,documentId:"research",note:"Original research note"},"PATCH");assert.equal(updated.status,200,await updated.clone().text());topic=await updated.json() as typeof topic;
+    const p=await post("/api/study/documents/research/progress",{documentRevision:1,revision:0,fraction:.6,anchor:null,read:false},"PUT");assert.equal(p.status,200,await p.clone().text());
+    await post("/api/study/topics",{name:"Standalone research note"});
+    const backup=await post("/api/data-safety/backups",{});assert.equal(backup.status,201,await backup.clone().text());const id=(await backup.json() as {id:string}).id;
+    const archive=JSON.parse(new TextDecoder().decode(bucket.objects.get(`backups/${id}.zhiye-cloud-backup`)!.bytes));assert.equal(archive.version,8);assert.equal(archive.studyData.tables.study_topics.length,2);
+    db.sqlite.exec("UPDATE study_topics SET note='Newer note';UPDATE study_progress SET fraction=.9");
+    db.failBatchOn=/INSERT INTO study_progress/u;const failed=await post(`/api/data-safety/backups/${id}/restore`,{});assert.equal(failed.status,500);assert.equal(db.sqlite.prepare("SELECT note FROM study_topics WHERE id=?").get(topic.id)?.note,"Newer note");assert.equal(db.sqlite.prepare("SELECT fraction FROM study_progress").get()?.fraction,.9);
+    db.failBatchOn=null;const restored=await post(`/api/data-safety/backups/${id}/restore`,{});assert.equal(restored.status,200,await restored.clone().text());assert.equal(db.sqlite.prepare("SELECT note FROM study_topics WHERE id=?").get(topic.id)?.note,"Original research note");assert.equal(db.sqlite.prepare("SELECT fraction FROM study_progress").get()?.fraction,.6);
+    const legacy=await post(`/api/data-safety/backups/${oldId}/restore`,{});assert.equal(legacy.status,200,await legacy.clone().text());assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS n FROM study_topics").get()?.n,0);assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS n FROM study_progress").get()?.n,0);assert.deepEqual(db.sqlite.prepare("PRAGMA foreign_key_check").all(),[]);
+  } finally {db.sqlite.close();}
 });
 
 test("selection translation cloud streams only selected text and stops when settings change", async () => {

@@ -3,7 +3,7 @@ import { forceCenter, forceLink, forceManyBody, forceSimulation } from "d3-force
 
 export interface NetworkLayoutInput {
   nodes: Array<{ id: string; position?: [number, number, number] }>;
-  links: Array<{ source: string; target: string; type: "folder" | "semantic" | "manual" }>;
+  links: Array<{ source: string; target: string; type: "folder" | "semantic" | "manual" | "tag" | "citation" | "lexical" }>;
 }
 
 export function layoutNetwork3D(input: NetworkLayoutInput) {

@@ -1,4 +1,9 @@
 export class LlmStreamError extends Error { constructor(readonly code: string) { super(code); } }
+export function jsonContainsSecret(text:string,secret:string) {
+  if(!secret)return false;
+  let root:unknown;try{root=JSON.parse(text.trim().replace(/^```(?:json)?\s*/u,"").replace(/\s*```$/u,""));}catch{return false;}
+  const stack:unknown[]=[root];while(stack.length){const value=stack.pop();if(typeof value==="string"&&value.includes(secret))return true;if(value&&typeof value==="object"){for(const[key,item]of Object.entries(value)){if(key.includes(secret))return true;stack.push(item);}}}return false;
+}
 
 export async function consumeCompletionStream(chunks: AsyncIterable<Uint8Array>, apiKey: string, onText: (text: string) => void | Promise<void>, signal: AbortSignal) {
   const decoder = new TextDecoder("utf-8", { fatal: true });
