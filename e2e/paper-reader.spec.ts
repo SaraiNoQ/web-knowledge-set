@@ -103,6 +103,7 @@ function minimalPdf() {
 }
 
 test("the reader scrolls its own panes, zooms the page, and resizes the split", async ({ page }) => {
+  const reader = page.getByRole("region", { name: "论文阅读", exact: true });
   test.setTimeout(60_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -180,8 +181,8 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
   await page.getByRole("option", { name: "24 px", exact: true }).click();
   await expect(page.locator(".paper-reader-block p").first()).toHaveCSS("font-size", "24px");
   expect(await canvasWidth()).toBe(fitted);
-  await page.getByRole("button", { name: "下一页", exact: true }).click();
-  await page.getByRole("button", { name: "上一页", exact: true }).click();
+  await reader.getByRole("button", { name: "下一页", exact: true }).click();
+  await reader.getByRole("button", { name: "上一页", exact: true }).click();
   await expect(page.locator(".paper-reader-block p").first()).toHaveCSS("font-size", "24px");
 
   expect(fitted).toBeGreaterThan(0);
@@ -236,7 +237,7 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
   const fontControl = page.getByRole("combobox", { name: "中文字号", exact: true });
   await fontControl.scrollIntoViewIfNeeded();
   const fontBounds = await fontControl.boundingBox();
-  const nextBounds = await page.getByRole("button", { name: "下一页", exact: true }).boundingBox();
+  const nextBounds = await reader.getByRole("button", { name: "下一页", exact: true }).boundingBox();
   expect(fontBounds!.x).toBeGreaterThanOrEqual(0);
   expect(nextBounds!.x + nextBounds!.width).toBeLessThanOrEqual(390);
   await fontControl.click();
