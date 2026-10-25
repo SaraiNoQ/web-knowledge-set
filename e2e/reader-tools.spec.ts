@@ -25,6 +25,10 @@ for (const narrow of [false, true]) test(`reader tools ${narrow ? "mobile" : "de
   await expect(ribbon).toBeVisible(); await ribbon.getByRole("button", { name: "翻译", exact: true }).click();
   const floating = page.getByRole("dialog", { name: "划词翻译", exact: true });
   await expect(floating).toBeVisible(); await expect(floating.getByLabel("待翻译选区")).toHaveText("selected words");
+  const languageBounds = (await floating.getByRole("combobox", { name: "目标语言", exact: true }).boundingBox())!;
+  const translateBounds = (await floating.getByRole("button", { name: "翻译选区", exact: true }).boundingBox())!;
+  expect(translateBounds.x).toBeGreaterThanOrEqual(languageBounds.x + languageBounds.width);
+  expect(Math.abs(translateBounds.y + translateBounds.height - languageBounds.y - languageBounds.height)).toBeLessThan(2);
   expect(translations).toBe(0);
   await floating.getByRole("button", { name: "翻译选区", exact: true }).click();
   await expect.poll(() => translations).toBe(1);
@@ -133,6 +137,8 @@ test("reader tool can be enabled and disabled independently and resets across do
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("button", { name: "阅读工具", exact: true }).click();
   const enabled = page.getByRole("checkbox", { name: "划词翻译" }); await enabled.check();
+  await expect(enabled).toHaveCSS("accent-color", "rgb(189, 65, 44)");
+  await expect(page.locator(".reader-tool-settings .ai-enable strong")).toHaveText("划词翻译");
   await page.getByRole("button", { name: "返回列表", exact: true }).click();
   await page.keyboard.press("Alt+t"); await expect(page.getByRole("dialog", { name: "划词翻译", exact: true })).toBeVisible();
   await expect(page.getByRole("dialog", { name: "划词翻译", exact: true }).getByRole("heading", { name: "划词翻译" })).toBeFocused();

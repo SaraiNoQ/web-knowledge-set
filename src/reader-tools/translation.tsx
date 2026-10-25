@@ -30,9 +30,9 @@ function TranslationView({ api, selection }: ReaderToolViewProps) {
     finally { window.clearTimeout(timer); if (generation.current === current) setBusy(false); }
   };
   return <div className="selection-translation">
-    <label>目标语言<Select value={language} onChange={(event) => { const value = event.target.value as TranslationLanguage; setLanguage(value); try { api.storage.set("language", value); } catch { toast.error("语言已切换，但未保存设置。"); } }}>{Object.entries(TRANSLATION_LANGUAGES).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</Select></label>
+    <div className="selection-translation-controls"><label>目标语言<Select aria-label="目标语言" value={language} onChange={(event) => { const value = event.target.value as TranslationLanguage; setLanguage(value); try { api.storage.set("language", value); } catch { toast.error("语言已切换，但未保存设置。"); } }}>{Object.entries(TRANSLATION_LANGUAGES).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</Select></label>
+    <div className="reader-tool-actions"><Button disabled={!selection || busy} onClick={() => void translate()}>翻译选区</Button>{busy && <Button onClick={() => { request.current?.abort(); generation.current += 1; setBusy(false); setComplete(false); }}>取消</Button>}</div></div>
     {selection ? <blockquote aria-label="待翻译选区">{selection.anchor.quote}</blockquote> : <p>先在正文、编辑器或论文中选择文字。</p>}
-    <div className="reader-tool-actions"><Button disabled={!selection || busy} onClick={() => void translate()}>翻译选区</Button>{busy && <Button onClick={() => { request.current?.abort(); generation.current += 1; setBusy(false); setComplete(false); }}>取消</Button>}</div>
     {busy && <p role="status">正在翻译…</p>}
     {output && <pre className="selection-translation-output" aria-label="选区译文">{output}</pre>}
     {error && <p className="error-text" role="alert">{error}</p>}
