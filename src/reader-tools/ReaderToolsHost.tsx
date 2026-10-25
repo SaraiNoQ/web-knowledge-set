@@ -5,7 +5,7 @@ import { READER_SELECTION_MAX_CHARS, type ReaderSelection } from "../../shared/r
 import { builtinReaderTools, readerTools, readerToolStorage, type ReaderToolApi, type ReaderToolManifest } from "./runtime";
 import { captureReaderSelection } from "./selection";
 import { Button, IconButton } from "../components/ui/Controls";
-import { useDialogs, useToast } from "../components/ui/Feedback";
+import { useToast } from "../components/ui/Feedback";
 
 export class ReaderToolBoundary extends Component<{ children: ReactNode; onClose?: () => void }, { failed: boolean }> {
   state = { failed: false };
@@ -37,7 +37,7 @@ function FloatingTool({ title, children, onClose }: { title: string; children: R
 
 export function ReaderToolsHost() {
   const state = useSyncExternalStore(readerTools.subscribe, readerTools.getSnapshot);
-  const dialogs = useDialogs(), toast = useToast();
+  const toast = useToast();
   const [modal, setModal] = useState(false);
   const active = useRef(new Map<string, { controller: AbortController; retry: number }>());
   useEffect(() => {
@@ -76,9 +76,6 @@ export function ReaderToolsHost() {
           const requestSignal = AbortSignal.any([signal, controller.signal]);
           const settings = await coreApi.getLlmSettings(requestSignal);
           if (!settings.enabled) throw new Error("请先在智能设置中启用 AI。");
-          const model = settings[settings.target];
-          const confirmed = await dialogs.confirm(<><p>将选中的 {selection.anchor.quote.length} 个字符发送到 {settings.target === "local" ? "本机模型" : model.endpointUrl}，使用 {model.model || "未配置模型"}。</p><pre className="reader-send-preview">{selection.anchor.quote}</pre></>, { title: "确认发送选区", confirmLabel: "发送选区" });
-          if (!confirmed) throw new DOMException("已取消发送。", "AbortError");
           valid(selection); requestSignal.throwIfAborted();
           await streamSelectionTranslation(selection.documentId, { text: selection.anchor.quote, revision: selection.revision, language, settingsRevision: settings.revision }, (text) => { valid(selection); requestSignal.throwIfAborted(); onText(text); }, requestSignal);
         },
@@ -89,7 +86,7 @@ export function ReaderToolsHost() {
         readerTools.register(id, module, toolApi);
       }).catch(() => { if (!controller.signal.aborted) readerTools.fail(id); });
     }
-  }, [state.enabled, state.retries, dialogs]);
+  }, [state.enabled, state.retries]);
   useEffect(() => () => { for (const value of active.current.values()) value.controller.abort(); active.current.clear(); for (const item of builtinReaderTools) readerTools.unregister(item.manifest.id); readerTools.setContext(null); }, []);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {

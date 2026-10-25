@@ -7,7 +7,6 @@
 .reader-selection-actions { position: absolute; display: flex; gap: 4px; padding: 4px; border-radius: 8px; }
 .reader-tool-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .reader-tool-actions .ui-button { font-size: 12px; }
-.reader-send-preview { max-height: 32dvh; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 .selection-translation label, .reading-data-panel label { display: grid; gap: 6px; font-size: 12px; }
 .selection-translation blockquote, .reading-data-panel blockquote { margin: 14px 0; padding: 0 0 0 10px; border-left: 1px solid var(--line); color: var(--ink-soft); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow-y: auto; font-size: 13px; }
 .selection-translation-output, .reading-data-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 14px/1.8 var(--font-sans); }
