@@ -1,12 +1,23 @@
 import { SegmentedControl } from "./ui/SegmentedControl";
 import { Button } from "./ui/Controls";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 
 import type { SemanticGraphResult } from "../../shared/semantic-graph";
 import { SEMANTIC_GRAPH_MAX_NODES, semanticVectorKey } from "../../shared/semantic-graph";
 import type { KnowledgeMapNode, LibraryItemKind, SemanticVectorEntry } from "../../shared/types";
 import { api } from "../api";
+import type { Map3DHandle, Map3DState } from "./KnowledgeMap3D";
+
+const KnowledgeMap3D = lazy(() => import("./KnowledgeMap3D"));
+
+class Map3DBoundary extends Component<{ children: ReactNode; onUnavailable: () => void }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch() { this.props.onUnavailable(); }
+  render() { return this.state.failed ? null : this.props.children; }
+}
 
 interface Props {
   active: boolean;
@@ -19,9 +30,9 @@ interface Props {
 }
 
 type MapItem = KnowledgeMapNode & { type: "document"; color: string };
-type FolderItem = { id: string; name: string; type: "folder"; color: string };
-type MapNode = MapItem | FolderItem;
-type MapLink = { source: string; target: string; type: "folder" } | { source: string; target: string; type: "semantic"; score: number };
+type FolderItem = { id: string; folderId: string; name: string; count: number; type: "folder"; color: string };
+export type MapNode = (MapItem | FolderItem) & { x?: number; y?: number; vx?: number; vy?: number };
+export type MapLink = { source: string; target: string; type: "folder" } | { source: string; target: string; type: "semantic"; score: number };
 type ForceStrength = number | ((value: unknown, index: number, values: unknown[]) => number);
 type D3Force = ((alpha: number) => void) & {
   strength?: {
@@ -34,6 +45,8 @@ type D3Force = ((alpha: number) => void) & {
   };
 };
 type GraphMethods = {
+  centerAt: { (): { x: number; y: number }; (x: number, y: number, duration?: number): void };
+  zoom: { (): number; (value: number, duration?: number): void };
   zoomToFit: (duration?: number, padding?: number) => void;
   pauseAnimation: () => void;
   resumeAnimation: () => void;
@@ -46,6 +59,8 @@ type GraphMethods = {
 type SemanticVectorVersion = { id: string; sourceHash: string | null; model: string | null; formatVersion: string | null };
 type SemanticGraphWorkerMessage = { requestId: number; graphKey?: string; result?: SemanticGraphResult; error?: string };
 const EMPTY_SEMANTIC_GRAPH: SemanticGraphResult = { edges: [], neighbors: {} };
+const MAP_VISIBLE_DOCUMENTS = 1_000;
+const MAP_LIST_PAGE_SIZE = 50;
 
 const folderColors = ["#9e493d", "#687c59", "#637d93", "#a77d46", "#816b91", "#47827e", "#ae674a"];
 
@@ -110,6 +125,9 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
   const [includeArchived, setIncludeArchived] = useState(true);
   const [showFolders, setShowFolders] = useState(true);
   const [localMode, setLocalMode] = useState(false);
+  const [focusedGroup, setFocusedGroup] = useState<string | null>(null);
+  const [listOpen, setListOpen] = useState(false);
+  const [listPage, setListPage] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [semanticVectors, setSemanticVectors] = useState<SemanticVectorEntry[]>([]);
   const [semanticLoading, setSemanticLoading] = useState(false);
@@ -117,6 +135,8 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
   const [semanticGraph, setSemanticGraph] = useState(EMPTY_SEMANTIC_GRAPH);
   const [semanticThreshold, setSemanticThreshold] = useState(0.6);
   const [paused, setPaused] = useState(false);
+  const [dimension, setDimension] = useState<"2d" | "3d">("2d");
+  const [renderError, setRenderError] = useState("");
   const [draggingNode, setDraggingNode] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [width, setWidth] = useState(0);
@@ -124,7 +144,27 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
   const host = useRef<HTMLDivElement>(null);
   const resizeObserver = useRef<ResizeObserver | null>(null);
   const graph = useRef<GraphMethods | null>(null);
+  const graph3D = useRef<Map3DHandle | null>(null);
+  const saved2DView = useRef<{ center: { x: number; y: number }; zoom: number } | null>(null);
+  const state3D = useRef<Map3DState>({ positions: new Map(), camera: null, overview: null, scope: "all", layoutKey: "" });
+  const captureGraph = useCallback((instance: GraphMethods | null) => {
+    if (!instance && graph.current) saved2DView.current = { center: graph.current.centerAt(), zoom: graph.current.zoom() };
+    graph.current = instance;
+    if (instance && saved2DView.current) {
+      instance.centerAt(saved2DView.current.center.x, saved2DView.current.center.y);
+      instance.zoom(saved2DView.current.zoom);
+    }
+  }, []);
+  const unavailable3D = useCallback(() => {
+    setDimension("2d");
+    setRenderError("3D 暂不可用，已返回 2D；筛选和选中资料已保留。");
+  }, []);
   const mapLoading = useRef(false);
+  const metadataKey = useRef("");
+  const nodeCache = useRef(new Map<string, MapNode>());
+  const overview = useRef<{ center: { x: number; y: number }; zoom: number; positions: Map<string, { x?: number; y?: number }> } | null>(null);
+  const restoreOverview = useRef(false);
+  const fitFocusedScope = useRef(false);
   const draggingNodeRef = useRef(false);
   const dragForceSnapshot = useRef<{
     linkStrength?: ForceStrength;
@@ -133,6 +173,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
     centerForce?: D3Force;
   } | null>(null);
   const graphWorker = useRef<Worker | null>(null);
+  const workerPending = useRef(false);
   const graphRequestId = useRef(0);
   const latestGraphRequestId = useRef(0);
   const latestGraphKey = useRef("");
@@ -192,11 +233,15 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
         resultFolders = page.folders;
         expectedTotal = page.total;
         cursor = page.nextCursor ?? undefined;
-        setItems([...values]);
         setTotal(expectedTotal);
-        setFolders(resultFolders);
       } while (cursor && !signal.aborted);
       if (!signal.aborted && values.length !== expectedTotal) throw new Error("资料地图分页不完整，请重试。");
+      const key = JSON.stringify([values, resultFolders]);
+      if (!signal.aborted && key !== metadataKey.current) {
+        metadataKey.current = key;
+        setItems(values);
+        setFolders(resultFolders);
+      }
     } catch (cause) {
       if (!signal.aborted) setError((cause as Error).message || "无法载入知识地图");
     } finally {
@@ -214,6 +259,14 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
     const timer = window.setTimeout(() => void loadMap(controller.signal), query.trim() ? 180 : 0);
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [active, kind, folderId, favorite, includeArchived, query, loadMap, refreshKey, retryCount]);
+
+  useEffect(() => {
+    setFocusedGroup(null);
+    setLocalMode(false);
+    overview.current = null;
+    restoreOverview.current = false;
+    fitFocusedScope.current = false;
+  }, [kind, folderId, favorite, includeArchived, query]);
 
   const semanticEnabled = items.some((item) => item.semanticState !== "unavailable");
   const readyVectorRefs = useMemo(() => items.filter((item) => item.semanticState === "ready")
@@ -313,6 +366,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
     worker.onmessage = (event: MessageEvent<SemanticGraphWorkerMessage>) => {
       const message = event.data;
       if (message.requestId !== latestGraphRequestId.current) return;
+      workerPending.current = false;
       if (message.error === "SEMANTIC_GRAPH_BASE_MISMATCH" ||
         (message.result && message.graphKey !== latestGraphKey.current)) {
         const vectors = semanticVectorsRef.current;
@@ -321,7 +375,8 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
         latestGraphRequestId.current = requestId;
         latestGraphKey.current = graphKey;
         postedVectors.current = vectors;
-        worker.postMessage(vectors.length ? { requestId, mode: "replace", vectors } : { requestId, mode: "reset" });
+        workerPending.current = true;
+        graphWorker.current?.postMessage(vectors.length ? { requestId, mode: "replace", vectors } : { requestId, mode: "reset" });
         return;
       }
       if (message.error) {
@@ -335,21 +390,36 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
       }
     };
     worker.onerror = () => {
+      workerPending.current = false;
       setSemanticGraph(EMPTY_SEMANTIC_GRAPH);
       setSemanticGraphKey("");
       setSemanticError("查找相近织片失败，分组地图仍可用。");
     };
     return () => {
-      worker.terminate();
-      if (graphWorker.current === worker) graphWorker.current = null;
+      graphWorker.current?.terminate();
+      graphWorker.current = null;
     };
   }, []);
 
   useEffect(() => {
-    const worker = graphWorker.current;
+    let worker = graphWorker.current;
     if (!worker) return;
+    if (!active) return;
+    if (!semanticVectors.length && !postedVectors.current.length) return;
+    const graphKey = semanticVectorKey(semanticVectors);
+    if (latestGraphKey.current === graphKey && postedVectors.current === semanticVectors) return;
+    if (workerPending.current && latestGraphKey.current !== graphKey) {
+      const replacement = new Worker(new URL("../semantic-graph-worker.ts", import.meta.url), { type: "module" });
+      replacement.onmessage = worker.onmessage;
+      replacement.onerror = worker.onerror;
+      worker.terminate();
+      graphWorker.current = replacement;
+      worker = replacement;
+      postedVectors.current = [];
+    }
+    workerPending.current = true;
     const requestId = ++graphRequestId.current;
-    if (!active || !semanticVectors.length) {
+    if (!semanticVectors.length) {
       setSemanticGraph(EMPTY_SEMANTIC_GRAPH);
       setSemanticGraphKey("");
       postedVectors.current = [];
@@ -358,7 +428,6 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
       worker.postMessage({ requestId, mode: "reset" });
       return;
     }
-    const graphKey = semanticVectorKey(semanticVectors);
     const previous = postedVectors.current;
     const added = appendedVectors(previous, semanticVectors);
     latestGraphRequestId.current = requestId;
@@ -379,59 +448,133 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
     }
   }, [items, loading, selectedId]);
 
-  const documents = useMemo<MapItem[]>(() => items.map((item) => {
-    return { ...item, type: "document", color: item.folderId ? folderColor(item.folderId) : "#77766f" };
-  }), [items]);
+  const documents = useMemo(() => {
+    const ids = new Set(items.map(({ id }) => id));
+    for (const [id, node] of nodeCache.current) {
+      if (node.type === "document" && !ids.has(id)) nodeCache.current.delete(id);
+    }
+    return items.map((item) => {
+      const node = Object.assign(nodeCache.current.get(item.id) ?? {}, item, {
+        type: "document" as const, color: item.folderId ? folderColor(item.folderId) : "#77766f",
+      }) as MapItem & MapNode;
+      nodeCache.current.set(item.id, node);
+      return node;
+    });
+  }, [items]);
+  const documentsById = useMemo(() => new Map(documents.map((item) => [item.id, item])), [documents]);
+  useEffect(() => setListPage(0), [documents]);
 
-  const selected = documents.find((item) => item.id === selectedId) ?? null;
+  const selected = selectedId ? documentsById.get(selectedId) ?? null : null;
   const selectedSemanticPeers = useMemo(() => selected?.semanticState === "ready"
     && semanticGraphCurrent
     ? (semanticGraph.neighbors[selected.id] ?? [])
       .filter((neighbor) => neighbor.score >= semanticThreshold)
       .slice(0, 10)
       .flatMap((neighbor) => {
-        const item = documents.find((candidate) => candidate.id === neighbor.id);
+        const item = documentsById.get(neighbor.id);
         return item?.semanticState === "ready" ? [{ item, score: neighbor.score }] : [];
       })
-    : [], [documents, selected, semanticGraph, semanticGraphCurrent, semanticThreshold]);
+    : [], [documentsById, selected, semanticGraph, semanticGraphCurrent, semanticThreshold]);
+
+  const selectedFolderPeers = useMemo(() => selected?.folderId
+    ? documents.filter((item) => item.id !== selected.id && item.folderId === selected.folderId).slice(0, 8)
+    : [], [documents, selected]);
+  const scopedDocuments = useMemo(() => focusedGroup === null ? documents
+    : documents.filter((item) => (item.folderId ?? "") === focusedGroup), [documents, focusedGroup]);
+  const summaryMode = !localMode && focusedGroup === null && documents.length > MAP_VISIBLE_DOCUMENTS;
+  const overviewDocuments = useMemo(() => summaryMode ? [] : scopedDocuments.slice(0, MAP_VISIBLE_DOCUMENTS), [scopedDocuments, summaryMode]);
 
   const visibleDocuments = useMemo(() => {
-    if (!localMode || !selectedId) return documents;
-    const selected = documents.find((item) => item.id === selectedId);
-    if (!selected) return documents;
-    if (selected.semanticState !== "ready" || !semanticGraphCurrent) return [selected];
-    const neighborIds = new Set((semanticGraph.neighbors[selectedId] ?? [])
-      .filter((neighbor) => neighbor.score >= semanticThreshold)
-      .slice(0, 10)
-      .map(({ id }) => id));
-    return [selected, ...documents.filter((item) => neighborIds.has(item.id))];
-  }, [documents, localMode, selectedId, semanticGraph, semanticGraphCurrent, semanticThreshold]);
+    if (!localMode || !selected) return overviewDocuments;
+    const peers = new Map([...selectedFolderPeers, ...selectedSemanticPeers.map(({ item }) => item)].map((item) => [item.id, item]));
+    return [selected, ...peers.values()];
+  }, [localMode, selected, selectedFolderPeers, selectedSemanticPeers, overviewDocuments]);
+
+  const groupNodes = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of documents) counts.set(item.folderId ?? "", (counts.get(item.folderId ?? "") ?? 0) + 1);
+    const groups = [...folders, { id: "", name: "未分类" }];
+    const ids = new Set(groups.map(({ id }) => "folder:" + id));
+    for (const [id, node] of nodeCache.current) if (node.type === "folder" && !ids.has(id)) nodeCache.current.delete(id);
+    return groups.filter(({ id }) => counts.has(id)).map(({ id, name }) => {
+      const node = Object.assign(nodeCache.current.get("folder:" + id) ?? {}, {
+        id: "folder:" + id, folderId: id, name, count: counts.get(id)!, type: "folder" as const,
+        color: id ? folderColor(id) : "#77766f",
+      }) as FolderItem & MapNode;
+      nodeCache.current.set(node.id, node);
+      return node;
+    });
+  }, [documents, folders]);
+
+  useEffect(() => {
+    for (const id of state3D.current.positions.keys()) if (!nodeCache.current.has(id)) state3D.current.positions.delete(id);
+  }, [documents, groupNodes]);
+
+  const localSelectedId = localMode ? selectedId : null;
 
   const graphData = useMemo(() => {
-    const visibleFolderIds = new Set(visibleDocuments.map((item) => item.folderId).filter((id): id is string => Boolean(id)));
-    const folderItems: FolderItem[] = showFolders ? folders.filter((folder) => visibleFolderIds.has(folder.id)).map((folder) => ({
-      id: "folder:" + folder.id, name: folder.name, type: "folder", color: folderColor(folder.id),
-    })) : [];
-    const folderLinks: MapLink[] = showFolders ? visibleDocuments.filter((item) => item.folderId && folders.some((folder) => folder.id === item.folderId))
+    const visibleFolderIds = new Set(visibleDocuments.map((item) => item.folderId ?? ""));
+    const folderItems = summaryMode ? groupNodes : showFolders ? groupNodes.filter((folder) => visibleFolderIds.has(folder.folderId)) : [];
+    const folderIds = new Set(folderItems.map(({ folderId }) => folderId));
+    const folderLinks: MapLink[] = showFolders ? visibleDocuments.filter((item) => item.folderId && folderIds.has(item.folderId))
       .map((item) => ({ source: item.id, target: "folder:" + item.folderId, type: "folder" })) : [];
     const visibleIds = new Set(visibleDocuments.map(({ id }) => id));
     const readyVisibleIds = new Set(visibleDocuments.filter(({ semanticState }) => semanticState === "ready").map(({ id }) => id));
-    const semanticLinks: MapLink[] = !semanticGraphCurrent ? [] : localMode && selectedId
-      ? selectedSemanticPeers.filter(({ item }) => visibleIds.has(item.id) && readyVisibleIds.has(selectedId))
-        .map(({ item, score }) => ({ source: selectedId, target: item.id, type: "semantic", score }))
+    const semanticLinks: MapLink[] = !semanticGraphCurrent ? [] : localSelectedId
+      ? (semanticGraph.neighbors[localSelectedId] ?? []).filter(({ id, score }) => score >= semanticThreshold && visibleIds.has(id))
+        .map(({ id, score }) => ({ source: localSelectedId, target: id, type: "semantic", score }))
       : semanticGraph.edges.filter((edge) => edge.score >= semanticThreshold && visibleIds.has(edge.source) && visibleIds.has(edge.target) &&
         readyVisibleIds.has(edge.source) && readyVisibleIds.has(edge.target))
         .map((edge) => ({ ...edge, type: "semantic" as const }));
-    return { nodes: [...folderItems, ...visibleDocuments] as MapNode[], links: [...folderLinks, ...semanticLinks] };
-  }, [folders, localMode, selectedId, selectedSemanticPeers, semanticGraph, semanticGraphCurrent, semanticThreshold, showFolders, visibleDocuments]);
+    const nodes = [...folderItems, ...visibleDocuments];
+    if (restoreOverview.current) {
+      for (const node of nodes) {
+        const position = overview.current?.positions.get(node.id);
+        if (position) Object.assign(node, position, { vx: 0, vy: 0 });
+      }
+    }
+    return { nodes, links: [...folderLinks, ...semanticLinks] };
+  }, [groupNodes, localSelectedId, semanticGraph, semanticGraphCurrent, semanticThreshold, showFolders, summaryMode, visibleDocuments]);
 
-  const semanticCalculationPending = semanticLoading || (readyVectorIds.length > 0 && !semanticGraphCurrent && !semanticError);
+  const semanticCalculationPending = documents.length <= SEMANTIC_GRAPH_MAX_NODES && (semanticLoading || (readyVectorIds.length > 0 && !semanticGraphCurrent && !semanticError));
+  const semanticEmptyMessage = !selected || selected.semanticState === "unavailable" ? "尚未启用语义推荐，可先浏览同组资料。"
+    : documents.length > SEMANTIC_GRAPH_MAX_NODES ? "当前范围超过推荐上限，请用筛选缩小到 1,000 篇以内。"
+    : semanticError ? semanticError
+    : selected.semanticState === "failed" ? "这篇资料的语义索引失败，请到智能设置重试。"
+    : selected.kind === "paper" && selected.status !== "ready" ? "论文提取完成后才能建立语义索引。"
+    : selected.semanticState === "pending" ? "这篇资料尚待建立语义索引。"
+    : selected.semanticState === "indexing" ? "正在建立这篇资料的语义索引。"
+    : semanticCalculationPending ? "正在比较内容，稍后显示推荐。"
+    : "暂无符合相似要求的资料，可以调低相似要求。";
 
-  const selectedFolderPeers = selected?.folderId
-    ? documents.filter((item) => item.id !== selected.id && item.folderId === selected.folderId).slice(0, 8)
-    : [];
+  const changeScope = (local: boolean, group: string | null = focusedGroup) => {
+    if (!localMode && focusedGroup === null && (local || group !== null) && graph.current) {
+      overview.current = { center: graph.current.centerAt(), zoom: graph.current.zoom(),
+        positions: new Map(graphData.nodes.map(({ id, x, y }) => [id, { x, y }])) };
+    }
+    if (!local && group === null && (localMode || focusedGroup !== null)) restoreOverview.current = true;
+    fitFocusedScope.current = local || group !== null;
+    setLocalMode(local);
+    setFocusedGroup(group);
+  };
 
-  const fit = () => graph.current?.zoomToFit(420, 34);
+  useEffect(() => {
+    if (restoreOverview.current) {
+      if (overview.current) {
+        saved2DView.current = { center: overview.current.center, zoom: overview.current.zoom };
+        graph.current?.centerAt(overview.current.center.x, overview.current.center.y);
+        graph.current?.zoom(overview.current.zoom);
+      }
+      restoreOverview.current = false;
+    }
+  }, [graphData]);
+
+  useEffect(() => {
+    if (active && !paused && dimension === "2d") graph.current?.resumeAnimation();
+    else graph.current?.pauseAnimation();
+  }, [active, paused, width, height, graphData, dimension]);
+
+  const fit = () => dimension === "3d" ? graph3D.current?.fit() : graph.current?.zoomToFit(420, 34);
   const togglePause = () => {
     if (paused) graph.current?.resumeAnimation();
     else graph.current?.pauseAnimation();
@@ -454,54 +597,62 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
       ctx.lineWidth = (isSelected ? 2.4 : 1.1) / Math.max(scale, .35);
       ctx.stroke();
     }
-    if (isSelected || node.id === hoveredId) {
+    if (isSelected || node.id === hoveredId || (node.type === "folder" && !draggingNode)) {
       ctx.font = (isSelected ? "600 " : "450 ") + Math.max(10, 12 / Math.max(scale, .7)) + "px Georgia, serif";
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
       ctx.fillStyle = darkTheme ? "#eee8dd" : node.type === "folder" ? "#55483a" : "#2d2a25";
-      ctx.fillText(node.type === "folder" ? shortTitle(node.name) : shortTitle(node.title), node.x + size + 4, node.y);
+      ctx.fillText(node.type === "folder" ? `${shortTitle(node.name)} · ${node.count}` : shortTitle(node.title), node.x + size + 4, node.y);
     }
   }, [darkTheme, draggingNode, hoveredId, selectedId]);
 
   const openSelected = () => { if (selected) onOpenDocument(selected.id); };
+  const selectNode = (item: MapNode) => {
+    if (item.type === "document") setSelectedId(item.id);
+    else { changeScope(false, item.folderId); setSelectedId(null); }
+  };
 
   return (
     <section className="knowledge-map" aria-label="知识地图">
       <header className="knowledge-map-head">
-        <div className="knowledge-map-heading"><h2>知识地图</h2><p>实线表示分组，虚线表示内容相近。</p></div>
-        <div className="knowledge-map-head-actions"><span className="map-total">{total.toLocaleString("zh-CN")} 篇</span></div>
+        <div className="knowledge-map-heading"><h2>知识地图</h2><p>{dimension === "3d" ? "节点与连线按关系分布在三维空间；虚线表示内容相近。" : "实线表示分组，虚线表示内容相近。"}</p></div>
+        <div className="knowledge-map-head-actions"><SegmentedControl label="地图维度" className="map-dimension-switch" value={dimension} options={[{ value: "2d", label: "2D" }, { value: "3d", label: "3D" }]} onChange={(value) => { if (value === "3d") graph.current?.pauseAnimation(); setDimension(value as "2d" | "3d"); setRenderError(""); }} /><span className="map-total">{total.toLocaleString("zh-CN")} 篇</span></div>
       </header>
-      <div className="knowledge-map-layout">
+      <div className={"knowledge-map-layout" + (selected ? " has-detail" : "")}>
         <aside className="knowledge-map-filters" aria-label="地图筛选">
           <label className="map-search"><span>搜索标题</span><input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="输入关键词" /></label>
           <label><span>资料类型</span><select value={kind} onChange={(event) => setKind(event.target.value as LibraryItemKind | "")}><option value="">文章与论文</option><option value="article">文章</option><option value="paper">论文</option></select></label>
           <label><span>分组</span><select value={folderId} onChange={(event) => setFolderId(event.target.value)}><option value="">全部分组</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select></label>
           <label><span>收藏</span><select value={favorite === undefined ? "all" : String(favorite)} onChange={(event) => setFavorite(event.target.value === "all" ? undefined : event.target.value === "true")}><option value="all">全部</option><option value="true">只看收藏</option><option value="false">排除收藏</option></select></label>
           {!cloud && <label className="map-check"><input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} /><span>显示归档</span></label>}
-          <label className="map-check"><input type="checkbox" checked={showFolders} onChange={(event) => setShowFolders(event.target.checked)} /><span>显示分组</span></label>
+          <label className="map-check"><input type="checkbox" checked={showFolders || summaryMode} disabled={summaryMode} onChange={(event) => setShowFolders(event.target.checked)} /><span>显示分组</span></label>
           <label className="map-threshold"><span>相似要求 · {semanticThreshold.toFixed(2)}</span><input aria-label="相似要求" type="range" min="0.3" max="0.9" step="0.01" value={semanticThreshold} disabled={!semanticEnabled || semanticLoading || items.length > SEMANTIC_GRAPH_MAX_NODES} onChange={(event) => setSemanticThreshold(Number(event.target.value))} /></label>
-          <SegmentedControl label="查看范围" className="map-view-switch" value={localMode ? "local" : "all"} options={[{ value: "all", label: "全部资料" }, { value: "local", label: "当前关联", disabled: !selected }]} onChange={(value) => setLocalMode(value === "local")} />
+          <SegmentedControl label="查看范围" className="map-view-switch" value={localMode ? "local" : "all"} options={[{ value: "all", label: "全部资料" }, { value: "local", label: "当前关联", disabled: !selected }]} onChange={(value) => changeScope(value === "local", null)} />
           <div className="map-key"><span><i className="map-key-article" />文章</span><span><i className="map-key-paper" />论文</span><span><i className="map-key-folder" />分组</span><span><i className="map-key-line" />所属分组</span><span><i className="map-key-semantic" />内容相近</span></div>
           <p className="map-privacy-note">分数表示内容相似，不代表正确。<br />连线不表示引用或事实关系。</p>
-          {semanticEnabled && items.length > SEMANTIC_GRAPH_MAX_NODES && <p className="map-semantic-status" role="status">当前有 {items.length.toLocaleString("zh-CN")} 篇，推荐限1,000篇。地图仍显示全部资料，请筛选后查看。</p>}
+          {items.length > MAP_VISIBLE_DOCUMENTS && <p className="map-budget-note" role="status">{summaryMode ? "已按分组汇总，点击分组展开。" : !localMode && scopedDocuments.length > MAP_VISIBLE_DOCUMENTS ? "当前分组仅绘制前 1,000 篇，请搜索或从资料列表选择。" : "语义推荐限 1,000 篇，请用筛选缩小范围。"}</p>}
           {semanticCalculationPending && <p className="map-semantic-status" role="status">正在查找相近织片…</p>}
           {semanticEnabled && items.length <= SEMANTIC_GRAPH_MAX_NODES && !semanticCalculationPending && !readyVectorIds.length && !semanticError && <p className="map-semantic-status" role="status">处理完成后，会显示相近织片。</p>}
           {semanticError && <p className="map-semantic-status is-error" role="status">{semanticError}</p>}
-          <details className="map-accessible-list"><summary>资料列表（{documents.length}）</summary><ul>{documents.map((item) => <li key={item.id}><Button type="button" aria-pressed={selectedId === item.id} onClick={() => { setSelectedId(item.id); setLocalMode(true); }}>{item.title || "未命名资料"}<small>{item.kind === "paper" ? "论文" : "文章"}</small></Button></li>)}</ul></details>
+          <details className="map-accessible-list" open={listOpen} onToggle={(event) => setListOpen(event.currentTarget.open)}><summary>资料列表（{documents.length}）</summary>{listOpen && <>
+            <ul>{documents.slice(listPage * MAP_LIST_PAGE_SIZE, (listPage + 1) * MAP_LIST_PAGE_SIZE).map((item) => <li key={item.id}><Button type="button" aria-pressed={selectedId === item.id} onClick={() => setSelectedId(item.id)}>{item.title || "未命名资料"}<small>{item.kind === "paper" ? "论文" : "文章"}</small></Button></li>)}</ul>
+            {documents.length > MAP_LIST_PAGE_SIZE && <nav className="map-list-pages" aria-label="地图资料分页"><Button disabled={listPage === 0} onClick={() => setListPage((value) => value - 1)}>上一页</Button><span>{listPage + 1} / {Math.ceil(documents.length / MAP_LIST_PAGE_SIZE)}</span><Button disabled={(listPage + 1) * MAP_LIST_PAGE_SIZE >= documents.length} onClick={() => setListPage((value) => value + 1)}>下一页</Button></nav>}
+          </>}</details>
         </aside>
         <div className="knowledge-map-canvas" role="region" aria-label="资料关联画布">
           {loading && <p className="map-loading" role="status">正在加载资料地图…</p>}
+          {renderError && <p className="map-render-error" role="status">{renderError}</p>}
           {error ? <div className="map-state"><span className="eyebrow">MAP · ERROR</span><h3>加载失败</h3><p>{error}</p><Button type="button" onClick={() => setRetryCount((value) => value + 1)}>重试</Button></div>
             : !loading && !documents.length ? <div className="map-state"><span className="eyebrow">MAP · EMPTY</span><h3>{query || kind || folderId || favorite !== undefined ? "没有匹配的资料" : "知识地图还是空的"}</h3><p>添加文章或论文后，这里会显示。</p></div>
               : <div className="map-canvas-inner" ref={observeHost}>
-                {width > 0 && height > 0 && <ForceGraph2D
-                  ref={graph as never}
+                {width > 0 && height > 0 && (dimension === "3d" ? <Map3DBoundary onUnavailable={unavailable3D}><Suspense fallback={<p className="map-loading" role="status">正在准备 3D 地图…</p>}><KnowledgeMap3D ref={graph3D} data={graphData} state={state3D} width={width} height={height} active={active} paused={paused} dark={darkTheme} selectedId={selectedId} scope={localMode ? `local:${selectedId}` : focusedGroup !== null ? `folder:${focusedGroup}` : "all"} onSelect={selectNode} onUnavailable={unavailable3D} /></Suspense></Map3DBoundary> : <ForceGraph2D
+                  ref={captureGraph as never}
                   width={width}
                   height={height}
                   graphData={graphData}
                   backgroundColor="rgba(0,0,0,0)"
                   nodeId="id"
-                  nodeLabel={(node: object) => { const item = node as MapNode; return item.type === "folder" ? "分组：" + item.name : (item.kind === "paper" ? "论文：" : "文章：") + item.title; }}
+                  nodeLabel={(node: object) => { const item = node as MapNode; return item.type === "folder" ? `分组：${item.name} · ${item.count} 篇，点击展开` : (item.kind === "paper" ? "论文：" : "文章：") + item.title; }}
                   nodeCanvasObject={drawNode}
                   nodePointerAreaPaint={(raw: object, color: string, ctx: CanvasRenderingContext2D) => {
                     const node = raw as MapNode & { x?: number; y?: number };
@@ -517,8 +668,14 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
                   linkPointerAreaPaint={() => {}}
                   d3AlphaDecay={0.06}
                   cooldownTicks={130}
+                  onEngineStop={() => {
+                    if (fitFocusedScope.current) {
+                      fitFocusedScope.current = false;
+                      graph.current?.zoomToFit(window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 420, 34);
+                    }
+                  }}
                   enableNodeDrag
-                  onNodeClick={(node: object) => { const item = node as MapNode; if (item.type === "document") { setSelectedId(item.id); setLocalMode(true); } }}
+                  onNodeClick={(node: object) => selectNode(node as MapNode)}
                   onNodeHover={(node: object | null) => setHoveredId(node && "id" in node ? String((node as MapNode).id) : null)}
                   onNodeDrag={() => {
                     if (draggingNodeRef.current) return;
@@ -552,19 +709,20 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
                     if (!paused) graph.current?.d3ReheatSimulation();
                     else graph.current?.pauseAnimation();
                   }}
-                />}
-                <div className="map-canvas-toolbar"><Button type="button" onClick={fit} aria-label="显示全图">显示全图</Button><Button type="button" onClick={togglePause} aria-pressed={paused}>{paused ? "继续移动" : "暂停移动"}</Button></div>
-                <span className="map-coordinate-note">{draggingNode ? "拖动时暂时隐藏连线，松开后恢复。" : "位置远近不表示内容相似程度。"}</span>
+                />)}
+                <div className="map-canvas-toolbar">{(localMode || focusedGroup !== null) && <Button type="button" onClick={() => changeScope(false, null)}>返回总览</Button>}<Button type="button" onClick={fit} aria-label="显示全图">显示全图</Button><Button type="button" onClick={togglePause} aria-pressed={paused}>{paused ? "继续移动" : "暂停移动"}</Button></div>
+                <span className="map-coordinate-note">{dimension === "3d" ? "拖动空白旋转，滚轮缩放；拖动节点调整位置。" : draggingNode ? "拖动时暂时隐藏连线，松开后恢复。" : "位置远近不表示内容相似程度。"}</span>
               </div>}
         </div>
         <aside className={"knowledge-map-detail " + (selected ? "is-open" : "")} aria-label="资料详情">
-          {selected && <div className="map-detail-head"><Button type="button" className="map-detail-close" onClick={() => { setSelectedId(null); setLocalMode(false); }} aria-label="关闭详情">×</Button></div>}
+          {selected && <div className="map-detail-head"><Button type="button" className="map-detail-close" onClick={() => { changeScope(false, null); setSelectedId(null); }} aria-label="关闭详情">×</Button></div>}
           {selected ? <>
             <span className={"map-kind-mark " + selected.kind} aria-hidden="true" />
             <h3>{selected.title || "未命名资料"}</h3>
             <dl className="map-metadata"><div><dt>类型</dt><dd>{selected.kind === "paper" ? "论文" : "文章"}</dd></div><div><dt>分组</dt><dd>{selected.folderName || "未分类"}</dd></div><div><dt>状态</dt><dd>{statusLabel(selected)}</dd></div><div><dt>推荐处理</dt><dd>{semanticStateLabel(selected)}</dd></div></dl>
-            <section className="map-detail-related"><h4>内容相近</h4>{selectedSemanticPeers.length ? <ul>{selectedSemanticPeers.map(({ item, score }) => <li key={item.id}><Button type="button" onClick={() => { setSelectedId(item.id); setLocalMode(true); }}>{item.title || "未命名资料"}<small>{item.kind === "paper" ? "论文" : "文章"} · 相似分数 {score.toFixed(2)}</small></Button></li>)}</ul> : <p>{selected.semanticState === "ready" ? "暂无符合相似要求的织片。" : "处理完成后，会显示相近织片。"}</p>}<small className="map-model-score-note">相似分数不代表内容正确。</small></section>
-            <section className="map-detail-related"><h4>同组资料</h4>{selectedFolderPeers.length ? <ul>{selectedFolderPeers.map((peer) => <li key={peer.id}><Button type="button" onClick={() => setSelectedId(peer.id)}>{peer.title || "未命名资料"}<small>{peer.kind === "paper" ? "论文" : "文章"}</small></Button></li>)}</ul> : <p>目前没有其他同分组资料。</p>}</section>
+            <Button type="button" className="map-focus-related" aria-pressed={localMode} onClick={() => changeScope(!localMode, null)}>{localMode ? "返回总览" : "聚焦关联"}</Button>
+            <section className="map-detail-related"><h4>内容相近</h4>{selectedSemanticPeers.length ? <ul>{selectedSemanticPeers.map(({ item, score }) => <li key={item.id}><Button type="button" onClick={() => setSelectedId(item.id)}><span>{item.title || "未命名资料"}<small>模型推荐{item.folderId && item.folderId === selected.folderId ? ` · 同属「${selected.folderName}」` : item.folderName ? ` · 来自「${item.folderName}」` : ""}</small></span><small>相似分数 {score.toFixed(2)}</small></Button></li>)}</ul> : <p>{semanticEmptyMessage}</p>}<small className="map-model-score-note">依据已保存正文的向量相似度推荐，不表示引用或内容正确。</small></section>
+            <section className="map-detail-related"><h4>同组资料</h4>{selectedFolderPeers.length ? <><p>同属「{selected.folderName}」，依据你的分组。</p><ul>{selectedFolderPeers.map((peer) => <li key={peer.id}><Button type="button" onClick={() => setSelectedId(peer.id)}>{peer.title || "未命名资料"}<small>{peer.kind === "paper" ? "论文" : "文章"}</small></Button></li>)}</ul></> : <p>{selected.folderId ? "目前没有其他同分组资料。" : "这篇资料尚未分组。"}</p>}</section>
             <Button className="map-open-reader" type="button" onClick={openSelected}>打开资料 <span aria-hidden="true">↗</span></Button>
           </> : <p className="map-empty-detail">选择一张织片，查看详情。</p>}
         </aside>
