@@ -182,6 +182,27 @@ jobs:
           ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "umask 077; mkdir -p '$remote/source'"
           # Only tracked checkout files; no Git metadata, dependencies, data or runner credentials.
           git archive HEAD | ssh -C -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "tar -x -C '$remote/source'"
+          # Fetch only the reviewed signed package; server-release verifies its
+          # signature entries and exact build contents before publication.
+          release_meta=$(node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const release = JSON.parse(readFileSync('extension/amo/signed-release.json'));
+          assert(/^\d+\.\d+\.\d+$/.test(release.version));
+          assert(/^[a-zA-Z0-9._-]+\.xpi$/.test(release.filename));
+          assert(/^[a-f0-9]{64}$/.test(release.sha256));
+          console.log([release.version, release.filename, release.sha256].join('\n'));
+          JS
+          )
+          mapfile -t signed_release <<< "$release_meta"
+          signed_dir="$RUNNER_TEMP/signed-firefox"
+          mkdir -m 700 "$signed_dir"
+          gh release download "firefox-v${signed_release[0]}" --repo "$GITHUB_REPOSITORY" --pattern "${signed_release[1]}" --dir "$signed_dir"
+          printf '%s  %s\n' "${signed_release[2]}" "$signed_dir/${signed_release[1]}" | sha256sum --check
+          scp -o StrictHostKeyChecking=yes "$signed_dir/${signed_release[1]}" "$DEPLOY_USER@$DEPLOY_HOST:$remote/firefox.xpi"
+          signed_path="/srv/zhiye-delivery/signed/${signed_release[1]}"
+          ssh -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
+            "if test ! -e '$signed_path'; then install -m 600 '$remote/firefox.xpi' '$signed_path'; fi; printf '%s  %s\n' '${signed_release[2]}' '$signed_path' | sha256sum --check"
           node --input-type=module <<'JS'
           import assert from 'node:assert/strict';
           import { readFileSync, writeFileSync } from 'node:fs';
