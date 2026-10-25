@@ -6,3 +6,5 @@ allowBuilds:
 # Keep math-rendering transitives on the patched KaTeX release.
 overrides:
   katex: 0.18.2
+  # Patch the pinned Miniflare HTTP client without upgrading the toolchain.
+  miniflare>undici: 7.30.1
