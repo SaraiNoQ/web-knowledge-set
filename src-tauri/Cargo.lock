@@ -5531,7 +5531,7 @@ dependencies = [
 
 [[package]]
 name = "zhiye"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "base64 0.22.1",
  "minisign-verify 0.2.5",

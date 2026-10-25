@@ -42,6 +42,7 @@ pnpm firefox:amo
 
 ## 签名记录
 
+- `0.3.11` · 2026-10-25 已使用项目签名脚本取得 AMO unlisted 签名。产物 `3058733-0.3.11.xpi`，SHA-256 `4e74a3bc064d882e00541b9fe4f2f27dc1b18e507b73299afd36c5b8324becb6`；manifest、AMO 签名条目及五个编译文件逐字节校验通过。签名包将作为 GitHub Release 资产分发，未进入 Git；Web 上线状态以生产发布证据为准。
 - `0.3.10` · 扩展源码 `3ae6f94542af93da9438feddb19522e545eadab0` · 本机运行 `scripts/sign-firefox-unlisted.sh` 完成 AMO unlisted 签名。产物 `3058733-0.3.10.xpi`，SHA-256 `d736367ca5b3b9dcfb22f551740d11d8d5e604dfebf06298d865fdefc4fa368e`；签名 XPI 的 AMO 签名条目、manifest 版本/固定 ID 与五个编译文件均已校验。签名文件存于服务器 `/srv/zhiye-delivery/signed/3058733-0.3.10.xpi`，未进入 Git。已随主分支 `6000b1ccf4952c99283f2a5d1f79c9c86a13fe61` 部署；Worker ID 见 [Cloudflare 部署记录](CLOUDFLARE.md#部署记录)。未验证 Access 登录态下的实际下载、配对或剪藏。
 - `0.3.9` · 扩展源码 `bc1e2ba` · 2026-10-04 核验服务器既有 `/root/amo-signed/3058733-0.3.9.xpi`，SHA-256 `7fbe7aec14ec030fa46c7abe77b3442aa402dfbdd83643a5b64d04eee2e24b54`。在整合沉浸模式与 favicon、完成最终 `build` 和 `firefox:amo` 后，`scripts/stage-firefox-xpi.mjs` 已严格通过整包摘要、当前 manifest、Mozilla 签名条目及五个扩展文件的逐字节一致校验；签名文件未进入 Git。本条记录现有产物核验，不表示重新签名；生产分发状态以 Cloudflare 部署记录为准。
 
