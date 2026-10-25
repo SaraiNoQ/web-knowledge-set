@@ -51,7 +51,7 @@ export const readerTools = {
   setSelection(selection: ReaderSelection | null) {
     if (selection && (selection.documentId !== snapshot.context?.id || selection.revision !== snapshot.context.revision)) return;
     if (snapshot.selection?.anchor.quote === selection?.anchor.quote && snapshot.selection?.anchor.source === selection?.anchor.source &&
-      snapshot.selection?.anchor.pageNumber === selection?.anchor.pageNumber && snapshot.selection?.anchor.prefix === selection?.anchor.prefix && snapshot.selection?.anchor.suffix === selection?.anchor.suffix && snapshot.selection?.anchor.blockId === selection?.anchor.blockId) return;
+      snapshot.selection?.anchor.pageNumber === selection?.anchor.pageNumber && snapshot.selection?.anchor.prefix === selection?.anchor.prefix && snapshot.selection?.anchor.suffix === selection?.anchor.suffix && snapshot.selection?.anchor.blockId === selection?.anchor.blockId && JSON.stringify(snapshot.selection?.rect) === JSON.stringify(selection?.rect)) return;
     publish({ selection });
   },
   enable(id: string, enabled: boolean) {
