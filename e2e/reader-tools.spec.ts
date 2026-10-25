@@ -20,7 +20,7 @@ for (const narrow of [false, true]) test(`reader tools ${narrow ? "mobile" : "de
   await page.getByRole("button", { name: title, exact: true }).click();
   const body = page.locator(".reader-main .markdown-preview p").filter({ hasText: "before selected words after" });
   await expect(body).toBeVisible();
-  await body.evaluate((element) => { const node = element.firstChild!; const range = document.createRange(); range.setStart(node, 7); range.setEnd(node, 21); const selection = getSelection()!; selection.removeAllRanges(); selection.addRange(range); document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); });
+  await body.evaluate((element) => { const node = element.firstChild!; const range = document.createRange(); range.setStart(node, 7); range.setEnd(node, 21); const selection = getSelection()!; selection.removeAllRanges(); selection.addRange(range); element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); });
   const ribbon = page.getByRole("toolbar", { name: "选区操作" });
   await expect(ribbon).toBeVisible(); await ribbon.getByRole("button", { name: "翻译", exact: true }).click();
   const floating = page.getByRole("dialog", { name: "划词翻译", exact: true });
@@ -67,6 +67,47 @@ for (const narrow of [false, true]) test(`reader tools ${narrow ? "mobile" : "de
   expect(errors).toEqual([]);
 });
 
+for (const source of ["preview", "editor"] as const) test(`reader selection survives wheel scrolling and unrelated key events in ${source}`, async ({ page, request }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.route("**/api/settings/onboarding", (route) => route.fulfill({ json: { completed: true, revision: 1 } }));
+  await page.addInitScript(() => localStorage.setItem("zhiye.reader-tools.enabled", '["translation"]'));
+  const listing = await request.get("/api/documents");
+  const headers = { Origin: "http://127.0.0.1:4174", "X-Zhiye-Data-Epoch": listing.headers()["x-zhiye-data-epoch"] };
+  const title = `滚动选区${source}-${Date.now()}`, quote = "selectedword original passage.";
+  const { document } = await (await request.post("/api/documents", { headers, data: { title } })).json();
+  const markdown = quote + "\n\n" + Array.from({ length: 100 }, (_, index) => `Later paragraph ${index}. Another passage that must not replace the selected words.`).join("\n\n");
+  await request.patch(`/api/documents/${document.id}`, { headers, data: { revision: document.revision, markdown } });
+  await page.goto("/"); await page.getByRole("button", { name: title, exact: true }).click();
+  const paragraph = page.locator(".markdown-preview p").first();
+  await paragraph.scrollIntoViewIfNeeded();
+  if (source === "editor") { const editor = page.getByLabel("Markdown 编辑器"); await editor.press("Control+Home"); await editor.press("Shift+End"); }
+  else await paragraph.evaluate((element) => { const range = document.createRange(); range.selectNodeContents(element); getSelection()!.removeAllRanges(); getSelection()!.addRange(range); element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); });
+  await expect(page.getByRole("toolbar", { name: "选区操作" })).toBeVisible();
+  const scroll = page.locator(source === "editor" ? ".cm-scroller" : ".preview-pane");
+  await scroll.hover(); await page.mouse.wheel(0, 700);
+  await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect(page.getByRole("toolbar", { name: "选区操作" })).toBeHidden();
+  await page.keyboard.press("Alt+t");
+  const floating = page.getByRole("dialog", { name: "划词翻译", exact: true });
+  await expect(floating.getByLabel("待翻译选区")).toHaveText(quote);
+  // A changed native DOM range outside a new reading gesture must not replace the captured text.
+  await page.locator(".markdown-preview p").nth(1).evaluate((element) => { const range = document.createRange(); range.selectNodeContents(element); getSelection()!.removeAllRanges(); getSelection()!.addRange(range); document.querySelector(".reader-tool-float h2")!.dispatchEvent(new KeyboardEvent("keyup", { key: "Alt", bubbles: true })); });
+  await expect(floating.getByLabel("待翻译选区")).toHaveText(quote);
+  let sent = "", release = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/reader-tools/documents/*/translate", async (route) => { sent = route.request().postDataJSON().text; await held; await route.fulfill({ contentType: "application/x-ndjson", body: '{"type":"delta","text":"kept translation"}\n{"type":"done"}\n' }); });
+  try {
+    await floating.getByRole("button", { name: "翻译选区", exact: true }).click();
+    await expect.poll(() => sent).toBe(quote);
+    const top = await scroll.evaluate((element) => element.scrollTop);
+    await scroll.hover(); await page.mouse.wheel(0, 700);
+    await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(top);
+    await expect(floating.getByLabel("待翻译选区")).toHaveText(quote);
+  } finally { release(); }
+  await expect(floating.getByLabel("选区译文")).toHaveText("kept translation");
+  await expect(floating.getByRole("button", { name: "保存译文摘录" })).toBeEnabled();
+});
+
 test("reader tool can be enabled and disabled independently and resets across documents", async ({ page, request }) => {
   await page.route("**/api/settings/onboarding", (route) => route.fulfill({ json: { completed: true, revision: 1 } }));
   const listing = await request.get("/api/documents");
@@ -104,10 +145,11 @@ test("PDF text selection has source anchors; long floating content stays reachab
   await expect(page.locator(".reader-overlay-host")).not.toHaveCSS("visibility", "hidden");
   const text = page.locator(".paper-text-layer span").filter({ hasText: "Paper selection words" }); await expect(text).toHaveCount(1);
   expect((await text.boundingBox())!.width).toBeGreaterThan(50);
-  const select = async () => text.evaluate((element) => { const range = document.createRange(); range.selectNodeContents(element); getSelection()!.removeAllRanges(); getSelection()!.addRange(range); document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); });
+  const select = async () => text.evaluate((element) => { const range = document.createRange(); range.selectNodeContents(element); getSelection()!.removeAllRanges(); getSelection()!.addRange(range); element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); });
   await select(); const ribbon = page.getByRole("toolbar", { name: "选区操作" }); await expect(ribbon).toBeVisible();
   await text.evaluate((element) => { getSelection()!.collapse(element.firstChild, 0); element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); }); await expect(ribbon).toBeHidden();
   await select(); await page.locator(".paper-reader-pdf-scroll").evaluate((element) => element.dispatchEvent(new Event("scroll"))); await expect(ribbon).toBeHidden();
+  await page.keyboard.press("Alt+t"); await expect(page.getByRole("dialog", { name: "划词翻译", exact: true }).getByLabel("待翻译选区")).toHaveText("Paper selection words"); await page.keyboard.press("Escape");
   await select(); await ribbon.getByRole("button", { name: "保存摘录", exact: true }).click();
   const paperId = /zhiye:\/\/paper\/([0-9a-f-]+)/u.exec((await page.locator(".paper-reader-header p").textContent()) ?? "")?.[1]; expect(paperId).toBeTruthy();
   await expect.poll(async () => (await (await request.get(`/api/reader-tools/documents/${paperId}/data`)).json()).annotations[0]?.anchor.source).toBe("paper-original");

@@ -1,20 +1,34 @@
 import { resolveSourceAnchor, sourceAnchorRange, type ReaderSelection, type SourceAnchor } from "../../shared/reader-tools";
 import { readerTools } from "./runtime";
 
-export function captureReaderSelection(event?: Event) {
+const readingRoots = ".reader-main .markdown-preview, .paper-text-layer, .paper-reader-block[data-reader-block]";
+let readingPointer = false;
+export function beginReaderSelection(event: PointerEvent) {
+  readingPointer = event.type === "pointerdown" && event.target instanceof Element && Boolean(event.target.closest(readingRoots + ", .cm-content"));
+}
+export function captureReaderSelection(event: Event) {
+  if (event instanceof KeyboardEvent && !/^(ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Home|End|PageUp|PageDown)$/u.test(event.key) && !((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a")) return false;
+  const target = event.target instanceof Element ? event.target : null;
+  const pointerGesture = event.type === "pointerup" && readingPointer;
+  if (event.type === "pointerup") readingPointer = false;
+  const keyboardGesture = event instanceof KeyboardEvent && (event.target === document.body || event.target === document) &&
+    ((event.shiftKey && /^(ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Home|End|PageUp|PageDown)$/u.test(event.key)) || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a"));
+  // CodeMirror's native DOM range can be recycled while scrolling; its state owns editor selections.
+  if (target?.closest(".cm-content")) return readerTools.getSnapshot().selection?.anchor.source === "editor";
+  if (!pointerGesture && !keyboardGesture && !target?.closest(readingRoots)) return false;
   const context = readerTools.getSnapshot().context, selection = window.getSelection();
-  if (!context || !selection) return;
+  if (!context || !selection) return false;
   if (selection.isCollapsed || !selection.rangeCount) {
-    if (event?.target instanceof Element && event.target.closest(".markdown-preview, .cm-content, .paper-text-layer, .paper-reader-block")) readerTools.setSelection(null);
-    return;
+    readerTools.setSelection(null);
+    return false;
   }
   const range = selection.getRangeAt(0);
   const element = range.commonAncestorContainer instanceof Element ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
-  if (element?.closest(".cm-content")) return;
-  const root = element?.closest<HTMLElement>(".reader-main .markdown-preview, .paper-text-layer, .paper-reader-block[data-reader-block]");
-  if (!root || !root.contains(range.startContainer) || !root.contains(range.endContainer)) return;
+  if (element?.closest(".cm-content")) return false;
+  const root = element?.closest<HTMLElement>(readingRoots);
+  if (!root || !root.contains(range.startContainer) || !root.contains(range.endContainer)) return false;
   const quote = selection.toString();
-  if (!quote.trim()) return;
+  if (!quote.trim()) return false;
   const before = range.cloneRange(), after = range.cloneRange();
   before.selectNodeContents(root); before.setEnd(range.startContainer, range.startOffset);
   after.selectNodeContents(root); after.setStart(range.endContainer, range.endOffset);
@@ -25,6 +39,7 @@ export function captureReaderSelection(event?: Event) {
     anchor: { quote, prefix: before.toString().slice(-80), suffix: after.toString().slice(0, 80), source,
       ...(page > 0 ? { pageNumber: page } : {}), ...(root.dataset.readerBlock ? { blockId: root.dataset.readerBlock } : {}) },
     rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height } });
+  return true;
 }
 
 export function publishEditorSelection(text: string, from: number, to: number, rect: ReaderSelection["rect"]) {
