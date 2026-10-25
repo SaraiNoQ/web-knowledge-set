@@ -42,7 +42,14 @@ for (const narrow of [false, true]) test(`reader tools ${narrow ? "mobile" : "de
   await expect.poll(async () => (await (await request.get(`/api/reader-tools/documents/${first.document.id}/data`)).json()).annotations.length).toBe(1);
   await page.keyboard.press("Escape"); await expect(floating).toBeHidden();
   if (!narrow) {
-    const editor = page.getByLabel("Markdown 编辑器"); await editor.press("Control+Home"); await editor.press("Control+Shift+End"); await expect(ribbon).toBeVisible(); await editor.press("ArrowRight"); await expect(ribbon).toBeHidden();
+    const editor = page.getByLabel("Markdown 编辑器");
+    await editor.press("Control+Home"); await editor.press("Control+Shift+End");
+    await expect(ribbon).toBeVisible();
+    // Wait for CodeMirror's measured selection, rather than the previous preview ribbon.
+    await page.keyboard.press("Alt+t");
+    await expect(floating.getByLabel("待翻译选区")).toHaveText(markdown);
+    await page.keyboard.press("Escape");
+    await editor.press("ArrowRight"); await expect(ribbon).toBeHidden();
   }
   if (await page.getByRole("button", { name: "展开侧栏", exact: true }).isVisible()) await page.getByRole("button", { name: "展开侧栏", exact: true }).click();
   const sidebar = page.getByRole("complementary", { name: "右侧功能区" });
