@@ -44,8 +44,9 @@ test("portable v3 maps research data, preserves existing notes, and round-trips 
     assert.equal(manifest.version, 3); assert.equal(manifest.studyData.tables.study_source_checks.length, 0); assert.equal(manifest.studyData.tables.study_merge_history.length, 0); assert.equal(manifest.studyData.tables.study_topics.length, 2);
     const preview = await stagePortableBundle(target, bytes); assert.ok(Number(preview.studyRecords) > 0); assert.deepEqual(promotePortableAssets(target, preview.id), []);
     const applied = target.applyImportBatch(preview.id, "copy")!; assert.equal(applied.counts.created, 2);
-    const topics = await createStudyStore(adapter(target)).listTopics(), topic = topics.find((item) => item.name === seeded.topic.name)!;
-    assert.equal(topics.length, 2); assert.equal(topic.note, seeded.topic.note); assert.equal(topic.documentIds.length, 2); assert.equal(topic.annotationIds.length, 2);
+    const targetStore = createStudyStore(adapter(target)), topics = await targetStore.listTopics(), summary = topics.find((item) => item.name === seeded.topic.name)!;
+    const topic = await targetStore.topic(summary.id);
+    assert.equal(topics.length, 2); assert.equal(summary.note, ""); assert.equal(topic.note, seeded.topic.note); assert.equal(topic.documentIds.length, 2); assert.equal(topic.annotationIds.length, 2);
     assert.ok(topic.documentIds.every((id) => applied.items.some((item) => item.documentId === id))); assert.ok(!topic.documentIds.includes(seeded.first.id));
     assert.equal(target.sql.prepare("SELECT COUNT(*) AS n FROM study_progress").get()?.n, 1); assert.equal(target.sql.prepare("SELECT COUNT(*) AS n FROM study_reviews").get()?.n, 1); assert.equal(target.sql.prepare("SELECT COUNT(*) AS n FROM reading_connection_evidence").get()?.n, 1);
     assert.ok([...target.documentsForPortableExport()].find((document) => document.title === seeded.second.title)?.tags.includes("FromCloud"));
@@ -81,7 +82,8 @@ test("an empty library can share standalone topic notes without creating fake do
   try {
     const store = createStudyStore(adapter(source)), topic = await store.createTopic({ name: "Standalone" }); await store.updateTopic(topic.id, { revision: topic.revision, note: "A genuine standalone research note" });
     const bytes = await createPortableBundle(source), preview = await stagePortableBundle(target, bytes); assert.equal(preview.counts.total, 0); assert.ok(Number(preview.studyRecords) > 0); target.applyImportBatch(preview.id, "update");
-    assert.equal(target.sql.prepare("SELECT COUNT(*) AS n FROM documents").get()?.n, 0); assert.equal((await createStudyStore(adapter(target)).listTopics())[0]?.note, "A genuine standalone research note");
+    const targetStore = createStudyStore(adapter(target)), summary = (await targetStore.listTopics())[0]!;
+    assert.equal(target.sql.prepare("SELECT COUNT(*) AS n FROM documents").get()?.n, 0); assert.equal((await targetStore.topic(summary.id)).note, "A genuine standalone research note");
   } finally { source.close(); target.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
