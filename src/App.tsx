@@ -2846,7 +2846,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
       setConflict(null);
       setSaveState("idle");
       setSaveError("");
-    } else setMode("split");
+    } else setMode(longPreviewAllowed ? "split" : "edit");
     setCloudEditing((value) => !value);
   };
 

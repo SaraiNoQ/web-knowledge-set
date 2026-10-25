@@ -80,6 +80,12 @@ for (const runtime of ["cloud", "desktop"] as const) test(`long article reading 
     await page.getByRole("button", { name: "边写边看", exact: true }).click();
   } else await page.getByRole("button", { name: "打开预览", exact: true }).click();
   await expect(page.locator(".markdown-preview").getByRole("heading", { name: "长文测试" })).toBeVisible();
+  if (runtime === "cloud") {
+    await page.getByRole("button", { name: "返回阅读", exact: true }).click();
+    await page.getByRole("button", { name: "编辑", exact: true }).click();
+    await expect(page.locator(".editor-grid")).toHaveClass(/mode-split/);
+    await expect(page.locator(".markdown-preview")).toBeVisible();
+  }
 });
 
 for (const response of ["status", "503"] as const) test(`startup waits visibly for maintenance ${response} and mounts business requests only when ready`, async ({ page }) => {
