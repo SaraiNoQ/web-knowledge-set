@@ -201,8 +201,18 @@ jobs:
           printf '%s  %s\n' "${signed_release[2]}" "$signed_dir/${signed_release[1]}" | sha256sum --check
           scp -o StrictHostKeyChecking=yes "$signed_dir/${signed_release[1]}" "$DEPLOY_USER@$DEPLOY_HOST:$remote/firefox.xpi"
           signed_path="/srv/zhiye-delivery/signed/${signed_release[1]}"
-          ssh -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
-            "if test ! -e '$signed_path'; then install -m 600 '$remote/firefox.xpi' '$signed_path'; fi; printf '%s  %s\n' '${signed_release[2]}' '$signed_path' | sha256sum --check"
+          ssh -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" bash -s -- "$signed_path" "$remote/firefox.xpi" "${signed_release[2]}" "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" <<'SH'
+          set -euo pipefail
+          target=$1
+          temporary="$target.$4.tmp"
+          trap 'rm -f "$temporary"' EXIT
+          if test ! -e "$target"; then
+            install -m 600 "$2" "$temporary"
+            printf '%s  %s\n' "$3" "$temporary" | sha256sum --check
+            ln "$temporary" "$target" || test -e "$target"
+          fi
+          printf '%s  %s\n' "$3" "$target" | sha256sum --check
+          SH
           node --input-type=module <<'JS'
           import assert from 'node:assert/strict';
           import { readFileSync, writeFileSync } from 'node:fs';
