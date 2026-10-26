@@ -82,7 +82,7 @@ test("pending topic and tag saves lock editors and preserve the submitted values
   expect((await (await request.get(`/api/study/documents?q=${encodeURIComponent(documentTitle)}`)).json()).items[0].tags).toEqual(["saved-tag"]);
 });
 
-test("reading position and read state persist without changing a selected translation passage", async ({ page, request }) => {
+test("reading position persists without changing a selected translation passage", async ({ page, request }) => {
   const listing = await request.get("/api/documents"), headers = { Origin: "http://127.0.0.1:4174", "X-Zhiye-Data-Epoch": listing.headers()["x-zhiye-data-epoch"] };
   const title = `阅读进度${Date.now()}`, created = await (await request.post("/api/documents", { headers, data: { title } })).json();
   await request.patch(`/api/documents/${created.document.id}`, { headers, data: { revision: created.document.revision, markdown: "selected original passage.\n\n" + Array.from({ length: 100 }, (_, index) => `Reading paragraph ${index}. Persistent position without replacing selected words.`).join("\n\n") } });
@@ -92,9 +92,7 @@ test("reading position and read state persist without changing a selected transl
   const pane = page.locator(".preview-pane"); await pane.hover(); await page.mouse.wheel(0, 600); await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   await expect.poll(async () => (await (await request.get(`/api/study/documents/${created.document.id}/progress`)).json())?.fraction ?? 0).toBeGreaterThan(0);
   await page.keyboard.press("Alt+t"); await expect(page.getByRole("dialog", { name: "划词翻译", exact: true }).getByLabel("待翻译选区")).toHaveText("selected original passage."); await page.keyboard.press("Escape");
-  const progress = page.getByLabel("阅读进度", { exact: true }); await progress.getByRole("button", { name: "标为已读", exact: true }).click();
-  await expect.poll(async () => (await (await request.get(`/api/study/documents/${created.document.id}/progress`)).json()).read).toBe(true);
-  await progress.getByRole("button", { name: "标为未读", exact: true }).click(); await expect.poll(async () => (await (await request.get(`/api/study/documents/${created.document.id}/progress`)).json()).read).toBe(false);
+  await expect(page.getByLabel("阅读进度", { exact: true })).toHaveCount(0);
   await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "研究", exact: true }).click();
   const workspace = page.getByRole("region", { name: "研究工作台" }); await workspace.getByRole("button", { name: "资料", exact: true }).click(); await workspace.getByRole("textbox", { name: "搜索资料", exact: true }).fill(title);
   const row = workspace.locator(".study-document-list > li").filter({ has: page.getByRole("button", { name: title, exact: true }) });

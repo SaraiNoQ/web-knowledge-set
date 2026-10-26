@@ -20,6 +20,27 @@ test("reading styles migrate old preferences and retain custom size, spacing, an
 });
 
 import { loadPaperFontSize, savePaperFontSize } from "../src/reading-preferences";
+import { loadRestoreReadingPosition, saveRestoreReadingPosition } from "../src/reading-preferences";
+test("reading position restoration defaults on and persists an explicit opt-out", () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  let saved: string | null = null;
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: () => saved, setItem: (_key: string, value: string) => { saved = value; } } });
+  try {
+    assert.equal(loadRestoreReadingPosition(), true);
+    assert.equal(saveRestoreReadingPosition(false), true);
+    assert.equal(loadRestoreReadingPosition(), false);
+    assert.equal(saveRestoreReadingPosition(true), true);
+    assert.equal(loadRestoreReadingPosition(), true);
+    saved = "invalid";
+    assert.equal(loadRestoreReadingPosition(), true);
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, get() { throw new Error("denied"); } });
+    assert.equal(loadRestoreReadingPosition(), true);
+    assert.equal(saveRestoreReadingPosition(false), false);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "localStorage", previous);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+  }
+});
 test("paper font preference survives reload and ignores invalid storage", () => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
   let saved: string | null = null;

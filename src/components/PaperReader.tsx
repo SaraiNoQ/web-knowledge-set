@@ -133,6 +133,7 @@ function PaperCanvas({ paperId, pageNumber, zoom, onZoom }: { paperId: string; p
         const page = await document_.getPage(pageNumber);
         const canvas = canvasRef.current;
         if (cancelled || !canvas) return;
+        delete canvas.dataset.renderedPage;
         setError("");
         const width = paneWidth || scrollRef.current?.clientWidth || 700;
         const base = page.getViewport({ scale: 1 });
@@ -158,6 +159,7 @@ function PaperCanvas({ paperId, pageNumber, zoom, onZoom }: { paperId: string; p
         const layer = new TextLayer({ textContentSource: page.streamTextContent(), container, viewport });
         textTask.current = layer;
         await layer.render();
+        if (!cancelled) canvas.dataset.renderedPage = String(pageNumber);
       })
       .catch((cause: unknown) => {
         // A render cancelled by the next zoom, page, or resize is expected.

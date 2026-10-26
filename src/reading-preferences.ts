@@ -1,4 +1,13 @@
 const KEY = "zhiye:reading-margin";
+const POSITION_KEY = "zhiye:restore-reading-position";
+export function loadRestoreReadingPosition() {
+  try { return localStorage.getItem(POSITION_KEY) !== "false"; }
+  catch { return true; }
+}
+export function saveRestoreReadingPosition(value: boolean) {
+  try { localStorage.setItem(POSITION_KEY, String(value)); return true; }
+  catch { return false; }
+}
 export const DEFAULT_READING_MARGIN = 20;
 
 export function normalizeReadingMargin(value: number) {

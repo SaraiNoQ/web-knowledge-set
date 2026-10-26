@@ -49,7 +49,7 @@ import type { DocumentPatch } from "./api";
 import { CachedImage } from "./components/ImageViewer";
 import { WorkspaceSettings } from "./components/WorkspaceSettings";
 import { MarkdownUpload } from "./components/MarkdownUpload";
-import { loadReadingText, loadReadingMargin, saveReadingText, type ReadingTextSettings } from "./reading-preferences";
+import { loadReadingText, loadReadingMargin, loadRestoreReadingPosition, saveReadingText, type ReadingTextSettings } from "./reading-preferences";
 import { AppUpdater } from "./components/AppUpdater";
 import { BrowserExtension } from "./components/BrowserExtension";
 import { DataSafety } from "./components/DataSafety";
@@ -796,6 +796,8 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
   const [cloudEditing, setCloudEditing] = useState(false);
   const [safetyRecovery, setSafetyRecovery] = useState(false);
   const [readingText, setReadingText] = useState(loadReadingText);
+  const [restoreReadingPosition, setRestoreReadingPosition] = useState(loadRestoreReadingPosition);
+  const [readingAnchorTarget, setReadingAnchorTarget] = useState<string | null>(null);
   const [readingMargin, setReadingMargin] = useState(loadReadingMargin);
   const changeMarkdownStyle = (value: ReadingTextSettings) => {
     setReadingText(value);
@@ -2838,11 +2840,12 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
     setDuplicateNotice("已保留两张织片，当前条目没有被删除。");
   };
 
-  const selectDocument = async (id: string) => {
+  const selectDocument = async (id: string, restorePosition = true) => {
     if (closeAttemptRef.current || organizationInFlight.current || id === selectedId || lifecycleAction || restoringRevision !== null) return false;
     if (!await confirmDiscardChanges("当前修改尚未保存，确定离开吗？")) return false;
     if (closeAttemptRef.current || organizationInFlight.current || id === selectedIdRef.current || lifecycleAction || restoringRevision !== null) return false;
     invalidateNavigation();
+    setReadingAnchorTarget(restorePosition ? null : id);
     setSelectedId(id);
     return true;
   };
@@ -3756,15 +3759,15 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
   }
 
   const workspaceClassName = ["workspace", selectedId ? "has-selection" : "", libraryCollapsed ? "library-collapsed" : "", graphMode ? "is-map-mode" : ""].filter(Boolean).join(" ");
-  const openStudy = async () => {if(!await confirmDiscardChanges("当前修改尚未保存，确定打开研究工作台吗？"))return;setAiSettingsOpen(false);setSafetyOpen(false);setDiagnosticsOpen(false);setStudyOpen(true);};
+  const openStudy = async () => {if(!await confirmDiscardChanges("当前修改尚未保存，确定打开研究工作台吗？"))return;setAiSettingsOpen(false);setSafetyOpen(false);setDiagnosticsOpen(false);setReadingAnchorTarget(null);setStudyOpen(true);};
   const openStudyDocument = async (id:string,anchor?:SourceAnchor) => {
     try {
       if(!studyOpen&&!await confirmDiscardChanges("当前修改尚未保存，确定打开引用来源吗？"))return;
-      setStudyDirty(false);studyDirtyRef.current=false;setStudyOpen(false);setGraphMode(false);
+      setStudyDirty(false);studyDirtyRef.current=false;setReadingAnchorTarget(anchor ? id : null);setStudyOpen(false);setGraphMode(false);
       if(id===selectedIdRef.current) {
         const guard=beginNavigation(),fresh=await api.getDocument(id);if(!canApplyNavigation(guard))return;
         installCurrentDocument(fresh);const next=draftOf(fresh);draftRef.current=next;setDraft(next);
-      } else if(!await selectDocument(id))return;
+      } else if(!await selectDocument(id, !anchor))return;
       if(!anchor)return;
       if(anchor.source==="editor"){setMode("edit");if(cloudMode||desktopRuntime)setCloudEditing(true);}
       const navigation=navigationGenerationRef.current;let attempts=0;
@@ -3801,9 +3804,9 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
         void dialogs.confirm("专题笔记尚未保存，确定离开吗？", {title:"存在未保存修改",confirmLabel:"放弃并离开"}).then((yes) => { if (yes) { studyDirtyRef.current=false;setStudyDirty(false);setStudyOpen(false);button.click(); } });
       }}>
         <Button type="button" className="rail-brand" aria-label="返回首页" disabled={closing} onClick={() => void returnToLibrary()}>织</Button>
-        <IconButton label="资料库" title={directoryVisible ? "收起资料目录" : "展开资料目录"} ref={libraryRailRef} aria-expanded={directoryVisible} aria-controls={workspaceVisible ? "library-panel" : undefined} aria-pressed={!libraryCollapsed && !sidebarSearch && !graphMode && libraryView === "all" && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen} disabled={closing} onClick={() => void toggleDirectory()}><WorkspaceIcon name="document" /></IconButton>
+        <IconButton label="资料库" title={directoryVisible ? "收起资料目录" : "展开资料目录"} ref={libraryRailRef} aria-expanded={directoryVisible} aria-controls={workspaceVisible ? "library-panel" : undefined} aria-pressed={workspaceVisible && !libraryCollapsed && !sidebarSearch && !graphMode && libraryView === "all"} disabled={closing} onClick={() => void toggleDirectory()}><WorkspaceIcon name="document" /></IconButton>
         <IconButton label="快捷查找" aria-haspopup="dialog" aria-expanded={quickActionsOpen} disabled={closing} onClick={openQuickActions}><WorkspaceIcon name="quickSearch" /></IconButton>
-        <IconButton label="知识地图" aria-pressed={graphMode} disabled={closing} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); void openKnowledgeMap(); }}><WorkspaceIcon name="map" /></IconButton>
+        <IconButton label="知识地图" aria-pressed={workspaceVisible && graphMode} disabled={closing} onClick={() => { setAiSettingsOpen(false); setSafetyOpen(false); setDiagnosticsOpen(false); void openKnowledgeMap(); }}><WorkspaceIcon name="map" /></IconButton>
         <IconButton label="导入" disabled={closing} onClick={() => { if (!bulkImportPreview) setBulkImportKind(cloudMode ? "markdown" : "urls"); setBulkImportOpen(true); }}><WorkspaceIcon name="import" /></IconButton>
         <IconButton label="研究" aria-pressed={studyOpen} disabled={closing} onClick={() => {if(!studyOpen)void openStudy();}}><WorkspaceIcon name="paper" /></IconButton>
         <div className="rail-spacer" />
@@ -3926,10 +3929,10 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
         </Modal>
       )}
 
-      {studyOpen ? <div className="study-host"><header><Button onClick={() => void confirmDiscardChanges("专题笔记尚未保存，确定返回阅读吗？").then((yes)=>{if(yes)setStudyOpen(false);})}>返回阅读</Button></header><Suspense fallback={<p role="status">正在打开研究工作台…</p>}><StudyWorkspace currentDocumentId={selectedId ?? undefined} onOpenDocument={(id,anchor)=>void openStudyDocument(id,anchor)} onDirtyChange={setStudyDirty} /></Suspense></div> : diagnosticsOpen ? (
+      {studyOpen ? <div className="study-host"><Suspense fallback={<p role="status">正在打开研究工作台…</p>}><StudyWorkspace currentDocumentId={selectedId ?? undefined} onOpenDocument={(id,anchor)=>void openStudyDocument(id,anchor)} onDirtyChange={setStudyDirty} /></Suspense></div> : diagnosticsOpen ? (
         <Diagnostics onClose={() => { setDiagnosticsOpen(false); setSafetyOpen(true); }} />
       ) : aiSettingsOpen ? (
-        <WorkspaceSettings readingText={readingText} onReadingTextChange={setReadingText} readingMargin={readingMargin} onReadingMarginChange={setReadingMargin} cloud={cloudMode} semanticRefresh={semanticRefresh} onClose={() => setAiSettingsOpen(false)} />
+        <WorkspaceSettings restoreReadingPosition={restoreReadingPosition} onRestoreReadingPositionChange={setRestoreReadingPosition} readingText={readingText} onReadingTextChange={setReadingText} readingMargin={readingMargin} onReadingMarginChange={setReadingMargin} cloud={cloudMode} semanticRefresh={semanticRefresh} onClose={() => setAiSettingsOpen(false)} />
       ) : safetyOpen ? (
         <DataSafety
           cloud={cloudMode}
@@ -4075,7 +4078,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
 
         <section id="reader-panel" ref={readerPanelRef} className="reader-panel" aria-label="文档工作台" tabIndex={-1}>
           <DocumentTabs documents={openDocuments} selectedId={selectedId} dirty={hasUnsavedChanges} disabled={closing || organizationSaving || batchBusy || captureApplying || Boolean(collectionAction) || Boolean(tagAction) || Boolean(lifecycleAction) || restoringRevision !== null} onSelect={async (id) => { const opened = await selectDocument(id); if (opened) { graphReturnRef.current = false; setGraphMode(false); } return opened; }} onClose={closeDocumentTab} toolsOpen={toolsOpen} onToggleTools={() => setToolsOpen((value) => !value)} />
-          {selectedId && <ReadingProgress />}
+          {selectedId && <ReadingProgress documentId={selectedId} restorePosition={restoreReadingPosition && readingAnchorTarget !== selectedId} />}
           {selectedId && <div className="workspace-location">
             <IconButton label="返回目录" disabled={closing} onClick={() => void closeDocument()}><Icon size={18}><path d="M20 12H4m6-6-6 6 6 6" /></Icon></IconButton>
             <span>{folders.find((folder) => folder.id === currentDoc?.folderId)?.name ?? "目录"}</span><WorkspaceIcon name="chevron" size={13} />{titleEdit?.id === currentDoc?.id && titleEdit ? <input autoFocus className="breadcrumb-title-input" aria-label="文章标题" maxLength={1000} size={Math.max(1, Math.min(20, Array.from(titleEdit.title).length))} value={titleEdit.title} onChange={(event) => setTitleEdit({ ...titleEdit, title: event.target.value })} onBlur={() => setTitleEdit(null)} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); setTitleEdit(null); } if (event.key === "Enter") { event.preventDefault(); const edit = titleEdit; setTitleEdit(null); void renameDocument(edit, edit.title); } }} /> : <Button type="button" className="breadcrumb-title" aria-label={`修改标题：${currentDoc?.title || "正在打开…"}`} title={currentDoc?.title || "双击修改标题"} disabled={!currentDoc || organizationLocked || metadataDirty || paperDirty} onDoubleClick={() => { if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "F2") { event.preventDefault(); if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); } }}>{Array.from(currentDoc?.title || "正在打开…").slice(0, 20).join("")}{Array.from(currentDoc?.title || "").length > 20 ? "…" : ""}</Button>}
@@ -4328,7 +4331,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
               )}
             </>
           ) : null}
-          </div>{toolsOpen && <ReaderSidebar onOpenStudy={() => void openStudy()} onClose={() => { setToolsOpen(false); window.requestAnimationFrame(() => readerPanelRef.current?.querySelector<HTMLButtonElement>(".document-tabbar > .ui-icon-button")?.focus()); }} outline={<DocumentOutline embedded key={currentDoc?.id ?? "empty"} markdown={currentDoc?.kind === "article" ? (webArticleMode && !cloudEditing ? currentDoc.markdown : draft?.markdown ?? currentDoc.markdown) : ""} onClose={() => { setToolsOpen(false); window.requestAnimationFrame(() => readerPanelRef.current?.querySelector<HTMLButtonElement>(".document-tabbar > .ui-icon-button")?.focus()); }} onNavigate={(offset) => {
+          </div>{toolsOpen && <ReaderSidebar onClose={() => { setToolsOpen(false); window.requestAnimationFrame(() => readerPanelRef.current?.querySelector<HTMLButtonElement>(".document-tabbar > .ui-icon-button")?.focus()); }} outline={<DocumentOutline embedded key={currentDoc?.id ?? "empty"} markdown={currentDoc?.kind === "article" ? (webArticleMode && !cloudEditing ? currentDoc.markdown : draft?.markdown ?? currentDoc.markdown) : ""} onClose={() => { setToolsOpen(false); window.requestAnimationFrame(() => readerPanelRef.current?.querySelector<HTMLButtonElement>(".document-tabbar > .ui-icon-button")?.focus()); }} onNavigate={(offset) => {
             const heading = readerPanelRef.current?.querySelector<HTMLElement>(`[data-heading-offset="${offset}"]`);
             if (heading) {
               const toolbar = readerPanelRef.current?.querySelector<HTMLElement>(".editor-toolbar");
