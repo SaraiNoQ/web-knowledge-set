@@ -18,6 +18,7 @@ import {
 } from "../shared/semantic";
 import { CloudHttpError, getDocument, jsonObject, type D1Database } from "./extension";
 import { getPaper } from "./paper";
+import { annInsert, backfillAnn } from "../shared/semantic-ann";
 
 const KEY_HEADER = "X-Zhiye-Embedding-Key";
 const KEY_MAX_BYTES = 16 * 1024;
@@ -265,7 +266,8 @@ async function complete(db: D1Database, doc: SemanticSource, sourceHash: string,
     SEMANTIC_CONFIG_CURRENT + " AND EXISTS (SELECT 1 FROM cloud_semantic_indexes WHERE document_id=? AND source_hash=? " +
     "AND model=? AND format_version=? AND state='ready') AND " + SEMANTIC_SOURCE_CURRENT)
     .bind(settingsRevision, model, doc.id, sourceHash, model, SEMANTIC_FORMAT_VERSION, doc.id, doc.revision, doc.extractionId, doc.extractionId);
-  const results = await db.batch([update, resetFailures]);
+  const ann = annInsert("cloud_documents", doc.id, sourceHash, model, SEMANTIC_FORMAT_VERSION, vector);
+  const results = await db.batch([update, resetFailures, ...(ann ? [db.prepare(ann.sql).bind(...ann.values)] : [])]);
   return (results[0]?.meta.changes ?? 0) === 1;
 }
 
@@ -317,7 +319,11 @@ async function step(db: D1Database, request: Request): Promise<SemanticIndexStep
   const apiKey = key(request);
   const now = Date.now();
   const id = await nextDocument(db, now, currentSettings.model);
-  if (!id) return empty("idle", null);
+  if (!id) {
+    const indexed = await backfillAnn({ documentsTable: "cloud_documents", all: async (sql, values) => (await db.prepare(sql).bind(...values).all<Record<string, unknown>>()).results,
+      batch: async (statements) => { if (!db.batch) throw cloudError(503, "CLOUD_BATCH_UNAVAILABLE", "D1 batch support is required"); await db.batch(statements.map((statement) => db.prepare(statement.sql).bind(...statement.values))); } });
+    return empty(indexed ? "progress" : "idle", null);
+  }
   const doc = await source(db, id);
   if (!doc) return empty("idle", id);
   const chunks = await splitSemanticSections(doc.sections);

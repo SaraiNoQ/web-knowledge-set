@@ -7,6 +7,7 @@ import { escapeLike, paperPageTextSql, paperTextMatch, searchExcerptSql, searchM
 import { READING_DATA_SCHEMA } from "../shared/reading-data.js";
 import { STUDY_SCHEMA } from "../shared/study-store.js";
 import { CONNECTION_EVIDENCE_SCHEMA } from "../shared/related.js";
+import { SEMANTIC_ANN_SCHEMA, annInsert } from "../shared/semantic-ann.js";
 import { parseReadingSnapshot, insertAnnotationSql, annotationValues, insertConnectionSql, connectionValues } from "../shared/reading-snapshot.js";
 import { parseStudySnapshot } from "../shared/study-snapshot.js";
 import { applyPortableStudyData, readPortableStudyData } from "./study-portable.js";
@@ -682,6 +683,7 @@ const migrations = [
   `,
   READING_DATA_SCHEMA,
   STUDY_SCHEMA + CONNECTION_EVIDENCE_SCHEMA,
+  SEMANTIC_ANN_SCHEMA,
 ];
 
 export const CURRENT_SCHEMA_VERSION = migrations.length;
@@ -1581,15 +1583,21 @@ export class KnowledgeDatabase {
 
   completeSemanticIndex(id: string, sourceRevision: number, extractionId: string | null, settingsRevision: number,
     sourceHash: string, model: string, formatVersion: string, token: string, vector: number[]) {
-    const result = this.sql.prepare("UPDATE semantic_indexes SET state = 'ready', vector_json = ?, lease_token = NULL, lease_until = NULL, " +
-      "error_code = NULL, chunk_done = chunk_total, updated_at = ? WHERE document_id = ? AND source_hash = ? AND model = ? AND format_version = ? " +
-      "AND state = 'indexing' AND lease_token = ? AND lease_until >= ? AND chunk_done = chunk_total " +
-      "AND json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.enabled') = 1 " +
-      "AND json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.model') = ? " +
-      "AND (SELECT revision FROM app_settings WHERE key = 'semantic_settings') = ? AND " + SEMANTIC_SOURCE_CURRENT)
-      .run(JSON.stringify(vector), now(), id, sourceHash, model, formatVersion, token, Date.now(), model, settingsRevision,
-        id, sourceRevision, extractionId, extractionId);
-    return result.changes === 1;
+    return transaction(this.sql, () => {
+      const result = this.sql.prepare("UPDATE semantic_indexes SET state = 'ready', vector_json = ?, lease_token = NULL, lease_until = NULL, " +
+        "error_code = NULL, chunk_done = chunk_total, updated_at = ? WHERE document_id = ? AND source_hash = ? AND model = ? AND format_version = ? " +
+        "AND state = 'indexing' AND lease_token = ? AND lease_until >= ? AND chunk_done = chunk_total " +
+        "AND json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.enabled') = 1 " +
+        "AND json_extract((SELECT value FROM app_settings WHERE key = 'semantic_settings'), '$.model') = ? " +
+        "AND (SELECT revision FROM app_settings WHERE key = 'semantic_settings') = ? AND " + SEMANTIC_SOURCE_CURRENT)
+        .run(JSON.stringify(vector), now(), id, sourceHash, model, formatVersion, token, Date.now(), model, settingsRevision,
+          id, sourceRevision, extractionId, extractionId);
+      if (result.changes === 1) {
+        const insert = annInsert("documents", id, sourceHash, model, formatVersion, vector);
+        if (insert) this.sql.prepare(insert.sql).run(...insert.values as never[]);
+      }
+      return result.changes === 1;
+    });
   }
 
   failSemanticIndex(id: string, sourceRevision: number, extractionId: string | null, settingsRevision: number,

@@ -87,11 +87,11 @@ class SqliteD1Database implements D1Database {
 function migratedCloudDatabase() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
-  for (let version = 1; version <= 14; version += 1) {
+  for (let version = 1; version <= 15; version += 1) {
     sqlite.exec(readFileSync(new URL(`../cloud/migrations/${String(version).padStart(4, "0")}_${[
       "cloud_core", "browser_extension", "cloud_ai", "cloud_backups", "cloud_capture", "cloud_folders", "cloud_trash", "cloud_favorites",
       "cloud_papers", "cloud_paper_content_mode",
-      "semantic_indexes", "cloud_imports", "reading_data", "study_workflows",
+      "semantic_indexes", "cloud_imports", "reading_data", "study_workflows", "semantic_ann",
     ][version - 1]}.sql`, import.meta.url), "utf8"));
   }
   return new SqliteD1Database(sqlite);
@@ -541,8 +541,15 @@ test("cloud semantic indexing is opt-in, keeps keys out of D1, resumes batches, 
     assert.equal(stepSignalAbortedAfterDisconnect, false);
     assert.equal(inputs.at(-1)?.length, 4);
     assert.equal((db.sqlite.prepare("SELECT chunk_done FROM cloud_semantic_indexes WHERE document_id=?").get(document.id) as { chunk_done: number }).chunk_done, 4);
+    db.failBatchOn = /INSERT INTO cloud_semantic_ann/u;
+    const annFailed = await step(); assert.equal(annFailed.status, 502); db.failBatchOn = null;
+    assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS n FROM cloud_semantic_ann").get()?.n, 0);
+    assert.notEqual(db.sqlite.prepare("SELECT state FROM cloud_semantic_indexes WHERE document_id=?").get(document.id)?.state, "ready");
+    const retryAnn = await handleRequest(new Request("https://app.example.com/api/semantic/retry", { method: "POST", headers, body: "{}" }), env);
+    assert.equal((await retryAnn.json() as { affectedDocuments: number }).affectedDocuments, 1);
     const second = await step();
     assert.equal((await second.json() as { status: string }).status, "completed");
+    assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS n FROM cloud_semantic_ann").get()?.n, 1);
     assert.equal(inputs.at(-1)?.length, 4);
     assert.equal((db.sqlite.prepare("SELECT chunk_total, chunk_done FROM cloud_semantic_indexes WHERE document_id=?").get(document.id) as { chunk_total: number; chunk_done: number }).chunk_done, 8);
     assert.ok(inputs.slice(1).flat().every((text) => text.startsWith("跨语言检索\n\n")));

@@ -33,6 +33,7 @@ import { TRANSLATION_LANGUAGES } from "../shared/types.js";
 import { PAPER_MAX_PAGES, PAPER_PAGE_IMAGE_MAX_BYTES, PAPER_PAGE_IMAGE_TYPE } from "../shared/paper.js";
 import { cacheDocumentAssets, type AssetFetchFunction } from "./assets.js";
 import { createAuth } from "./auth.js";
+import { pluginWorkerDocument } from "../shared/plugin-worker.js";
 import { parseSelectionTranslation, ReaderInputError } from "../shared/reader-tools.js";
 import { createReadingRepository, ReadingDataError } from "../shared/reading-data.js";
 import {
@@ -1563,6 +1564,9 @@ export function createApp(options: AppOptions) {
         return;
       }
       if (request.method === "GET" && pathname === "/" && auth.establishTrustedSession(request, response)) return;
+      if (pathname === "/reader-plugin-worker" && (request.method === "GET" || request.method === "HEAD")) {
+        const worker = pluginWorkerDocument(); response.writeHead(200, worker.headers); response.end(request.method === "HEAD" ? undefined : worker.script); return;
+      }
       if (pathname.startsWith("/api/") && !auth.isAuthenticated(request)) {
         sendError(response, 401, "UNAUTHORIZED", "Authentication required");
         return;

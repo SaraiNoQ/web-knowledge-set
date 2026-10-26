@@ -1530,8 +1530,11 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
     let queued = false;
     let disposed = false;
     let controller: AbortController | null = null;
+    let continuation = 0;
+    let annBackfill = false;
     const wake = () => {
       if (disposed) return;
+      window.clearTimeout(continuation); continuation = 0;
       if (running) { queued = true; return; }
       running = true;
       controller = new AbortController();
@@ -1539,7 +1542,12 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
         const settings = await api.getSemanticSettings(controller!.signal);
         if (!settings.enabled || !settings.apiKeyConfigured) return;
         const result = await api.advanceSemanticIndex(controller!.signal);
-        if (result.status !== "idle" && result.status !== "busy") setSemanticRefresh((value) => value + 1);
+        if (result.status === "progress" && result.documentId === null) {
+          annBackfill = true;
+          if (!disposed) continuation = window.setTimeout(wake, 100);
+        } else if (result.status !== "busy" && (result.status !== "idle" || annBackfill)) {
+          annBackfill = false; setSemanticRefresh((value) => value + 1);
+        }
       })().catch(() => { if (!disposed) setSemanticRefresh((value) => value + 1); }).finally(() => {
         running = false;
         controller = null;
@@ -1555,6 +1563,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
     return () => {
       disposed = true;
       window.clearInterval(timer);
+      window.clearTimeout(continuation);
       window.removeEventListener("zhiye:semantic-wake", wake);
       document.removeEventListener("visibilitychange", onVisible);
       controller?.abort();

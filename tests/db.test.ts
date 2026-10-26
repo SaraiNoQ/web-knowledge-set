@@ -58,7 +58,7 @@ test("v14 recent filters persist in the local database", () => {
     sort: "updated",
   }];
   try {
-    assert.equal(CURRENT_SCHEMA_VERSION, 21);
+    assert.equal(CURRENT_SCHEMA_VERSION, 22);
     assert.deepEqual(fixture.db.getRecentFilters(), { filters: [], revision: 0 });
     assert.deepEqual(fixture.db.getOnboarding(), { completed: false, revision: 0 });
     assert.deepEqual(fixture.db.setOnboarding(true, 0), {
@@ -681,9 +681,15 @@ test("semantic index leases persist chunk vectors, content edits invalidate them
     const chunk = { index: 0, pageNumber: null, startOffset: 0, endOffset: 4, textHash, text: "body", weight: 4 };
     assert.equal(fixture.db.saveSemanticChunks(article.id, article.revision, null, enabled.settings.revision,
       sourceHash, "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION, "lease", [{ chunk, vector: [1, 0] }]), true);
+    fixture.db.sql.exec("CREATE TEMP TRIGGER fail_ann BEFORE INSERT ON semantic_ann BEGIN SELECT RAISE(ABORT,'ANN_FAILED'); END;");
+    assert.throws(() => fixture.db.completeSemanticIndex(article.id, article.revision, null, enabled.settings.revision,
+      sourceHash, "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION, "lease", [1, 0]), /ANN_FAILED/u);
+    assert.equal(fixture.db.sql.prepare("SELECT state FROM semantic_indexes WHERE document_id=?").get(article.id)?.state, "indexing");
+    fixture.db.sql.exec("DROP TRIGGER fail_ann");
     assert.equal(fixture.db.completeSemanticIndex(article.id, article.revision, null, enabled.settings.revision,
       sourceHash, "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION, "lease", [1, 0]), true);
     assert.deepEqual(fixture.db.semanticVectorPage(0, 10, "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION).items.map(({ id, vector }) => ({ id, vector })), [{ id: article.id, vector: [1, 0] }]);
+    assert.equal(fixture.db.sql.prepare("SELECT COUNT(*) AS n FROM semantic_ann").get()?.n, 1);
 
     const current = fixture.db.getDocument(article.id)!;
     const favorite = fixture.db.updateDocument(article.id, current.revision, { favorite: true });
@@ -693,6 +699,7 @@ test("semantic index leases persist chunk vectors, content edits invalidate them
     const renamed = fixture.db.updateDocument(article.id, favorite.document.revision, { title: "Changed source" });
     assert.equal(renamed.kind, "updated");
     assert.equal(fixture.db.semanticVectorPage(0, 10, "BAAI/bge-m3", SEMANTIC_FORMAT_VERSION).total, 0);
+    assert.equal(fixture.db.sql.prepare("SELECT COUNT(*) AS n FROM semantic_ann").get()?.n, 0);
 
     const modelChanged = fixture.db.setSemanticSettings({ enabled: false, model: "new-model", revision: enabled.settings.revision }, true);
     assert.equal(modelChanged.kind, "updated");
@@ -1757,6 +1764,7 @@ test("schema inspection is read-only and rejects future or incomplete histories"
       DROP TABLE study_fingerprints;
       DROP TABLE reading_annotations;
       DROP TABLE document_connections;
+      DROP TABLE semantic_ann;
       DROP TABLE semantic_chunks;
       DROP TABLE semantic_indexes;
       DROP INDEX documents_folder_updated;

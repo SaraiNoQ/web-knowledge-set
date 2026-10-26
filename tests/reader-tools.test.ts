@@ -74,7 +74,7 @@ test("reading schema upgrades existing libraries and full SQLite backups preserv
   let db = openDatabase(dataDir);
   try {
     const doc = db.createOrGetDocument("https://example.com/reader-backup").document;
-    db.sql.exec("PRAGMA foreign_keys=OFF; DROP TABLE reading_connection_evidence; DROP TABLE study_topic_annotations; DROP TABLE study_topic_documents; DROP TABLE study_topics; DROP TABLE study_progress; DROP TABLE study_reviews; DROP TABLE study_document_tags; DROP TABLE study_source_checks; DROP TABLE study_merge_history; DROP TABLE study_fingerprints; DROP TABLE document_connections; DROP TABLE reading_annotations; PRAGMA foreign_keys=ON;");
+    db.sql.exec("PRAGMA foreign_keys=OFF; DROP TABLE semantic_ann; DROP TABLE reading_connection_evidence; DROP TABLE study_topic_annotations; DROP TABLE study_topic_documents; DROP TABLE study_topics; DROP TABLE study_progress; DROP TABLE study_reviews; DROP TABLE study_document_tags; DROP TABLE study_source_checks; DROP TABLE study_merge_history; DROP TABLE study_fingerprints; DROP TABLE document_connections; DROP TABLE reading_annotations; PRAGMA foreign_keys=ON;");
     db.sql.prepare("DELETE FROM schema_migrations WHERE version>=?").run(20);
     db.close(); db = openDatabase(dataDir);
     assert.equal(db.getDocument(doc.id)?.sourceUrl, doc.sourceUrl);

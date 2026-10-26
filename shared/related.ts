@@ -2,12 +2,13 @@ import { semanticHash, extractSemanticMarkdown, SEMANTIC_FORMAT_VERSION } from "
 import { readerRevision, readerText, ReaderInputError, type SourceAnchor } from "./reader-tools.js";
 import { ReadingDataError, annotationColumns, annotationFromRow } from "./reading-data.js";
 import type { QuestionCitation, StudyAdapter, StudyDocument } from "./study-types.js";
+import { backfillAnn, searchAnn, type AnnDiagnostics } from "./semantic-ann.js";
 
 export type RelationType = "semantic" | "manual" | "folder" | "tag" | "citation" | "lexical";
 export interface RelationReason { type: RelationType; label: string; score?: number; annotationIds?: string[]; connectionId?: string }
 export interface RelatedEvidence extends QuestionCitation { basis: "term-overlap" | "context" }
 export interface RelatedItem { document: StudyDocument; reasons: RelationReason[]; evidence: RelatedEvidence[]; score: number }
-export interface RelatedResult { sourceId: string; sourceRevision: number; items: RelatedItem[]; scannedDocuments: number; truncated: boolean; nextCursor: string | null }
+export interface RelatedResult { sourceId: string; sourceRevision: number; items: RelatedItem[]; scannedDocuments: number; truncated: boolean; nextCursor: string | null; search?: AnnDiagnostics }
 export interface RelatedOptions { limit?: number; cursor?: string; types?: RelationType[] }
 
 export const CONNECTION_EVIDENCE_SCHEMA = `CREATE TABLE reading_connection_evidence (
@@ -102,6 +103,13 @@ export async function getRelated(db: StudyAdapter, documentId: string, options: 
   const manual = new Map(links.map((row) => [row.sourceId === documentId ? String(row.targetId) : String(row.sourceId), row]));
   type Candidate = { id: string; rank: number; reasons: RelationReason[]; sourceHash?: unknown; model?: unknown; format?: unknown; semanticScore?: number };
   const candidates = new Map<string, Candidate>();
+  let search: AnnDiagnostics | undefined;
+  if (sourceVector && (!types || types.includes("semantic"))) {
+    await backfillAnn(db);
+    const result = await searchAnn(db, { id: source.id, model: String(sourceIndex!.model), format: String(sourceIndex!.format_version), vector: sourceVector }, limit, cursor);
+    search = result.diagnostics;
+    for (const entry of result.entries) if (entry.score >= .3) candidates.set(entry.id, { id: entry.id, rank: entry.score, reasons: [{ type: "semantic", label: "正文向量相近", score: entry.score }], sourceHash: entry.sourceHash, model: entry.model, format: entry.format, semanticScore: entry.score });
+  }
   let last = cursor, scannedDocuments = 0, bytes = 0, more = false;
   const queryTerms = evidenceTerms(source.title + " " + sections(source).map((section) => section.text).join(" ").slice(0, 12_000));
   const sourceTags = source.tags.map((tag) => tag.toLocaleLowerCase());
@@ -114,7 +122,7 @@ export async function getRelated(db: StudyAdapter, documentId: string, options: 
   while (scannedDocuments < 1000 && bytes < 8 * 1024 * 1024) {
     const rows = await db.all(`SELECT d.id,d.title,d.source_url AS sourceUrl,d.folder_id AS folderId,
       (SELECT json_group_array(tag) FROM (${tagsSql})) AS tagsJson,
-      i.source_hash AS sourceHash,i.model,i.format_version AS format,CASE WHEN length(i.vector_json)<=131072 THEN i.vector_json ELSE NULL END AS vectorJson,
+      i.source_hash AS sourceHash,i.model,i.format_version AS format,${search?.mode === "ann" ? "NULL" : "CASE WHEN length(i.vector_json)<=131072 THEN i.vector_json ELSE NULL END"} AS vectorJson,
       CASE WHEN ?='' THEN 0 WHEN d.kind='article' THEN instr(d.markdown,?) ELSE EXISTS(SELECT 1 FROM ${pageTable} pp JOIN ${paperTable} p ON p.id=pp.paper_id AND p.extraction_id=pp.extraction_id WHERE p.id=d.id AND instr(pp.original_json,?)>0) END AS inboundHint
       FROM ${db.documentsTable} d LEFT JOIN ${semanticTable} i ON i.document_id=d.id AND i.state='ready'
       WHERE d.deleted_at IS NULL AND d.status='ready' AND d.id>? AND d.id<>? ORDER BY d.id LIMIT 100`, [sourceUrl, sourceUrl, sourceUrl, last, documentId]);
@@ -124,8 +132,8 @@ export async function getRelated(db: StudyAdapter, documentId: string, options: 
       const vectorBytes = String(row.vectorJson ?? "").length;
       if (scannedDocuments && bytes + vectorBytes > 8 * 1024 * 1024) { more = true; stopped = true; break; }
       const id = String(row.id); last = id; scannedDocuments++; bytes += vectorBytes;
-      const reasons: RelationReason[] = [], link = manual.get(id);
-      let rank = 0;
+      const prior = candidates.get(id), reasons: RelationReason[] = prior ? [...prior.reasons] : [], link = manual.get(id);
+      let rank = prior?.rank ?? 0;
       if (link) { reasons.push({ type: link.relationType === "citation" ? "citation" : "manual", label: String(link.note || "你建立的双向关联"), connectionId: String(link.id), annotationIds: [link.sourceAnnotationId, link.targetAnnotationId].filter((value): value is string => typeof value === "string") }); rank += 2; }
       if (source.folderId && row.folderId === source.folderId) { reasons.push({ type: "folder", label: "来自同一分组" }); rank += .2; }
       let tags: string[] = []; try { tags = JSON.parse(String(row.tagsJson ?? "[]")); } catch {}
@@ -133,8 +141,8 @@ export async function getRelated(db: StudyAdapter, documentId: string, options: 
       if (sharedTags.length) { reasons.push({ type: "tag", label: `共同标签：${sharedTags.slice(0, 5).join("、")}` }); rank += .4; }
       if (sourceReferences.has(String(row.sourceUrl))) { reasons.push({ type: "citation", label: "当前资料的正文包含该资料来源链接" }); rank += 1.5; }
       if (Number(row.inboundHint) > 0) rank += 1.5;
-      let semanticScore: number | undefined;
-      if (sourceVector && row.model === sourceIndex?.model && row.format === sourceIndex?.format_version) { const target = vector(row.vectorJson); const score = target ? cosine(sourceVector, target) : 0; if (score >= .3) { semanticScore = score; rank += score; reasons.push({ type: "semantic", label: "正文向量相近", score }); } }
+      let semanticScore = prior?.semanticScore;
+      if (search?.mode !== "ann" && sourceVector && row.model === sourceIndex?.model && row.format === sourceIndex?.format_version) { const target = vector(row.vectorJson); const score = target ? cosine(sourceVector, target) : 0; if (score >= .3) { semanticScore = score; rank += score; reasons.push({ type: "semantic", label: "正文向量相近", score }); } }
       const matches = overlap(String(row.title), queryTerms);
       if (matches && semanticScore === undefined) { reasons.push({ type: "lexical", label: "标题具有共同词项" }); rank += Math.min(.3, matches / Math.max(1, queryTerms.length)); }
       const admitted = types ? reasons.filter((reason) => types.includes(reason.type)) : reasons;
@@ -174,7 +182,7 @@ export async function getRelated(db: StudyAdapter, documentId: string, options: 
     items.push({ document: { ...doc, markdown: "", sections: undefined }, reasons: filtered, evidence, score: filtered.reduce((sum, reason) => sum + relationWeight(reason), 0) });
   }
   await guardSource();
-  return { sourceId: source.id, sourceRevision: source.revision, items: items.sort((a, b) => b.score - a.score || a.document.id.localeCompare(b.document.id)), scannedDocuments, truncated: more, nextCursor: more ? last : null };
+  return { sourceId: source.id, sourceRevision: source.revision, items: items.sort((a, b) => b.score - a.score || a.document.id.localeCompare(b.document.id)), scannedDocuments, truncated: more, nextCursor: more ? last : null, ...(search ? { search } : {}) };
 }
 
 export async function getConnectionEvidence(db: StudyAdapter, connectionId: string): Promise<ConnectionEvidence | null> {
