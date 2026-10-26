@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { MarkdownStyleSelect } from "./MarkdownStyleSelect";
 import { AiSettings } from "./AiSettings";
-import { Button, Select } from "./ui/Controls";
+import { Button, Checkbox, Select } from "./ui/Controls";
 import { ReaderToolSettings } from "../reader-tools/ReaderSidebar";
-import { DEFAULT_READING_MARGIN, normalizeReadingMargin, saveReadingMargin, DEFAULT_READING_TEXT, READING_FONTS, READING_STYLES, normalizeReadingText, saveReadingText, type ReadingTextSettings } from "../reading-preferences";
+import { DEFAULT_READING_MARGIN, normalizeReadingMargin, saveReadingMargin, DEFAULT_READING_TEXT, READING_FONTS, READING_STYLES, normalizeReadingText, saveReadingText, saveRestoreReadingPosition, type ReadingTextSettings } from "../reading-preferences";
 
-export function WorkspaceSettings({ cloud, semanticRefresh, onClose, readingMargin, onReadingMarginChange, readingText, onReadingTextChange }: {
+export function WorkspaceSettings({ cloud, semanticRefresh, onClose, readingMargin, onReadingMarginChange, readingText, onReadingTextChange, restoreReadingPosition, onRestoreReadingPositionChange }: {
   cloud: boolean; semanticRefresh: number; onClose: () => void;
   readingMargin: number; onReadingMarginChange: (value: number) => void;
   readingText: ReadingTextSettings; onReadingTextChange: (value: ReadingTextSettings) => void;
+  restoreReadingPosition: boolean; onRestoreReadingPositionChange: (value: boolean) => void;
 }) {
   const [section, setSection] = useState("reading");
   const readingSettingsRef = useRef<HTMLDivElement>(null);
@@ -37,6 +38,9 @@ export function WorkspaceSettings({ cloud, semanticRefresh, onClose, readingMarg
     const normalized = normalizeReadingText({ ...readingText, ...value });
     onReadingTextChange(normalized); setStorageFailed(!saveReadingText(normalized));
   };
+  const changeRestorePosition = (value: boolean) => {
+    onRestoreReadingPositionChange(value); setStorageFailed(!saveRestoreReadingPosition(value));
+  };
   return <main className="workspace-settings" aria-labelledby="workspace-settings-title">
     <header><div><h1 id="workspace-settings-title">设置</h1></div><Button onClick={onClose}>返回列表</Button></header>
     <div className="settings-layout">
@@ -49,6 +53,7 @@ export function WorkspaceSettings({ cloud, semanticRefresh, onClose, readingMarg
         <section hidden={section !== "reading"} aria-labelledby="reading-settings-title">
           <h2 id="reading-settings-title">阅读外观</h2>
           <div ref={readingSettingsRef} className="reading-setting">
+            <Checkbox label="打开资料时恢复阅读位置" checked={restoreReadingPosition} onChange={(event) => changeRestorePosition(event.target.checked)} />
             <div className="reading-control"><span>页面风格</span><MarkdownStyleSelect density="regular" value={readingText} onChange={changeText} /></div>
             <p className="reading-style-description">{READING_STYLES[readingText.style].description}。<br />切换会调整字体和行距，其他设置保留。</p>
             <div className="reading-control"><label htmlFor="reading-margin">两侧留白</label><div className="reading-number"><input type="number" aria-label="两侧留白百分比" min={0} max={50} step={1} value={readingMargin} onChange={(event) => changeMargin(event.currentTarget.valueAsNumber)} /><span>%</span></div><input id="reading-margin" type="range" min={0} max={50} step={1} value={readingMargin} style={{ "--range-progress": `${readingMargin * 2}%` } as import("react").CSSProperties} onChange={(event) => changeMargin(event.currentTarget.valueAsNumber)} /></div>
@@ -58,7 +63,7 @@ export function WorkspaceSettings({ cloud, semanticRefresh, onClose, readingMarg
               <article className="reading-text-preview markdown-preview" style={{ paddingInline: `${readingMargin / 2}%` }} aria-label="效果预览"><h2>留一段安静的阅读时间</h2><p>文字的大小、间距与宽度，共同决定阅读的节奏。调整到舒适的状态，让每一行内容都有呼吸的空间。</p><blockquote><p>把值得留下的想法，写成自己的知识。</p></blockquote><p>支持 <strong>重点</strong>、列表、表格与 <code>Markdown</code>。</p></article>
             </div>
             {storageFailed && <p role="status">设置已生效，但未保存。刷新后会恢复默认值。</p>}
-            <div><Button onClick={() => { changeMargin(DEFAULT_READING_MARGIN); changeText(DEFAULT_READING_TEXT); }}>恢复默认</Button></div>
+            <div><Button onClick={() => { changeMargin(DEFAULT_READING_MARGIN); changeText(DEFAULT_READING_TEXT); changeRestorePosition(true); }}>恢复默认</Button></div>
           </div>
         </section>
         <div hidden={section !== "ai"}><AiSettings embedded cloud={cloud} semanticRefresh={semanticRefresh} onClose={onClose} /></div>

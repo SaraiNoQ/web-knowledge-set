@@ -176,6 +176,8 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
   // Zoom really rescales the rendered page, and the pane scrolls it rather than
   // pushing the layout taller.
   const canvasWidth = () => page.locator(".paper-reader-pdf-scroll canvas").evaluate((element) => Math.round(element.getBoundingClientRect().width));
+  // Wait for the viewport resize to finish before comparing font-only changes.
+  await expect.poll(async () => Math.abs(await canvasWidth() - await page.locator(".paper-reader-pdf-scroll").evaluate((pane) => pane.clientWidth - 2))).toBeLessThanOrEqual(1);
   const fitted = await canvasWidth();
   await page.getByRole("combobox", { name: "中文字号", exact: true }).click();
   await page.getByRole("option", { name: "24 px", exact: true }).click();
@@ -264,4 +266,34 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
   await page.getByRole("button", { name: "永久删除：E2E 论文" }).click();
   await page.getByRole("alertdialog", { name: "永久删除" }).getByRole("button", { name: "永久删除" }).click();
   await expect(page.getByRole("button", { name: "E2E 论文", exact: true })).toHaveCount(0);
+});
+
+test("automatically restores the PDF and translation reading positions", async ({ page, request }) => {
+  await page.setViewportSize({ width: 1440, height: 640 });
+  await page.route("**/api/settings/onboarding", (route) => route.fulfill({ json: { completed: true, revision: 1 } }));
+  await page.goto("/");
+  await page.getByRole("button", { name: "导入", exact: true }).click();
+  await page.getByRole("button", { name: "论文 PDF", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "导入" });
+  await dialog.getByRole("button", { name: "上传文件" }).click();
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "restore-paper.pdf", mimeType: "application/pdf", buffer: minimalPdf() });
+  await dialog.getByRole("button", { name: "添加论文" }).click();
+  await expect(page.locator(".paper-reader-block p")).toHaveText("一篇 E2E 论文。", { timeout: 10_000 });
+  await expect(page.locator("canvas[data-rendered-page='1']")).toBeVisible();
+  const paperId = /zhiye:\/\/paper\/([0-9a-f-]+)/u.exec((await page.locator(".paper-reader-header p").textContent()) ?? "")![1];
+  await page.getByRole("button", { name: "编辑译文", exact: true }).click();
+  await page.locator("textarea").fill("用于验证中文对照的自动恢复位置。\n".repeat(100));
+  await page.getByRole("button", { name: "保存本页", exact: true }).click();
+  await expect(page.locator(".paper-reader-notice")).toContainText("本页译文已保存");
+  const response = await request.get(`/api/documents/${paperId}`), document = await response.json();
+  const headers = { Origin: "http://127.0.0.1:4174", "X-Zhiye-Data-Epoch": response.headers()["x-zhiye-data-epoch"] };
+  const title = `论文位置恢复${Date.now()}`;
+  expect((await request.patch(`/api/documents/${paperId}`, { headers, data: { revision: document.revision, title } })).ok()).toBe(true);
+  const progress = await (await request.get(`/api/study/documents/${paperId}/progress`)).json();
+  expect((await request.put(`/api/study/documents/${paperId}/progress`, { headers, data: { revision: progress?.revision ?? 0, documentRevision: document.revision + 1, fraction: .6, anchor: null, read: false } })).ok()).toBe(true);
+  await page.reload();
+  await page.locator(".library-directory").getByRole("button", { name: title, exact: true }).click();
+  for (const selector of [".paper-reader-pdf-scroll", ".paper-reader-translation-scroll"]) {
+    await expect.poll(() => page.locator(selector).evaluate((pane) => pane.scrollTop / Math.max(1, pane.scrollHeight - pane.clientHeight))).toBeCloseTo(.6, 2);
+  }
 });

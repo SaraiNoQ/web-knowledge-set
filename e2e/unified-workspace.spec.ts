@@ -57,10 +57,8 @@ test("root and expanded folders lazily fill every document while the reader scro
   const tabs = await page.locator(".document-tabbar").boundingBox();
   const scroll = await page.locator(".reader-layout").boundingBox();
   const location = (await page.locator(".workspace-location").boundingBox())!;
-  const progress = (await page.locator(".study-reading-progress").boundingBox())!;
   expect(location.height).toBe(42);
-  expect(Math.abs(progress.y - tabs!.y - tabs!.height)).toBeLessThanOrEqual(1);
-  expect(Math.abs(location.y - progress.y - progress.height)).toBeLessThanOrEqual(1);
+  expect(Math.abs(location.y - tabs!.y - tabs!.height)).toBeLessThanOrEqual(1);
   expect(Math.abs(scroll!.y - location.y - location.height)).toBeLessThanOrEqual(1);
   expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(true);
   await page.getByRole("button", { name: "展开侧栏", exact: true }).click();

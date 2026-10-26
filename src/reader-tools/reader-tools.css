@@ -6,12 +6,11 @@
 .reader-tool-float-body { padding: 16px; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
 .reader-selection-actions { position: absolute; display: flex; gap: 4px; padding: 4px; border-radius: 8px; }
 .reader-tool-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
-.reader-tool-actions .ui-button { font-size: 12px; }
-.selection-translation label, .reading-data-panel label { display: grid; gap: 6px; font-size: 12px; }
+.selection-translation label:not(.ui-checkbox-field), .reading-data-panel label { display: grid; gap: 6px; font-size: 12px; }
 .selection-translation blockquote, .reading-data-panel blockquote { margin: 14px 0; padding: 0 0 0 10px; border-left: 1px solid var(--line); color: var(--ink-soft); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow-y: auto; font-size: 13px; }
 .selection-translation-output, .reading-data-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 14px/1.8 var(--font-sans); }
 .selection-translation-output { max-height: 38dvh; overflow-y: auto; }
-.selection-translation .translation-automatic { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.selection-translation .translation-automatic { margin-top: 12px; }
 .translation-hint { margin: 8px 0; color: var(--ink-soft); font-size: 12px; line-height: 1.6; }
 .translation-glossary { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 12px; font-size: 13px; }
 .translation-glossary summary { cursor: pointer; font-weight: 500; }
@@ -21,14 +20,11 @@
 .translation-glossary li > span { min-width: 0; display: grid; gap: 4px; overflow-wrap: anywhere; }
 .translation-glossary strong { font-weight: 500; }
 .reader-sidebar-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 4px 12px; border-bottom: 1px solid var(--line); }
-.reader-sidebar-tabs .ui-button { padding: 4px 7px; font-size: 11px; }
-.reader-sidebar-tabs [aria-pressed=true] { color: var(--accent); background: var(--accent-soft); }
 .reader-sidebar-content { padding: 8px 6px; overflow-wrap: anywhere; }
 .reading-data-panel { font-size: 13px; }
 .reading-data-panel section + section { margin-top: 28px; }
 .reading-data-panel h3 { font: 500 14px/1.5 var(--font-sans); margin: 10px 0; }
 .document-tools .reading-data-panel li { display: block; padding: 14px 0; border-bottom: 1px solid var(--line); }
-.reading-data-panel textarea { width: 100%; min-height: 72px; resize: vertical; padding: 8px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); font: inherit; }
 .reading-data-panel label { margin: 12px 0; }
 .reading-data-panel small { color: var(--ink-soft); }
 .reading-data-panel nav { display: flex; align-items: center; gap: 8px; margin-top: 18px; }

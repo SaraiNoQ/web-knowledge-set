@@ -77,6 +77,8 @@ export function locateReaderAnchor(anchor: SourceAnchor) {
 }
 
 export async function revealReaderAnchor(anchor: SourceAnchor) {
+  const documentId = readerTools.getSnapshot().context?.id;
+  if (documentId) window.dispatchEvent(new CustomEvent("zhiye:reader-anchor", { detail: { documentId } }));
   if (locateReaderAnchor(anchor)) return true;
   const context = readerTools.getSnapshot().context;
   if (!context || !anchor.pageNumber || !anchor.source.startsWith("paper-")) return false;
