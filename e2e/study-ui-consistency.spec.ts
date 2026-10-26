@@ -163,3 +163,20 @@ test("returning before another document finishes loading still restores the orig
   release();
   await expect(page.locator(".document-tab-select[aria-pressed='true']")).toHaveText(first.document.title);
 });
+
+test("automatic restoration follows delayed image layout until the user takes control", async ({ page, request }) => {
+  const { document, headers } = await article(request, `图片位置恢复${Date.now()}`);
+  const hash = "c".repeat(64), source = `zhiye://asset/${hash}`;
+  const markdown = `![延迟加载图](${source})\n\n` + Array.from({ length: 30 }, (_, index) => `Paragraph ${index}. 图片加载前后都应恢复到保存的位置。`).join("\n\n");
+  await request.patch(`/api/documents/${document.id}`, { headers, data: { revision: document.revision, markdown } });
+  const updated = await (await request.get(`/api/documents/${document.id}`)).json();
+  await request.put(`/api/study/documents/${document.id}/progress`, { headers, data: { revision: 0, documentRevision: updated.revision, fraction: .6, anchor: null, read: false } });
+  let release!: () => void; const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(`**/api/assets/${hash}`, async (route) => { await held; await route.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="2000"><path fill="#bd412c" d="M0 0h600v2000H0z"/></svg>' }); });
+  await page.goto("/"); await openArticle(page, document.title);
+  await expect.poll(() => fraction(page)).toBeCloseTo(.6, 2);
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  release();
+  await expect.poll(() => page.getByRole("img", { name: "延迟加载图" }).evaluate((image: HTMLImageElement) => image.complete && image.naturalHeight > 0)).toBe(true);
+  await expect.poll(() => fraction(page)).toBeCloseTo(.6, 2);
+});

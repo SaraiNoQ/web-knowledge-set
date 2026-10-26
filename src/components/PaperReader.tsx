@@ -186,7 +186,7 @@ function PaperCanvas({ paperId, pageNumber, zoom, onZoom }: { paperId: string; p
   );
 }
 
-export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChange, onDirtyChange, onCreateArticle }: { paperId: string; title?: string; autoStart?: boolean; onClose: () => void; onRevisionChange: (paperId: string, revision: number, status: PaperDocument["status"]) => void; onDirtyChange?: (dirty: boolean) => void; onCreateArticle: (title: string, markdown: string) => Promise<boolean> }) {
+export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChange, onDirtyChange, onCreateArticle }: { paperId: string; title?: string; autoStart?: boolean; onClose: () => void; onRevisionChange: (paperId: string, revision: number, status: PaperDocument["status"], title?: string) => void; onDirtyChange?: (dirty: boolean) => void; onCreateArticle: (title: string, markdown: string) => Promise<boolean> }) {
   const [paper, setPaper] = useState<PaperDocument | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [draftBlocks, setDraftBlocks] = useState<PaperBlock[]>([]);
@@ -278,7 +278,7 @@ export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChan
       const next = await api.getPaper(paperId, signal);
       if (signal?.aborted || sequence !== loadSequence.current) return;
       setPaper(next);
-      onRevisionChange(paperId, next.revision, next.status);
+      onRevisionChange(paperId, next.revision, next.status, next.title);
       if (next.pages.length && pageNumber > next.pages.length) setPageNumber(next.pages.length);
       setError("");
     } catch (cause) {

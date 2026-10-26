@@ -1168,12 +1168,13 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
     setSourceMetadata(metadata);
   }, []);
 
-  const updateCurrentPaperRevision = useCallback((paperId: string, revision: number, status: PaperDocument["status"]) => {
+  const updateCurrentPaperRevision = useCallback((paperId: string, revision: number, status: PaperDocument["status"], title?: string) => {
     const current = currentDocRef.current;
-    if (!current || current.id !== paperId || current.kind !== "paper" || revision < current.revision || (revision === current.revision && status === current.status)) return;
-    const updated = { ...current, revision, status };
+    if (!current || current.id !== paperId || current.kind !== "paper" || revision < current.revision || (revision === current.revision && status === current.status && (title === undefined || title === current.title))) return;
+    const updated = { ...current, revision, status, title: title ?? current.title };
     currentDocRef.current = updated;
     setCurrentDoc(updated);
+    if (updated.title !== current.title) setOpenDocuments((tabs) => tabs.map((tab) => tab.id === paperId ? { ...tab, title: updated.title } : tab));
   }, []);
 
   const queueAutoTitle = useCallback((id: string) => {
