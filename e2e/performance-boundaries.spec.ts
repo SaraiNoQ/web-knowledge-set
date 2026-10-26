@@ -156,6 +156,27 @@ test("folder menu renames and deletes without losing articles and its contents a
   expect(retained.deletedAt).toBeNull();
 });
 
+test("directory reconciles captures that finish across multiple pages between polls", async ({ page, context, request }) => {
+  const document = await createArticle(request, "批量抓取模板");
+  const epoch = (await request.get("/api/documents")).headers()["x-zhiye-data-epoch"]!;
+  await page.route("**/api/settings/onboarding", (route) => route.fulfill({ json: { completed: true, revision: 1 } }));
+  await page.route("**/api/folders", (route) => route.fulfill({ json: [] }));
+  let completed = false;
+  await context.route("**/api/documents?*", async (route) => {
+    const current = Number(new URL(route.request().url()).searchParams.get("page") || 1);
+    const documents = Array.from({ length: 120 }, (_, index) => ({ ...document, id: `batch-${String(index).padStart(3, "0")}`, title: `批量抓取 ${index + 1}`, status: completed || index < 60 ? "ready" : "queued", updatedAt: new Date(Date.UTC(2026, 9, 26) + ((completed && index >= 60 ? 240 : 120) - index) * 1_000).toISOString() })).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    await route.fulfill({ headers: { "X-Zhiye-Data-Epoch": epoch }, json: { page: current, pageSize: 30, total: 120, items: documents.slice((current - 1) * 30, current * 30) } });
+  });
+  await page.goto("/");
+  const root = page.getByRole("region", { name: "未分组内容" });
+  await expect(root.locator(".document-row")).toHaveCount(120);
+  await expect(root.locator(".sr-only").filter({ hasText: /^等待收取$/ })).toHaveCount(60);
+  completed = true;
+  await expect(root.locator(".sr-only").filter({ hasText: /^等待收取$/ })).toHaveCount(0, { timeout: 8_000 });
+  await expect(root.locator(".document-row")).toHaveCount(120);
+  await expect(root.locator(".directory-document-label").first()).toHaveText("批量抓取 61");
+});
+
 for (const runtime of ["cloud", "desktop"] as const) test(`long article reading requires opt-in in ${runtime} UI`, async ({ page, request }) => {
   const title = `长文保护-${runtime}`;
   await createArticle(request, title, `# 长文测试\n\n${"正文内容。".repeat(50_001)}`);

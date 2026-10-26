@@ -363,6 +363,9 @@ export const LibraryDirectory = memo(function LibraryDirectory({
             const result = await api.listDocuments({ ...filters, sort: "updated", ...(key === "unfiled" ? { unfiled: true } : { folderId: key }), page }, controller.signal);
             if (controller.signal.aborted || requests.current.get(key) !== requestId) break;
             if (result.total !== branch.total) { void loadBranch(key); break; }
+            // Reconcile all pages if updates have moved captures across page boundaries.
+            const previousIds = new Set(branch.items.slice((page - 1) * branch.pageSize, page * branch.pageSize).map((item) => item.id));
+            if (result.items.some((item) => !previousIds.has(item.id))) { void loadBranch(key); break; }
             setBranches((current) => current[key] && requests.current.get(key) === requestId ? { ...current, [key]: { ...current[key], items: mergeDocuments(current[key].items, result.items) } } : current);
           }
         }
