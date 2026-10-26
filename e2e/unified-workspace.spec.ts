@@ -8,7 +8,7 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/health", (route) => route.fulfill({ json: { ok: true, mode: "cloud-core" } }));
 });
 
-test("root and expanded folders page through every document while the reader scrolls below its tabs", async ({ page, request }) => {
+test("root and expanded folders lazily fill every document while the reader scrolls below its tabs", async ({ page, request }) => {
   const listing = await request.get("/api/documents");
   const headers = { Origin: "http://127.0.0.1:4174", "X-Zhiye-Data-Epoch": listing.headers()["x-zhiye-data-epoch"] };
   const prefix = `连续目录${Date.now()}`;
@@ -29,56 +29,38 @@ test("root and expanded folders page through every document while the reader scr
   await page.goto("/");
   await expect(page.locator('.root-contents button[aria-description="论文"]').filter({ hasText: paperDocument.title })).toBeVisible();
   await expect(page.locator(".directory-kind-badge")).toHaveCount(0);
-  await expect(page.locator(".root-contents .document-row")).toHaveCount(30);
-  const rootPages = page.getByRole("navigation", { name: "未分组分页" });
-  const rootTitles = new Set<string>();
-  let rootPage = 1;
-  while (true) {
-    for (const title of await page.locator(".root-contents .directory-document-label").filter({ hasText: prefix }).allTextContents()) rootTitles.add(title);
-    if (await rootPages.getByRole("button", { name: "下一页" }).isDisabled()) break;
-    await rootPages.getByRole("button", { name: "下一页" }).click();
-    rootPage += 1;
-    await expect(rootPages).toContainText(`第 ${rootPage} /`);
-  }
-  expect(rootTitles.size).toBe(61);
-  while (rootPage > 1) {
-    await rootPages.getByRole("button", { name: "上一页" }).click();
-    rootPage -= 1;
-    await expect(rootPages).toContainText(`第 ${rootPage} /`);
-  }
+  await expect(page.locator(".root-contents > .directory-document-row .directory-document-label").filter({ hasText: prefix })).toHaveCount(61);
+  await expect(page.getByRole("navigation", { name: "未分组分页" })).toHaveCount(0);
   await expect(page.locator(".library-directory .panel-heading").getByRole("button", { name: "新建", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "分组", exact: true })).toHaveCount(0);
   await page.locator(".folder-node > button[aria-expanded]").filter({ hasText: prefix }).click();
-  await expect(page.locator(".folder-contents .directory-document-label").filter({ hasText: prefix })).toHaveCount(30);
-  const folderPages = page.getByRole("navigation", { name: `${prefix}分页` });
-  await folderPages.getByRole("button", { name: "下一页" }).click();
-  await expect(page.locator(".folder-contents .directory-document-label").filter({ hasText: prefix })).toHaveCount(5);
-  await folderPages.getByRole("button", { name: "上一页" }).click();
-  await expect(page.locator(".folder-contents .directory-document-label").filter({ hasText: prefix })).toHaveCount(30);
+  await expect(page.locator(".folder-contents .directory-document-label").filter({ hasText: prefix })).toHaveCount(35);
+  await expect(page.getByRole("navigation", { name: `${prefix}分页` })).toHaveCount(0);
   const folderButton = page.locator(".folder-node > button[aria-expanded]").filter({ hasText: prefix });
   await folderButton.hover();
   await expect(folderButton).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  const renameFolder = page.getByRole("button", { name: `改名 ${prefix}`, exact: true });
-  await renameFolder.hover();
-  await expect(renameFolder).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  expect(await renameFolder.evaluate((element) => getComputedStyle(element).color)).toBe(await folderButton.evaluate((element) => getComputedStyle(element).color));
+  const folderActions = page.getByRole("button", { name: `更多操作：${prefix}`, exact: true });
+  await folderActions.click();
+  await expect(page.getByRole("dialog", { name: `分组操作：${prefix}` }).getByRole("button", { name: "修改名称" })).toBeVisible();
+  await page.keyboard.press("Escape");
   await expect(page.locator(".folder-contents")).toHaveCSS("overflow-y", "visible");
   await expect(page.locator(".folder-contents")).toHaveCSS("max-height", "none");
   await folderButton.locator("..").screenshot({ path: "/tmp/zhiye-folder-flat-light.png" });
   await page.getByRole("button", { name: "深色外观", exact: true }).click();
-  await renameFolder.hover();
-  await expect(renameFolder).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await folderActions.hover();
   await folderButton.locator("..").screenshot({ path: "/tmp/zhiye-folder-flat-dark.png" });
   await page.getByRole("button", { name: "浅色外观", exact: true }).click();
-  await expect(folderPages).toContainText("第 1 / 2 页");
+  await expect(page.locator(".folder-contents .directory-document-label").filter({ hasText: prefix })).toHaveCount(35);
   expect(await page.locator(".reader-main").evaluate((element) => element.scrollHeight <= element.clientHeight)).toBe(true);
   await page.screenshot({ path: "/tmp/zhiye-reader-empty.png" });
   await page.locator(".root-contents").getByRole("button", { name: `${prefix}-0`, exact: true }).click();
   const tabs = await page.locator(".document-tabbar").boundingBox();
   const scroll = await page.locator(".reader-layout").boundingBox();
   const location = (await page.locator(".workspace-location").boundingBox())!;
+  const progress = (await page.locator(".study-reading-progress").boundingBox())!;
   expect(location.height).toBe(42);
-  expect(Math.abs(location.y - tabs!.y - tabs!.height)).toBeLessThanOrEqual(1);
+  expect(Math.abs(progress.y - tabs!.y - tabs!.height)).toBeLessThanOrEqual(1);
+  expect(Math.abs(location.y - progress.y - progress.height)).toBeLessThanOrEqual(1);
   expect(Math.abs(scroll!.y - location.y - location.height)).toBeLessThanOrEqual(1);
   expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(true);
   await page.getByRole("button", { name: "展开侧栏", exact: true }).click();
