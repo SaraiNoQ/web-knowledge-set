@@ -74,7 +74,11 @@ export const readerTools = {
     if (!builtinReaderTools.some((tool) => tool.manifest.id === id)) throw new Error("Unknown built-in reader tool");
     const ids = enabled ? [...new Set([...snapshot.enabled, id])] : snapshot.enabled.filter((item) => item !== id);
     publish({ enabled: ids, overlay: snapshot.overlay === id && !enabled ? null : snapshot.overlay });
-    localStorage.setItem("zhiye.reader-tools.enabled", JSON.stringify(ids));
+    localStorage.setItem("zhiye.reader-tools.enabled", JSON.stringify(ids.filter((id) => builtinReaderTools.some((item) => item.manifest.id === id))));
+  },
+  syncExternalEnabled(ids: string[]) {
+    const enabled = [...snapshot.enabled.filter((id) => builtinReaderTools.some((item) => item.manifest.id === id)), ...ids];
+    if (JSON.stringify(enabled) !== JSON.stringify(snapshot.enabled)) publish({ enabled });
   },
   open(id: string) { if (snapshot.enabled.includes(id) && snapshot.context) publish({ overlay: id }); },
   close() { if (snapshot.overlay) publish({ overlay: null }); },

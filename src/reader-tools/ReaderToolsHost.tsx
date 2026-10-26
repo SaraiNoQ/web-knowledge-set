@@ -8,6 +8,8 @@ import { Button, IconButton } from "../components/ui/Controls";
 import { useToast } from "../components/ui/Feedback";
 import { TranslationCache } from "./translation-cache";
 import { READER_TOOL_STORAGE_BYTES } from "./tool-storage";
+import { pluginRegistry, useExternalPlugins } from "./external-plugins";
+import { externalPluginModule } from "./PluginView";
 
 const translationCache = new TranslationCache();
 const translating = new Set<string>();
@@ -43,9 +45,12 @@ function FloatingTool({ title, children, onClose }: { title: string; children: R
 export function ReaderToolsHost() {
   const state = useSyncExternalStore(readerTools.subscribe, readerTools.getSnapshot);
   const toast = useToast();
+  const external = useExternalPlugins();
+  const externalKey = JSON.stringify(external.plugins.map((item) => [item.id, item.sha256, item.enabled]));
   const [modal, setModal] = useState(false);
   const [hiddenSelection, setHiddenSelection] = useState<ReaderSelection | null>(null);
-  const active = useRef(new Map<string, { controller: AbortController; retry: number }>());
+  const active = useRef(new Map<string, { controller: AbortController; retry: number; packageSha?: string }>());
+  useEffect(() => { readerTools.syncExternalEnabled(external.plugins.filter((item) => item.enabled).map((item) => item.id)); }, [externalKey]);
   useEffect(() => {
     const update = () => setModal(Boolean(document.querySelector("dialog[open]")));
     const observer = new MutationObserver((records) => {
@@ -62,23 +67,36 @@ export function ReaderToolsHost() {
     return () => { observer.disconnect(); document.removeEventListener("pointerdown", beginReaderSelection); document.removeEventListener("pointercancel", beginReaderSelection); document.removeEventListener("pointerup", capture); document.removeEventListener("keyup", capture); document.removeEventListener("scroll", scroll, true); };
   }, []);
   useEffect(() => {
-    for (const [id, value] of active.current) if (!state.enabled.includes(id) || value.retry !== (state.retries[id] ?? 0)) { value.controller.abort(); active.current.delete(id); readerTools.unregister(id); translationCache.clear(); }
-    for (const item of builtinReaderTools) {
+    for (const [id, value] of active.current) if (!state.enabled.includes(id) || value.retry !== (state.retries[id] ?? 0) || value.packageSha !== external.plugins.find((item) => item.id === id)?.sha256) { value.controller.abort(); active.current.delete(id); readerTools.unregister(id); translationCache.clear(); }
+    const items = [...builtinReaderTools, ...external.plugins.filter((item) => item.enabled).map((item) => ({
+      manifest: item.manifest,
+      load: () => pluginRegistry.getVerified(item.id).then((pkg) => externalPluginModule(pkg, () => { try { pluginRegistry.setEnabled(item.id, false); } catch {} readerTools.fail(item.id); })),
+    }))];
+    for (const item of items) {
       const id = item.manifest.id;
       if (!state.enabled.includes(id) || active.current.has(id)) continue;
-      const controller = new AbortController(); active.current.set(id, { controller, retry: state.retries[id] ?? 0 });
-      const permit = (permission: ReaderToolManifest["permissions"][number]) => { if (!item.manifest.permissions.includes(permission)) throw new Error("工具未声明所需权限。"); controller.signal.throwIfAborted(); };
-      const valid = (selection: ReaderSelection) => {
+      const packageSha = external.plugins.find((entry) => entry.id === id)?.sha256;
+      const controller = new AbortController(); active.current.set(id, { controller, retry: state.retries[id] ?? 0, packageSha });
+      const alive = () => {
         controller.signal.throwIfAborted();
+        if (packageSha) { const current = pluginRegistry.list().find((entry) => entry.id === id); if (!current?.enabled || current.sha256 !== packageSha) throw new Error("插件已停用或版本已变化。"); }
+      };
+      const permit = (permission: ReaderToolManifest["permissions"][number]) => {
+        if (!item.manifest.permissions.includes(permission)) throw new Error("工具未声明所需权限。"); alive();
+      };
+      const valid = (selection: ReaderSelection) => {
+        alive();
         const current = readerTools.getSnapshot();
         if (!current.context || current.context.id !== selection.documentId || current.context.revision !== selection.revision || current.context.blockedReason || JSON.stringify(current.selection?.anchor) !== JSON.stringify(selection.anchor)) throw new Error(current.context?.blockedReason || "文档或选区已变化，请重新选择文字。");
       };
-      let storage = readerToolStorage(id, item.manifest.storageVersion);
+      const externalTool = id.includes(".");
+      let storage: ReaderToolApi["storage"] = externalTool ? { ...pluginRegistry.storage(id), subscribe: pluginRegistry.subscribe } : readerToolStorage(id, item.manifest.storageVersion);
       const toolApi: ReaderToolApi = {
         selection: () => { permit("selection.read"); return readerTools.getSnapshot().selection; },
         async capabilities() {
-          controller.signal.throwIfAborted();
+          alive();
           const mode = await coreApi.getRuntimeMode(controller.signal);
+          alive();
           return { platform: "__TAURI_INTERNALS__" in globalThis ? "desktop" : mode, hostApiVersion: 1,
             permissions: [...item.manifest.permissions], maxSelectionCharacters: READER_SELECTION_MAX_CHARS,
             storageSchemaVersion: item.manifest.storageVersion ?? 1, storageQuotaBytes: READER_TOOL_STORAGE_BYTES,
@@ -89,7 +107,7 @@ export function ReaderToolsHost() {
           controller.signal.addEventListener("abort", unsubscribe, { once: true });
           return () => { unsubscribe(); controller.signal.removeEventListener("abort", unsubscribe); };
         } },
-        close: readerTools.close,
+        close: () => { alive(); readerTools.close(); },
         async saveExcerpt(selection, translation, note) { permit("annotations.create"); valid(selection); await readerDataApi.annotate(selection.documentId, selection.revision, selection.anchor, note, translation); window.dispatchEvent(new Event("zhiye:reading-data-changed")); },
         async translate(selection, language, onText, signal, options = {}) {
           permit("translation.request"); valid(selection);
@@ -119,12 +137,12 @@ export function ReaderToolsHost() {
       void item.load().then((module) => {
         if (controller.signal.aborted) return;
         if (module.manifest.id !== id || module.manifest.hostApiVersion !== 1 || (module.manifest.storageVersion ?? 1) !== (item.manifest.storageVersion ?? 1) || module.manifest.permissions.some((permission) => !item.manifest.permissions.includes(permission))) throw new Error("Incompatible reader tool");
-        storage = readerToolStorage(id, module.manifest.storageVersion, module.storageMigrations);
+        if (!externalTool) storage = readerToolStorage(id, module.manifest.storageVersion, "storageMigrations" in module ? module.storageMigrations : undefined);
         readerTools.register(id, module, toolApi);
       }).catch(() => { if (!controller.signal.aborted) readerTools.fail(id); });
     }
-  }, [state.enabled, state.retries]);
-  useEffect(() => () => { for (const value of active.current.values()) value.controller.abort(); active.current.clear(); translationCache.clear(); for (const item of builtinReaderTools) readerTools.unregister(item.manifest.id); readerTools.setContext(null); }, []);
+  }, [state.enabled, state.retries, externalKey]);
+  useEffect(() => () => { for (const [id, value] of active.current) { value.controller.abort(); readerTools.unregister(id); } active.current.clear(); translationCache.clear(); readerTools.setContext(null); }, []);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (document.querySelector("dialog[open]") || !readerTools.getSnapshot().context) return;
@@ -141,5 +159,5 @@ export function ReaderToolsHost() {
     <Button onClick={() => void readerDataApi.annotate(selection.documentId, selection.revision, selection.anchor).then(() => { toast.success("摘录已保存。"); window.dispatchEvent(new Event("zhiye:reading-data-changed")); }, (cause) => toast.error((cause as Error).message))}>保存摘录</Button>
     {Object.entries(state.tools).map(([id, entry]) => <Button key={id} onClick={() => readerTools.open(id)}>{entry.module.selectionAction.title}</Button>)}
   </div> : null;
-  return createPortal(<div className="reader-overlay-host" style={{ visibility: modal ? "hidden" : undefined }}>{ribbon}{tool && state.context && <FloatingTool key={`${state.overlay}:${state.context.id}:${state.context.revision}`} title={tool.module.manifest.name} onClose={readerTools.close}><ReaderToolBoundary onClose={readerTools.close}><tool.module.Overlay api={tool.api} selection={selection} active /></ReaderToolBoundary></FloatingTool>}</div>, document.body);
+  return createPortal(<div className="reader-overlay-host" style={{ visibility: modal ? "hidden" : undefined }}>{ribbon}{tool && state.context && <FloatingTool key={`${state.overlay}:${state.context.id}:${state.context.revision}`} title={tool.module.manifest.name} onClose={readerTools.close}><ReaderToolBoundary onClose={readerTools.close}><tool.module.Overlay api={tool.api} selection={selection} active={!modal} /></ReaderToolBoundary></FloatingTool>}</div>, document.body);
 }

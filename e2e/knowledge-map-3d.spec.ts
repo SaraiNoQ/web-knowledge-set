@@ -257,6 +257,7 @@ test("1000 nodes use batched drawing, remain interactive and release WebGL resou
     await page.getByRole("group", { name: "地图维度" }).getByRole("button", { name: "2D", exact: true }).click();
     await expect(page.locator(".map-3d")).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => window.map3dEvidence.contexts.every((context) => context.isContextLost()))).toBe(true);
+    expect(await page.evaluate(() => window.map3dEvidence.contexts.every((context) => context.canvas.width === 0 && context.canvas.height === 0))).toBe(true);
     expect(await page.evaluate(() => window.map3dEvidence.buffers)).toBe(0);
     await switch3D(page);
     await expect.poll(() => page.evaluate(() => window.map3dEvidence.instances)).toBe(1_001);

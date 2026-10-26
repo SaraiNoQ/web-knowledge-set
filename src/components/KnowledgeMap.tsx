@@ -158,11 +158,17 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
   const host = useRef<HTMLDivElement>(null);
   const resizeObserver = useRef<ResizeObserver | null>(null);
   const graph = useRef<GraphMethods | null>(null);
+  const canvases2D = useRef(new Set<HTMLCanvasElement>());
   const graph3D = useRef<Map3DHandle | null>(null);
   const saved2DView = useRef<{ center: { x: number; y: number }; zoom: number } | null>(null);
   const state3D = useRef<Map3DState>({ positions: new Map(), camera: null, overview: null, scope: "all", layoutKey: "" });
   const captureGraph = useCallback((instance: GraphMethods | null) => {
-    if (!instance && graph.current) saved2DView.current = { center: graph.current.centerAt(), zoom: graph.current.zoom() };
+    if (!instance && graph.current) {
+      saved2DView.current = { center: graph.current.centerAt(), zoom: graph.current.zoom() };
+      graph.current.pauseAnimation();
+      for (const canvas of canvases2D.current) canvas.width = canvas.height = 0;
+      canvases2D.current.clear();
+    }
     graph.current = instance;
     if (instance && saved2DView.current) {
       instance.centerAt(saved2DView.current.center.x, saved2DView.current.center.y);
@@ -655,6 +661,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
   }, [graphData, selectedId]);
 
   const prepareLabels = useCallback((ctx: CanvasRenderingContext2D, scale: number) => {
+    canvases2D.current.add(ctx.canvas);
     const candidates = [...new Set([selectedId, hoveredId, ...(!draggingNode && scale > .6 ? labelPeerIds : []), ...(!draggingNode ? labelGroupIds : [])].filter((id): id is string => Boolean(id)))];
     const rectangles: Array<{ left: number; top: number; right: number; bottom: number }> = [];
     visibleLabels.current.clear(); ctx.save();
@@ -746,6 +753,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
                   nodeCanvasObject={drawNode}
                   onRenderFramePre={prepareLabels}
                   nodePointerAreaPaint={(raw: object, color: string, ctx: CanvasRenderingContext2D) => {
+                    canvases2D.current.add(ctx.canvas);
                     const node = raw as MapNode & { x?: number; y?: number };
                     if (node.x === undefined || node.y === undefined) return;
                     const radius = node.type === "folder" ? 9 : node.kind === "paper" ? 8 : 7;

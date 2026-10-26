@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { READING_DATA_SCHEMA } from "../shared/reading-data.js";
 import { CONNECTION_EVIDENCE_SCHEMA, documentSemanticHash, getRelated, retrieveEvidence, setConnectionEvidence } from "../shared/related.js";
 import type { StudyAdapter, StudyDocument } from "../shared/study-types.js";
+import { SEMANTIC_ANN_SCHEMA, annInsert } from "../shared/semantic-ann.js";
 
 function fixture() {
   const sql = new DatabaseSync(":memory:"); sql.exec("PRAGMA foreign_keys=ON");
@@ -12,7 +13,7 @@ function fixture() {
     CREATE TABLE study_document_tags(document_id TEXT,tag TEXT);
     CREATE TABLE papers(id TEXT,extraction_id TEXT); CREATE TABLE paper_pages(paper_id TEXT,extraction_id TEXT,original_json TEXT);
     CREATE TABLE semantic_indexes(document_id TEXT PRIMARY KEY,source_hash TEXT,model TEXT,format_version TEXT,vector_json TEXT,state TEXT);`);
-  sql.exec(READING_DATA_SCHEMA + CONNECTION_EVIDENCE_SCHEMA);
+  sql.exec(READING_DATA_SCHEMA + CONNECTION_EVIDENCE_SCHEMA + SEMANTIC_ANN_SCHEMA);
   let beforeBatch: (() => void) | null = null;
   const db: StudyAdapter = { documentsTable: "documents",
     async all(query, values) { return sql.prepare(query).all(...values as never[]); },
@@ -56,6 +57,21 @@ test("related keyset pages can reach documents beyond the first scan budget", as
     f.add("zz-last", "A remote manual note", "Last document", "research");
     const first = await getRelated(f.db, "source"); assert.equal(first.scannedDocuments, 1000); assert.equal(first.truncated, true); assert.ok(first.nextCursor);
     const second = await getRelated(f.db, "source", { cursor: first.nextCursor! }); assert.ok(second.items.some((item) => item.document.id === "zz-last")); assert.equal(second.truncated, false);
+  } finally { f.sql.close(); }
+});
+
+test("ANN recommendations can include a nearest source beyond the metadata page", async () => {
+  const f = fixture();
+  try {
+    f.add("source", "An original source."); await f.index("source", [1, 0]);
+    for (let index = 0; index < 1100; index++) { const id = `d${String(index).padStart(4, "0")}`; f.add(id, "Independent note"); await f.index(id, [.4, .6]); }
+    f.add("zz-nearest", "A matching original."); await f.index("zz-nearest", [1, 0]);
+    for (const row of f.sql.prepare("SELECT * FROM semantic_indexes").all()) {
+      const insertion = annInsert("documents", String(row.document_id), String(row.source_hash), String(row.model), String(row.format_version), JSON.parse(String(row.vector_json)))!;
+      f.sql.prepare(insertion.sql).run(...insertion.values as never[]);
+    }
+    const result = await getRelated(f.db, "source", { types: ["semantic"] });
+    assert.equal(result.search?.mode, "ann"); assert.ok(result.items.some((item) => item.document.id === "zz-nearest")); assert.equal(result.scannedDocuments, 1000); assert.ok(result.search!.vectorRows <= 64);
   } finally { f.sql.close(); }
 });
 

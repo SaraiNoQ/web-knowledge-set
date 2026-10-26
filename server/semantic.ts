@@ -12,6 +12,7 @@ import {
   splitSemanticSections,
 } from "../shared/semantic.js";
 import type { KnowledgeDatabase } from "./db.js";
+import { backfillAnn } from "../shared/semantic-ann.js";
 
 export class SemanticError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) {
@@ -57,7 +58,11 @@ export class SemanticTasks {
     const key = this.apiKey();
     if (!key) throw new SemanticError(409, "SEMANTIC_KEY_MISSING", "Set the embedding API key before indexing");
     const id = db.nextSemanticDocument(Date.now(), settings.model, SEMANTIC_FORMAT_VERSION);
-    if (!id) return this.result("idle", null);
+    if (!id) {
+      const indexed = await backfillAnn({ documentsTable: "documents", all: async (sql, values) => db.sql.prepare(sql).all(...values as never[]),
+        batch: async (statements) => { assertCurrent(); db.sql.exec("BEGIN IMMEDIATE"); try { for (const statement of statements) db.sql.prepare(statement.sql).run(...statement.values as never[]); db.sql.exec("COMMIT"); } catch (cause) { db.sql.exec("ROLLBACK"); throw cause; } } });
+      return this.result(indexed ? "progress" : "idle", null);
+    }
     const source = db.getSemanticSource(id);
     if (!source) return this.result("idle", id);
     const chunks = await splitSemanticSections(source.sections);

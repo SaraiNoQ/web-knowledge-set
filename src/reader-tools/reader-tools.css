@@ -44,3 +44,13 @@
 .selection-translation-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; }
 .selection-translation-controls > label { flex: 1 1 100px; min-width: 0; }
 .selection-translation-controls > .reader-tool-actions { margin-top: 0; }
+.external-plugin-settings { margin-top: 32px; }
+.external-plugin-settings > p { max-width: 65ch; }
+.external-plugin-list { padding: 0; list-style: none; }
+.external-plugin-list > li { padding: 18px 0; border-bottom: 1px solid var(--line); }
+.external-plugin-settings h3 { margin: 0 0 8px; font-size: 16px; }
+.external-plugin-list p { overflow-wrap: anywhere; }
+.plugin-package-details { margin: 24px 0; }
+.plugin-package-details code { display: block; overflow-wrap: anywhere; font-size: 12px; }
+.external-plugin-text { white-space: pre-wrap; overflow-wrap: anywhere; font: 14px/1.8 var(--font-sans); }
+.external-plugin-view label { display: grid; gap: 6px; margin: 12px 0; }

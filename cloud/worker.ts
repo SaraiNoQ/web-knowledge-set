@@ -24,6 +24,7 @@ import {
   type D1Database,
 } from "./extension";
 import { handleImportApi } from "./import";
+import { pluginWorkerDocument } from "../shared/plugin-worker";
 import { handleAiApi, translateReaderSelection } from "./ai";
 import { createReadingRepository, ReadingDataError } from "../shared/reading-data";
 import { ReaderInputError } from "../shared/reader-tools";
@@ -473,6 +474,9 @@ export async function handleRequest(request: Request, env: CloudEnv) {
   try {
     const url = new URL(request.url);
     if (url.pathname === "/health") return json({ ok: true, mode: "cloud-core" });
+    if (url.pathname === "/reader-plugin-worker" && (request.method === "GET" || request.method === "HEAD")) {
+      const worker = pluginWorkerDocument(); return new Response(request.method === "HEAD" ? null : worker.script, { headers: worker.headers });
+    }
 
     const assetResponse = (request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith("/api/assets/")
       ? await handleAssetRequest(env.IMAGES, url)

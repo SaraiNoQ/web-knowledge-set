@@ -372,6 +372,7 @@ export default function KnowledgeMap3D(props: Props) {
       disposeGraph();
       renderer.dispose();
       renderer.forceContextLoss();
+      canvas.width = canvas.height = 0;
       canvas.remove();
       labelLayer.replaceChildren();
       runtime.current = null;
