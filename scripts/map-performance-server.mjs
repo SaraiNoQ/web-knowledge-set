@@ -24,8 +24,10 @@ const processRows = () => execFileSync("ps", ["-A", "-o", "pid=,ppid=,rss=,comm=
 const before = new Set(JSON.parse(process.env.ZHIYE_MAP_BENCH_INITIAL_WEBKIT || "[]"));
 const memory = () => {
   const rows = processRows(), own = new Set([process.pid, process.ppid]);
+  let changed = true;
+  while (changed) { changed = false; for (const row of rows) if (own.has(row.ppid) && !own.has(row.pid)) { own.add(row.pid); changed = true; } }
   const selected = rows.filter((row) => own.has(row.pid) || (/com\.apple\.WebKit\.(?:WebContent|GPU|Networking)/.test(row.command) && !before.has(row.pid)));
-  return { processes: selected, totalRssKiB: selected.reduce((sum, row) => sum + row.rssKiB, 0), attribution: "Tauri/sidecar plus newly launched WebKit processes; no forced GC" };
+  return { processes: selected, totalRssKiB: selected.reduce((sum, row) => sum + row.rssKiB, 0), attribution: "isolated test process tree plus newly launched WebKit processes; RSS can count shared pages more than once; no forced GC" };
 };
 const json = (response, value, status = 200) => { response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" }); response.end(JSON.stringify(value)); };
 let resultCount = 0;

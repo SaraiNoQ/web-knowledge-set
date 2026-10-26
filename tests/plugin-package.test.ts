@@ -115,3 +115,31 @@ test("backup restore rejects publisher-origin conflicts with orphan settings wit
   await assert.rejects(target.importState(orphanBackup, []), /不同发布者来源/u); assert.equal(targetBackend.getItem(PLUGIN_REGISTRY_KEY), before);
   await target.install(second, approve(second)); assert.equal(target.storage(second.manifest.id).get("private", ""), "target values");
 });
+
+test("a stale startup probe cannot roll back a version already activated, replaced or uninstalled elsewhere", async () => {
+  const backend = new MemoryStorage(), firstTab = createPluginRegistry(backend), otherTab = createPluginRegistry(backend);
+  const first = await stagePluginPackage(await packageBytes()), second = await stagePluginPackage(await packageBytes({ version: "1.1.0" })), third = await stagePluginPackage(await packageBytes({ version: "1.2.0" }));
+  await firstTab.install(first, approve(first)); firstTab.activate(first.manifest.id, first.sha256); firstTab.storage(first.manifest.id).set("note", "first version");
+  await firstTab.install(second, approve(second)); firstTab.storage(second.manifest.id).set("note", "pending version");
+  otherTab.activate(second.manifest.id, second.sha256); otherTab.storage(second.manifest.id).set("note", "activated elsewhere");
+  let before = backend.getItem(PLUGIN_REGISTRY_KEY);
+  assert.equal(firstTab.rollback(second.manifest.id, { sha256: second.sha256, pending: true }), false); assert.equal(backend.getItem(PLUGIN_REGISTRY_KEY), before);
+  assert.equal(firstTab.storage(second.manifest.id).get("note", ""), "activated elsewhere");
+  await otherTab.install(third, approve(third)); otherTab.storage(third.manifest.id).set("note", "newer pending data"); before = backend.getItem(PLUGIN_REGISTRY_KEY);
+  assert.equal(firstTab.rollback(second.manifest.id, { sha256: second.sha256, pending: true }), false); assert.equal(backend.getItem(PLUGIN_REGISTRY_KEY), before);
+  assert.equal(firstTab.storage(third.manifest.id).get("note", ""), "newer pending data");
+  assert.equal(firstTab.rollback(third.manifest.id, { sha256: third.sha256, pending: true }), true);
+  assert.equal(firstTab.list()[0]!.sha256, second.sha256); assert.equal(firstTab.storage(second.manifest.id).get("note", ""), "activated elsewhere");
+  otherTab.uninstall(second.manifest.id); before = backend.getItem(PLUGIN_REGISTRY_KEY);
+  assert.equal(firstTab.rollback(second.manifest.id, { sha256: second.sha256, pending: true }), false); assert.equal(backend.getItem(PLUGIN_REGISTRY_KEY), before);
+});
+
+test("a late ready message cannot reactivate a canceled probe with the same package fingerprint", async () => {
+  const backend = new MemoryStorage(), registry = createPluginRegistry(backend), pkg = await stagePluginPackage(await packageBytes());
+  await registry.install(pkg, approve(pkg)); assert.equal(registry.rollback(pkg.manifest.id, { sha256: pkg.sha256, pending: true }), true);
+  const before = backend.getItem(PLUGIN_REGISTRY_KEY);
+  assert.throws(() => registry.activate(pkg.manifest.id, pkg.sha256), /检查状态已变化/u); assert.equal(backend.getItem(PLUGIN_REGISTRY_KEY), before);
+  assert.equal(registry.list()[0]!.enabled, false); assert.equal(registry.list()[0]!.pending, false);
+  registry.setEnabled(pkg.manifest.id, true); const active = backend.getItem(PLUGIN_REGISTRY_KEY);
+  assert.throws(() => registry.activate(pkg.manifest.id, pkg.sha256), /检查状态已变化/u); assert.equal(backend.getItem(PLUGIN_REGISTRY_KEY), active); assert.equal(registry.list()[0]!.enabled, true);
+});

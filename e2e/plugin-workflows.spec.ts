@@ -7,7 +7,7 @@ function bundle(version = "1.0.0", broken = false, suppliedScript?: string, perm
   const script = suppliedScript ?? (broken ? "throw new Error('failed upgrade');" : `
     let current = null;
     const view = (text) => zhiye.render({text,fields:[],actions:[{id:'read',label:'读取选区'},{id:'store',label:'保存插件设置'},{id:'recall',label:'读取插件设置'},{id:'denied',label:'尝试未授权翻译'}]});
-    view('插件就绪 ${version}');
+    void (async () => { await zhiye.capabilities(); view(await zhiye.storage.get('greeting','插件就绪 ${version}')); })();
     zhiye.onAction(async (id) => {
       try {
         if(id==='read') {current=await zhiye.selection();view(current ? current.selection.anchor.quote : '没有选区');}
@@ -62,8 +62,9 @@ test("an upgrade requires renewed approval and a failed startup restores previou
   await install(page, bundle("2.0.0", true));
   const section = page.getByRole("region", { name: "第三方插件", exact: true }); await expect(section.getByRole("alert")).toContainText("上一版及其设置已恢复");
   await expect(section.getByRole("heading", { name: "示例阅读插件 · 1.0.0", exact: true })).toBeVisible(); await expect(section.getByRole("checkbox", { name: "启用 示例阅读插件", exact: true })).toBeChecked();
-  await install(page, bundle("3.0.0", false, "Promise.reject(new Error('async startup failure'));"));
+  await install(page, bundle("3.0.0", false, "zhiye.initialize(async () => { await zhiye.storage.set('during-upgrade','must-rollback'); throw new Error('async startup failure'); });"));
   await expect(section.getByRole("heading", { name: "示例阅读插件 · 1.0.0", exact: true })).toBeVisible(); await expect(section.getByRole("checkbox", { name: "启用 示例阅读插件", exact: true })).toBeChecked();
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("zhiye.external-plugins.v1")!).data["example.reader"].values["during-upgrade"])).toBeUndefined();
 });
 
 test("external RPC rejects undeclared capabilities and missing selection tokens before any model or data write", async ({ page, request }) => {

@@ -111,12 +111,14 @@ export function createPluginRegistry(backend: ToolStorageBackend) {
       state.installations[id] = { package: saved, enabled: false, pending: true, previous: old ? { package: old.package, enabled: old.enabled, data: clone(state.data[id]!) } : null };
       save(state);
     },
-    activate(id: string, sha256: string) { const state = mutable(), item = installed(state, id); if (item.package.sha256 !== sha256) return fail("插件版本已变化，请重新打开。"); item.enabled = true; item.pending = false; save(state); },
+    activate(id: string, sha256: string) { const state = mutable(), item = installed(state, id); if (item.package.sha256 !== sha256 || !item.pending) return fail("插件版本或检查状态已变化，请重新打开。"); item.enabled = true; item.pending = false; save(state); },
     setEnabled(id: string, enabled: boolean) { const state = mutable(), item = installed(state, id); if (enabled && item.pending) return fail("插件尚未完成运行检查，请先打开并验证。"); item.enabled = enabled; save(state); },
-    rollback(id: string) {
-      const state = mutable(), item = installed(state, id), previous = item.previous;
+    rollback(id: string, expected?: { sha256: string; pending: true }) {
+      const state = mutable(), current = state.installations[id];
+      if (expected && (!current || !current.pending || current.package.sha256 !== expected.sha256)) return false;
+      const item = installed(state, id), previous = item.previous;
       if (!previous) { item.enabled = false; item.pending = false; } else { state.installations[id] = { package: previous.package, enabled: previous.enabled, pending: false, previous: null }; state.data[id] = clone(previous.data); }
-      save(state);
+      save(state); return true;
     },
     uninstall(id: string, removeData = false) { const state = mutable(); installed(state, id); delete state.installations[id]; if (removeData) delete state.data[id]; save(state); },
     retainedData() { const state = load(); return Object.entries(state.data).filter(([id]) => !state.installations[id]).map(([id, data]) => ({ id, publisherOrigin: data.publisherOrigin, storageVersion: data.schemaVersion })); },

@@ -24,6 +24,7 @@ const text = (command, argv) => execFileSync(command, argv, { cwd: repo, encodin
 const hash = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 const sourcePaths = ["src/components/KnowledgeMap.tsx", "src/components/KnowledgeMap3D.tsx", "src/graph-layout-3d.ts", "src/semantic-graph-worker.ts", "shared/semantic-graph.ts", "src-tauri/Cargo.lock"];
 const report = { startedAt: new Date().toISOString(), sourceSha: text("git", ["rev-parse", "HEAD"]), sourceFiles: Object.fromEntries(sourcePaths.map((path) => [path, hash(join(repo, path))])), hardware: { cpu: cpus()[0].model, memoryBytes: totalmem(), arch: arch(), macOS: text("sw_vers", ["-productVersion"]), build: text("sw_vers", ["-buildVersion"]) }, node: process.version, methodology: { documents: [1000, 10000], dimensions: 1024, folders: 20, toggleCycles: 30, interactionInput: "synthetic DOM pointer/wheel events; trusted canvas picking requires separate browser regression", memory: "RSS of native host, sidecar and newly launched WebKit processes; no forced GC", nativeChanges: "temporary data-directory/keychain/bundle identifiers only; production renderer source unchanged", thresholds: { nominal60HzFps: 59.5, frameP95Ms: 33, detailP95Ms: 100, postWarmupRssGrowthMiB: 32, postWarmupRssSlopeMiBPerCycle: 1 } }, engines: {} };
+report.instrumentationHashes = Object.fromEntries(["benchmark-macos-map.mjs", "map-performance-browser.js", "map-performance-server.mjs"].map((name) => [name, hash(join(repo, "scripts", name))]));
 
 if (!option("--prepared")) {
   mkdirSync(source);

@@ -70,7 +70,10 @@ export function ReaderToolsHost() {
     for (const [id, value] of active.current) if (!state.enabled.includes(id) || value.retry !== (state.retries[id] ?? 0) || value.packageSha !== external.plugins.find((item) => item.id === id)?.sha256) { value.controller.abort(); active.current.delete(id); readerTools.unregister(id); translationCache.clear(); }
     const items = [...builtinReaderTools, ...external.plugins.filter((item) => item.enabled).map((item) => ({
       manifest: item.manifest,
-      load: () => pluginRegistry.getVerified(item.id).then((pkg) => externalPluginModule(pkg, () => { try { pluginRegistry.setEnabled(item.id, false); } catch {} readerTools.fail(item.id); })),
+      load: () => pluginRegistry.getVerified(item.id).then((pkg) => {
+        if (pkg.sha256 !== item.sha256) throw new Error("插件版本已变化。");
+        return externalPluginModule(pkg, () => { try { const current = pluginRegistry.list().find((entry) => entry.id === item.id); if (current?.sha256 === pkg.sha256 && current.enabled) { pluginRegistry.setEnabled(item.id, false); readerTools.fail(item.id); } } catch {} });
+      }),
     }))];
     for (const item of items) {
       const id = item.manifest.id;

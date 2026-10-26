@@ -3,9 +3,10 @@ const runtime = String.raw`(() => {
   const listen = self.addEventListener.bind(self), unlisten = self.removeEventListener.bind(self);
   const schedule = self.setTimeout.bind(self), repeat = self.setInterval.bind(self), unschedule = self.clearTimeout.bind(self);
   const loadScript = self.importScripts.bind(self);
+  const readMessage = Function.prototype.call.bind(Object.getOwnPropertyDescriptor(MessageEvent.prototype, "data").get);
   const stringify = JSON.stringify.bind(JSON), encode = new TextEncoder().encode.bind(new TextEncoder());
   const define = Object.defineProperty, freeze = Object.freeze, prototype = Object.getPrototypeOf;
-  for (const name of ["fetch", "XMLHttpRequest", "WebSocket", "WebSocketStream", "WebTransport", "EventSource", "RTCPeerConnection", "webkitRTCPeerConnection", "Worker", "SharedWorker", "BroadcastChannel", "indexedDB", "caches", "navigator", "importScripts", "postMessage", "close", "__TAURI_INTERNALS__", "__TAURI__"]) {
+  for (const name of ["fetch", "XMLHttpRequest", "WebSocket", "WebSocketStream", "WebTransport", "EventSource", "RTCPeerConnection", "webkitRTCPeerConnection", "Worker", "SharedWorker", "BroadcastChannel", "indexedDB", "caches", "navigator", "importScripts", "postMessage", "close", "event", "__TAURI_INTERNALS__", "__TAURI__"]) {
     for (let owner = self; owner; owner = prototype(owner)) {
       if (Object.hasOwn(owner, name)) define(owner, name, { value: undefined, writable: false, configurable: false });
     }
@@ -16,6 +17,7 @@ const runtime = String.raw`(() => {
     if (event.data?.type !== "initialize" || event.ports.length !== 1 || typeof event.data.scriptUrl !== "string" || !event.data.scriptUrl.startsWith("blob:")) return;
     event.stopImmediatePropagation();
     unlisten("message", initialize);
+    const scriptUrl = event.data.scriptUrl;
     const port = event.ports[0], post = port.postMessage.bind(port), pending = new Map();
     const pack = (value) => {
       const text = stringify(value);
@@ -25,6 +27,13 @@ const runtime = String.raw`(() => {
     const send = (value) => post(pack(value));
     let failed = false;
     listen("unhandledrejection", (event) => { event.preventDefault(); failed = true; send({ type: "failed" }); });
+    let loaded = false, readySent = false, startupTasks = 0;
+    const maybeReady = () => { if (loaded && !failed && !pending.size && !startupTasks && !readySent) schedule(() => { if (loaded && !failed && !pending.size && !startupTasks && !readySent) { readySent = true; send({ type: "ready" }); } }, 0); };
+    const initializeTask = (task) => {
+      if (loaded || startupTasks || typeof task !== "function") throw new Error("请在入口脚本中注册一次初始化。");
+      startupTasks += 1;
+      Promise.resolve().then(task).then(() => { startupTasks -= 1; maybeReady(); }, () => { startupTasks -= 1; failed = true; send({ type: "failed" }); });
+    };
     let queuedView = "", viewTimer = 0;
     const render = (view) => { queuedView = pack({ type: "view", view }); if (!viewTimer) viewTimer = schedule(() => { viewTimer = 0; post(queuedView); }, 80); };
     let sequence = 0, action = null;
@@ -34,7 +43,7 @@ const runtime = String.raw`(() => {
       pending.set(id, { resolve, reject, onText, timer }); send({ type: "request", id, method, args });
     });
     define(self, "zhiye", { configurable: false, writable: false, value: freeze({
-      selection: () => call("selection.get"), capabilities: () => call("capabilities"),
+      initialize: initializeTask, selection: () => call("selection.get"), capabilities: () => call("capabilities"),
       storage: freeze({ get: (key, fallback = null) => call("storage.get", { key, fallback }), set: (key, value) => call("storage.set", { key, value }) }),
       translate: (token, language, onText) => call("translation.request", { token, language }, onText),
       saveExcerpt: (token, translation = "", note = "") => call("annotations.create", { token, translation, note }),
@@ -42,7 +51,7 @@ const runtime = String.raw`(() => {
       onAction: (listener) => { if (typeof listener !== "function") throw new Error("操作监听器无效。"); action = listener; }
     }) });
     port.onmessage = (event) => {
-      const data = event.data;
+      const data = readMessage(event);
       if (!data || typeof data !== "object") return;
       if (data.type === "action" && typeof action === "function") { Promise.resolve().then(() => action(data.id, data.values)).catch(() => send({ type: "failed" })); return; }
       const request = pending.get(data.id); if (!request) return;
@@ -50,9 +59,10 @@ const runtime = String.raw`(() => {
       if (data.type !== "result") return;
       unschedule(request.timer); pending.delete(data.id);
       if (data.error) request.reject(new Error(String(data.error))); else request.resolve(data.value);
+      maybeReady();
     };
-    port.start(); repeat(() => send({ type: "heartbeat" }), 2000);
-    try { loadScript(event.data.scriptUrl); URL.revokeObjectURL(event.data.scriptUrl); schedule(() => { if (!failed) send({ type: "ready" }); }, 0); }
+    port.start(); send({ type: "connected" }); repeat(() => send({ type: "heartbeat" }), 2000);
+    try { loadScript(scriptUrl); URL.revokeObjectURL(scriptUrl); loaded = true; maybeReady(); }
     catch { failed = true; send({ type: "failed" }); }
   };
   listen("message", initialize);

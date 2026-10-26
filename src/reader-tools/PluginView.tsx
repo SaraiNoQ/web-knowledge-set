@@ -10,7 +10,7 @@ import { Button, Input, Textarea } from "../components/ui/Controls";
 function startPlugin(pkg: VerifiedPluginPackage, api: ReaderToolApi | null, update: (view: View) => void, ready: () => void, fail: (message: string) => void) {
   const worker = new Worker("/reader-plugin-worker", { name: pkg.manifest.id }), channel = new MessageChannel(), port = channel.port1;
   const requests = new Map<string, AbortController>(), used = new Set<string>();
-  let stopped = false, initialized = false, lastHeartbeat = Date.now(), windowStart = Date.now(), messages = 0, actions = 0, receivedBytes = 0;
+  let stopped = false, initialized = false, healthy = false, lastHeartbeat = Date.now(), windowStart = Date.now(), messages = 0, actions = 0, receivedBytes = 0;
   let selectionToken = "", selectionKey = "", lastAction = 0;
   const stop = () => { if (stopped) return; stopped = true; clearTimeout(startup); clearInterval(watchdog); for (const controller of requests.values()) controller.abort(); requests.clear(); port.close(); worker.terminate(); };
   const failure = (message = "插件已停止，正文仍可继续阅读。") => { if (stopped) return; stop(); fail(message); };
@@ -38,7 +38,8 @@ function startPlugin(pkg: VerifiedPluginPackage, api: ReaderToolApi | null, upda
       const packet = data as Record<string, unknown>;
       if (packet.type === "heartbeat") { lastHeartbeat = Date.now(); return; }
       if (packet.type === "failed") { failure("插件执行失败，已停止。"); return; }
-      if (packet.type === "ready" && !initialized) { initialized = true; clearTimeout(startup); lastHeartbeat = Date.now(); ready(); return; }
+      if (packet.type === "connected" && !initialized) { initialized = true; return; }
+      if (packet.type === "ready" && initialized && !healthy) { healthy = true; clearTimeout(startup); lastHeartbeat = Date.now(); ready(); return; }
       if (packet.type === "view") { update(parsePluginView(packet.view)); return; }
       if (packet.type === "cancel" && typeof packet.id === "string") { requests.get(packet.id)?.abort(); return; }
       const request = parsePluginRequest(data);

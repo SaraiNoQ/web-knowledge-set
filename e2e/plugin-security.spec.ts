@@ -124,3 +124,26 @@ test("the trusted child transport rejects oversized views before cloning them in
   }));
   expect(outcome.text).toBe("oversize blocked"); expect(outcome.largest).toBeLessThanOrEqual(64 * 1024);
 });
+
+test("poisoning message event getters cannot recover the private SDK port", async ({ page }) => {
+  await page.goto("/");
+  const report = await page.evaluate(() => new Promise<{ leaked: boolean; response: string }>((resolve, reject) => {
+    const worker = new Worker("/reader-plugin-worker"), channel = new MessageChannel();
+    const stop = () => { clearTimeout(timer); channel.port1.close(); worker.terminate(); };
+    const timer = setTimeout(() => { stop(); reject(new Error("private port test timed out")); }, 7000);
+    worker.onerror = () => { stop(); reject(new Error("isolated worker failed")); };
+    channel.port1.onmessage = (event) => {
+      const packet = JSON.parse(event.data);
+      if (packet.type === "request") channel.port1.postMessage({ type: "result", id: packet.id, value: "bounded result" });
+      if (packet.type === "view") { stop(); resolve(JSON.parse(packet.view.text)); }
+    };
+    channel.port1.start();
+    worker.postMessage({ type: "start", script: `
+      const original = Object.getOwnPropertyDescriptor(MessageEvent.prototype,'data').get;
+      let leaked = false;
+      Object.defineProperty(MessageEvent.prototype,'data',{get(){if(this.currentTarget instanceof MessagePort || this.ports.length) leaked=true;return original.call(this);}});
+      zhiye.capabilities().then(response=>zhiye.render({text:JSON.stringify({leaked,response}),fields:[],actions:[]}));
+    ` }, [channel.port2]);
+  }));
+  expect(report).toEqual({ leaked: false, response: "bounded result" });
+});

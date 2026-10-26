@@ -1,4 +1,8 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { api as coreApi } from "../api";
+import { READER_SELECTION_MAX_CHARS } from "../../shared/reader-tools";
+import { READER_TOOL_STORAGE_BYTES } from "./tool-storage";
+import type { ReaderToolApi, ReaderToolManifest } from "./runtime";
 import { Button, Checkbox } from "../components/ui/Controls";
 import { FileSelectButton } from "../components/ui/Uploads";
 import { Modal } from "../components/ui/Modal";
@@ -11,6 +15,19 @@ import { PluginView } from "./PluginView";
 const labels = { "selection.read": "读取当前选区", "translation.request": "通过已配置模型翻译选区", "storage.own": "保存自己的私有设置", "annotations.create": "保存选区摘录" };
 const approval = (item: Pick<InstalledPlugin, "sha256" | "manifest">): PluginApproval => ({ sha256: item.sha256, publisherOrigin: item.manifest.publisher.origin, permissions: item.manifest.permissions });
 const message = (cause: unknown) => cause instanceof Error ? cause.message : "操作失败，请重试。";
+function probingApi(pkg: VerifiedPluginPackage): ReaderToolApi {
+  const alive = () => { const current = pluginRegistry.list().find((item) => item.id === pkg.manifest.id); if (!current?.pending || current.sha256 !== pkg.sha256) throw new Error("插件检查已结束或版本已变化。"); };
+  const permit = (permission: ReaderToolManifest["permissions"][number]) => { alive(); if (!pkg.manifest.permissions.includes(permission)) throw new Error("工具未声明所需权限。"); };
+  const storage = pluginRegistry.storage(pkg.manifest.id);
+  return {
+    selection: () => { permit("selection.read"); return null; },
+    async capabilities() { alive(); const platform = await coreApi.getRuntimeMode(); alive(); return { platform: "__TAURI_INTERNALS__" in globalThis ? "desktop" : platform, hostApiVersion: 1, permissions: pkg.manifest.permissions, maxSelectionCharacters: READER_SELECTION_MAX_CHARS, storageSchemaVersion: pkg.manifest.storageVersion, storageQuotaBytes: READER_TOOL_STORAGE_BYTES, translationCache: { entries: 32, bytes: 512 * 1024, ttlMs: 5 * 60000 } }; },
+    storage: { get: (key, fallback) => { permit("storage.own"); return storage.get(key, fallback); }, set: (key, value) => { permit("storage.own"); storage.set(key, value); }, subscribe: pluginRegistry.subscribe },
+    close() {},
+    async translate() { throw new Error("启动检查期间不发送翻译请求，请在打开工具后操作。"); },
+    async saveExcerpt() { throw new Error("启动检查期间不保存摘录，请在打开工具后操作。"); },
+  };
+}
 function PackageDetails({ item }: { item: Pick<InstalledPlugin, "sha256" | "manifest"> }) {
   return <div className="plugin-package-details"><h3>{item.manifest.name} · {item.manifest.version}</h3><p>{item.manifest.publisher.name} · {item.manifest.publisher.origin}</p><code>{item.sha256}</code><ul>{item.manifest.permissions.map((permission) => <li key={permission}>{labels[permission]}</li>)}</ul>{!item.manifest.permissions.length && <p>不申请资料或私有设置权限。</p>}</div>;
 }
@@ -18,11 +35,18 @@ export function PluginSettings() {
   const { plugins, retained, error: registryError } = useExternalPlugins(), dialogs = useDialogs(), toast = useToast();
   const [error, setError] = useState(""), [busy, setBusy] = useState(false), [accepted, setAccepted] = useState(false);
   const [staged, setStaged] = useState<VerifiedPluginPackage | null>(null), [probe, setProbe] = useState<VerifiedPluginPackage | null>(null);
+  const probeApi = useMemo(() => probe ? probingApi(probe) : null, [probe?.sha256]);
   const [backup, setBackup] = useState<{ text: string; items: InstalledPlugin[] } | null>(null);
   const [removing, setRemoving] = useState<InstalledPlugin | null>(null), [removeData, setRemoveData] = useState(false);
   const perform = async (action: () => Promise<void> | void) => { setBusy(true); setError(""); try { await action(); } catch (cause) { setError(message(cause)); } finally { setBusy(false); } };
   const start = async (id: string) => { setProbe(await pluginRegistry.getVerified(id)); };
-  const failed = (reason: string) => { if (!probe) return; try { pluginRegistry.rollback(probe.manifest.id); } catch (cause) { setError(message(cause)); } setProbe(null); setError(`${reason} 已停用此版本；可用的上一版及其设置已恢复。`); };
+  const failed = (reason: string) => {
+    if (!probe) return;
+    let detail: string;
+    try { detail = pluginRegistry.rollback(probe.manifest.id, { sha256: probe.sha256, pending: true }) ? "已停用此版本；可用的上一版及其设置已恢复。" : "插件已在其他操作中变化，未回退当前版本。"; }
+    catch (cause) { detail = message(cause); }
+    setProbe(null); setError(`${reason} ${detail}`);
+  };
   return <section className="external-plugin-settings" aria-label="第三方插件"><h2>第三方插件</h2>
     <p>导入本地插件包。插件在可终止的后台环境中运行，界面由织页绘制；不能读取整页、访问网络或修改页面样式。</p>
     <p>包和私有设置仅保存在当前浏览器，最多 4 MiB。请单独导出备份；插件保存的摘录属于知识库。</p>
@@ -43,7 +67,7 @@ export function PluginSettings() {
       <Button disabled={busy || Boolean(probe)} onClick={() => { setRemoving(item); setRemoveData(false); }}>卸载</Button>
     </div></li>)}</ul>
     {retained.length > 0 && <section aria-label="已卸载插件的设置"><h3>保留的插件设置</h3><ul className="external-plugin-list">{retained.map((item) => <li key={item.id}><p>{item.id} · {item.publisherOrigin}</p><Button disabled={busy || Boolean(probe)} onClick={() => void perform(async () => { if (await dialogs.confirm("永久删除此已卸载插件的私有设置？请先导出插件备份，知识库摘录不受影响。", { title: "清除插件设置", confirmLabel: "永久删除设置", tone: "danger" })) pluginRegistry.clearRetainedData(item.id, item.publisherOrigin); })}>清除保留设置</Button></li>)}</ul></section>}
-    {probe && <div role="status">正在验证 {probe.manifest.name}…<Button onClick={() => failed("已取消验证。")}>取消验证</Button><div hidden><PluginView pkg={probe} api={null} onReady={() => { try { pluginRegistry.activate(probe.manifest.id, probe.sha256); setProbe(null); toast.success("插件已启用，可在阅读器中打开。"); } catch (cause) { failed(message(cause)); } }} onFailure={failed} /></div></div>}
+    {probe && <div role="status">正在验证 {probe.manifest.name}…<Button onClick={() => failed("已取消验证。")}>取消验证</Button><div hidden><PluginView pkg={probe} api={probeApi} onReady={() => { try { pluginRegistry.activate(probe.manifest.id, probe.sha256); setProbe(null); toast.success("插件已启用，可在阅读器中打开。"); } catch (cause) { failed(message(cause)); } }} onFailure={failed} /></div></div>}
     <Modal open={Boolean(staged || backup)} title={staged ? "确认安装插件" : "确认恢复插件备份"} dismissible={!busy} onClose={() => { setStaged(null); setBackup(null); }} footer={<><Button disabled={busy} onClick={() => { setStaged(null); setBackup(null); }}>取消</Button><Button variant="primary" disabled={!accepted || busy} onClick={() => void perform(async () => {
       if (staged) { const pkg = staged; await pluginRegistry.install(pkg, approval(pkg)); setStaged(null); setProbe(pkg); }
       else if (backup) { await pluginRegistry.importState(backup.text, backup.items.map(approval)); setBackup(null); toast.success("插件备份已恢复，请逐个验证并启用。"); }

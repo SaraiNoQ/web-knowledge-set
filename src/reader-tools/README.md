@@ -51,6 +51,8 @@ zhiye.onAction(async (actionId) => {
 
 SDK 方法：
 
+入口可立即读取能力和自己的设置。需要等待异步初始化或迁移兼容设置时，使用 `zhiye.initialize(async () => { ... })` 注册一次启动任务；宿主等待它及 SDK 请求完成后才启用，抛错或超过 5 秒会拒绝启用并恢复上一版。不要用未返回的异步任务表达启动成功。安装检查允许声明的私有设置和能力查询，选区为空，不执行翻译或保存摘录；运行后的异常会停用插件，仍可手动回退。
+
 | 方法 | 用途及权限 |
 | --- | --- |
 | `selection()` | 异步取得当前选区及短期 token，需 `selection.read` |
@@ -60,6 +62,7 @@ SDK 方法：
 | `saveExcerpt(token, translation = "", note = "")` | 把当前版本的选区保存为核心摘录，需 `annotations.create` |
 | `render({text, fields, actions})` | 更新宿主视图；最多 4 个输入项和 4 个按钮 |
 | `onAction(callback)` | 接收 `callback(actionId, values)`，输入值仍需插件自身校验 |
+| `initialize(callback)` | 在入口注册一次异步启动任务，返回的 Promise 决定初始化成功或失败 |
 | `close()` | 关闭工具并取消活动任务 |
 
 字段格式为 `{id, label, value, multiline?}`，按钮格式为 `{id, label}`。所有显示值都按纯文本处理。不能把选区 token 替换为任意文档 ID 或正文；文档版本变化、停用和卸载都会使旧请求失效。
