@@ -176,6 +176,8 @@ test("the reader scrolls its own panes, zooms the page, and resizes the split", 
   // Zoom really rescales the rendered page, and the pane scrolls it rather than
   // pushing the layout taller.
   const canvasWidth = () => page.locator(".paper-reader-pdf-scroll canvas").evaluate((element) => Math.round(element.getBoundingClientRect().width));
+  // Wait for the viewport resize to finish before comparing font-only changes.
+  await expect.poll(async () => Math.abs(await canvasWidth() - await page.locator(".paper-reader-pdf-scroll").evaluate((pane) => pane.clientWidth - 2))).toBeLessThanOrEqual(1);
   const fitted = await canvasWidth();
   await page.getByRole("combobox", { name: "中文字号", exact: true }).click();
   await page.getByRole("option", { name: "24 px", exact: true }).click();

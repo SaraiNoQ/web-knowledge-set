@@ -180,3 +180,21 @@ test("automatic restoration follows delayed image layout until the user takes co
   await expect.poll(() => page.getByRole("img", { name: "延迟加载图" }).evaluate((image: HTMLImageElement) => image.complete && image.naturalHeight > 0)).toBe(true);
   await expect.poll(() => fraction(page)).toBeCloseTo(.6, 2);
 });
+
+test("keyboard directory actions also take priority over a delayed restore", async ({ page, request }) => {
+  const { document, headers } = await article(request, `键盘目录优先${Date.now()}`);
+  const progressUrl = `/api/study/documents/${document.id}/progress`;
+  await request.put(progressUrl, { headers, data: { revision: 0, documentRevision: document.revision, fraction: .8, anchor: null, read: false } });
+  let release!: () => void; const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(`**${progressUrl}`, async (route) => { const response = await route.fetch(); await held; await route.fulfill({ response }); });
+  await page.goto("/"); await openArticle(page, document.title);
+  const more = page.getByRole("button", { name: `更多操作：${document.title}`, exact: true });
+  await more.focus(); await more.press("Enter");
+  const menu = page.getByRole("dialog", { name: `操作：${document.title}`, exact: true });
+  await expect(menu).toBeVisible();
+  const response = page.waitForResponse((value) => value.url().endsWith(progressUrl));
+  release(); await response;
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(menu).toBeVisible();
+  await expect.poll(() => fraction(page)).toBe(0);
+});

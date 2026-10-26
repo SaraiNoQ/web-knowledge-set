@@ -116,7 +116,6 @@ export function ReadingProgress({ documentId, restorePosition }: { documentId: s
     };
     const scroll = (event: Event) => capture(event.target);
     const intent = (event: Event) => {
-      if (event instanceof KeyboardEvent && !["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) return;
       if (!(event.target instanceof Element) || !event.target.closest(".reader-panel, .library-panel")) return;
       interacted = true; stopRestore();
     };
