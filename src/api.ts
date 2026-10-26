@@ -1,3 +1,4 @@
+import { documentListUrl } from "./document-list-url";
 import type {
   AppearanceSettings,
   ApiError,
@@ -77,6 +78,7 @@ export type { DataSafetyStatus, DocumentFilters, RecentFilter } from "../shared/
 
 const DATA_EPOCH_HEADER = "X-Zhiye-Data-Epoch";
 let dataEpoch: string | null = null;
+export function currentDataEpoch() { return dataEpoch; }
 let cloudRuntime = globalThis.location?.hostname === "zhiye.sarainoq.cn";
 function cloudCredentialStorage() {
   if (globalThis.location?.hostname !== "zhiye.sarainoq.cn") return null;
@@ -715,27 +717,12 @@ export const api = {
     });
   },
 
-  listDocuments(filters: DocumentFilters, signal?: AbortSignal) {
-    const query = new URLSearchParams();
-    if (filters.q?.trim()) query.set("q", filters.q.trim());
-    if (filters.scope) query.set("scope", filters.scope);
-    if (filters.caseSensitive !== undefined) query.set("caseSensitive", String(filters.caseSensitive));
-    if (filters.kind) query.set("kind", filters.kind);
-    if (filters.tag) query.set("tag", filters.tag);
-    if (filters.collectionId) query.set("collectionId", filters.collectionId);
-    if (filters.folderId) query.set("folderId", filters.folderId);
-    if (filters.unfiled !== undefined) query.set("unfiled", String(filters.unfiled));
-    if (filters.status) query.set("status", filters.status);
-    if (filters.favorite !== undefined) query.set("favorite", String(filters.favorite));
-    if (filters.archived !== undefined) query.set("archived", String(filters.archived));
-    if (filters.unorganized !== undefined) query.set("unorganized", String(filters.unorganized));
-    if (filters.from) query.set("from", filters.from);
-    if (filters.to) query.set("to", filters.to);
-    if (filters.captureMode) query.set("captureMode", filters.captureMode);
-    if (filters.sort) query.set("sort", filters.sort);
-    if (filters.trash) query.set("trash", filters.trash);
-    query.set("page", String(filters.page || 1));
-    return request<DocumentListResponse>(`/api/documents?${query}`, { signal });
+  async listDocuments(filters: DocumentFilters, signal?: AbortSignal) {
+    const response = await requestResponse(documentListUrl(filters), { signal });
+    const epoch = response.headers.get(DATA_EPOCH_HEADER);
+    const result = await response.json() as DocumentListResponse;
+    if (epoch && epoch !== dataEpoch) throw new ApiRequestError("知识库已从备份恢复，请刷新后继续。", 409, "STALE_DATA_EPOCH");
+    return result;
   },
 
   listLibrary(filters: DocumentFilters, signal?: AbortSignal) {

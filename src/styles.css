@@ -2198,9 +2198,8 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .folder-node strong { overflow: hidden; font: 600 var(--font-ui)/1.2 var(--font-sans); text-overflow: ellipsis; white-space: nowrap; }
 .folder-node b { color: var(--ink-faint); font-weight: 400; }
 .folder-node em { color: var(--ink-faint); font: normal 10px/1 var(--font-mono); }
-.folder-node > div { display: flex; opacity: 0; transition: opacity 120ms ease; }
-.folder-node:hover > div, .folder-node:focus-within > div { opacity: 1; }
-.folder-node > div .ui-icon-button { width: 28px; min-height: 28px; font-size: 13px; }
+.folder-node > .ui-icon-button { width: 30px; min-height: 30px; padding: 0; color: var(--ink-faint); }
+.library-directory .directory-document-row { content-visibility: auto; contain-intrinsic-size: auto 35px; }
 .folder-contents { max-height: none; margin-left: 13px; overflow: visible; border-left: 1px solid var(--line); }
 .folder-contents > p { margin: 0; padding: 10px 12px; color: var(--ink-faint); font-size: var(--font-caption); }
 
@@ -2212,7 +2211,8 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   .directory-document-row > .ui-icon-button { min-height: 40px; }
   .folder-node { min-height: 44px; }
   .folder-node > button:first-child { min-height: 43px; }
-  .folder-node > div { opacity: 1; }
+  .folder-node > .ui-icon-button { width: 40px; min-height: 40px; }
+  .library-directory .directory-document-row { contain-intrinsic-size: auto 44px; }
   .folder-contents { max-height: none; overflow: visible; }
 }
 
