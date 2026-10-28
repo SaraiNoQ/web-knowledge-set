@@ -174,7 +174,7 @@ async function source(request: Request, env: VideoEnv, url: URL, id: string, epo
     if (target.pathname !== "/tweet-result" || target.searchParams.get("id") !== tweetId || !/^[a-z0-9]{1,64}$/u.test(target.searchParams.get("token") ?? "") ||
       [...target.searchParams.keys()].some(key => !["id", "token"].includes(key)) || target.searchParams.getAll("id").length !== 1 || target.searchParams.getAll("token").length !== 1) throw new CloudHttpError(400, "INVALID_VIDEO_SOURCE", "Video metadata must match the current tweet");
   } else if (!["video.twimg.com", "video-s.twimg.com"].includes(target.hostname) || !target.pathname.endsWith(".mp4")) throw new CloudHttpError(400, "INVALID_VIDEO_SOURCE", "Only X MP4 sources are allowed");
-  const headers = new Headers({ "User-Agent": "Googlebot" });
+  const headers = new Headers({ "User-Agent": "Googlebot", "Accept-Encoding": "identity" });
   const range = request.headers.get("Range");
   if (range) {
     if (metadata || !/^bytes=\d+-\d*$/u.test(range)) throw new CloudHttpError(400, "INVALID_VIDEO_RANGE", "Invalid source range");

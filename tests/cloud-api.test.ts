@@ -2775,6 +2775,7 @@ test("video source bridge restricts hosts, tweet metadata and forwarded credenti
     assert.equal(requests[0].headers.get("Authorization"), null);
     assert.equal(requests[0].headers.get("Cookie"), null);
     assert.equal(requests[0].headers.get("Range"), "bytes=0-31");
+    assert.equal(requests[0].headers.get("Accept-Encoding"), "identity");
     assert.equal(requests[0].redirect, "manual");
     assert.equal((await get("https://cdn.syndication.twimg.com/tweet-result?id=1577719286659006464&token=3tojuiek1l")).status, 200);
   } finally { globalThis.fetch = original; }

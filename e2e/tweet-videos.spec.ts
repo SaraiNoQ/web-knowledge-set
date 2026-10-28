@@ -8,7 +8,7 @@ async function cloudPage(page: Page) {
 async function article(request: APIRequestContext) {
   const listing = await request.get("/api/documents");
   const headers = { Origin: "http://127.0.0.1:4174", "X-Zhiye-Data-Epoch": listing.headers()["x-zhiye-data-epoch"] };
-  const response = await request.post("/api/documents", { headers, data: { title: "推文视频验证" } });
+  const response = await request.post("/api/documents", { headers, data: { title: `推文视频验证 ${Date.now()}` } });
   expect(response.ok()).toBe(true);
   const { document } = await response.json();
   return { ...(await (await request.get(`/api/documents/${document.id}`)).json()), sourceUrl: "https://x.com/example/status/123456789", markdown: "正文和图片先保存。" };
