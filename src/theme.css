@@ -60,7 +60,6 @@
   .derived-preview pre, .derived-custom-prompt textarea, .derived-history > ol > li,
   .derived-markdown pre, .derived-lightweight pre, .derived-blocked-image,
   .derived-empty, .derived-state, .ui-toast, .back-to-title, .shortcut-card kbd,
-  .knowledge-map-filters input:not([type="checkbox"]), .knowledge-map-filters select,
   .map-canvas-toolbar button, .map-state button, .map-loading,
   .paper-reader-header, .paper-reader-pdf-page, .paper-reader-translation,
   .paper-reader-block--edit textarea, .paper-wireframe-topbar, .paper-wireframe-page,
