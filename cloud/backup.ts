@@ -28,8 +28,8 @@ interface R2ObjectBody {
 }
 
 export interface R2Bucket {
-  put(key: string, value: ArrayBuffer | Uint8Array | string | ReadableStream<Uint8Array>, options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }): Promise<unknown>;
-  get(key: string): Promise<R2ObjectBody | null>;
+  put(key: string, value: ArrayBuffer | Uint8Array | string | ReadableStream<Uint8Array>, options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string>; onlyIf?: { etagDoesNotMatch: string } }): Promise<unknown>;
+  get(key: string, options?: { range?: { offset: number; length: number } }): Promise<R2ObjectBody | null>;
   head(key: string): Promise<{ size: number; httpMetadata?: { contentType?: string } } | null>;
   delete(keys: string | string[]): Promise<void>;
   list(options?: { prefix?: string; cursor?: string }): Promise<{ objects: Array<{ key: string }>; truncated: boolean; cursor?: string }>;
@@ -403,7 +403,17 @@ async function snapshot(db: D1Database, images: R2Bucket): Promise<Archive> {
 async function createBackup(db: D1Database, bucket: R2Bucket, images: R2Bucket, reason: "manual" | "pre-restore" = "manual") {
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
-  const bytes = encoder.encode(JSON.stringify(await snapshot(db, images)));
+  const archive = await snapshot(db, images);
+  const bytes = encoder.encode(JSON.stringify(archive));
+  const exportedBytes = encoder.encode(JSON.stringify({ ...archive, documents: uniqueDocumentSources(archive.documents) }));
+  const assets = (archive as Partial<ArchiveV5>).assets ?? [];
+  const papers = (archive as Partial<ArchiveV6>).paperFiles ?? [];
+  const payloadBytes = exportedBytes.byteLength + [...assets, ...papers].reduce((sum, file) => sum + file.bytes, 0);
+  // Stored ZIP entries use bounded hash filenames; allow 512 bytes per entry for all headers.
+  const zipBytes = payloadBytes + (1 + assets.length + papers.length) * 512 + 64;
+  if (exportedBytes.byteLength > MAX_ARCHIVE_BYTES || zipBytes > MAX_CLOUD_ZIP_REQUEST_BYTES || payloadBytes > MAX_CLOUD_ZIP_UNPACKED_BYTES) {
+    throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup media exceeds the restorable archive budget");
+  }
   if (bytes.byteLength > MAX_ARCHIVE_BYTES) throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds 8 MiB");
   const hash = await sha256(bytes);
   const objectKey = `backups/${id}.zhiye-cloud-backup`;

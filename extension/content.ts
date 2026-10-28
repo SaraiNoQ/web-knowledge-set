@@ -28,6 +28,32 @@ function paintsNothing(source: string) {
   return ![...root.children].some((child) => !NON_DRAWING_SVG_CHILDREN.has(child.localName.toLowerCase()));
 }
 
+/** Keep video-only posts clip-able without treating replies, quotes or loading shells as the post. */
+function videoOnlyTweetUrl(page: Document, id: string | null | undefined): string | null {
+  if (!id || !/\/status\/\d+(?:\/|$)/u.test(location.pathname)) return null;
+  for (const tweet of page.querySelectorAll('article[data-testid="tweet"]')) {
+    if (tweet.closest('aside, [hidden], [aria-hidden="true"]') || tweet.parentElement?.closest('article, blockquote, [data-testid="quoteTweet"], [data-testid="quotedTweet"], [role="link"]')) continue;
+    const own = tweet.cloneNode(true) as Element;
+    for (const nested of own.querySelectorAll('article, blockquote, [data-testid="quoteTweet"], [data-testid="quotedTweet"], [role="link"]')) nested.remove();
+    // X's quoted cards also use an aria-labelledby wrapper containing their own author.
+    for (const nested of own.querySelectorAll('[aria-labelledby*="id__"]')) {
+      if (nested.querySelector('[data-testid="User-Name"]')) nested.remove();
+    }
+    const href = own.querySelector("time")?.closest("a[href]")?.getAttribute("href");
+    if (!href) continue;
+    let matches = false;
+    try {
+      const url = new URL(href, location.href);
+      matches = url.protocol === "https:" && /(?:^|\.)(?:x\.com|twitter\.com)$/u.test(url.hostname) && url.pathname.endsWith(`/status/${id}`);
+    } catch { /* A missing or malformed permalink cannot identify the current post. */ }
+    if (!matches) continue;
+    if ([...own.querySelectorAll("video")].some((video) => (
+      video.getAttribute("src")?.trim() || video.getAttribute("poster")?.trim() || video.querySelector("source[src]")?.getAttribute("src")?.trim()
+    ))) return `https://x.com/i/status/${id}`;
+  }
+  return null;
+}
+
 async function extract(): Promise<ZhiyeClipResult> {
   const page = document.cloneNode(true) as Document;
   const xArticleId = /(?:^|\.)(?:x\.com|twitter\.com)$/u.test(location.hostname)
@@ -146,12 +172,13 @@ async function extract(): Promise<ZhiyeClipResult> {
     .some((element) => element.textContent?.trim()))) {
     throw new Error("X 文章正文尚未加载，请等待页面显示正文后重试。");
   }
+  const videoTweetUrl = !xArticle ? videoOnlyTweetUrl(page, xArticleId) : null;
   const result = new Defuddle(page, {
     url: location.href, markdown: true, useAsync: false,
     ...(xArticle ? { contentSelector: ".x-article-body", removeLowScoring: false, removeContentPatterns: false } : {}),
   }).parse();
   const extracted = text(result.contentMarkdown) ?? text(result.content);
-  const markdown = extracted && restoreProtectedMath(extracted, protectedMath);
+  const markdown = extracted ? restoreProtectedMath(extracted, protectedMath) : videoTweetUrl ? `[视频推文](${videoTweetUrl})` : null;
   if (!markdown) throw new Error("页面没有可剪藏的正文，请使用织页的手动摘录。");
   const cover = text((xArticle?.querySelector('img[itemprop="image"]')
     ?? xArticle?.querySelector(":scope > img, :scope > a > img")

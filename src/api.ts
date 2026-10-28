@@ -1,3 +1,5 @@
+import type { TweetVideoSettings as TweetVideoSettingsState, TweetVideoState as TweetVideoJobState } from "../shared/tweet-video";
+export type { TweetVideoSettings as TweetVideoSettingsState, TweetVideoState as TweetVideoJobState } from "../shared/tweet-video";
 import { documentListUrl } from "./document-list-url";
 import type {
   AppearanceSettings,
@@ -278,6 +280,16 @@ export const api = {
     const disposition = response.headers.get("Content-Disposition") || "";
     const fileName = /filename="?([^";]+)"?/iu.exec(disposition)?.[1]?.replace(/[\\/]/gu, "-") || "zhiye-diagnostics.zip";
     return { blob: await response.blob(), fileName };
+  },
+
+  getTweetVideoSettings(signal?: AbortSignal) {
+    return request<TweetVideoSettingsState>("/api/settings/tweet-videos", { signal });
+  },
+  setTweetVideoSettings(settings: TweetVideoSettingsState) {
+    return request<TweetVideoSettingsState>("/api/settings/tweet-videos", { method: "PUT", body: JSON.stringify(settings) });
+  },
+  getTweetVideoStatus(documentId: string, signal?: AbortSignal) {
+    return request<TweetVideoJobState | null>(`/api/documents/${encodeURIComponent(documentId)}/tweet-videos`, { signal });
   },
 
   async getLlmSettings(signal?: AbortSignal) {

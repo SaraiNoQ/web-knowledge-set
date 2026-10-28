@@ -47,8 +47,8 @@ export function BrowserExtension({ onPairingCountChange }: { onPairingCountChang
   return <section className="extension-help" aria-labelledby="extension-title">
     <h3 id="extension-title">浏览助手</h3>
     <div className="extension-downloads">
-      <a href="/extensions/zhiye-clipper-chrome.zip?v=0.3.11" download>下载 Chrome 扩展 0.3.11</a>
-      <a href="/extensions/zhiye-clipper-firefox.xpi?v=0.3.11" download>下载 Firefox 扩展 0.3.11</a>
+      <a href="/extensions/zhiye-clipper-chrome.zip?v=0.3.12" download>下载 Chrome 扩展 0.3.12</a>
+      <a href="/extensions/zhiye-clipper-firefox.xpi?v=0.3.12" download>下载 Firefox 扩展 0.3.12</a>
     </div>
     <p>Chrome：覆盖旧文件夹，重新加载扩展。</p>
     <p>Firefox：下载 XPI，在扩展管理页安装。</p>

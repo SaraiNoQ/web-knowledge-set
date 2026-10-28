@@ -105,3 +105,44 @@ test("extension rejects a native X cover with no rendered article body", async (
   }).__ZHIYE_CLIP_RESULT__.catch((reason: Error) => reason.message));
   expect(error).toContain("正文尚未加载");
 });
+
+test("extension clips only the current post's own loaded video when its text is empty", async ({ page, browserName }) => {
+  const script = await readFile(`dist/extensions/zhiye-clipper-${browserName === "firefox" ? "firefox" : "chrome"}/content.js`, "utf8");
+  const video = '<div data-testid="videoPlayer"><video src="blob:https://x.com/video-fixture" poster="https://pbs.twimg.com/ext_tw_video_thumb/123/pu/img/poster.jpg" controls></video></div>';
+  const timestamp = (id: string) => `<a href="/videoauthor/status/${id}"><time datetime="2026-10-29T00:00:00Z">Oct 29</time></a>`;
+  const author = '<div data-testid="User-Name"><a href="/videoauthor">Video Author</a><a href="/videoauthor">@videoauthor</a></div>';
+  const tweet = (body: string, id = statusId) => `<article data-testid="tweet">${author}${timestamp(id)}${body}</article>`;
+  const marker = `[视频推文](https://x.com/i/status/${statusId})`;
+  const cases = [
+    { name: "video-only", body: tweet(video), fallback: true },
+    { name: "source-only", body: tweet('<div data-testid="videoPlayer"><video><source src="blob:https://x.com/video-fixture" type="video/mp4"></video></div>'), fallback: true },
+    { name: "existing-text", body: tweet(`<div data-testid="tweetText">The original text stays intact.</div>${video}`), fallback: false },
+    { name: "empty-post", body: tweet(""), fallback: false },
+    { name: "loading-player", body: tweet('<div data-testid="videoPlayer"><video></video></div>'), fallback: false },
+    { name: "reply-only", body: tweet("") + tweet(video, "999"), fallback: false },
+    { name: "wrong-post", body: tweet(video, "999"), fallback: false },
+    { name: "quoted-only", body: tweet(`<div role="link" data-testid="quoteTweet">${author}${timestamp("999")}${video}</div>`), fallback: false },
+    { name: "aria-quoted-only", body: tweet(`<div aria-labelledby="id__quoted">${author}${timestamp("999")}${video}</div>`), fallback: false },
+    { name: "quoted-current-post", body: tweet(`<div role="link">${tweet(video)}</div>`, "999"), fallback: false },
+    { name: "no-permalink", body: `<article data-testid="tweet">${author}${video}</article>`, fallback: false },
+    { name: "hidden-post", body: `<aside>${tweet(video)}</aside>`, fallback: false },
+  ];
+  await page.route("https://pbs.twimg.com/**", route => route.abort());
+  await page.route("https://x.com/**", route => {
+    if (route.request().resourceType() !== "document") return route.abort();
+    const item = cases.find(value => new URL(route.request().url()).searchParams.get("fixture") === value.name)!;
+    return route.fulfill({ contentType: "text/html; charset=utf-8", body: `<!doctype html><html><head><title>Video author on X</title></head><body><main data-testid="primaryColumn">${item.body}</main></body></html>` });
+  });
+  for (const item of cases) {
+    await page.goto(`https://x.com/videoauthor/status/${statusId}?fixture=${item.name}`);
+    await page.addScriptTag({ content: script });
+    const result = await page.evaluate(async () => {
+      try {
+        return { markdown: (await (window as typeof window & { __ZHIYE_CLIP_RESULT__: Promise<{ markdown: string }> }).__ZHIYE_CLIP_RESULT__).markdown, error: null };
+      } catch (error) { return { markdown: null, error: (error as Error).message }; }
+    });
+    if (item.fallback) expect(result.markdown, item.name).toBe(marker);
+    else expect(result.markdown ?? "", item.name).not.toContain("[视频推文]");
+    if (item.name === "existing-text") expect(result.markdown).toContain("The original text stays intact.");
+  }
+});

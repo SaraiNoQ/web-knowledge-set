@@ -91,5 +91,9 @@ if [[ "$mode" == full ]]; then
   pnpm exec wrangler deploy --dry-run --config cloud/wrangler.web.jsonc
   pnpm exec wrangler deploy --dry-run --config cloud/wrangler.clip.jsonc
 fi
+stage=tweet-video-worker-prepare
+node scripts/configure-tweet-video-worker.mjs prepare "$request_path"
 stage=publish
 node scripts/cloudflare-delivery.mjs publish "$request_path"
+stage=tweet-video-worker-activate
+node scripts/configure-tweet-video-worker.mjs activate "$request_path"

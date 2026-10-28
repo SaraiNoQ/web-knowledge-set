@@ -352,3 +352,12 @@ fieldset.sidebar-category-toggle > button { min-height: 26px; padding: 0 2px; }
 }
 
 .workspace-location .breadcrumb-title-input { min-height: 30px; height: 30px; }
+
+.tweet-video-settings { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line); }
+.tweet-video-limit { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.tweet-video-limit .ui-input { width: 100px; }
+.tweet-video-settings p { color: var(--ink-soft); font-size: var(--font-small); line-height: 1.6; }
+.tweet-video-player { display: grid; gap: 8px; margin-block: 12px; }
+.tweet-video-player video { display: block; width: 100%; max-width: 100%; max-height: 70dvh; background: #000; border-radius: var(--control-radius); }
+.tweet-video-player > a, .tweet-video-player > [role="status"] { font-size: var(--font-caption); }
+.tweet-video-status { padding: 10px 24px; margin: 0; color: var(--ink-soft); font-size: var(--font-small); border-bottom: 1px solid var(--line); }

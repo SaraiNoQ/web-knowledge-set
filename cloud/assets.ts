@@ -312,17 +312,40 @@ export async function fetchDocumentAssets(
 export async function handleAssetRequest(
   images: R2Bucket,
   url: URL,
+  rangeHeader: string | null = null,
+  head = false,
 ): Promise<Response | null> {
   const pathname = url.pathname;
   if (!pathname.startsWith("/api/assets/")) return null;
   const hash = pathname.slice("/api/assets/".length);
   if (!HASH.test(hash)) return new Response(null, { status: 404 });
-  const object = await images.get(hash);
-  if (!object) return new Response(null, { status: 404 });
+  const metadata = await images.head(hash);
+  if (!metadata) return new Response(null, { status: 404 });
   const headers = new Headers({
     "Cache-Control": "public, max-age=31536000, immutable",
-    "Content-Type": object.httpMetadata?.contentType ?? "application/octet-stream",
+    "Content-Type": metadata.httpMetadata?.contentType ?? "application/octet-stream",
+    "Accept-Ranges": "bytes",
+    "Content-Length": String(metadata.size),
   });
+  let range: { offset: number; length: number } | undefined;
+  if (rangeHeader && !head) {
+    const match = /^bytes=(\d*)-(\d*)$/u.exec(rangeHeader);
+    const size = metadata.size;
+    let start = match?.[1] ? Number(match[1]) : NaN;
+    let end = match?.[2] ? Number(match[2]) : size - 1;
+    if (match && !match[1] && match[2]) { start = Math.max(0, size - Number(match[2])); end = size - 1; }
+    if (!match || (!match[1] && !match[2]) || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start >= size || end < start || (!match[1] && Number(match[2]) === 0)) {
+      headers.set("Content-Range", `bytes */${size}`); headers.delete("Content-Length");
+      return new Response(null, { status: 416, headers });
+    }
+    end = Math.min(end, size - 1);
+    range = { offset: start, length: end - start + 1 };
+    headers.set("Content-Range", `bytes ${start}-${end}/${size}`);
+    headers.set("Content-Length", String(range.length));
+  }
+  if (head) return new Response(null, { headers });
+  const object = await images.get(hash, range ? { range } : undefined);
+  if (!object) return new Response(null, { status: 404 });
   if (object.httpEtag) headers.set("ETag", object.httpEtag);
-  return new Response(object.body, { headers });
+  return new Response(object.body, { status: range ? 206 : 200, headers });
 }
