@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { MarkdownStyleSelect } from "./MarkdownStyleSelect";
 import { AiSettings } from "./AiSettings";
+import { TweetVideoSettings } from "./TweetVideoSettings";
 import { Button, Checkbox, Select, Input, Range } from "./ui/Controls";
 import { ReaderToolSettings } from "../reader-tools/ReaderSidebar";
 import { DEFAULT_READING_MARGIN, normalizeReadingMargin, saveReadingMargin, DEFAULT_READING_TEXT, READING_FONTS, READING_STYLES, normalizeReadingText, saveReadingText, saveRestoreReadingPosition, type ReadingTextSettings } from "../reading-preferences";
@@ -67,7 +68,7 @@ export function WorkspaceSettings({ cloud, semanticRefresh, onClose, readingMarg
           </div>
         </section>
         <div hidden={section !== "ai"}><AiSettings embedded cloud={cloud} semanticRefresh={semanticRefresh} onClose={onClose} /></div>
-        <div hidden={section !== "tools"}><ReaderToolSettings /></div>
+        <div hidden={section !== "tools"}><ReaderToolSettings />{cloud && <TweetVideoSettings />}</div>
       </div>
     </div>
   </main>;

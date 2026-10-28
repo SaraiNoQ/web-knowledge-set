@@ -45,9 +45,11 @@ import type {
   ReextractionPreview,
 } from "../shared/types";
 import { api, ApiRequestError } from "./api";
-import type { DocumentPatch } from "./api";
+import type { DocumentPatch, TweetVideoJobState } from "./api";
+import { normalizeTweetUrl } from "../shared/tweet-video";
 import { CachedImage } from "./components/ImageViewer";
 import { WorkspaceSettings } from "./components/WorkspaceSettings";
+import { TweetVideoPlayer } from "./components/TweetVideoPlayer";
 import { MarkdownUpload } from "./components/MarkdownUpload";
 import { loadReadingText, loadReadingMargin, loadRestoreReadingPosition, saveReadingText, type ReadingTextSettings } from "./reading-preferences";
 import { AppUpdater } from "./components/AppUpdater";
@@ -360,6 +362,7 @@ const PreviewAssets = createContext<{ sourceUrl: string; bySource: Map<string, D
 function PreviewImage({ src, alt }: { src?: string; alt?: string }) {
   const context = useContext(PreviewAssets)!;
   const assetHash = assetHashFromUri(src);
+  if (assetHash && /^推文视频 [1-4]$/u.test(alt ?? "")) return <TweetVideoPlayer key={assetHash} hash={assetHash} label={alt!} />;
   if (assetHash) return <CloudAssetImage asset={context.byHash.get(assetHash)} hash={assetHash} alt={alt} />;
   const source = assetSource(src, context.sourceUrl);
   return source ? <OfflineImage asset={context.bySource.get(source)} alt={alt} /> : <ImagePlaceholder alt={alt}>图片地址不可用。</ImagePlaceholder>;
@@ -1006,6 +1009,9 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
 
   const persistedDraft = currentDoc ? draftOf(currentDoc) : null;
   const dirty = Boolean(draft && persistedDraft && !draftsEqual(draft, persistedDraft));
+  const cloudEditingRef = useRef(cloudEditing);
+  cloudEditingRef.current = cloudEditing;
+  const [tweetVideoState, setTweetVideoState] = useState<TweetVideoJobState | null>(null);
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
   const metadataDirty = Boolean(sourceMetadata && currentDoc && !sourceMetadataEqual(sourceMetadata, currentDoc));
@@ -1836,6 +1842,32 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
       controller.abort();
     };
   }, [currentDoc?.id, currentDoc?.status, selectedId, updateListItem]);
+
+  useEffect(() => {
+    setTweetVideoState(null);
+    if (!cloudMode || !currentDoc || currentDoc.deletedAt || !normalizeTweetUrl(currentDoc.sourceUrl)) return;
+    const documentId = currentDoc.id;
+    const controller = new AbortController();
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const status = await api.getTweetVideoStatus(documentId, controller.signal);
+        if (controller.signal.aborted || selectedIdRef.current !== documentId) return;
+        setTweetVideoState(status);
+        if (!status) return;
+        if (status.status === "queued" || status.status === "processing") {
+          timer = window.setTimeout(() => void poll(), 3000);
+        } else if (status.status === "ready" && !cloudEditingRef.current && !dirtyRef.current && !metadataDirtyRef.current) {
+          const updated = await api.getDocument(documentId, controller.signal);
+          const live = currentDocRef.current;
+          if (controller.signal.aborted || selectedIdRef.current !== documentId || cloudEditingRef.current || dirtyRef.current || metadataDirtyRef.current || !live || live.id !== documentId || live.deletedAt || updated.revision <= live.revision) return;
+          installCurrentDocument(updated); updateListItem(updated); setDraft(draftOf(updated)); setTagText(updated.tags.join(", "));
+        }
+      } catch { /* The document remains readable when background video status is unavailable. */ }
+    };
+    void poll();
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [cloudMode, currentDoc?.id, currentDoc?.deletedAt, selectedId, cloudEditing, dirty, metadataDirty, installCurrentDocument, updateListItem]);
 
   useEffect(() => {
     if (cloudMode) return;
@@ -4087,6 +4119,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
           </div>}
 
           <div ref={readerScrollRef} className={`reader-layout${toolsOpen ? " has-tools" : ""}`}><div className="reader-main">
+          {selectedId === currentDoc?.id && tweetVideoState && (tweetVideoState.status === "queued" || tweetVideoState.status === "processing" || tweetVideoState.errorCode === "VIDEO_TOO_LARGE" || tweetVideoState.errorCode === "VIDEO_FORMAT_UNSUPPORTED" || tweetVideoState.status === "failed") && <p className="tweet-video-status" role="status">{tweetVideoState.errorCode === "VIDEO_TOO_LARGE" ? "视频超过本条推文的大小上限，已跳过；文字和图片已保留。" : tweetVideoState.errorCode === "VIDEO_FORMAT_UNSUPPORTED" ? "该视频暂无可下载的 MP4，文字和图片已保留。" : tweetVideoState.status === "failed" ? "视频暂未保存，文字和图片已保留。" : "正在后台保存推文视频，文字和图片可正常阅读。"}</p>}
           {graphMounted && <div className={`knowledge-map-host ${graphMode && !selectedId ? "is-active" : "is-dormant"}`} aria-hidden={!graphMode || Boolean(selectedId)}><Suspense fallback={<div className="map-load-fallback" role="status">正在准备知识地图…</div>}><KnowledgeMap active={graphMode && !selectedId} cloud={cloudMode} libraryView={libraryView === "trash" ? "all" : libraryView} query={query} onQueryChange={setQuery} onOpenDocument={(id) => void openGraphDocument(id)} refreshKey={listRefresh + semanticRefresh} /></Suspense></div>}
           {graphMode && !selectedId ? null : !selectedId ? (
             <div className="welcome-state">

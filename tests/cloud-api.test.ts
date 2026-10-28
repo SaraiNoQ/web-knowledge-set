@@ -87,11 +87,11 @@ class SqliteD1Database implements D1Database {
 function migratedCloudDatabase() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
-  for (let version = 1; version <= 15; version += 1) {
+  for (let version = 1; version <= 16; version += 1) {
     sqlite.exec(readFileSync(new URL(`../cloud/migrations/${String(version).padStart(4, "0")}_${[
       "cloud_core", "browser_extension", "cloud_ai", "cloud_backups", "cloud_capture", "cloud_folders", "cloud_trash", "cloud_favorites",
       "cloud_papers", "cloud_paper_content_mode",
-      "semantic_indexes", "cloud_imports", "reading_data", "study_workflows", "semantic_ann",
+      "semantic_indexes", "cloud_imports", "reading_data", "study_workflows", "semantic_ann", "tweet_videos",
     ][version - 1]}.sql`, import.meta.url), "utf8"));
   }
   return new SqliteD1Database(sqlite);
@@ -181,18 +181,20 @@ function memoryBucket() {
   const objects = new Map<string, { bytes: Uint8Array; contentType?: string }>();
   return {
     objects,
-    async put(key: string, value: ArrayBuffer | Uint8Array | string, options?: { httpMetadata?: { contentType?: string } }) {
+    async put(key: string, value: ArrayBuffer | Uint8Array | string | ReadableStream<Uint8Array>, options?: { httpMetadata?: { contentType?: string }; onlyIf?: { etagDoesNotMatch: string } }) {
+      if (options?.onlyIf?.etagDoesNotMatch === "*" && objects.has(key)) return null;
       objects.set(key, {
-        bytes: typeof value === "string" ? new TextEncoder().encode(value) : value instanceof Uint8Array ? value : new Uint8Array(value),
+        bytes: typeof value === "string" ? new TextEncoder().encode(value) : value instanceof Uint8Array ? value : value instanceof ReadableStream ? new Uint8Array(await new Response(value).arrayBuffer()) : new Uint8Array(value),
         contentType: options?.httpMetadata?.contentType,
       });
     },
-    async get(key: string) {
+    async get(key: string, options?: { range?: { offset: number; length: number } }) {
       const object = objects.get(key);
       if (!object) return null;
-      const response = new Response(object.bytes);
+      const value = options?.range ? object.bytes.subarray(options.range.offset, options.range.offset + options.range.length) : object.bytes;
+      const response = new Response(value);
       return {
-        body: response.body!, size: object.bytes.byteLength, httpEtag: `"${key}"`,
+        body: response.body!, size: value.byteLength, httpEtag: `"${key}"`,
         httpMetadata: object.contentType ? { contentType: object.contentType } : undefined,
         async arrayBuffer() { return await response.arrayBuffer(); },
       };
@@ -2626,4 +2628,236 @@ test("cloud folder listing respects D1 GLOB limits for empty and populated folde
   assert.equal(body.total, 2);
   assert.deepEqual(body.items.map((item) => item.id).sort(), [id, jobId]);
   assert.ok(body.items.every((item) => item.folderId === folderId));
+});
+
+const videoWorkerToken = "v".repeat(43);
+function installVideoWorker(db: ReturnType<typeof sqliteEnvironment>["db"]) {
+  db.sqlite.prepare("INSERT INTO app_settings(key,value) VALUES('tweet_video_worker_key_hash',?)")
+    .run(createHash("sha256").update(videoWorkerToken).digest("hex"));
+}
+function videoWorkerRequest(path: string, body?: unknown, headers: Record<string, string> = {}, method = "POST") {
+  return new Request("https://clip.example.com/api/browser-extension/video-worker" + path, {
+    method, headers: { Authorization: `Bearer ${videoWorkerToken}`, ...(body instanceof Uint8Array ? { "Content-Type": "video/mp4", "Content-Length": String(body.byteLength) } : body === undefined ? {} : { "Content-Type": "application/json" }), ...headers },
+    ...(body === undefined ? {} : { body: body instanceof Uint8Array ? body as unknown as BodyInit : JSON.stringify(body) }),
+  });
+}
+async function pendingVideoJob(env: CloudEnv, db: ReturnType<typeof sqliteEnvironment>["db"], id: string) {
+  const { enqueueTweetVideos } = await import("../cloud/video.js");
+  insertCapturedDocument(db, id, "Tweet", "User text and ![picture](https://example.com/a.jpg)");
+  const epoch = String((db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get() as { value: string }).value);
+  await enqueueTweetVideos(epochGuardedDatabase(db, epoch), id, "https://x.com/test/status/1577719286659006464", epoch);
+  const response = await handleClipRequest(videoWorkerRequest("/claim"), env);
+  assert.equal(response.status, 200, await response.clone().text());
+  return (await response.json() as { job: { id: string; documentId: string; epoch: string; maxBytes: number; leaseToken: string } }).job;
+}
+function testMp4(bytes = 32) {
+  const value = new Uint8Array(bytes);
+  value.set([0, 0, 0, 24, 102, 116, 121, 112, 105, 115, 111, 109]);
+  return value;
+}
+
+test("tweet video settings default to 20 MB and require epoch and revision", async () => {
+  const { env, db } = sqliteEnvironment();
+  const get = () => handleRequest(new Request("https://app.example.com/api/settings/tweet-videos"), env);
+  const initial = await get();
+  assert.deepEqual(await initial.json(), { maxBytes: 20_000_000, revision: 0 });
+  const epoch = String((db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get() as { value: string }).value);
+  const put = (maxBytes: number, revision: number, dataEpoch = epoch) => handleRequest(new Request("https://app.example.com/api/settings/tweet-videos", {
+    method: "PUT", headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": dataEpoch }, body: JSON.stringify({ maxBytes, revision }),
+  }), env);
+  assert.equal((await put(1_000_000, 0, "wrong-epoch")).status, 409);
+  assert.equal((await put(100_000_001, 0)).status, 400);
+  assert.deepEqual(await (await put(30_000_000, 0)).json(), { maxBytes: 30_000_000, revision: 1 });
+  assert.equal((await put(10_000_000, 0)).status, 409);
+});
+
+test("video worker has separate authentication and appends to the latest document once", async () => {
+  const { env, db, imagesBucket } = sqliteEnvironment();
+  installVideoWorker(db);
+  assert.equal((await handleClipRequest(new Request("https://clip.example.com/api/browser-extension/video-worker/claim", { method: "POST" }), env)).status, 401);
+  assert.equal((await handleClipRequest(videoWorkerRequest("/claim", undefined, { Origin: "https://app.example.com" }), env)).status, 403);
+  const job = await pendingVideoJob(env, db, "tweet-video-preserve");
+  assert.equal(job.maxBytes, 20_000_000);
+  assert.deepEqual(await (await handleClipRequest(videoWorkerRequest("/claim"), env)).json(), { job: null });
+  const bytes = testMp4(), hash = createHash("sha256").update(bytes).digest("hex");
+  const upload = await handleClipRequest(videoWorkerRequest(`/jobs/${job.id}/asset?index=0`, bytes, { "X-Video-Lease": job.leaseToken, "X-Video-Hash": hash }), env);
+  assert.equal(upload.status, 200, await upload.clone().text());
+  assert.equal((await imagesBucket.head(hash))?.httpMetadata?.contentType, "video/mp4");
+  db.sqlite.prepare("UPDATE cloud_documents SET markdown='Edited text with existing picture',revision=revision+1 WHERE id=?").run(job.documentId);
+  const complete = () => handleClipRequest(videoWorkerRequest(`/jobs/${job.id}/complete`, { leaseToken: job.leaseToken, status: "ready" }), env);
+  assert.equal((await complete()).status, 200);
+  assert.equal((await complete()).status, 409);
+  const document = db.sqlite.prepare("SELECT markdown,revision FROM cloud_documents WHERE id=?").get(job.documentId) as { markdown: string; revision: number };
+  assert.equal(document.markdown, `Edited text with existing picture\n\n![推文视频 1](zhiye://asset/${hash})`);
+  assert.equal(document.revision, 3);
+  const status = await handleRequest(new Request(`https://app.example.com/api/documents/${job.documentId}/tweet-videos`), env);
+  assert.deepEqual(await status.json(), { status: "ready", errorCode: null, maxBytes: 20_000_000 });
+  // Existing backup machinery sees the portable reference and includes its MP4 bytes.
+  const epoch = job.epoch;
+  const backup = await handleRequest(new Request("https://app.example.com/api/data-safety/backups", { method: "POST", headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch }, body: "{}" }), env);
+  assert.equal(backup.status, 201, await backup.clone().text());
+  const backupId = (await backup.json() as { id: string }).id;
+  const exported = await handleRequest(new Request(`https://app.example.com/api/data-safety/backups/${backupId}/export.zhiye-backup`), env);
+  assert.equal(exported.status, 200);
+  const zip = new Uint8Array(await exported.arrayBuffer());
+  const unpacked = unzipSync(zip);
+  const manifest = JSON.parse(new TextDecoder().decode(unpacked["manifest.json"])) as { assets: Array<{ hash: string; bytes: number; mime: string }> };
+  assert.deepEqual(manifest.assets, [{ hash, bytes: bytes.byteLength, mime: "video/mp4" }]);
+  assert.deepEqual(unpacked[`assets/${hash}`], bytes);
+  imagesBucket.objects.delete(hash);
+  const imported = await handleRequest(new Request("https://app.example.com/api/data-safety/backups/import", {
+    method: "POST", headers: { "Content-Type": "application/vnd.zhiye.cloud-backup+zip", "X-Zhiye-Data-Epoch": epoch }, body: zip,
+  }), env);
+  assert.equal(imported.status, 201, await imported.clone().text());
+  const importedId = (await imported.json() as { id: string }).id;
+  assert.deepEqual(imagesBucket.objects.get(hash), { bytes, contentType: "video/mp4" });
+  const restored = await handleRequest(new Request(`https://app.example.com/api/data-safety/backups/${importedId}/restore`, {
+    method: "POST", headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch }, body: "{}",
+  }), env);
+  assert.equal(restored.status, 200, await restored.clone().text());
+  assert.equal((db.sqlite.prepare("SELECT markdown FROM cloud_documents WHERE id=?").get(job.documentId) as { markdown: string }).markdown, document.markdown);
+  assert.equal(db.sqlite.prepare("SELECT id FROM cloud_tweet_video_jobs WHERE id=?").get(job.id), undefined);
+  assert.deepEqual(db.sqlite.prepare("PRAGMA foreign_key_check").all(), []);
+});
+
+test("tweet aggregate budget and skipped videos never change text or images", async () => {
+  const { env, db, imagesBucket } = sqliteEnvironment();
+  installVideoWorker(db);
+  const job = await pendingVideoJob(env, db, "tweet-video-budget");
+  db.sqlite.prepare("UPDATE cloud_tweet_video_jobs SET max_bytes=1000000 WHERE id=?").run(job.id);
+  const before = db.sqlite.prepare("SELECT markdown,revision FROM cloud_documents WHERE id=?").get(job.documentId);
+  for (const [index, expected] of [[0, 200], [1, 409]]) {
+    const bytes = testMp4(600_000); bytes[20] = index;
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    const result = await handleClipRequest(videoWorkerRequest(`/jobs/${job.id}/asset?index=${index}`, bytes, { "X-Video-Lease": job.leaseToken, "X-Video-Hash": hash }), env);
+    assert.equal(result.status, expected, await result.clone().text());
+  }
+  const complete = await handleClipRequest(videoWorkerRequest(`/jobs/${job.id}/complete`, { leaseToken: job.leaseToken, status: "skipped", errorCode: "VIDEO_TOO_LARGE" }), env);
+  assert.equal(complete.status, 200);
+  assert.deepEqual(db.sqlite.prepare("SELECT markdown,revision FROM cloud_documents WHERE id=?").get(job.documentId), before);
+  assert.equal(imagesBucket.objects.size, 1);
+});
+
+test("video leases cannot write after deletion or restore and expired jobs are bounded", async () => {
+  const { env, db } = sqliteEnvironment(); installVideoWorker(db);
+  const job = await pendingVideoJob(env, db, "tweet-video-lease");
+  db.sqlite.prepare("UPDATE cloud_tweet_video_jobs SET lease_until=0 WHERE id=?").run(job.id);
+  const reclaimed = await handleClipRequest(videoWorkerRequest("/claim"), env);
+  const next = (await reclaimed.json() as { job: typeof job }).job;
+  assert.notEqual(next.leaseToken, job.leaseToken);
+  const finish = (token: string) => handleClipRequest(videoWorkerRequest(`/jobs/${job.id}/complete`, { leaseToken: token, status: "skipped", errorCode: "NO_PUBLIC_VIDEO" }), env);
+  assert.equal((await finish(job.leaseToken)).status, 409);
+  db.sqlite.prepare("UPDATE app_settings SET value='new-video-epoch' WHERE key='data_epoch'").run();
+  assert.equal((await finish(next.leaseToken)).status, 409);
+  db.sqlite.prepare("UPDATE app_settings SET value=? WHERE key='data_epoch'").run(job.epoch);
+  db.sqlite.prepare("UPDATE cloud_documents SET deleted_at='2026-01-01' WHERE id=?").run(job.documentId);
+  assert.equal((await finish(next.leaseToken)).status, 409);
+  db.sqlite.prepare("DELETE FROM cloud_documents WHERE id=?").run(job.documentId);
+  assert.equal(db.sqlite.prepare("SELECT id FROM cloud_tweet_video_jobs WHERE id=?").get(job.id), undefined);
+});
+
+test("video source bridge restricts hosts, tweet metadata and forwarded credentials", async () => {
+  const { env, db } = sqliteEnvironment(); installVideoWorker(db);
+  const job = await pendingVideoJob(env, db, "tweet-video-source");
+  const original = globalThis.fetch;
+  const requests: Request[] = [];
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init); requests.push(request);
+    return new Response(testMp4(), { headers: { "Content-Type": "video/mp4", "Content-Length": "32", "Set-Cookie": "do-not-forward=1" } });
+  };
+  const get = (source: string, headers: Record<string, string> = {}) => handleClipRequest(videoWorkerRequest(`/jobs/${job.id}/source?url=${encodeURIComponent(source)}`, undefined, { "X-Video-Lease": job.leaseToken, ...headers }, "GET"), env);
+  try {
+    for (const url of ["http://video.twimg.com/a.mp4", "https://video.twimg.com.evil.test/a.mp4", "https://127.0.0.1/a.mp4", "https://video.twimg.com:8443/a.mp4", "https://video.twimg.com/a.m3u8", "https://cdn.syndication.twimg.com/tweet-result?id=1&token=x"]) assert.equal((await get(url)).status, 400);
+    assert.equal(requests.length, 0);
+    const result = await get("https://video.twimg.com/a.mp4?tag=1", { Range: "bytes=0-31", "Cookie": "private=1" });
+    assert.equal(result.status, 200);
+    assert.equal(result.headers.get("Set-Cookie"), null);
+    assert.equal(requests[0].headers.get("Authorization"), null);
+    assert.equal(requests[0].headers.get("Cookie"), null);
+    assert.equal(requests[0].headers.get("Range"), "bytes=0-31");
+    assert.equal(requests[0].headers.get("Accept-Encoding"), "identity");
+    assert.equal(requests[0].redirect, "manual");
+    assert.equal((await get("https://cdn.syndication.twimg.com/tweet-result?id=1577719286659006464&token=3tojuiek1l")).status, 200);
+  } finally { globalThis.fetch = original; }
+});
+
+test("stored videos support bounded byte ranges and HEAD without reading the body", async () => {
+  const { env, imagesBucket } = sqliteEnvironment();
+  const bytes = testMp4(), hash = "f".repeat(64);
+  await imagesBucket.put(hash, bytes, { httpMetadata: { contentType: "video/mp4" } });
+  const request = (range?: string, method = "GET") => handleRequest(new Request(`https://app.example.com/api/assets/${hash}`, { method, headers: range ? { Range: range } : {} }), env);
+  const part = await request("bytes=4-11");
+  assert.equal(part.status, 206); assert.equal(part.headers.get("Content-Range"), "bytes 4-11/32");
+  assert.deepEqual(new Uint8Array(await part.arrayBuffer()), bytes.subarray(4, 12));
+  assert.equal((await request("bytes=100-200")).status, 416);
+  assert.equal((await request("bytes=0-1,4-5")).status, 416);
+  assert.equal((await request("bytes=-0")).status, 416);
+  const head = await request(undefined, "HEAD");
+  assert.equal(head.headers.get("Content-Length"), "32"); assert.equal((await head.arrayBuffer()).byteLength, 0);
+});
+
+test("tweet video enqueue normalizes mobile and video/photo page sources consistently", async () => {
+  const { env, db } = sqliteEnvironment();
+  const { enqueueTweetVideos } = await import("../cloud/video.js");
+  const epoch = String(db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get()?.value);
+  const sources = [
+    "https://mobile.twitter.com/test/status/1577719286659006464/video/1?lang=zh",
+    "https://m.twitter.com/test/status/1577719286659006464/photo/1",
+    "https://x.com/test/status/1577719286659006464/video/2",
+    "https://x.com/i/web/status/1577719286659006464",
+  ];
+  for (const [index, source] of sources.entries()) {
+    const id = `tweet-mobile-${index}`;
+    insertCapturedDocument(db, id, "Tweet source", "Unchanged text");
+    await enqueueTweetVideos(epochGuardedDatabase(db, epoch), id, source, epoch);
+    assert.equal(db.sqlite.prepare("SELECT source_url FROM cloud_tweet_video_jobs WHERE document_id=?").get(id)?.source_url, "https://x.com/i/status/1577719286659006464");
+  }
+  installVideoWorker(db);
+  const claimed = await handleClipRequest(videoWorkerRequest("/claim"), env);
+  assert.equal(claimed.status, 200);
+  assert.equal((await claimed.json() as { job: { sourceUrl: string } }).job.sourceUrl, "https://x.com/i/status/1577719286659006464");
+});
+
+test("cloud refuses a video backup larger than its restore budgets without changing media or text", async () => {
+  const { env, db, bucket, imagesBucket } = sqliteEnvironment();
+  const hash = "e".repeat(64), bytes = testMp4();
+  await imagesBucket.put(hash, bytes, { httpMetadata: { contentType: "video/mp4" } });
+  const originalHead = imagesBucket.head.bind(imagesBucket);
+  const originalGet = imagesBucket.get.bind(imagesBucket);
+  imagesBucket.head = async key => key === hash ? { size: 100_000_000, httpMetadata: { contentType: "video/mp4" } } : await originalHead(key);
+  let readVideo = false;
+  imagesBucket.get = async (key, options) => { if (key === hash) readVideo = true; return await originalGet(key, options); };
+  const markdown = `Saved text and image\n\n![推文视频 1](zhiye://asset/${hash})`;
+  insertCapturedDocument(db, "video-backup-budget", "Big video", markdown);
+  const epoch = String(db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get()?.value);
+  const response = await handleRequest(new Request("https://app.example.com/api/data-safety/backups", {
+    method: "POST", headers: { "Content-Type": "application/json", "X-Zhiye-Data-Epoch": epoch }, body: "{}",
+  }), env);
+  assert.equal(response.status, 413);
+  assert.equal((await response.json() as { error: { code: string } }).error.code, "BACKUP_ARCHIVE_TOO_LARGE");
+  assert.equal(readVideo, false, "reject using metadata before downloading the large media");
+  assert.equal(bucket.objects.size, 0);
+  assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS n FROM cloud_backups").get()?.n, 0);
+  assert.equal(db.sqlite.prepare("SELECT markdown FROM cloud_documents WHERE id='video-backup-budget'").get()?.markdown, markdown);
+  assert.deepEqual(imagesBucket.objects.get(hash), { bytes, contentType: "video/mp4" });
+});
+
+test("failed video downloads retry after a delay and stop after three claims", async () => {
+  const { env, db } = sqliteEnvironment(); installVideoWorker(db);
+  let job = await pendingVideoJob(env, db, "tweet-video-retries");
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const response = await handleClipRequest(videoWorkerRequest(`/jobs/${job.id}/complete`, { leaseToken: job.leaseToken, status: "failed", errorCode: "VIDEO_SOURCE_UNAVAILABLE" }), env);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { status: attempt < 3 ? "queued" : "failed" });
+    assert.deepEqual(await (await handleClipRequest(videoWorkerRequest("/claim"), env)).json(), { job: null });
+    assert.equal(db.sqlite.prepare("SELECT attempts FROM cloud_tweet_video_jobs WHERE id=?").get(job.id)?.attempts, attempt);
+    if (attempt < 3) {
+      const retryAt = db.sqlite.prepare("SELECT lease_until FROM cloud_tweet_video_jobs WHERE id=?").get(job.id)?.lease_until;
+      assert.ok(Number(retryAt) > Math.floor(Date.now() / 1000), "retry is delayed instead of hammering the source");
+      db.sqlite.prepare("UPDATE cloud_tweet_video_jobs SET lease_until=0 WHERE id=?").run(job.id);
+      const next = (await (await handleClipRequest(videoWorkerRequest("/claim"), env)).json() as { job: typeof job }).job;
+      assert.notEqual(next.leaseToken, job.leaseToken);
+      job = next;
+    }
+  }
 });

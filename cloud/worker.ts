@@ -23,6 +23,7 @@ import {
   updateFolder,
   type D1Database,
 } from "./extension";
+import { documentTweetVideos, saveTweetVideoSettings, tweetVideoSettings } from "./video";
 import { handleImportApi } from "./import";
 import { pluginWorkerDocument } from "../shared/plugin-worker";
 import { handleAiApi, translateReaderSelection } from "./ai";
@@ -130,6 +131,19 @@ async function api(request: Request, env: CloudEnv, url: URL) {
   }
   if (epoch.startsWith("restore:")) {
     return json({ error: { code: "CLOUD_MAINTENANCE", message: "Cloud restore is in progress" } }, 503);
+  }
+  if (url.pathname === "/api/settings/tweet-videos") {
+    if (request.method === "GET") return json(await tweetVideoSettings(env.DB), 200, epoch);
+    if (request.method !== "PUT") throw new CloudHttpError(405, "METHOD_NOT_ALLOWED", "GET or PUT required");
+    if (request.headers.get(DATA_EPOCH_HEADER) !== epoch) return json({ error: { code: "STALE_DATA_EPOCH", message: "Cloud data changed" } }, 409, epoch);
+    return json(await saveTweetVideoSettings(epochGuardedDatabase(env.DB, epoch), await jsonObject(request, 4096)), 200, epoch);
+  }
+  const tweetVideos = /^\/api\/documents\/([^/]+)\/tweet-videos$/u.exec(url.pathname);
+  if (tweetVideos) {
+    if (request.method !== "GET") throw new CloudHttpError(405, "METHOD_NOT_ALLOWED", "GET required");
+    let id: string;
+    try { id = decodeURIComponent(tweetVideos[1]); } catch { throw new CloudHttpError(400, "INVALID_PATH", "Invalid document identifier"); }
+    return json(await documentTweetVideos(env.DB, id), 200, epoch);
   }
   if(url.pathname.startsWith("/api/study/")) {
     if(request.method!=="GET"&&request.headers.get(DATA_EPOCH_HEADER)!==epoch)return json({error:{code:"STALE_DATA_EPOCH",message:"资料库已变化，请刷新。"}},409,epoch);
@@ -479,7 +493,7 @@ export async function handleRequest(request: Request, env: CloudEnv) {
     }
 
     const assetResponse = (request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith("/api/assets/")
-      ? await handleAssetRequest(env.IMAGES, url)
+      ? await handleAssetRequest(env.IMAGES, url, request.headers.get("Range"), request.method === "HEAD")
       : null;
     if (assetResponse) {
       const headers = new Headers(assetResponse.headers);

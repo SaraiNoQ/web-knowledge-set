@@ -12,6 +12,7 @@ import {
   type D1Database,
   verifiedExtensionToken,
 } from "./extension";
+import { enqueueTweetVideos, handleVideoWorkerRequest } from "./video";
 import { fetchDocumentAssets } from "./assets";
 import type { R2Bucket } from "./backup";
 import { llmRequestKeyState, settingsRow } from "./ai";
@@ -54,6 +55,8 @@ function json(body: unknown, status: number, headers: Record<string, string> = {
 }
 
 export async function handleClipRequest(request: Request, env: ClipEnv) {
+  const video = await handleVideoWorkerRequest(request, env);
+  if (video) return video;
   let cors: Record<string, string> = {};
   try {
     const url = new URL(request.url);
@@ -90,6 +93,8 @@ export async function handleClipRequest(request: Request, env: ClipEnv) {
       const generated = key ? await clipTitle(db, key, rewritten.markdown) : null;
       const clipped = { ...input, markdown: rewritten.markdown, ...(generated?.title ? { title: generated.title } : {}) };
       const saved = await createClip(db, tokenHash, clipped);
+      try { await enqueueTweetVideos(db, saved.documentId, input.sourceUrl, epoch); }
+      catch { console.error("[clip] video task could not be queued"); }
       return json({ ...saved, aiTitleError: generated?.error ?? (invalid ? "LLM_KEY_INVALID" : null) }, 201, cors);
     }
     throw new CloudHttpError(404, "NOT_FOUND", "Endpoint not found");
