@@ -108,4 +108,9 @@ test("oversize video is skipped without hiding text, while text-only X posts sta
   await page.locator(".directory-document-row").getByRole("button", { name: base.title, exact: true }).click();
   await expect(page.locator(".markdown-preview")).toContainText(base.markdown);
   await expect(page.locator(".tweet-video-status")).toHaveCount(0);
+  code = "VIDEO_FORMAT_UNSUPPORTED";
+  await page.reload();
+  await page.locator(".directory-document-row").getByRole("button", { name: base.title, exact: true }).click();
+  await expect(page.getByText("该视频暂无可下载的 MP4，文字和图片已保留。", { exact: true })).toBeVisible();
+  await expect(page.locator(".markdown-preview")).toContainText(base.markdown);
 });
