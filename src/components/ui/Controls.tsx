@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { WorkspaceIcon } from "./WorkspaceIcon";
 
 import type {
+  CSSProperties,
   ButtonHTMLAttributes,
   InputHTMLAttributes,
   KeyboardEvent,
@@ -70,6 +71,19 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
       {...props}
     />
   );
+});
+
+export interface RangeProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "type" | "value"> {
+  value: number;
+}
+
+export const Range = forwardRef<HTMLInputElement, RangeProps>(function Range(
+  { className = "", min = 0, max = 100, value, style, ...props }, ref,
+) {
+  const span = Number(max) - Number(min);
+  const progress = span > 0 ? Math.max(0, Math.min(100, (value - Number(min)) / span * 100)) : 0;
+  return <input ref={ref} type="range" className={`ui-range ${className}`.trim()} min={min} max={max} value={value}
+    style={{ ...style, "--range-progress": `${progress}%` } as CSSProperties} {...props} />;
 });
 
 export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {

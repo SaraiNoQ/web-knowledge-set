@@ -5,7 +5,7 @@ import type { DragEvent, KeyboardEventHandler, ReactNode, Ref } from "react";
 import type { DocumentFilters, DocumentSummary, KnowledgeFolder } from "../../shared/types";
 import { api, currentDataEpoch } from "../api";
 import type { DirectoryResult } from "../directory-loader-worker";
-import { Button, IconButton, Select } from "./ui/Controls";
+import { Button, IconButton, Select, Checkbox } from "./ui/Controls";
 import { useDialogs, useToast } from "./ui/Feedback";
 import { Modal } from "./ui/Modal";
 import { HoverCard } from "./ui/Tooltip";
@@ -114,7 +114,7 @@ export const DocumentDirectoryRow = memo(function DocumentDirectoryRow({
       event.dataTransfer.setData(DRAG_TYPE, JSON.stringify(target));
     }}
   >
-    {checkbox ?? (onSelect && <label className="row-select"><span className="sr-only">选择 {document.title || "未命名织片"}</span><input type="checkbox" disabled={selectionDisabled} checked={checked ?? false} onChange={(event) => onSelect(document, event.target.checked)} /></label>)}
+    {checkbox ?? (onSelect && <label className="row-select"><span className="sr-only">选择 {document.title || "未命名织片"}</span><Checkbox disabled={selectionDisabled} checked={checked ?? false} onChange={(event) => onSelect(document, event.target.checked)} /></label>)}
     <span className="sr-only">{STATUS[document.status]}</span>
     <HoverCard content={detail} delay={1_000} disabled={matchMedia("(hover: none), (pointer: coarse)").matches} hoverOnly label="织片详情">
       <Button type="button" className="directory-title document-row" aria-description={document.kind === "paper" ? "论文" : "文章"} aria-current={selected ? "true" : undefined} onClick={() => onOpen(document.id)}><WorkspaceIcon name={document.kind === "paper" ? "paper" : "document"} size={16} /><span className="directory-document-label">{document.title || "未命名织片"}</span></Button>

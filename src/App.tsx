@@ -74,7 +74,7 @@ const StudyWorkspace = lazy(() => import("./study/StudyWorkspace").then((module)
 import { DocumentTabs, type OpenDocumentTab } from "./components/DocumentTabs";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { WorkspaceIcon } from "./components/ui/WorkspaceIcon";
-import { Button, IconButton, Select } from "./components/ui/Controls";
+import { Button, IconButton, Select, Checkbox, Input, Textarea } from "./components/ui/Controls";
 import { useDialogs, useToast } from "./components/ui/Feedback";
 import { Modal } from "./components/ui/Modal";
 import { userErrorFrom, userErrorMessage } from "./error-messages";
@@ -416,7 +416,7 @@ const MarkdownPreview = memo(function MarkdownPreview({ markdown, sourceUrl, ass
   const context = useMemo(() => ({ sourceUrl, bySource: assetsBySource, byHash: assetsByHash }), [sourceUrl, assetsBySource, assetsByHash]);
   const components = useMemo<Components>(() => ({
     ...headingComponents,
-    input: ({ node: _node, ...props }) => <input {...props} aria-label={props.checked ? "已完成任务" : "未完成任务"} />,
+    input: ({ node: _node, type: _type, ...props }) => <Checkbox {...props} aria-label={props.checked ? "已完成任务" : "未完成任务"} />,
     pre: ({ node: _node, ...props }) => <pre {...props} tabIndex={0} />,
     table: ({ node: _node, ...props }) => <table {...props} tabIndex={0} />,
     a: ({ node, href, children, ...props }) => {
@@ -546,8 +546,8 @@ function CaptureHistoryPanel({
           </div>
           <fieldset disabled={applying || Boolean(blockedReason)}>
             <legend>只替换勾选的内容。</legend>
-            <label><input type="checkbox" checked={applyTitle} onChange={(event) => setApplyTitle(event.target.checked)} disabled={!titleChanged} />替换标题 {!titleChanged && <small>无变化</small>}</label>
-            <label><input type="checkbox" checked={applyMarkdown} onChange={(event) => setApplyMarkdown(event.target.checked)} disabled={!markdownChanged} />替换正文 {!markdownChanged && <small>无变化</small>}</label>
+            <label><Checkbox checked={applyTitle} onChange={(event) => setApplyTitle(event.target.checked)} disabled={!titleChanged} />替换标题 {!titleChanged && <small>无变化</small>}</label>
+            <label><Checkbox checked={applyMarkdown} onChange={(event) => setApplyMarkdown(event.target.checked)} disabled={!markdownChanged} />替换正文 {!markdownChanged && <small>无变化</small>}</label>
             <Button type="button" className="primary-button" onClick={() => void apply()} disabled={!applyTitle && !applyMarkdown}>{applying ? "采纳中…" : "确认替换"}</Button>
           </fieldset>
           {blockedReason && <p className="reextract-blocked" role="note">{blockedReason}</p>}
@@ -3874,13 +3874,13 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
             {!bulkImportPreview && importTabs(paperImportOpen ? "paper" : bulkImportKind, bulkImportBusy || paperImportBusy || uploadPreparing)}
             {paperImportOpen ? <div className="paper-import-content">
               <SegmentedControl label="论文来源类型" className="paper-import-tabs" value={paperImportMode} disabled={paperImportBusy} options={[{ value: "url", label: "论文链接" }, { value: "pdf", label: "上传文件" }]} onChange={setPaperImportMode} />
-              {paperImportMode === "url" ? <label className="paper-import-field"><span>论文链接</span><input type="url" value={paperImportUrl} onChange={(event) => setPaperImportUrl(event.target.value)} placeholder="https://arxiv.org/abs/..." disabled={paperImportBusy} /><small>支持 arXiv 页面和直接 PDF；IEEE / ACM 等请上传文件。</small></label> : <FilePicker title="拖入论文文件，或点击选择。" label="选择文件" icon="paper" accept="application/pdf,.pdf" file={paperImportFile} disabled={paperImportBusy} onFile={setPaperImportFile} hint="每份限 50 MiB，保留原始文件。" />}
+              {paperImportMode === "url" ? <label className="paper-import-field"><span>论文链接</span><Input type="url" value={paperImportUrl} onChange={(event) => setPaperImportUrl(event.target.value)} placeholder="https://arxiv.org/abs/..." disabled={paperImportBusy} /><small>支持 arXiv 页面和直接 PDF；IEEE / ACM 等请上传文件。</small></label> : <FilePicker title="拖入论文文件，或点击选择。" label="选择文件" icon="paper" accept="application/pdf,.pdf" file={paperImportFile} disabled={paperImportBusy} onFile={setPaperImportFile} hint="每份限 50 MiB，保留原始文件。" />}
               {paperImportError && <p className="paper-import-error" role="alert">{paperImportError}</p>}
               <footer className="bulk-dialog-actions paper-import-actions"><Button type="button" onClick={() => setPaperImportOpen(false)} disabled={paperImportBusy}>取消</Button><Button type="button" className="primary-button" onClick={() => void importPaper()} disabled={paperImportBusy || (paperImportMode === "url" ? !paperImportUrl.trim() : !paperImportFile)}>{paperImportBusy ? <><Spinner />处理中…</> : "添加论文"}</Button></footer>
             </div> : !bulkImportPreview ? <>
 
               {bulkImportKind === "urls" ? (
-                <label className="bulk-text"><span>每行一个公开网页链接</span><textarea value={bulkImportText} onChange={(event) => { setBulkImportText(event.target.value); setBulkImportError(""); }} rows={10} placeholder={'https://example.com/article-one\nhttps://example.com/article-two'} disabled={bulkImportBusy} /></label>
+                <label className="bulk-text"><span>每行一个公开网页链接</span><Textarea value={bulkImportText} onChange={(event) => { setBulkImportText(event.target.value); setBulkImportError(""); }} rows={10} placeholder={'https://example.com/article-one\nhttps://example.com/article-two'} disabled={bulkImportBusy} /></label>
               ) : bulkImportKind === "bookmarks" ? (
                 <FilePicker title="导入浏览书签" hint="选择浏览器导出的 bookmarks.html" accept=".html,text/html" file={bulkImportFiles[0]} disabled={bulkImportBusy} onFile={(file) => chooseBulkFiles(file ? [file] : [])} />
               ) : bulkImportKind === "markdown" ? (
@@ -3960,7 +3960,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
           <form className="capture-form" onSubmit={handleImport}>
             <label className="sr-only" htmlFor="capture-url">网页链接</label>
             <span className="url-prefix" aria-hidden="true">URL</span>
-            <input id="capture-url" value={importUrl} onChange={(event) => { setImportUrl(event.target.value); setImportError(""); setImportNotice(""); }} placeholder="https://example.com/article" inputMode="url" autoComplete="url" disabled={importing || closing} />
+            <Input id="capture-url" value={importUrl} onChange={(event) => { setImportUrl(event.target.value); setImportError(""); setImportNotice(""); }} placeholder="https://example.com/article" inputMode="url" autoComplete="url" disabled={importing || closing} />
             <Button className="primary-button" type="submit" disabled={importing || closing || !importUrl.trim()}>{importing ? <><Spinner />入队中</> : "保存网页"}</Button>
           </form>
           <div className="form-message" aria-live="polite">{importError ? <span className="error-text">{importError}</span> : importNotice && <span className="notice-text">{importNotice}</span>}</div>
@@ -3981,7 +3981,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
         <form className="capture-form" onSubmit={handleImport}>
           <label className="sr-only" htmlFor="capture-url">网页链接</label>
           <span className="url-prefix" aria-hidden="true">URL</span>
-          <input id="capture-url" value={importUrl} onChange={(event) => { setImportUrl(event.target.value); setImportDuplicate(null); setImportError(""); setImportNotice(""); }} placeholder="https://example.com/an-article" inputMode="url" autoComplete="url" disabled={importing || closing || navigationMutationLocked} />
+          <Input id="capture-url" value={importUrl} onChange={(event) => { setImportUrl(event.target.value); setImportDuplicate(null); setImportError(""); setImportNotice(""); }} placeholder="https://example.com/an-article" inputMode="url" autoComplete="url" disabled={importing || closing || navigationMutationLocked} />
           <Button className="primary-button" type="submit" disabled={closing || importing || navigationMutationLocked || !importUrl.trim()}>
             {importing ? <><Spinner />收取中</> : <><span>保存网页</span><Icon><path d="M5 12h14M13 6l6 6-6 6" /></Icon></>}
           </Button>
@@ -4042,7 +4042,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
           </> : <>
             <div className="result-caption"><span>{filteredDescription}</span>{items.some(needsCapturePolling) && <span className="polling-mark"><i />更新中</span>}</div>
             {!!items.length && selectionEnabled && <div className="bulk-toolbar" aria-label="当前页批量操作">
-              <label><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={items.length > 0 && items.every((item) => selectedIds.has(item.id))} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds(event.target.checked ? new Set(items.map((item) => item.id)) : new Set()); }} />本页全选 <strong>{selectedIds.size}</strong> 篇</label>
+              <label><Checkbox disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={items.length > 0 && items.every((item) => selectedIds.has(item.id))} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds(event.target.checked ? new Set(items.map((item) => item.id)) : new Set()); }} />本页全选 <strong>{selectedIds.size}</strong> 篇</label>
               {!!selectedIds.size && <><Select density="compact" aria-label="批量操作" disabled={listLoading || batchBusy} value={batchAction} onChange={(event) => setBatchAction(event.target.value as BatchDocumentAction | "")}><option value="">批量操作</option><option value="add-tag">添加标签</option><option value="remove-tag">移除标签</option><option value="add-collection">加入专题</option><option value="remove-collection">移出专题</option><option value="restore">恢复</option></Select>{(batchAction === "add-collection" || batchAction === "remove-collection") && <Select density="compact" aria-label="批量操作专题" disabled={listLoading || batchBusy} value={batchCollectionId} onChange={(event) => setBatchCollectionId(event.target.value)}><option value="">选择专题</option>{collections.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</Select>}<Button type="button" onClick={() => void runBatchAction()} disabled={listLoading || batchBusy || !batchAction}>{batchBusy ? "处理中…" : "执行操作"}</Button></>}
             </div>}
             <div ref={libraryListRef} className="document-list" onKeyDown={handleListKeyDown}>
@@ -4055,7 +4055,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
                   onOpen={(id) => void selectDocument(id)}
                   onMove={moveDocumentToFolder}
                   onPermanentDelete={permanentlyDeleteListItem}
-                  checkbox={selectionEnabled ? <label className="row-select"><span className="sr-only">选择 {item.title || "未命名织片"}</span><input type="checkbox" disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={selectedIds.has(item.id)} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds((previous) => { const next = new Set(previous); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; }); }} /></label> : undefined}
+                  checkbox={selectionEnabled ? <label className="row-select"><span className="sr-only">选择 {item.title || "未命名织片"}</span><Checkbox disabled={listLoading || batchBusy || itemsContextRef.current !== listContextKey} checked={selectedIds.has(item.id)} onChange={(event) => { if (itemsContextRef.current !== listContextKey) return; selectionContextRef.current = listContextKey; setSelectedIds((previous) => { const next = new Set(previous); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; }); }} /></label> : undefined}
                 />
               ))}
             </div>
@@ -4082,7 +4082,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
           {selectedId && <ReadingProgress documentId={selectedId} restorePosition={restoreReadingPosition && readingAnchorTarget !== selectedId} />}
           {selectedId && <div className="workspace-location">
             <IconButton label="返回目录" disabled={closing} onClick={() => void closeDocument()}><Icon size={18}><path d="M20 12H4m6-6-6 6 6 6" /></Icon></IconButton>
-            <span>{folders.find((folder) => folder.id === currentDoc?.folderId)?.name ?? "目录"}</span><WorkspaceIcon name="chevron" size={13} />{titleEdit?.id === currentDoc?.id && titleEdit ? <input autoFocus className="breadcrumb-title-input" aria-label="文章标题" maxLength={1000} size={Math.max(1, Math.min(20, Array.from(titleEdit.title).length))} value={titleEdit.title} onChange={(event) => setTitleEdit({ ...titleEdit, title: event.target.value })} onBlur={() => setTitleEdit(null)} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); setTitleEdit(null); } if (event.key === "Enter") { event.preventDefault(); const edit = titleEdit; setTitleEdit(null); void renameDocument(edit, edit.title); } }} /> : <Button type="button" className="breadcrumb-title" aria-label={`修改标题：${currentDoc?.title || "正在打开…"}`} title={currentDoc?.title || "双击修改标题"} disabled={!currentDoc || organizationLocked || metadataDirty || paperDirty} onDoubleClick={() => { if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "F2") { event.preventDefault(); if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); } }}>{Array.from(currentDoc?.title || "正在打开…").slice(0, 20).join("")}{Array.from(currentDoc?.title || "").length > 20 ? "…" : ""}</Button>}
+            <span>{folders.find((folder) => folder.id === currentDoc?.folderId)?.name ?? "目录"}</span><WorkspaceIcon name="chevron" size={13} />{titleEdit?.id === currentDoc?.id && titleEdit ? <Input autoFocus className="breadcrumb-title-input" aria-label="文章标题" maxLength={1000} size={Math.max(1, Math.min(20, Array.from(titleEdit.title).length))} value={titleEdit.title} onChange={(event) => setTitleEdit({ ...titleEdit, title: event.target.value })} onBlur={() => setTitleEdit(null)} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); setTitleEdit(null); } if (event.key === "Enter") { event.preventDefault(); const edit = titleEdit; setTitleEdit(null); void renameDocument(edit, edit.title); } }} /> : <Button type="button" className="breadcrumb-title" aria-label={`修改标题：${currentDoc?.title || "正在打开…"}`} title={currentDoc?.title || "双击修改标题"} disabled={!currentDoc || organizationLocked || metadataDirty || paperDirty} onDoubleClick={() => { if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "F2") { event.preventDefault(); if (currentDoc) setTitleEdit({ id: currentDoc.id, revision: currentDoc.revision, title: currentDoc.title }); } }}>{Array.from(currentDoc?.title || "正在打开…").slice(0, 20).join("")}{Array.from(currentDoc?.title || "").length > 20 ? "…" : ""}</Button>}
 
           </div>}
 
@@ -4149,16 +4149,15 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
                   <span>{formatDate(currentDoc.updatedAt)}</span>
                   {currentDoc.archivedAt && <span className="archive-stamp">已归档</span>}
                 </div>
-                <label className="title-field"><span className="sr-only">文档标题</span><input value={draft.title} onChange={(event) => { if (!closeAttemptRef.current) setDraft({ ...draft, title: event.target.value }); }} disabled={Boolean(currentDoc.deletedAt) || currentDoc.status !== "ready" || editorLocked} /></label>
+                <label className="title-field"><span className="sr-only">文档标题</span><Input value={draft.title} onChange={(event) => { if (!closeAttemptRef.current) setDraft({ ...draft, title: event.target.value }); }} disabled={Boolean(currentDoc.deletedAt) || currentDoc.status !== "ready" || editorLocked} /></label>
                 <div className="document-meta">
-                  <label className="tag-field"><span>标签</span><input value={tagText} onChange={(event) => { if (!closeAttemptRef.current) { setTagText(event.target.value); setDraft({ ...draft, tags: parseTags(event.target.value) }); } }} placeholder="用逗号分隔" disabled={Boolean(currentDoc.deletedAt) || currentDoc.status !== "ready" || editorLocked} /></label>
+                  <label className="tag-field"><span>标签</span><Input value={tagText} onChange={(event) => { if (!closeAttemptRef.current) { setTagText(event.target.value); setDraft({ ...draft, tags: parseTags(event.target.value) }); } }} placeholder="用逗号分隔" disabled={Boolean(currentDoc.deletedAt) || currentDoc.status !== "ready" || editorLocked} /></label>
                   <fieldset className="collection-picker" disabled={organizationLocked || metadataDirty}>
                     <legend>专题</legend>
                     <div>
                       {collectionsLoading && !collections.length ? <span>读取中…</span> : !collections.length ? <span>尚未创建</span> : collections.map((collection) => (
                         <label key={collection.id}>
-                          <input
-                            type="checkbox"
+                          <Checkbox
                             checked={currentDoc.collections.some((value) => value.id === collection.id)}
                             onChange={(event) => void toggleDocumentCollection(collection.id, event.target.checked)}
                           />
@@ -4170,9 +4169,9 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
                 </div>
                 {sourceMetadata && (
                   <form className="source-metadata-form" aria-label="来源信息" onSubmit={saveSourceMetadata}>
-                    <label><span>作者</span><input aria-label="作者" maxLength={1000} value={sourceMetadata.author} onChange={(event) => { setSourceMetadata({ ...sourceMetadata, author: event.target.value }); setOrganizationNotice(""); setOrganizationError(""); }} placeholder="未识别" disabled={organizationLocked} /></label>
-                    <label><span>发布日期</span><input aria-label="发布日期" type="date" value={sourceMetadata.publishedDate} onChange={(event) => { setSourceMetadata({ ...sourceMetadata, publishedDate: event.target.value }); setOrganizationNotice(""); setOrganizationError(""); }} disabled={organizationLocked} /></label>
-                    <label className="source-note-field"><span>来源备注</span><textarea aria-label="来源备注" maxLength={50_000} rows={2} value={sourceMetadata.sourceNote} onChange={(event) => { setSourceMetadata({ ...sourceMetadata, sourceNote: event.target.value }); setOrganizationNotice(""); setOrganizationError(""); }} placeholder="记下收录背景、可信度或阅读线索" disabled={organizationLocked} /></label>
+                    <label><span>作者</span><Input aria-label="作者" maxLength={1000} value={sourceMetadata.author} onChange={(event) => { setSourceMetadata({ ...sourceMetadata, author: event.target.value }); setOrganizationNotice(""); setOrganizationError(""); }} placeholder="未识别" disabled={organizationLocked} /></label>
+                    <label><span>发布日期</span><Input aria-label="发布日期" type="date" value={sourceMetadata.publishedDate} onChange={(event) => { setSourceMetadata({ ...sourceMetadata, publishedDate: event.target.value }); setOrganizationNotice(""); setOrganizationError(""); }} disabled={organizationLocked} /></label>
+                    <label className="source-note-field"><span>来源备注</span><Textarea aria-label="来源备注" maxLength={50_000} rows={2} value={sourceMetadata.sourceNote} onChange={(event) => { setSourceMetadata({ ...sourceMetadata, sourceNote: event.target.value }); setOrganizationNotice(""); setOrganizationError(""); }} placeholder="记下收录背景、可信度或阅读线索" disabled={organizationLocked} /></label>
                     <div className="source-metadata-save">
                       <span>收取·{currentDoc.captureMode === "browser" ? "浏览器" : currentDoc.captureMode === "http" ? "直接读取" : "—"}</span>
                       <Button type="submit" disabled={organizationLocked || !metadataDirty}>{organizationSaving ? "保存中…" : "保存来源"}</Button>
@@ -4200,7 +4199,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
                   <header><div><h3>专题标签</h3></div><Button type="button" onClick={() => setCollectionsOpen(false)} aria-label="关闭分类管理">×</Button></header>
                   <h4>专题</h4>
                   <form className="collection-create" onSubmit={createCollection}>
-                    <label><span className="sr-only">新专题名</span><input aria-label="新专题名" maxLength={100} value={collectionName} onChange={(event) => setCollectionName(event.target.value)} placeholder="新专题名" disabled={organizationLocked || metadataDirty} /></label>
+                    <label><span className="sr-only">新专题名</span><Input aria-label="新专题名" maxLength={100} value={collectionName} onChange={(event) => setCollectionName(event.target.value)} placeholder="新专题名" disabled={organizationLocked || metadataDirty} /></label>
                     <Button type="submit" className="primary-button" disabled={organizationLocked || metadataDirty || !collectionName.trim()}>{collectionAction === "create" ? "创建中…" : "新建专题"}</Button>
                   </form>
                   {collectionsLoading && !collections.length ? <StatePanel kind="loading" title="正在读取专题" /> : !collections.length ? <p className="collection-empty">将同一主题的织片放在一起。</p> : (
@@ -4209,7 +4208,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
                         <li key={collection.id}>
                           {renamingCollection?.id === collection.id ? (
                             <form className="collection-rename" onSubmit={renameCollection}>
-                              <label><span className="sr-only">专题名称</span><input aria-label="专题名称" maxLength={100} value={renamingCollection.name} onChange={(event) => setRenamingCollection({ id: collection.id, name: event.target.value })} autoFocus /></label>
+                              <label><span className="sr-only">专题名称</span><Input aria-label="专题名称" maxLength={100} value={renamingCollection.name} onChange={(event) => setRenamingCollection({ id: collection.id, name: event.target.value })} autoFocus /></label>
                               <Button type="submit" disabled={Boolean(collectionAction) || !renamingCollection.name.trim()}>保存名称</Button>
                               <Button type="button" onClick={() => setRenamingCollection(null)}>取消</Button>
                             </form>

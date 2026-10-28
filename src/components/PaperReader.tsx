@@ -5,7 +5,7 @@ import { loadPaperFontSize, savePaperFontSize, PAPER_FONT_SIZES } from "../readi
 import { paperTranslationMarkdown } from "../paper-translation";
 import { api } from "../api";
 import { runPaperExtraction, type PaperExtractionProgress } from "../paper-extraction";
-import { Button, Select } from "./ui/Controls";
+import { Button, Select, Textarea } from "./ui/Controls";
 
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
@@ -418,7 +418,7 @@ export function PaperReader({ paperId, title, autoStart, onClose, onRevisionChan
               />
               <article data-reader-page={pageNumber} className="paper-reader-translation" style={{ "--paper-translation-font-size": `${translationFontSize}px` } as CSSProperties}>
                 <div className="paper-reader-page-label"><span>中文对照 · 第 {pageNumber} 页</span></div>
-                <div className="paper-reader-translation-scroll">{page ? <div className="paper-reader-blocks">{draftBlocks.map((block, index) => editing ? <label key={block.id} className="paper-reader-block paper-reader-block--edit"><span>{labelForBlock(block.type)} · {index + 1}</span><textarea value={block.translation} onChange={(event) => setDraftBlocks((current) => current.map((value) => value.id === block.id ? { ...value, translation: event.target.value } : value))} rows={Math.max(2, Math.min(8, Math.ceil(block.translation.length / 36)))} /></label> : <section key={block.id} data-reader-block={block.id} className="paper-reader-block"><span aria-hidden="true">{labelForBlock(block.type)}</span><p>{block.translation || "（此块暂无译文）"}</p></section>)}</div> : <p className="paper-reader-empty">本页尚未生成译文。</p>}</div>
+                <div className="paper-reader-translation-scroll">{page ? <div className="paper-reader-blocks">{draftBlocks.map((block, index) => editing ? <label key={block.id} className="paper-reader-block paper-reader-block--edit"><span>{labelForBlock(block.type)} · {index + 1}</span><Textarea value={block.translation} onChange={(event) => setDraftBlocks((current) => current.map((value) => value.id === block.id ? { ...value, translation: event.target.value } : value))} rows={Math.max(2, Math.min(8, Math.ceil(block.translation.length / 36)))} /></label> : <section key={block.id} data-reader-block={block.id} className="paper-reader-block"><span aria-hidden="true">{labelForBlock(block.type)}</span><p>{block.translation || "（此块暂无译文）"}</p></section>)}</div> : <p className="paper-reader-empty">本页尚未生成译文。</p>}</div>
               </article>
             </div>
           </div>

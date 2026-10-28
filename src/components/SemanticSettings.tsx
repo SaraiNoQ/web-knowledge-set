@@ -1,4 +1,4 @@
-import { Button } from "./ui/Controls";
+import { Button, Checkbox, Input } from "./ui/Controls";
 import { useEffect, useState } from "react";
 
 import type { SemanticSettings } from "../../shared/types";
@@ -138,19 +138,19 @@ export function SemanticSettingsPanel({ cloud, refreshKey }: { cloud: boolean; r
       {!settings ? <p role={error ? "alert" : "status"}>{error || "正在读取推荐处理状态…"}</p> : <>
         <div className="semantic-settings-grid">
           <div className="semantic-settings-card">
-            <label><span>推荐模型</span><input aria-label="推荐模型" value={model} onChange={(event) => { setModel(event.target.value); setTestedModel(""); setDimension(null); }} maxLength={200} disabled={busy} /></label>
+            <label><span>推荐模型</span><Input aria-label="推荐模型" value={model} onChange={(event) => { setModel(event.target.value); setTestedModel(""); setDimension(null); }} maxLength={200} disabled={busy} /></label>
             <small>默认 BAAI/bge-m3。发送地址：https://api.siliconflow.cn/v1/embeddings。</small>
             <Button type="button" onClick={() => void saveModel()} disabled={busy || !model.trim() || model.trim() === settings.model}>保存模型</Button>
           </div>
           <div className="semantic-settings-card">
-            <label><span>SiliconFlow API 密钥</span><input aria-label="推荐密钥" type="password" autoComplete="new-password" spellCheck={false} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={settings.apiKeyConfigured ? "已保存，输入新密钥可替换" : "粘贴 SiliconFlow API Key"} disabled={busy} /></label>
+            <label><span>SiliconFlow API 密钥</span><Input aria-label="推荐密钥" type="password" autoComplete="new-password" spellCheck={false} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={settings.apiKeyConfigured ? "已保存，输入新密钥可替换" : "粘贴 SiliconFlow API Key"} disabled={busy} /></label>
             <small>{cloud ? "密钥只存当前浏览器。不写入云端数据库、备份或导出。" : "密钥暂存服务内存。服务重启后需重新填写。"}</small>
             <div><Button type="button" onClick={() => void storeKey()} disabled={busy || !apiKey.trim()}>保存密钥</Button>{settings.apiKeyConfigured && <Button type="button" onClick={() => void removeKey()} disabled={busy}>删除密钥</Button>}</div>
           </div>
         </div>
         <div className="semantic-settings-actions">
           <Button type="button" onClick={() => void testModel()} disabled={busy || !settings.apiKeyConfigured || !model.trim()}>{busy ? "处理中…" : "测试连接"}</Button>
-          <label><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} disabled={busy} />自动推荐</label>
+          <label><Checkbox checked={enabled} onChange={(event) => setEnabled(event.target.checked)} disabled={busy} />自动推荐</label>
           <Button type="button" className="primary-button" onClick={() => void applyEnabled()} disabled={busy || enabled === settings.enabled}>{enabled ? "开始处理" : "暂停处理"}</Button>
         </div>
         <dl className="semantic-progress">

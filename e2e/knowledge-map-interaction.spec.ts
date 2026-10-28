@@ -110,9 +110,11 @@ test("selection preserves the overview and local exploration explains folder rel
   await page.mouse.click(group.x, group.y);
   await expect.poll(() => page.evaluate(() => window.mapEvidence.nodes)).toBe(3);
   await expect(page.locator(".map-canvas-toolbar").getByRole("button", { name: "返回总览" })).toBeVisible();
-  await page.getByRole("combobox", { name: "分组", exact: true }).selectOption("reading");
+  await page.getByRole("combobox", { name: "分组", exact: true }).click();
+  await page.getByRole("option", { name: "阅读方法", exact: true }).click();
   await expect(page.locator(".map-canvas-toolbar").getByRole("button", { name: "返回总览" })).toHaveCount(0);
-  await page.getByRole("combobox", { name: "分组", exact: true }).selectOption("");
+  await page.getByRole("combobox", { name: "分组", exact: true }).click();
+  await page.getByRole("option", { name: "全部分组", exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.mapEvidence.nodes)).toBe(5);
   await page.locator(".map-accessible-list").getByRole("button", { name: "主动阅读" }).click();
   for (const width of [1440, 800, 390]) {

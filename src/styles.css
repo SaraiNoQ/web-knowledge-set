@@ -614,7 +614,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .document-row-wrap { position: relative; display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: stretch; border-bottom: 1px solid var(--line); }
 .document-row-wrap .document-row { border-bottom: 0; }
 .row-select { display: grid; place-items: center; }
-.row-select input { width: 13px; height: 13px; accent-color: var(--vermilion); }
+
 
 .document-row {
   position: relative;
@@ -866,7 +866,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   font-size: var(--font-caption);
 }
 .collection-picker label:has(input:checked) { color: var(--vermilion-dark); border-color: rgba(189,65,44,.42); background: rgba(189,65,44,.05); }
-.collection-picker input { width: 11px; height: 11px; margin: 0; accent-color: var(--vermilion); }
+
 
 .source-metadata-form {
   display: grid;
@@ -1591,10 +1591,10 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .knowledge-map-layout:not(.has-detail) { grid-template-columns: 214px minmax(0,1fr); }
 .knowledge-map-filters { display: flex; min-width: 0; flex-direction: column; gap: 14px; padding: 20px 16px; background: rgba(235,229,215,.38); border-right: 1px solid var(--line); overflow-y: auto; }
 .knowledge-map-filters > label:not(.map-check) { display: grid; gap: 6px; color: var(--ink-soft); font-size: var(--font-caption); }
-.knowledge-map-filters input:not([type="checkbox"]), .knowledge-map-filters select { width: 100%; min-height: 36px; padding: 0 9px; color: var(--ink); background: rgba(255,253,247,.82); border: 1px solid var(--line-strong); border-radius: 3px; font-size: var(--font-small); }
-.knowledge-map-filters input:focus-visible, .knowledge-map-filters select:focus-visible { outline: 2px solid rgba(189,65,44,.45); outline-offset: 1px; }
+.knowledge-map-filters .ui-select-wrap { width: 100%; min-width: 0; }
+
 .map-check { display: flex; align-items: center; gap: 8px; color: var(--ink-soft); font-size: var(--font-caption); }
-.map-check input { width: 15px; height: 15px; accent-color: var(--vermilion); }
+
 .map-key { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 5px; margin-top: 4px; padding-top: 14px; border-top: 1px solid var(--line); }
 .map-key span { display: flex; align-items: center; gap: 7px; color: var(--ink-soft); font-size: 10px; }
 .map-key i { display: inline-block; width: 10px; height: 10px; background: var(--moss); border: 1px solid var(--ink-soft); }
@@ -1603,7 +1603,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .map-key-folder { background: var(--paper) !important; }
 .map-key-line { width: 16px !important; height: 0 !important; background: none !important; border: 0 !important; border-top: 1px solid var(--ink-faint) !important; }
 .map-key-semantic { width: 16px !important; height: 0 !important; background: none !important; border: 0 !important; border-top: 1px dashed #816b91 !important; }
-.map-threshold input[type="range"] { min-height: auto; padding: 0; background: transparent; border: 0; accent-color: var(--vermilion); }
+
 .map-semantic-status { margin: -6px 0 0; color: var(--ink-faint); font-size: 10px; line-height: 1.5; }
 .map-semantic-status.is-error { color: var(--vermilion-dark); }
 .map-budget-note { margin: 0; color: var(--ink-soft); font-size: var(--font-caption); line-height: 1.6; }
@@ -1703,9 +1703,9 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   .knowledge-map-filters { display: grid; grid-template-columns: 1fr 1fr; align-items: end; gap: 8px; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line); }
   .knowledge-map-filters > label:not(.map-check) { gap: 3px; }
   .knowledge-map-filters .map-search { grid-column: 1 / -1; }
-  .knowledge-map-filters input:not([type="checkbox"]), .knowledge-map-filters select { min-height: 32px; padding-inline: 6px; font-size: 10px; }
+  .knowledge-map-filters :is(.ui-input, .ui-select) { min-height: 32px; }
   .map-check { min-height: 27px; gap: 5px; font-size: 9px; }
-  .map-check input { width: 13px; height: 13px; }
+
   .map-view-switch { grid-column: 1; }
   .map-view-switch button { padding: 5px 7px; font-size: 9px; }
   .map-threshold, .map-key, .map-privacy-note, .map-semantic-status, .map-budget-note, .map-accessible-list { grid-column: 1 / -1; }

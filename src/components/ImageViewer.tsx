@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Modal } from "./ui/Modal";
-import { Button, IconButton } from "./ui/Controls";
+import { Button, IconButton, Range } from "./ui/Controls";
 import { WorkspaceIcon } from "./ui/WorkspaceIcon";
 
 export function CachedImage({ src, alt = "", onError }: { src: string; alt?: string; onError: () => void }) {
@@ -119,6 +119,6 @@ function ImageViewer({ src, alt, onClose }: { src: string; alt: string; onClose:
       onPointerUp={() => { dragRef.current = null; }} onPointerCancel={() => { dragRef.current = null; }} onLostPointerCapture={() => { dragRef.current = null; }}>
       <img ref={imageRef} src={src} alt={alt || "正文图片"} draggable={false} onLoad={(event) => setSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })} onError={() => setError("图片无法读取，请关闭后重试。")} style={{ width: size.width || undefined, height: size.height || undefined, transform: `translate(${pan.x}px, ${pan.y}px) rotate(${rotation}deg) scale(${scale * flipX}, ${scale * flipY})`, filter }} />
     </div>
-    <footer className="image-viewer-footer"><label>亮度 <input type="range" min={0} max={200} value={brightness} onChange={(event) => setBrightness(event.currentTarget.valueAsNumber)} /> <output>{brightness}%</output></label><label>对比度 <input type="range" min={0} max={200} value={contrast} onChange={(event) => setContrast(event.currentTarget.valueAsNumber)} /> <output>{contrast}%</output></label><small>拖动平移 · 画布内 + / − 缩放 · Esc 关闭</small>{error && <p role="alert">{error}</p>}</footer>
+    <footer className="image-viewer-footer"><label>亮度 <Range min={0} max={200} value={brightness} onChange={(event) => setBrightness(event.currentTarget.valueAsNumber)} /> <output>{brightness}%</output></label><label>对比度 <Range min={0} max={200} value={contrast} onChange={(event) => setContrast(event.currentTarget.valueAsNumber)} /> <output>{contrast}%</output></label><small>拖动平移 · 画布内 + / − 缩放 · Esc 关闭</small>{error && <p role="alert">{error}</p>}</footer>
   </Modal>, document.body);
 }
