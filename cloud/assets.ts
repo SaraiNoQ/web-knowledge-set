@@ -319,7 +319,10 @@ export async function handleAssetRequest(
   if (!pathname.startsWith("/api/assets/")) return null;
   const hash = pathname.slice("/api/assets/".length);
   if (!HASH.test(hash)) return new Response(null, { status: 404 });
-  const metadata = await images.head(hash);
+  // Ordinary image reads keep their existing single R2 request; only ranges/HEAD need metadata first.
+  const wholeRequest = !head && !rangeHeader;
+  const whole = wholeRequest ? await images.get(hash) : null;
+  const metadata = wholeRequest ? whole : await images.head(hash);
   if (!metadata) return new Response(null, { status: 404 });
   const headers = new Headers({
     "Cache-Control": "public, max-age=31536000, immutable",
@@ -344,7 +347,7 @@ export async function handleAssetRequest(
     headers.set("Content-Length", String(range.length));
   }
   if (head) return new Response(null, { headers });
-  const object = await images.get(hash, range ? { range } : undefined);
+  const object = whole ?? await images.get(hash, range ? { range } : undefined);
   if (!object) return new Response(null, { status: 404 });
   if (object.httpEtag) headers.set("ETag", object.httpEtag);
   return new Response(object.body, { status: range ? 206 : 200, headers });
