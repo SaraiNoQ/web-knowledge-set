@@ -141,7 +141,8 @@ test("2D and 3D retain filters, selection and semantic relations without refetch
   await page.locator(".map-accessible-list li").first().getByRole("button").click();
   const detail = page.getByRole("complementary", { name: "资料详情" });
   await expect(detail).toContainText("相似分数 1.00");
-  await page.getByRole("combobox", { name: "收藏", exact: true }).selectOption("true");
+  await page.getByRole("combobox", { name: "收藏", exact: true }).click();
+  await page.getByRole("option", { name: "只看收藏", exact: true }).click();
   const search = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/knowledge-map" && new URL(response.url()).searchParams.get("q") === "阅读");
   await page.getByRole("textbox", { name: "搜索标题" }).fill("阅读");
   await search;
@@ -156,7 +157,7 @@ test("2D and 3D retain filters, selection and semantic relations without refetch
   const depth = await page.evaluate(() => window.map3dEvidence.layoutPositions.filter((_, index) => index % 3 === 2));
   expect(Math.max(...depth) - Math.min(...depth)).toBeGreaterThan(1);
   await expect(page.getByRole("textbox", { name: "搜索标题" })).toHaveValue("阅读");
-  await expect(page.getByRole("combobox", { name: "收藏", exact: true })).toHaveValue("true");
+  await expect(page.getByRole("combobox", { name: "收藏", exact: true })).toHaveText("只看收藏");
   await expect(page.getByRole("slider", { name: "相似要求" })).toHaveValue("0.9");
   await expect(page.getByRole("button", { name: "当前关联", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(detail.getByRole("heading", { name: "三维阅读" })).toBeVisible();

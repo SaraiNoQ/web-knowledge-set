@@ -92,3 +92,15 @@ button.directory-title.document-row.ui-button:is(:hover,:active,[aria-current]),
 .folder-node { color: var(--ink-soft); border-color: transparent; border-radius: var(--control-radius); }
 .editor-shell .folder-node:has(> button[aria-expanded="true"]) { color: var(--vermilion-dark); background: color-mix(in srgb, var(--vermilion) 8%, var(--paper)); }
 .folder-node button.ui-button.ui-button--ghost, .folder-node button.ui-button.ui-button--ghost:is(:hover,:active,[aria-expanded]) { color: inherit; background: transparent; border-color: transparent; box-shadow: none; }
+
+input.ui-range { width: 100%; height: 5px; margin: 10px 0 4px; appearance: none; border: 0; border-radius: var(--control-radius); background: linear-gradient(to right, var(--vermilion) var(--range-progress), var(--line-strong) var(--range-progress)); }
+input.ui-range::-webkit-slider-thumb { appearance: none; width: 18px; height: 18px; border: 2px solid var(--paper-light); border-radius: 50%; background: var(--vermilion); box-shadow: 0 1px 4px rgba(31,29,25,.2); cursor: ew-resize; }
+input.ui-range::-moz-range-thumb { width: 14px; height: 14px; border: 2px solid var(--paper-light); border-radius: 50%; background: var(--vermilion); cursor: ew-resize; }
+input.ui-range { min-height: 0; padding: 0; accent-color: var(--vermilion); }
+input.ui-range:disabled { cursor: not-allowed; }
+.map-threshold { display: grid; gap: 8px; margin-top: 10px; font-size: var(--font-caption); }
+.map-advanced summary { color: var(--ink-soft); font-size: var(--font-caption); cursor: pointer; }
+@media (forced-colors: active) {
+  input.ui-range { appearance: auto; background: Canvas; }
+  input.ui-range::-webkit-slider-thumb { appearance: auto; }
+}

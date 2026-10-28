@@ -1,4 +1,4 @@
-import { Button } from "./ui/Controls";
+import { Button, Input } from "./ui/Controls";
 import { useEffect, useId, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { DocumentSummary } from "../../shared/types";
@@ -136,7 +136,7 @@ export function QuickActions({ open, onClose, onOpenDocument, onCreateArticle }:
   return <Modal open={open} title="快捷查找" onClose={onClose} panel={false} className="quick-actions-backdrop">
     <section className="quick-actions-panel" aria-label="快捷查找">
       <header className="quick-actions-header">
-        <input
+        <Input
           ref={input}
           role="combobox"
           aria-label="搜索资料或输入文章标题"

@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { LlmApiKeyStatus, LlmConnectionTestResult, LlmSettings } from "../../shared/types";
 import { api } from "../api";
 import { isAbortError, userErrorFrom } from "../error-messages";
-import { Button, Select } from "./ui/Controls";
+import { Button, Select, Checkbox, Input } from "./ui/Controls";
 import { useDialogs } from "./ui/Feedback";
 import { SemanticSettingsPanel } from "./SemanticSettings";
 
@@ -295,7 +295,7 @@ export function AiSettings({ cloud = false, semanticRefresh = 0, embedded = fals
         <div className="ai-settings-grid">
           <section className="ai-settings-card">
             <div className="ai-setting-lead"><span>01</span><div><h2>功能开关</h2><p>开启不发送正文，点击生成后才发送。</p></div></div>
-            <label className="ai-enable"><input type="checkbox" checked={enabled} onChange={(event) => { setEnabled(event.target.checked); clearTestResult(); }} disabled={locked} /><span><strong>开启助手</strong><small>{enabled ? "已启用：可发起生成" : "已关闭，不会自动请求模型"}</small></span></label>
+            <label className="ai-enable"><Checkbox checked={enabled} onChange={(event) => { setEnabled(event.target.checked); clearTestResult(); }} disabled={locked} /><span><strong>开启助手</strong><small>{enabled ? "已启用：可发起生成" : "已关闭，不会自动请求模型"}</small></span></label>
           </section>
 
           <section className="ai-settings-card">
@@ -316,12 +316,12 @@ export function AiSettings({ cloud = false, semanticRefresh = 0, embedded = fals
               </label>
               {remoteProvider === "other" && <label>
                 <span>服务地址</span><small>须兼容 OpenAI 接口。</small>
-                <input aria-label="在线服务地址" type="url" value={remoteUrl} onChange={(event) => changeRemoteUrl(event.target.value)} placeholder="https://api.example.com/v1/chat/completions" disabled={locked} />
+                <Input aria-label="在线服务地址" type="url" value={remoteUrl} onChange={(event) => changeRemoteUrl(event.target.value)} placeholder="https://api.example.com/v1/chat/completions" disabled={locked} />
               </label>}
               <div className="ai-keychain">
                 <label>
                   <span>API Key（不会回显）</span>
-                  <input aria-label="平台密钥" type="password" value={apiKey} onChange={(event) => { setApiKey(event.target.value); clearTestResult(); }} autoComplete="new-password" spellCheck={false} placeholder={processKeyConfigured ? "当前平台已保存；输入新值可替换" : "粘贴当前平台的 API Key"} disabled={locked} />
+                  <Input aria-label="平台密钥" type="password" value={apiKey} onChange={(event) => { setApiKey(event.target.value); clearTestResult(); }} autoComplete="new-password" spellCheck={false} placeholder={processKeyConfigured ? "当前平台已保存；输入新值可替换" : "粘贴当前平台的 API Key"} disabled={locked} />
                 </label>
                 <div>
                   <span>{desktop ? (keychainEndpoint === undefined ? "正在检查 macOS 钥匙串…" : keychainEndpoint ? (endpointValue(keychainEndpoint) === currentRemoteEndpoint ? "当前平台密钥已保存到 macOS 钥匙串" : "钥匙串内有其他平台密钥；当前平台需重新输入") : "将保存到 macOS 钥匙串") : cloud ? "保存于当前浏览器站点存储；共享设备用完请删除" : "仅保存于当前本地服务进程"}</span>
@@ -330,11 +330,11 @@ export function AiSettings({ cloud = false, semanticRefresh = 0, embedded = fals
                 </div>
               </div>
               <div className={`ai-key-state ${processKeyConfigured ? "is-ready" : ""}`}><i />{processKeyConfigured ? (cloud ? "当前平台密钥已就绪。不写入云端数据库或备份。" : "当前平台密钥已就绪，不会返回浏览器。") : "请填写当前平台的密钥。切换平台后需重新填写。"}</div>
-              <label><span>在线模型</span><input aria-label="在线模型" value={remoteModel} onChange={(event) => { setRemoteModel(event.target.value); clearTestResult(); }} placeholder="model-name" disabled={locked} /></label>
+              <label><span>在线模型</span><Input aria-label="在线模型" value={remoteModel} onChange={(event) => { setRemoteModel(event.target.value); clearTestResult(); }} placeholder="model-name" disabled={locked} /></label>
             </> : <>
-              <label><span>本机地址</span><small>须兼容 OpenAI 接口。</small><input aria-label="本机服务地址" type="url" value={localUrl} onChange={(event) => { setLocalUrl(event.target.value); setLocalTrusted(false); clearTestResult(); }} placeholder="http://127.0.0.1:11434/v1/chat/completions" disabled={locked} /></label>
-              <label><span>本机模型</span><input aria-label="本机模型" value={localModel} onChange={(event) => { setLocalModel(event.target.value); clearTestResult(); }} placeholder="model-name" disabled={locked} /></label>
-              <label className="ai-local-trust"><input type="checkbox" checked={localTrusted} onChange={(event) => { setLocalTrusted(event.target.checked); clearTestResult(); }} disabled={locked} /><span>我信任这个本机服务，允许向它发送正文。</span></label>
+              <label><span>本机地址</span><small>须兼容 OpenAI 接口。</small><Input aria-label="本机服务地址" type="url" value={localUrl} onChange={(event) => { setLocalUrl(event.target.value); setLocalTrusted(false); clearTestResult(); }} placeholder="http://127.0.0.1:11434/v1/chat/completions" disabled={locked} /></label>
+              <label><span>本机模型</span><Input aria-label="本机模型" value={localModel} onChange={(event) => { setLocalModel(event.target.value); clearTestResult(); }} placeholder="model-name" disabled={locked} /></label>
+              <label className="ai-local-trust"><Checkbox checked={localTrusted} onChange={(event) => { setLocalTrusted(event.target.checked); clearTestResult(); }} disabled={locked} /><span>我信任这个本机服务，允许向它发送正文。</span></label>
             </>}
             <div className="ai-connection-test">
               <Button type="button" onClick={() => void testConnection()} disabled={locked || (target === "remote" ? !remoteUrl.trim() || !remoteModel.trim() || !processKeyConfigured || Boolean(apiKey.trim()) : !localUrl.trim() || !localModel.trim() || !localTrusted)}>{testing ? "测试中…" : "测试连接"}</Button>

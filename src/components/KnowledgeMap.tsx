@@ -1,5 +1,5 @@
 import { SegmentedControl } from "./ui/SegmentedControl";
-import { Button } from "./ui/Controls";
+import { Button, Checkbox, Input, Range, Select } from "./ui/Controls";
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import ForceGraph2D from "react-force-graph-2d";
@@ -716,14 +716,14 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
       </header>
       <div className={"knowledge-map-layout" + (selected ? " has-detail" : "")}>
         <aside className="knowledge-map-filters" aria-label="地图筛选">
-          <label className="map-search"><span>搜索标题</span><input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="输入关键词" /></label>
-          <label><span>资料类型</span><select value={kind} onChange={(event) => setKind(event.target.value as LibraryItemKind | "")}><option value="">文章与论文</option><option value="article">文章</option><option value="paper">论文</option></select></label>
-          <label><span>分组</span><select value={folderId} onChange={(event) => setFolderId(event.target.value)}><option value="">全部分组</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select></label>
-          <label><span>收藏</span><select value={favorite === undefined ? "all" : String(favorite)} onChange={(event) => setFavorite(event.target.value === "all" ? undefined : event.target.value === "true")}><option value="all">全部</option><option value="true">只看收藏</option><option value="false">排除收藏</option></select></label>
-          {!cloud && <label className="map-check"><input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} /><span>显示归档</span></label>}
-          <label className="map-check"><input type="checkbox" checked={showFolders || summaryMode} disabled={summaryMode} onChange={(event) => setShowFolders(event.target.checked)} /><span>显示分组</span></label>
-          <fieldset className="map-relations"><legend>关系类型</legend>{(Object.entries(RELATION_LABELS) as Array<[RelationType, string]>).map(([type, label]) => <label key={type}><input type="checkbox" checked={relationTypes[type]} onChange={(event) => setRelationTypes((values) => ({ ...values, [type]: event.target.checked }))} />{label}</label>)}</fieldset>
-          <details className="map-advanced"><summary>高级筛选</summary><label className="map-threshold"><span>相似要求 · {semanticThreshold.toFixed(2)}</span><input aria-label="相似要求" type="range" min="0.3" max="0.9" step="0.01" value={semanticThreshold} disabled={!semanticEnabled || semanticLoading} onChange={(event) => setSemanticThreshold(Number(event.target.value))} /></label></details>
+          <label className="map-search"><span>搜索标题</span><Input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="输入关键词" /></label>
+          <label><span>资料类型</span><Select aria-label="资料类型" value={kind} onChange={(event) => setKind(event.target.value as LibraryItemKind | "")}><option value="">文章与论文</option><option value="article">文章</option><option value="paper">论文</option></Select></label>
+          <label><span>分组</span><Select aria-label="分组" value={folderId} onChange={(event) => setFolderId(event.target.value)}><option value="">全部分组</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</Select></label>
+          <label><span>收藏</span><Select aria-label="收藏" value={favorite === undefined ? "all" : String(favorite)} onChange={(event) => setFavorite(event.target.value === "all" ? undefined : event.target.value === "true")}><option value="all">全部</option><option value="true">只看收藏</option><option value="false">排除收藏</option></Select></label>
+          {!cloud && <label className="map-check"><Checkbox checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} /><span>显示归档</span></label>}
+          <label className="map-check"><Checkbox checked={showFolders || summaryMode} disabled={summaryMode} onChange={(event) => setShowFolders(event.target.checked)} /><span>显示分组</span></label>
+          <fieldset className="map-relations"><legend>关系类型</legend>{(Object.entries(RELATION_LABELS) as Array<[RelationType, string]>).map(([type, label]) => <label key={type}><Checkbox checked={relationTypes[type]} onChange={(event) => setRelationTypes((values) => ({ ...values, [type]: event.target.checked }))} />{label}</label>)}</fieldset>
+          <details className="map-advanced"><summary>高级筛选</summary><label className="map-threshold"><span>相似要求 · {semanticThreshold.toFixed(2)}</span><Range aria-label="相似要求" min="0.3" max="0.9" step="0.01" value={semanticThreshold} disabled={!semanticEnabled || semanticLoading} onChange={(event) => setSemanticThreshold(Number(event.target.value))} /></label></details>
           <SegmentedControl label="查看范围" className="map-view-switch" value={localMode ? "local" : "all"} options={[{ value: "all", label: "全部资料" }, { value: "local", label: "当前关联", disabled: !selected }]} onChange={(value) => changeScope(value === "local", null)} />
           <div className="map-key"><span><i className="map-key-article" />文章</span><span><i className="map-key-paper" />论文</span><span><i className="map-key-folder" />分组</span><span><i className="map-key-line" />所属分组</span><span><i className="map-key-semantic" />内容相近</span></div>
           <p className="map-privacy-note">分数表示内容相似，不代表正确。<br />连线不表示引用或事实关系。</p>

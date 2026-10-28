@@ -3,7 +3,7 @@ import type { ReactNode, Ref } from "react";
 import type { DocumentListResponse, DocumentSearchScope, DocumentSort, KnowledgeFolder } from "../../shared/types";
 import { searchTerms } from "../../shared/search";
 import { api } from "../api";
-import { Button, IconButton, Select } from "./ui/Controls";
+import { Button, IconButton, Select, Checkbox, Input } from "./ui/Controls";
 import { WorkspaceIcon } from "./ui/WorkspaceIcon";
 import "../library-search.css";
 
@@ -87,7 +87,7 @@ export function LibrarySearch({ folders, refreshKey, inputRef, onOpen, active }:
     <div className="library-search-controls">
       <div className="library-search-input">
         <WorkspaceIcon name="search" size={18} />
-        <input ref={inputRef} aria-label="搜索文档" type="search" maxLength={200} placeholder="输入关键词" value={query} onChange={(event) => changeQuery(event.target.value)} />
+        <Input ref={inputRef} aria-label="搜索文档" type="search" maxLength={200} placeholder="输入关键词" value={query} onChange={(event) => changeQuery(event.target.value)} />
         <Button type="button" variant="ghost" density="compact" className="library-search-icon library-search-case" aria-label="区分大小写" aria-pressed={caseSensitive} title="区分大小写" onClick={() => { setCaseSensitive(!caseSensitive); setPage(1); }}>Aa</Button>
         {query && <IconButton className="library-search-icon" label="清空输入" title="清空输入" onClick={() => changeQuery("")}><WorkspaceIcon name="close" size={16} /></IconButton>}
       </div>
@@ -96,14 +96,14 @@ export function LibrarySearch({ folders, refreshKey, inputRef, onOpen, active }:
       </IconButton>
     </div>
     {settingsOpen && <div className="library-search-settings" id={`${id}-settings`}>
-      <label className="library-search-switch"><span>收起片段</span><input type="checkbox" role="switch" checked={collapseResults} onChange={(event) => { setCollapseResults(event.target.checked); setExpanded({}); }} /></label>
-      <label className="library-search-switch"><span>更多原文</span><input type="checkbox" role="switch" checked={moreContext} onChange={(event) => setMoreContext(event.target.checked)} /></label>
+      <label className="library-search-switch"><span>收起片段</span><Checkbox role="switch" checked={collapseResults} onChange={(event) => { setCollapseResults(event.target.checked); setExpanded({}); }} /></label>
+      <label className="library-search-switch"><span>更多原文</span><Checkbox role="switch" checked={moreContext} onChange={(event) => setMoreContext(event.target.checked)} /></label>
       <div className="library-search-filters">
         <label>搜索范围<Select density="compact" aria-label="搜索范围" aria-describedby={scope === "source" ? `${id}-source-help` : undefined} value={scope} onChange={(event) => { setScope(event.target.value as DocumentSearchScope); setPage(1); }}><option value="all">全部内容</option><option value="title">标题</option><option value="body">正文</option><option value="source">来源信息</option></Select></label>
         {scope === "source" && <p className="library-search-scope-help" id={`${id}-source-help`}>查找链接、作者和来源备注。</p>}
         <label>分组<Select density="compact" aria-label="搜索分组" value={folderId} onChange={(event) => { setFolderId(event.target.value); setPage(1); }}><option value="">全部分组</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</Select></label>
         <label>资料类型<Select density="compact" aria-label="搜索资料类型" value={kind} onChange={(event) => { setKind(event.target.value as typeof kind); setPage(1); }}><option value="">全部类型</option><option value="article">文章</option><option value="paper">论文</option></Select></label>
-        <label className="library-search-checkbox"><input type="checkbox" checked={favorite} onChange={(event) => { setFavorite(event.target.checked); setPage(1); }} />只看收藏</label>
+        <label className="library-search-checkbox"><Checkbox checked={favorite} onChange={(event) => { setFavorite(event.target.checked); setPage(1); }} />只看收藏</label>
       </div>
     </div>}
     {!term ? <div className="library-search-start">

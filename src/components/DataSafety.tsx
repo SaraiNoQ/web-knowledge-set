@@ -1,5 +1,5 @@
 import { FileSelectButton } from "./ui/Uploads";
-import { Button } from "./ui/Controls";
+import { Button, Input } from "./ui/Controls";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
@@ -438,7 +438,7 @@ export function DataSafety({
           <p>每日首次启动时备份一次。<br />只轮换每日备份，其他备份保留。</p>
           <form onSubmit={saveRetention}>
             <label htmlFor="backup-retention">保留份数</label>
-            <div><input id="backup-retention" type="number" min="1" max="100" step="1" value={retention} onChange={(event) => setRetention(Number(event.target.value))} disabled={Boolean(busy) || recovery || status.maintenance} /><span>份</span></div>
+            <div><Input id="backup-retention" type="number" min="1" max="100" step="1" value={retention} onChange={(event) => setRetention(Number(event.target.value))} disabled={Boolean(busy) || recovery || status.maintenance} /><span>份</span></div>
             <Button type="submit" disabled={Boolean(busy) || recovery || status.maintenance}>保存设置</Button>
           </form>
           <hr />
