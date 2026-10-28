@@ -3,7 +3,7 @@
 .library-search-input { display: flex; flex: 1; align-items: center; gap: 5px; min-width: 0; min-height: 38px; padding: 3px 5px 3px 10px; background: var(--paper-light); border: 1px solid var(--line-strong); border-radius: var(--control-radius); }
 .library-search-input:focus-within { border-color: var(--vermilion); }
 .library-search-input > svg { flex-shrink: 0; color: var(--ink-soft); }
-.library-search-input input { width: 100%; min-width: 0; padding: 5px 0; color: var(--ink); background: transparent; border: 0; outline: 0; }
+.library-search-input input { min-height: 0; width: 100%; min-width: 0; padding: 5px 0; color: var(--ink); background: transparent; border: 0; outline: 0; }
 .library-search-input input::-webkit-search-cancel-button { display: none; }
 .library-search-input input::placeholder { color: var(--ink-faint); }
 .library-search-icon { display: grid; flex: 0 0 auto; place-items: center; width: 28px; min-height: 28px; padding: 3px; color: var(--ink-soft); background: transparent; border: 0; border-radius: 4px; }
