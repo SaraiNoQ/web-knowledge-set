@@ -1752,6 +1752,9 @@ test("schema inspection is read-only and rejects future or incomplete histories"
     const raw = new DatabaseSync(join(dataDir, "zhiye.sqlite3"));
     raw.exec(`
       PRAGMA foreign_keys = OFF;
+      DROP TABLE home_presentations;
+      DROP TABLE home_covers;
+      DROP TABLE home_settings;
       DROP TABLE reading_connection_evidence;
       DROP TABLE study_topic_annotations;
       DROP TABLE study_topic_documents;
