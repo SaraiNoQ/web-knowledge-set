@@ -42,11 +42,11 @@
 .markdown-toolbar-host:empty { display: none; }
 .markdown-toolbar-host .markdown-format-toolbar { padding: 0; border: 0; background: transparent; }
 .editor-shell .compact-document-head .document-actions { flex: 0 1 auto; max-width: 100%; flex-wrap: wrap; gap: 8px; }
-.editor-shell .compact-document-head .document-actions > button { flex: 0 0 auto; padding-inline: 10px; gap: 6px; font-size: 12px; }
+.editor-shell .compact-document-head .document-actions > button { flex: 0 0 auto; padding-inline: 10px; gap: 6px; font-size: var(--font-small); }
 .editor-shell .compact-document-head .markdown-style-select { width: 70px; min-width: 70px; max-width: 70px; flex: 0 0 70px; }
 .save-indicator .editor-stats { margin-left: 0; color: var(--ink-faint); letter-spacing: 0; }
 .compact-document-head .document-actions > * { order: 0; }
-.compact-document-head .mode-switch.ui-segmented { flex: 0 0 180px; width: 180px; height: var(--control-height-compact); padding: 2px; }
+.compact-document-head .mode-switch.ui-segmented { flex: 0 0 210px; width: 210px; height: var(--control-height-compact); padding: 2px; }
 .editor-shell .compact-document-head .mode-switch.ui-segmented > button.ui-button { height: 28px; min-height: 28px; padding-block: 0; }
 .compact-document-head .mode-switch .ui-segmented-surface { inset: 2px auto 2px 2px; width: calc((100% - 4px) / var(--segment-count)); }
 .pane-label-overlay { position: sticky; top: 0; z-index: 2; height: 0; flex: 0 0 0; pointer-events: none; }
@@ -71,7 +71,7 @@
 :root[data-theme="dark"] .editor-shell .mode-switch button[aria-pressed="true"] { color: var(--vermilion-dark); }
 .markdown-preview :is(pre,table):focus-visible, .preview-pane:focus-visible { outline: 1px solid var(--vermilion); outline-offset: -2px; }
 .markdown-editor:focus-within { box-shadow: inset 0 0 0 1px var(--line-strong); }
-.settings-content .reading-style-description { margin: 0; font-size: 13px; }
+.settings-content .reading-style-description { margin: 0; font-size: var(--font-small); }
 .reading-style-sample { border-block: 1px solid var(--line); }
 .editor-shell .reading-text-preview.markdown-preview { padding-block: 24px; font-family: var(--reading-font); }
 .reading-text-preview.markdown-preview > h2:first-child { margin-top: 0; }
