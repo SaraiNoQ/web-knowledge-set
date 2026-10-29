@@ -37,8 +37,7 @@ export function TweetVideoSettings() {
   };
   return <section className="tweet-video-settings" aria-labelledby="tweet-video-settings-title">
     <h2 id="tweet-video-settings-title">推文视频</h2>
-    <label className="tweet-video-limit">每条推文视频上限<Input type="number" min={MIN_TWEET_VIDEO_BYTES / 1_000_000} max={MAX_TWEET_VIDEO_BYTES / 1_000_000} step={1} value={limitMb} disabled={!settings || busy} onChange={(event) => { setLimitMb(event.target.value); setNotice(""); }} aria-describedby="tweet-video-limit-description" /><span>MB</span></label>
-    <p id="tweet-video-limit-description">按本条推文全部视频合计，范围 1–100 MB。超限只跳过视频，文字和图片照常保存。</p>
+    <div className="reading-control tweet-video-limit"><label htmlFor="tweet-video-limit">每条推文视频上限</label><div className="reading-number"><Input id="tweet-video-limit" type="number" min={MIN_TWEET_VIDEO_BYTES / 1_000_000} max={MAX_TWEET_VIDEO_BYTES / 1_000_000} step={1} value={limitMb} disabled={!settings || busy} onChange={(event) => { setLimitMb(event.target.value); setNotice(""); }} aria-describedby="tweet-video-limit-description" /><span>MB</span></div><p id="tweet-video-limit-description">按本条推文全部视频合计，范围 1–100 MB。超限只跳过视频，文字和图片照常保存。</p></div>
     <Button disabled={!settings || !valid || busy} onClick={() => void save()}>{busy ? "保存中…" : "保存视频设置"}</Button>
     {notice && <p role="status">{notice}</p>}
     {error && <div role="alert"><p>{error}</p><Button disabled={busy} onClick={() => void load()}>重新载入视频设置</Button></div>}
