@@ -47,8 +47,8 @@ export function BrowserExtension({ onPairingCountChange }: { onPairingCountChang
   return <section className="extension-help" aria-labelledby="extension-title">
     <h3 id="extension-title">浏览助手</h3>
     <div className="extension-downloads">
-      <div><a href="/extensions/zhiye-clipper-chrome.zip?v=0.3.12" download>下载 Chrome 扩展 0.3.12</a><p>Chrome：覆盖旧文件夹，重新加载扩展。</p></div>
-      <div><a href="/extensions/zhiye-clipper-firefox.xpi?v=0.3.12" download>下载 Firefox 扩展 0.3.12</a><p>Firefox：下载 XPI，在扩展管理页安装。</p></div>
+      <div><a href="/extensions/zhiye-clipper-chrome.zip?v=0.3.13" download>下载 Chrome 扩展 0.3.13</a><p>Chrome：覆盖旧文件夹，重新加载扩展。</p></div>
+      <div><a href="/extensions/zhiye-clipper-firefox.xpi?v=0.3.13" download>下载 Firefox 扩展 0.3.13</a><p>Firefox：下载 XPI，在扩展管理页安装。</p></div>
     </div>
     <div className="extension-actions">
       <Button type="button" className="primary-button" onClick={() => void generate()} disabled={busy}>{busy ? "生成中…" : "连接码"}</Button>
