@@ -211,7 +211,7 @@ test("refreshes the directory when the browser extension announces a saved clip"
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
   await deferSetup.or(page.getByLabel("网页链接")).first().waitFor();
   if (await deferSetup.isVisible()) await deferSetup.click();
-  await expect(page.getByText("所有织片都已分组。")).toBeVisible();
+  await expect(page.getByRole("region", { name: "未分组内容", exact: true })).toBeVisible();
   const folderName = `即时刷新-${Date.now()}`;
   await page.getByRole("button", { name: "新建", exact: true }).click();
   await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "新建分组" }).click();
@@ -219,7 +219,7 @@ test("refreshes the directory when the browser extension announces a saved clip"
   await page.getByRole("dialog", { name: "新建分组" }).getByRole("button", { name: "创建", exact: true }).click();
   const folder = page.locator(".folder-node").filter({ hasText: folderName });
   await expect(folder).toBeVisible();
-  await folder.locator(":scope > button").click();
+  await folder.locator(":scope > button[aria-expanded]").click();
   await expect(page.getByText("这个分组里还没有织片。")).toBeVisible();
   const foldersRefresh = page.waitForRequest((request) => request.method() === "GET" && new URL(request.url()).pathname === "/api/folders");
   const rootRefresh = page.waitForRequest((request) => request.method() === "GET" && new URL(request.url()).pathname === "/api/documents" && new URL(request.url()).searchParams.get("unfiled") === "true");
@@ -601,14 +601,16 @@ test("knowledge map shows model-ranked semantic neighbors and applies the thresh
   await expect(detail).toContainText("语义主题乙");
   await expect(detail).toContainText("相似分数 0.80");
   await expect(page.locator(".knowledge-map")).toContainText("连线不表示引用或事实关系");
+  await page.getByText("高级筛选", { exact: true }).click();
   await page.getByRole("slider", { name: "相似要求" }).press("End");
   await expect(page.getByRole("slider", { name: "相似要求" })).toHaveValue("0.9");
   await expect(detail.getByRole("heading", { name: "语义主题甲" })).toBeVisible();
-  await expect(detail.locator(".map-detail-related").first()).not.toContainText("语义主题乙");
+  const semanticPeers = detail.locator(".map-detail-related").filter({ has: page.getByRole("heading", { name: "内容相近", exact: true }) });
+  await expect(semanticPeers).not.toContainText("语义主题乙");
 
   await page.getByRole("slider", { name: "相似要求" }).press("Home");
   await expect(detail).toContainText("语义主题乙");
-  await detail.locator(".map-detail-related").first().getByRole("button", { name: /语义主题乙/u }).click();
+  await semanticPeers.getByRole("button", { name: /语义主题乙/u }).click();
   await expect(detail.getByRole("heading", { name: "语义主题乙" })).toBeVisible();
   await expect(page.getByRole("button", { name: "全部资料" })).toHaveAttribute("aria-pressed", "true");
   await detail.getByRole("button", { name: "聚焦关联", exact: true }).click();
@@ -687,7 +689,7 @@ test("opens one keyboard-accessible help and about dialog in normal and recovery
   await expect(help.getByText("本地 Web", { exact: true })).toHaveCount(0);
   await expect(help.getByText("MIT", { exact: true })).toHaveCount(0);
   await expect(help.getByText("点击读取后", { exact: false })).toHaveCount(0);
-  const extensionNotes = help.locator(".extension-help > p");
+  const extensionNotes = help.locator(".extension-downloads p, .extension-code-empty, .extension-privacy");
   await expect(extensionNotes).toHaveCount(4);
   await expect(extensionNotes.nth(0)).toHaveText("Chrome：覆盖旧文件夹，重新加载扩展。");
   await expect(extensionNotes.nth(1)).toHaveText("Firefox：下载 XPI，在扩展管理页安装。");
@@ -709,6 +711,13 @@ test("opens one keyboard-accessible help and about dialog in normal and recovery
   await page.setViewportSize({ width: 1280, height: 720 });
   await help.getByRole("button", { name: "连接码" }).click();
   await expect(help.getByRole("status")).toContainText(/[A-Z2-9]{10}/u);
+  await page.setViewportSize({ width: 320, height: 844 });
+  const codeBounds = await help.locator(".extension-code").evaluate((element) => ({
+    width: element.clientWidth, scrollWidth: element.scrollWidth,
+  }));
+  expect(codeBounds.scrollWidth).toBeLessThanOrEqual(codeBounds.width);
+  expect(await help.locator(".help-card").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 720 });
   for (const link of await help.getByRole("navigation", { name: "项目帮助链接" }).getByRole("link").all()) {
     await expect(link).toHaveAttribute("target", "_blank");
     await expect(link).toHaveAttribute("rel", /noopener/u);

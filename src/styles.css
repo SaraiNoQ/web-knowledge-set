@@ -160,31 +160,44 @@ a { color: inherit; }
 .shortcut-card h2 { margin: 4px 0 0; font: 500 26px/1.2 var(--font-serif); }
 .shortcut-card header button { color: var(--ink-faint); background: transparent; border: 0; font-size: 24px; }
 .shortcut-card dl { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; margin: 22px 0 0; }
-.shortcut-card dl > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.shortcut-card dl > div { display: grid; grid-template-columns: 80px minmax(0,1fr); align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
 .shortcut-card dt { display: flex; gap: 4px; }
 .shortcut-card dd { margin: 0; color: var(--ink-soft); font-size: var(--font-ui); }
 .shortcut-card kbd { min-width: 24px; padding: 4px 6px; text-align: center; background: rgba(250,247,239,.8); border: 1px solid var(--line); font: 500 var(--font-small)/1 var(--font-mono); }
-.help-card { width: min(720px, 100%); max-height: calc(100vh - 40px); overflow: auto; }
-.help-card h3 { margin: 8px 0; font: 500 19px/1.25 var(--font-serif); }
-.help-shortcuts { margin-top: 22px; }
+.help-card { width: min(720px, 100%); max-height: calc(100dvh - 48px); overflow: auto; }
+.help-card > header { align-items: center; gap: 16px; }
+.help-card > header .ui-icon-button { width: 40px; min-height: 40px; }
+.help-card > header h2 { margin: 0; }
+.help-card h3 { margin: 0 0 16px; font: 500 20px/1.4 var(--font-serif); }
+.help-shortcuts { margin-top: 28px; }
 .help-shortcuts h3 { margin-bottom: 0; }
 .shortcut-card .shortcut-list { margin-top: 10px; }
 .help-links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line-strong); }
 .help-links a { color: var(--ink-soft); font-size: var(--font-ui); text-underline-offset: 4px; }
+.help-card .help-links a { display: inline-flex; align-items: center; min-height: 40px; }
 .help-links a::after { margin-left: 5px; color: var(--vermilion); content: "↗"; }
-.extension-help { margin-top: 20px; padding: 22px; border: 1px solid var(--line); }
-.extension-help > p { color: var(--ink-soft); font-size: var(--font-body); }
-.extension-downloads { display: flex; flex-wrap: wrap; gap: 10px; }
-.extension-downloads a { padding: 9px 13px; color: var(--paper); background: var(--ink); text-decoration: none; font-size: var(--font-ui); }
-.extension-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; }
+.extension-help { margin-top: 24px; }
+.extension-help p { color: var(--ink-soft); font-size: var(--font-ui); line-height: 1.7; overflow-wrap: anywhere; }
+.extension-downloads { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
+.extension-downloads > div { min-width: 0; }
+.extension-downloads a { display: inline-flex; align-items: center; min-height: var(--control-height); max-width: 100%; padding: 8px 12px; border-radius: var(--control-radius); color: var(--paper); background: var(--ink); text-decoration: none; font-size: var(--font-ui); }
+.extension-downloads p { margin: 8px 0 0; }
+.extension-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 24px; }
 .extension-actions .primary-button { min-height: 40px; padding: 0 14px; }
-.extension-code { display: flex; align-items: baseline; gap: 14px; margin-top: 14px; padding: 12px; background: rgba(194,60,38,.08); }
+.extension-code { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-top: 12px; padding: 12px; background: var(--paper-deep); }
 .extension-code strong { color: var(--vermilion-dark); font: 700 24px/1 var(--font-mono); letter-spacing: .15em; }
-.extension-code small { color: var(--ink-soft); }
-.extension-code-empty { margin: 12px 0 0; padding: 10px 12px; border: 1px dashed var(--line-strong); }
+.extension-code small { color: var(--ink-soft); font-size: var(--font-small); line-height: 1.6; }
+.extension-code-empty { margin: 8px 0 0; }
 .extension-pairings { margin: 14px 0 0; padding: 0; list-style: none; }
-.extension-pairings li { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+.extension-pairings li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; padding: 12px 0; border-top: 1px solid var(--line); font-size: var(--font-ui); }
 .extension-pairings button { border: 0; color: var(--vermilion-dark); background: transparent; cursor: pointer; }
+.extension-help > .extension-privacy { margin: 20px 0 0; padding-top: 16px; border-top: 1px solid var(--line); }
+@media (max-width: 580px) {
+  .shortcut-card.help-card { padding: 20px; }
+  .extension-downloads { grid-template-columns: minmax(0,1fr); }
+  .extension-code { align-items: flex-start; flex-direction: column; }
+  .shortcut-card dl > div { grid-template-columns: 72px minmax(0,1fr); }
+}
 
 .bulk-import-card {
   width: min(860px, 100%);
