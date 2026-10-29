@@ -1,3 +1,5 @@
+import { ReadingLevels } from "./components/ReadingLevels";
+import { foldedMarkdown, type FoldData, type FoldLevel } from "../shared/textfold";
 import {
   createElement,
   createContext,
@@ -808,6 +810,12 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
   };
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [derivedOpen, setDerivedOpen] = useState(false);
+  const [readingFold, setReadingFold] = useState<{ documentId: string; markdown: string; data: FoldData; level: FoldLevel } | null>(null);
+  const changeReadingFold = useCallback((value: typeof readingFold) => {
+    setReadingFold(value);
+    if (value && value.level !== "full") setMode("preview");
+  }, []);
+  const displayMarkdown = (markdown: string) => readingFold && readingFold.documentId === currentDoc?.id && readingFold.markdown === markdown ? foldedMarkdown(markdown, readingFold.data, readingFold.level) : markdown;
   const [derivedPreferredType, setDerivedPreferredType] = useState<DerivedMode>("summary");
   const [collections, setCollections] = useState<KnowledgeCollection[]>([]);
   const [folders, setFolders] = useState<KnowledgeFolder[]>([]);
@@ -4149,6 +4157,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
                   <Button type="button" className="primary-button" onClick={() => void toggleCloudEditing()} disabled={currentDoc.status !== "ready" || saveState === "saving"}>{cloudEditing ? "返回阅读" : "编辑"}</Button>
                   <Button type="button" className={`favorite-button ${currentDoc.favorite ? "is-active" : ""}`} aria-pressed={currentDoc.favorite} onClick={() => void toggleFavorite()} disabled={organizationLocked || metadataDirty}><WorkspaceIcon name="star" size={17} />{currentDoc.favorite ? "取消收藏" : "收藏"}</Button>
                   <Button type="button" className="history-button" onClick={toggleDerived} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen} aria-controls="derived-knowledge">智能助手</Button>
+                  <ReadingLevels key={`${currentDoc.id}:${currentDoc.revision}`} document={currentDoc} blocked={!!derivedBlockedReason} onChange={changeReadingFold} />
                   <Button type="button" className="history-button translation-button" onClick={openTranslation} disabled={currentDoc.status !== "ready" || cloudEditing || dirty} aria-expanded={derivedOpen && derivedPreferredType === "translation"} aria-controls="derived-knowledge">翻译</Button>
                 </div>
               </header>
@@ -4164,11 +4173,11 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
                 {conflict && <div className="conflict-banner" role="alert"><div><strong>这张织片已在别处更新</strong><span>你的文字仍保留在编辑器中。请复制需要保留的内容，然后载入最新版。</span></div><Button type="button" onClick={() => { installCurrentDocument(conflict); updateListItem(conflict); setDraft(draftOf(conflict)); setConflict(null); setSaveState("idle"); }}>载入最新版</Button></div>}
                 <div ref={editorGridRef} className={`editor-grid mode-${mode}`} onScrollCapture={markPaneScroll}>
                   {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><PaneLabel>MARKDOWN</PaneLabel><MarkdownEditor ref={markdownEditorRef} toolbarHost={markdownToolbarHost} value={draft.markdown} onChange={(markdown) => setDraft((value) => value ? { ...value, markdown } : value)} readOnly={saveState === "saving" || organizationSaving} /></section>}
-                  {mode !== "edit" && longPreviewAllowed && <section className="preview-pane" aria-label="Markdown 预览" tabIndex={0}><PaneLabel>PREVIEW</PaneLabel>{draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : EMPTY_DOCUMENT_ASSETS} onNavigateSource={mode === "split" && draft.markdown === deferredDraftMarkdown ? navigatePreviewSource : undefined} /> : <StatePanel kind="empty" title="暂无正文" />}</section>}
+                  {mode !== "edit" && longPreviewAllowed && <section className="preview-pane" aria-label="Markdown 预览" tabIndex={0}><PaneLabel>PREVIEW</PaneLabel>{draft.markdown.trim() ? <MarkdownPreview markdown={mode === "split" ? deferredDraftMarkdown : displayMarkdown(deferredDraftMarkdown)} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : EMPTY_DOCUMENT_ASSETS} onNavigateSource={mode === "split" && draft.markdown === deferredDraftMarkdown ? navigatePreviewSource : undefined} /> : <StatePanel kind="empty" title="暂无正文" />}</section>}
                 </div>
               </div> : <>
                 <div className="pane-label">READ ONLY · MARKDOWN</div>
-                {!longPreviewAllowed ? <StatePanel kind="empty" title="长文预览已暂停"><Button type="button" onClick={() => setLongPreviewDocumentId(currentDoc.id)}>打开预览</Button></StatePanel> : currentDoc.markdown.trim() ? <MarkdownPreview markdown={currentDoc.markdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : EMPTY_DOCUMENT_ASSETS} /> : <StatePanel kind="empty" title="暂无正文" />}
+                {!longPreviewAllowed ? <StatePanel kind="empty" title="长文预览已暂停"><Button type="button" onClick={() => setLongPreviewDocumentId(currentDoc.id)}>打开预览</Button></StatePanel> : currentDoc.markdown.trim() ? <MarkdownPreview markdown={displayMarkdown(currentDoc.markdown)} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={desktopRuntime ? assets : EMPTY_DOCUMENT_ASSETS} /> : <StatePanel kind="empty" title="暂无正文" />}
               </>}
               </section>
             </>
@@ -4218,6 +4227,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
                   <Button type="button" className="history-button" onClick={toggleQuality} disabled={closing || currentDoc.status !== "ready"} aria-expanded={qualityOpen} aria-controls="capture-quality">内容检查</Button>
                   <Button type="button" className="history-button" onClick={toggleCaptureHistory} disabled={closing} aria-expanded={captureHistoryOpen} aria-controls="capture-history">收取记录</Button>
                   <Button type="button" className="history-button" onClick={toggleDerived} disabled={closing} aria-expanded={derivedOpen} aria-controls="derived-knowledge">智能助手</Button>
+                  <ReadingLevels key={`${currentDoc.id}:${currentDoc.revision}`} document={currentDoc} blocked={!!derivedBlockedReason} onChange={changeReadingFold} />
                   <Button type="button" className="history-button translation-button" onClick={openTranslation} disabled={closing} aria-expanded={derivedOpen && derivedPreferredType === "translation"} aria-controls="derived-knowledge">翻译</Button>
                   {!currentDoc.deletedAt && (
                     <Button type="button" className="text-button danger" onClick={() => void moveToTrash()} disabled={closing || organizationSaving || Boolean(organizationConflict) || Boolean(remoteDraftConflict) || Boolean(lifecycleAction) || hasUnsavedChanges || saveState === "saving"} title={hasUnsavedChanges || remoteDraftConflict || organizationConflict ? "请先处理当前更改" : undefined}>
@@ -4306,7 +4316,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
                   </div>
                   <section className="trash-preview" aria-label="回收站文档预览">
                     <div className="pane-label">READ ONLY</div>
-                    {!longPreviewAllowed ? <StatePanel kind="empty" title="长文预览已暂停"><Button type="button" onClick={() => setLongPreviewDocumentId(currentDoc.id)}>打开预览</Button></StatePanel> : draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} /> : <StatePanel kind="empty" title="暂无正文" />}
+                    {!longPreviewAllowed ? <StatePanel kind="empty" title="长文预览已暂停"><Button type="button" onClick={() => setLongPreviewDocumentId(currentDoc.id)}>打开预览</Button></StatePanel> : draft.markdown.trim() ? <MarkdownPreview markdown={mode === "split" ? deferredDraftMarkdown : displayMarkdown(deferredDraftMarkdown)} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} /> : <StatePanel kind="empty" title="暂无正文" />}
                   </section>
                 </div>
               ) : activeCapture ? (
@@ -4358,7 +4368,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
 
                   <div ref={editorGridRef} className={`editor-grid mode-${mode}`} onScrollCapture={markPaneScroll}>
                     {mode !== "preview" && <section className="editor-pane" aria-label="Markdown 源文编辑"><PaneLabel>MARKDOWN</PaneLabel><MarkdownEditor ref={markdownEditorRef} toolbarHost={markdownToolbarHost} value={draft.markdown} onChange={(markdown) => { if (!closeAttemptRef.current) setDraft((value) => value ? { ...value, markdown } : value); }} readOnly={editorLocked} /></section>}
-                    {mode !== "edit" && longPreviewAllowed && <section className="preview-pane" aria-label="Markdown 预览" tabIndex={0}><PaneLabel>PREVIEW</PaneLabel>{draft.markdown.trim() ? <MarkdownPreview markdown={deferredDraftMarkdown} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} onNavigateSource={mode === "split" && draft.markdown === deferredDraftMarkdown ? navigatePreviewSource : undefined} /> : <StatePanel kind="empty" title="暂无正文">写下正文，即可查看排版效果。</StatePanel>}</section>}
+                    {mode !== "edit" && longPreviewAllowed && <section className="preview-pane" aria-label="Markdown 预览" tabIndex={0}><PaneLabel>PREVIEW</PaneLabel>{draft.markdown.trim() ? <MarkdownPreview markdown={mode === "split" ? deferredDraftMarkdown : displayMarkdown(deferredDraftMarkdown)} sourceUrl={currentDoc.finalUrl || currentDoc.sourceUrl} assets={assets} onNavigateSource={mode === "split" && draft.markdown === deferredDraftMarkdown ? navigatePreviewSource : undefined} /> : <StatePanel kind="empty" title="暂无正文">写下正文，即可查看排版效果。</StatePanel>}</section>}
                   </div>
                 </div></>
               )}
