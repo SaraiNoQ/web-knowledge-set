@@ -1,3 +1,4 @@
+import { captureHomeSnapshot, emptyHomeSnapshot, parseHomeSnapshot, validateCover, type HomeSnapshot } from "../shared/home.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
@@ -24,7 +25,7 @@ import { captureStudySnapshot, emptyStudySnapshot, hasStudyData, parseStudySnaps
 import { PORTABLE_STUDY_FILE, readPortableStudyData, studyRecordCount } from "./study-portable.js";
 
 const FORMAT = "zhiye-portable";
-const FORMAT_VERSION = 3;
+const FORMAT_VERSION = 4;
 const MAX_ARCHIVE_BYTES = 100 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 25 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 200 * 1024 * 1024;
@@ -72,7 +73,8 @@ interface PortableDocument {
 
 interface PortableManifest {
   format: typeof FORMAT;
-  version: 1 | 2 | typeof FORMAT_VERSION;
+  version: 1 | 2 | 3 | typeof FORMAT_VERSION;
+  home?: HomeSnapshot;
   createdAt: string;
   documents: PortableDocument[];
   readingData?: ReadingSnapshot;
@@ -206,6 +208,7 @@ export async function createPortableBundle(database: KnowledgeDatabase, document
     totalBytes += body.length;
     entryCount += 1;
   };
+  const homeRevision = Number(database.sql.prepare("SELECT revision FROM home_settings WHERE id=1").get()?.revision ?? 1);
   const bodies = new Map<string, Buffer>();
   for (const document of documents) {
     exportedRevisions.set(document.id, document.revision);
@@ -278,12 +281,22 @@ export async function createPortableBundle(database: KnowledgeDatabase, document
   const hasReading = readingData.annotations.length + readingData.connections.length > 0;
   const studyData = parseStudySnapshot(await captureStudySnapshot(async (sql, values) => database.sql.prepare(sql).all(...values as never[]), { documents: new Set(manifestDocuments.map(({ id }) => id)), portable: true, includeEmptyTopics: documentIds === undefined }), new Set(manifestDocuments.map(({ id }) => id)), readingData);
   for (const [id, revision] of exportedRevisions) { const current = database.getDocument(id); if (!current || current.deletedAt || current.revision !== revision) throw new PortableError(409, "EXPORT_CHANGED", "Documents changed during export; retry the bundle"); }
+  const home = await captureHomeSnapshot(async(sql,values)=>database.sql.prepare(sql).all(...values as never[]), manifestDocuments.map(d=>d.id));
+  for (const cover of home.covers) {
+    const body = readFileSync(database.assetFilePath(cover.hash));
+    validateCover(body);
+    if (body.length !== cover.bytes || sha256(body) !== cover.hash) throw new PortableError(422,"ASSET_INVALID","封面文件校验失败");
+    addEntry(`covers/${cover.hash}.png`,body);
+  }
+  if (Number(database.sql.prepare("SELECT revision FROM home_settings WHERE id=1").get()?.revision ?? 1) !== homeRevision) throw new PortableError(409,"EXPORT_CHANGED","首页布置在导出时发生变化，请重试。");
   const hasStudy = hasStudyData(studyData);
+  const hasHome = home.presentations.length > 0;
   const manifest: PortableManifest = {
     format: FORMAT,
-    version: hasStudy ? FORMAT_VERSION : hasReading ? 2 : 1,
-    ...(hasReading || hasStudy ? { readingData } : {}),
-    ...(hasStudy ? { studyData } : {}),
+    version: hasHome ? FORMAT_VERSION : hasStudy ? 3 : hasReading ? 2 : 1,
+    ...(hasHome ? { home } : {}),
+    ...(hasReading || hasStudy || hasHome ? { readingData } : {}),
+    ...(hasStudy || hasHome ? { studyData } : {}),
     createdAt: new Date().toISOString(),
     documents: manifestDocuments,
   };
@@ -535,7 +548,7 @@ async function parseManifest(files: Record<string, Uint8Array>, signal?: AbortSi
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new PortableError(400, "INVALID_MANIFEST", "Manifest must be an object");
   const input = raw as Record<string, unknown>;
-  if (input.format !== FORMAT || (input.version !== 1 && input.version !== 2 && input.version !== FORMAT_VERSION) || (input.version === 1 && Object.hasOwn(input, "readingData")) || (input.version !== 3 && Object.hasOwn(input, "studyData")) || !Array.isArray(input.documents) || input.documents.length > MAX_DOCUMENTS) {
+  if (input.format !== FORMAT || (input.version !== 1 && input.version !== 2 && input.version !== 3 && input.version !== FORMAT_VERSION) || (input.version === 1 && Object.hasOwn(input, "readingData")) || (input.version !== 3 && input.version !== 4 && Object.hasOwn(input, "studyData")) || (input.version !== 4 && Object.hasOwn(input,"home")) || !Array.isArray(input.documents) || input.documents.length > MAX_DOCUMENTS) {
     throw new PortableError(400, "UNSUPPORTED_BUNDLE", "Portable bundle format or version is unsupported");
   }
   stringValue(input.createdAt, "createdAt", 50);
@@ -633,16 +646,27 @@ async function parseManifest(files: Record<string, Uint8Array>, signal?: AbortSi
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
-  if (expected.size !== Object.keys(files).length || Object.keys(files).some((path) => !expected.has(path))) {
-    throw new PortableError(400, "UNEXPECTED_ZIP_ENTRY", "ZIP contains files not declared by the manifest");
-  }
   const ids = new Set(documents.map(({ id }) => id));
   if (ids.size !== documents.length) throw new PortableError(400, "INVALID_MANIFEST", "Document IDs must be unique");
   let readingData: ReadingSnapshot = { annotations: [], connections: [] };
-  if (input.version === 2 || input.version === 3) try { readingData = parseReadingSnapshot(input.readingData, ids); } catch { throw new PortableError(400, "INVALID_MANIFEST", "Reading records or references are invalid"); }
+  if (input.version === 2 || input.version === 3 || input.version === 4) try { readingData = parseReadingSnapshot(input.readingData, ids); } catch { throw new PortableError(400, "INVALID_MANIFEST", "Reading records or references are invalid"); }
   let studyData = emptyStudySnapshot();
-  if (input.version === 3) try { studyData = parseStudySnapshot(input.studyData, ids, readingData); if (studyData.tables.study_merge_history.length || studyData.tables.study_source_checks.length) throw new Error(); } catch { throw new PortableError(400, "INVALID_MANIFEST", "Research records or references are invalid"); }
-  return { documents, readingData, studyData, assetPaths: [...new Set(documents.flatMap(({ assets }) => assets.map(({ path }) => path)))] };
+  if (input.version === 3 || input.version === 4) try { studyData = parseStudySnapshot(input.studyData, ids, readingData); if (studyData.tables.study_merge_history.length || studyData.tables.study_source_checks.length) throw new Error(); } catch { throw new PortableError(400, "INVALID_MANIFEST", "Research records or references are invalid"); }
+  let home = emptyHomeSnapshot();
+  if (input.version === 4) {
+    try { home = parseHomeSnapshot(input.home, ids); }
+    catch { throw new PortableError(400,"INVALID_MANIFEST","首页布置数据无效。"); }
+    for (const cover of home.covers) {
+      const path = `covers/${cover.hash}.png`, bytes = files[path];
+      if (!bytes || bytes.length !== cover.bytes || sha256(bytes) !== cover.hash) throw new PortableError(400,"CHECKSUM_MISMATCH","封面文件缺失或校验失败。");
+      try { validateCover(bytes); } catch { throw new PortableError(400,"INVALID_MANIFEST","封面文件无效。"); }
+      expected.add(path);
+    }
+  }
+  if (expected.size !== Object.keys(files).length || Object.keys(files).some((path) => !expected.has(path))) {
+    throw new PortableError(400, "UNEXPECTED_ZIP_ENTRY", "ZIP contains files not declared by the manifest");
+  }
+  return { documents, readingData, studyData, home, assetPaths: [...new Set(documents.flatMap(({ assets }) => assets.map(({ path }) => path)))] };
 }
 
 export async function stagePortableBundle(database: KnowledgeDatabase, archive: Uint8Array, signal?: AbortSignal): Promise<ImportPreview> {
@@ -663,6 +687,11 @@ export async function stagePortableBundle(database: KnowledgeDatabase, archive: 
       writeFileSync(join(stagingPath, asset.sha256), files[path]!, { mode: 0o600, flag: "wx", flush: true });
       stagedHashes.add(asset.sha256);
       await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    for (const cover of parsed.home.covers) {
+      if (stagedHashes.has(cover.hash)) continue;
+      writeFileSync(join(stagingPath,cover.hash),files[`covers/${cover.hash}.png`]!,{mode:0o600,flag:"wx",flush:true});
+      stagedHashes.add(cover.hash);
     }
     const descriptor = openSync(stagingPath, "r");
     try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
@@ -691,6 +720,7 @@ export async function stagePortableBundle(database: KnowledgeDatabase, archive: 
         sourceNote: document.sourceNote,
         markdown: document.originalMarkdown,
         readingData: readingByDocument.get(document.id)!,
+        ...(parsed.home.presentations.some(p=>p.documentId===document.id) ? { home: { presentations: parsed.home.presentations.filter(p=>p.documentId===document.id), covers: parsed.home.covers.filter(c=>parsed.home.presentations.some(p=>p.documentId===document.id&&p.coverHash===c.hash)) } } : {}),
         ...(index === 0 && hasStudyData(parsed.studyData) ? { studyData: parsed.studyData } : {}),
         assets: [...new Map(document.assets.map((asset) => [asset.sourceUrl, asset])).values()],
       } satisfies Extract<ImportPayload, { type: "markdown" }>,

@@ -1,3 +1,5 @@
+import { parseHomeSnapshot, homeRestoreStatements } from "../shared/home.js";
+import { HOME_SCHEMA } from "../shared/home.js";
 import type { ImportPayload, PreparedImportItem } from "../shared/types.js";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { chmodSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
@@ -684,6 +686,7 @@ const migrations = [
   READING_DATA_SCHEMA,
   STUDY_SCHEMA + CONNECTION_EVIDENCE_SCHEMA,
   SEMANTIC_ANN_SCHEMA,
+  HOME_SCHEMA,
 ];
 
 export const CURRENT_SCHEMA_VERSION = migrations.length;
@@ -1973,6 +1976,7 @@ export class KnowledgeDatabase {
            FROM assets a JOIN document_assets da ON da.asset_hash = a.hash
            WHERE da.status = 'ready'
            UNION SELECT DISTINCT 'assets/' || hash AS path FROM paper_files
+           UNION SELECT DISTINCT 'assets/' || cover_hash AS path FROM home_presentations WHERE cover_hash IS NOT NULL
            ORDER BY path`,
         )
         .all() as Array<{ path: string }>
@@ -3275,6 +3279,16 @@ export class KnowledgeDatabase {
             : this.insertImportedMarkdown(row.id, payload, copy);
           status = "created";
         }
+        if (documentId && (status === "created" || status === "updated") && payload.type === "markdown" && payload.home) {
+          const oldIds = new Set(payload.home.presentations.map(p=>p.documentId));
+          const home = parseHomeSnapshot(payload.home, oldIds);
+          if (home.presentations.length !== 1) throw new Error("Imported home presentation must belong to one document");
+          const importedDocumentId = documentId;
+          home.presentations = home.presentations.map(p=>({...p, documentId: importedDocumentId}));
+          this.sql.prepare("DELETE FROM home_presentations WHERE document_id=?").run(documentId);
+          for (const statement of homeRestoreStatements(home)) this.sql.prepare(statement.sql).run(...statement.values as never[]);
+          this.sql.prepare("INSERT INTO home_settings(id,revision) VALUES(1,2) ON CONFLICT(id) DO UPDATE SET revision=home_settings.revision+1").run();
+        }
         updateResult.run(status, documentId, error, row.id);
           this.sql.exec("RELEASE import_item");
         } catch (cause) {
@@ -4241,6 +4255,7 @@ export class KnowledgeDatabase {
           .prepare(
             `SELECT DISTINCT da.asset_hash AS hash FROM document_assets da
              WHERE da.document_id = ? AND da.asset_hash IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM home_covers h WHERE h.hash=da.asset_hash)
                AND NOT EXISTS (
                  SELECT 1 FROM document_assets other
                  WHERE other.asset_hash = da.asset_hash AND other.document_id <> da.document_id
@@ -4332,8 +4347,9 @@ export class KnowledgeDatabase {
       for (const path of new Set(paths)) {
         this.storagePath(path);
         const assetHash = /^assets\/([a-f0-9]{64})$/u.exec(path)?.[1];
+        // shortcut: retain registered covers, including pending uploads; add leased GC only with backup retention support.
         const inUse = assetHash
-          ? this.sql.prepare("SELECT 1 AS found WHERE EXISTS (SELECT 1 FROM document_assets WHERE asset_hash = ?) OR EXISTS (SELECT 1 FROM paper_files WHERE hash = ?)").get(assetHash, assetHash)
+          ? this.sql.prepare("SELECT 1 AS found WHERE EXISTS (SELECT 1 FROM document_assets WHERE asset_hash = ?) OR EXISTS (SELECT 1 FROM paper_files WHERE hash = ?) OR EXISTS (SELECT 1 FROM home_covers WHERE hash = ?)").get(assetHash, assetHash, assetHash)
           : this.sql.prepare("SELECT 1 AS found FROM captures WHERE snapshot_path = ? LIMIT 1").get(path);
         if (inUse) {
           referenced.push(path);
@@ -4371,6 +4387,11 @@ export class KnowledgeDatabase {
     for (const row of rows) {
       try {
         const path = this.storagePath(row.path);
+        const hash = /^assets\/([a-f0-9]{64})$/u.exec(row.path)?.[1];
+        if (hash && this.sql.prepare("SELECT 1 WHERE EXISTS(SELECT 1 FROM document_assets WHERE asset_hash=?) OR EXISTS(SELECT 1 FROM paper_files WHERE hash=?) OR EXISTS(SELECT 1 FROM home_covers WHERE hash=?)").get(hash,hash,hash)) {
+          this.sql.prepare("DELETE FROM file_deletions WHERE path=?").run(row.path);
+          continue;
+        }
         try {
           if (!lstatSync(path).isFile()) throw new Error("Stored path is not a file");
           unlinkSync(path);

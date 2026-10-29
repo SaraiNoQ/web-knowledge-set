@@ -1,3 +1,5 @@
+import { HomeError } from "../shared/home.js";
+import { localHome, uploadHomeCover, localHomeCover } from "./home.js";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { closeSync, constants, createReadStream, existsSync, fsyncSync, openSync, rmSync, statSync } from "node:fs";
 import { open, writeFile } from "node:fs/promises";
@@ -2796,6 +2798,27 @@ export function createApp(options: AppOptions) {
           }},controller.signal);assertDataEpoch(enteringEpoch);sendJson(response,200,result);
         } catch(error) { if(error instanceof ReaderInputError)throw new HttpError(400,"INVALID_STUDY_REQUEST",error.message);if(error instanceof ReadingDataError)throw new HttpError(error.status,error.code,error.message);if(/malformed JSON|STUDY_CONFLICT/iu.test(String((error as Error).message)))throw new HttpError(409,"REVISION_CONFLICT","记录已变化，请刷新后重试。");throw error; }
         finally{response.off("close",abort);controller.abort();}return;
+      }
+
+      if (pathname === "/api/home" || pathname.startsWith("/api/home/")) {
+        const enteringEpoch = dataEpoch;
+        const database = requireDatabase();
+        try {
+          if (pathname === "/api/home" && request.method === "GET") sendJson(response,200,await localHome(database,()=>assertDataEpoch(enteringEpoch)).list(requestUrl));
+          else if (pathname === "/api/home" && request.method === "PUT") sendJson(response,200,await localHome(database,()=>assertDataEpoch(enteringEpoch)).save(await mutationBody(request)));
+          else if (pathname === "/api/home/covers" && request.method === "POST") {
+            const body = await mutationBody(request); assertDataEpoch(enteringEpoch);
+            sendJson(response,200,uploadHomeCover(database,body));
+          } else if (request.method === "GET" && /^\/api\/home\/covers\/[a-f0-9]{64}$/.test(pathname)) {
+            const bytes=localHomeCover(database,pathname.split("/").at(-1)!);
+            response.writeHead(200,{"Content-Type":"image/png","Cache-Control":"private, max-age=3600","X-Content-Type-Options":"nosniff"});response.end(bytes);
+          } else throw new HomeError(405,"不支持的首页操作。");
+        } catch(error) {
+          if(error instanceof HomeError)throw new HttpError(error.status,"HOME_ERROR",error.message);
+          if(/HOME_CONFLICT|malformed JSON|FOREIGN KEY/iu.test(String((error as Error).message)))throw new HttpError(409,"REVISION_CONFLICT","首页或文章已变化，请重新加载。");
+          throw error;
+        }
+        return;
       }
 
       const readingData = /^\/api\/reader-tools\/documents\/([^/]+)\/(data|annotations|connections)(?:\/([^/]+))?$/u.exec(pathname);

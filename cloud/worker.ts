@@ -1,3 +1,4 @@
+import { handleHome } from "./home";
 import {
   CloudHttpError,
   createArticle,
@@ -131,6 +132,12 @@ async function api(request: Request, env: CloudEnv, url: URL) {
   }
   if (epoch.startsWith("restore:")) {
     return json({ error: { code: "CLOUD_MAINTENANCE", message: "Cloud restore is in progress" } }, 503);
+  }
+  if(url.pathname === "/api/home" || url.pathname.startsWith("/api/home/")) {
+    if(request.method!=="GET" && request.headers.get(DATA_EPOCH_HEADER)!==epoch)return json({error:{code:"STALE_DATA_EPOCH",message:"资料库已变化，请刷新。"}},409,epoch);
+    const result=await handleHome(request,url,request.method==="GET"?env.DB:epochGuardedDatabase(env.DB,epoch),env.IMAGES);
+    if(result instanceof Response){const headers=new Headers(result.headers);for(const [k,v] of Object.entries(SECURITY_HEADERS))headers.set(k,v);return new Response(result.body,{status:result.status,headers});}
+    return json(result,200,epoch);
   }
   if (url.pathname === "/api/settings/tweet-videos") {
     if (request.method === "GET") return json(await tweetVideoSettings(env.DB), 200, epoch);

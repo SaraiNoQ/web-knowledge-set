@@ -1,3 +1,4 @@
+import type { HomePage, HomePresentation } from "../shared/home";
 import type { TweetVideoSettings as TweetVideoSettingsState, TweetVideoState as TweetVideoJobState } from "../shared/tweet-video";
 export type { TweetVideoSettings as TweetVideoSettingsState, TweetVideoState as TweetVideoJobState } from "../shared/tweet-video";
 import { documentListUrl } from "./document-list-url";
@@ -703,6 +704,14 @@ export const api = {
       body: JSON.stringify({ targetId }),
     });
   },
+
+  home(params: { page?: number; q?: string; folder?: string; manage?: boolean } = {}, signal?: AbortSignal) {
+    const query = new URLSearchParams(Object.entries(params).map(([key,value])=>[key,String(value)]));
+    return request<HomePage>(`/api/home?${query}`,{signal});
+  },
+  saveHome(revision: number, changes: HomePresentation[]) { return request<{revision:number}>("/api/home",{method:"PUT",body:JSON.stringify({revision,changes})}); },
+  uploadHomeCover(image: string) { return request<{hash:string}>("/api/home/covers",{method:"POST",body:JSON.stringify({image})}); },
+  homeCoverUrl(hash: string) { return `/api/home/covers/${encodeURIComponent(hash)}`; },
 
   listFolders(signal?: AbortSignal) {
     return request<KnowledgeFolder[]>("/api/folders", { signal });

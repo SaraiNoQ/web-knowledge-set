@@ -267,3 +267,23 @@ test("importCloudZipBackup converts a cloud ZIP with images into a restorable .z
     sql.close();
   }
 });
+
+test("cloud v9 conversion retains cover-only images and rejects missing or corrupt cover bytes",async()=>{
+  const fixture=workspace();
+  try {
+    const { emptyStudySnapshot }=await import("../shared/study-snapshot.js");
+    const base=cloudArchive(),id=base.documents[0]!.id;
+    const png=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==","base64");
+    const hash=createHash("sha256").update(png).digest("hex");
+    const archive={...base,version:9,papers:[],paperExtractions:[],paperPages:[],paperFiles:[],readingData:{annotations:[],connections:[]},studyData:emptyStudySnapshot(),assets:[{hash,mime:"image/png",bytes:png.length}],home:{presentations:[{documentId:id,featured:true,position:1,coverHash:hash,color:"sage",shortTitle:"封面",fit:"contain"}],covers:[{hash,mime:"image/png",bytes:png.length}]}};
+    const manifest=new TextEncoder().encode(JSON.stringify(archive));
+    const zip=zipSync({"manifest.json":manifest,[`assets/${hash}`]:png});
+    const record=await importCloudZipBackup(fixture.db,fixture.dataDir,fixture.backupRoot,zip,CURRENT_SCHEMA_VERSION);
+    const backupPath=join(fixture.backupRoot,record.directoryName!);
+    assert.ok(existsSync(join(backupPath,"assets",hash)));
+    const copy=new DatabaseSync(join(backupPath,"database.sqlite3"),{readOnly:true});
+    try {assert.equal(copy.prepare("SELECT cover_hash FROM home_presentations WHERE document_id=?").get(id)?.cover_hash,hash);assert.deepEqual(copy.prepare("PRAGMA foreign_key_check").all(),[]);}finally{copy.close();}
+    await assert.rejects(importCloudZipBackup(fixture.db,fixture.dataDir,fixture.backupRoot,zipSync({"manifest.json":manifest}),CURRENT_SCHEMA_VERSION),/missing an asset/);
+    await assert.rejects(importCloudZipBackup(fixture.db,fixture.dataDir,fixture.backupRoot,zipSync({"manifest.json":manifest,[`assets/${hash}`]:new Uint8Array(png.length)}),CURRENT_SCHEMA_VERSION),/checksum/);
+  } finally {fixture.db.close();rmSync(fixture.root,{recursive:true,force:true});}
+});

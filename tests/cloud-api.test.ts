@@ -87,11 +87,11 @@ class SqliteD1Database implements D1Database {
 function migratedCloudDatabase() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
-  for (let version = 1; version <= 16; version += 1) {
+  for (let version = 1; version <= 17; version += 1) {
     sqlite.exec(readFileSync(new URL(`../cloud/migrations/${String(version).padStart(4, "0")}_${[
       "cloud_core", "browser_extension", "cloud_ai", "cloud_backups", "cloud_capture", "cloud_folders", "cloud_trash", "cloud_favorites",
       "cloud_papers", "cloud_paper_content_mode",
-      "semantic_indexes", "cloud_imports", "reading_data", "study_workflows", "semantic_ann", "tweet_videos",
+      "semantic_indexes", "cloud_imports", "reading_data", "study_workflows", "semantic_ann", "tweet_videos", "home_bookshelf",
     ][version - 1]}.sql`, import.meta.url), "utf8"));
   }
   return new SqliteD1Database(sqlite);
@@ -2860,4 +2860,46 @@ test("failed video downloads retry after a delay and stop after three claims", a
       job = next;
     }
   }
+});
+
+test("cloud v9 home backup restores cover-only assets and old backups clear presentation", async () => {
+  const { env, db, bucket, imagesBucket } = sqliteEnvironment();
+  const stamp="2026-10-30T00:00:00.000Z",id="home-cover-doc";
+  const png=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==","base64");
+  const hash=createHash("sha256").update(png).digest("hex");
+  db.sqlite.prepare("INSERT INTO cloud_documents(id,source_url,title,markdown,status,source_note,revision,created_at,updated_at) VALUES (?,?,'封面文章','没有正文图片','ready','',1,?,?)").run(id,`https://example.com/${id}`,stamp,stamp);
+  const headers=()=>({"Content-Type":"application/json","X-Zhiye-Data-Epoch":String(db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get()?.value)});
+  const post=(path:string,body:unknown={})=>handleRequest(new Request(`https://app.example.com${path}`,{method:"POST",headers:headers(),body:JSON.stringify(body)}),env);
+  try {
+    const old=await post("/api/data-safety/backups");assert.equal(old.status,201);const oldId=(await old.json() as {id:string}).id;
+    await imagesBucket.put(hash,png,{httpMetadata:{contentType:"image/png"}});
+    db.sqlite.prepare("INSERT INTO home_covers VALUES(?,'image/png',?)").run(hash,png.length);
+    db.sqlite.prepare("INSERT INTO home_presentations VALUES(?,1,0,?,'sage','封面','contain')").run(id,hash);
+    const created=await post("/api/data-safety/backups");assert.equal(created.status,201,await created.clone().text());const backupId=(await created.json() as {id:string}).id;
+    const snapshot=JSON.parse(new TextDecoder().decode(bucket.objects.get(`backups/${backupId}.zhiye-cloud-backup`)!.bytes));
+    assert.equal(snapshot.version,9);assert.equal(snapshot.home.presentations[0].coverHash,hash);assert.equal(snapshot.assets[0].hash,hash);
+    const exported=await handleRequest(new Request(`https://app.example.com/api/data-safety/backups/${backupId}/export.zhiye-backup`),env);
+    assert.equal(exported.status,200);assert.ok(unzipSync(new Uint8Array(await exported.arrayBuffer()))[`assets/${hash}`]);
+    const rejectedJson=await handleRequest(new Request("https://app.example.com/api/data-safety/backups/import",{method:"POST",headers:{...headers(),"Content-Type":"application/vnd.zhiye.cloud-backup+json"},body:JSON.stringify(snapshot)}),env);
+    assert.equal(rejectedJson.status,400);
+    db.sqlite.exec("UPDATE home_presentations SET short_title='更新内容'");
+    const epochBefore=String(db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get()?.value);
+    await imagesBucket.delete(hash);
+    const missing=await post(`/api/data-safety/backups/${backupId}/restore`);assert.equal(missing.status,409);
+    assert.equal(db.sqlite.prepare("SELECT short_title FROM home_presentations").get()?.short_title,"更新内容");
+    assert.equal(db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get()?.value,epochBefore);
+    await imagesBucket.put(hash,new Uint8Array(png.length),{httpMetadata:{contentType:"image/png"}});
+    const corrupt=await post(`/api/data-safety/backups/${backupId}/restore`);assert.equal(corrupt.status,409);
+    assert.equal(db.sqlite.prepare("SELECT short_title FROM home_presentations").get()?.short_title,"更新内容");
+    assert.equal(db.sqlite.prepare("SELECT value FROM app_settings WHERE key='data_epoch'").get()?.value,epochBefore);
+    await imagesBucket.put(hash,png,{httpMetadata:{contentType:"image/png"}});
+    db.failBatchOn=/INSERT INTO home_presentations/u;
+    const failed=await post(`/api/data-safety/backups/${backupId}/restore`);assert.equal(failed.status,500);assert.equal(db.sqlite.prepare("SELECT short_title FROM home_presentations").get()?.short_title,"更新内容");
+    db.failBatchOn=null;
+    const restored=await post(`/api/data-safety/backups/${backupId}/restore`);assert.equal(restored.status,200,await restored.clone().text());
+    assert.equal(db.sqlite.prepare("SELECT short_title FROM home_presentations").get()?.short_title,"封面");assert.ok(imagesBucket.objects.has(hash));
+    assert.equal(db.sqlite.prepare("SELECT revision FROM home_settings WHERE id=1").get()?.revision,2);
+    const legacy=await post(`/api/data-safety/backups/${oldId}/restore`);assert.equal(legacy.status,200,await legacy.clone().text());assert.equal(db.sqlite.prepare("SELECT COUNT(*) AS n FROM home_presentations").get()?.n,0);
+    assert.equal(db.sqlite.prepare("SELECT revision FROM home_settings WHERE id=1").get()?.revision,3);
+  } finally { db.sqlite.close(); }
 });

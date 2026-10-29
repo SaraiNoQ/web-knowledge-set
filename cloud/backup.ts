@@ -1,3 +1,4 @@
+import { captureHomeSnapshot, parseHomeSnapshot, homeRestoreStatements, validateCover, type HomeSnapshot } from "../shared/home";
 import { Zip, ZipPassThrough, Unzip, UnzipInflate, unzipSync, type UnzipFile } from "fflate";
 
 import { CloudHttpError, MAX_CLOUD_ROW_TEXT_BYTES, type D1Database, type D1Statement } from "./extension";
@@ -74,7 +75,8 @@ interface ArchiveV6 extends Omit<ArchiveV5, "version"> {
 
 interface ArchiveV7 extends Omit<ArchiveV6, "version"> { version: 7; readingData: ReadingSnapshot }
 interface ArchiveV8 extends Omit<ArchiveV7, "version"> { version: 8; studyData: StudySnapshot }
-type Archive = ArchiveV1 | ArchiveV2 | ArchiveV3 | ArchiveV4 | ArchiveV5 | ArchiveV6 | ArchiveV7 | ArchiveV8;
+interface ArchiveV9 extends Omit<ArchiveV8, "version"> { version: 9; home: HomeSnapshot }
+type Archive = ArchiveV1 | ArchiveV2 | ArchiveV3 | ArchiveV4 | ArchiveV5 | ArchiveV6 | ArchiveV7 | ArchiveV8 | ArchiveV9;
 
 function assetHashRefs(markdown: unknown): string[] {
   if (typeof markdown !== "string") return [];
@@ -111,7 +113,7 @@ function backupRecord(row: Record<string, unknown>) {
     id: String(row.id), directoryName: String(row.objectKey), reason: row.reason,
     status: row.status, createdAt: String(row.createdAt), finishedAt: row.verifiedAt ? String(row.verifiedAt) : null,
     verifiedAt: row.verifiedAt ? String(row.verifiedAt) : null, totalBytes: row.totalBytes == null ? null : Number(row.totalBytes),
-    schemaVersion: 8, errorCode: row.errorCode ? String(row.errorCode) : null, errorMessage: null,
+    schemaVersion: 9, errorCode: row.errorCode ? String(row.errorCode) : null, errorMessage: null,
   };
 }
 
@@ -129,8 +131,8 @@ function parseArchive(bytes: Uint8Array): Archive {
   const version = typeof raw.version === "number" ? raw.version : 0;
   const topFields = version === 1
     ? ["format", "version", "createdAt", "documents", "derivedResults", "llmSettings"]
-    : ["format", "version", "createdAt", "folders", "documents", "derivedResults", "llmSettings", ...(version >= 5 ? ["assets"] : []), ...(version >= 6 ? ["papers", "paperExtractions", "paperPages", "paperFiles"] : []), ...(version >= 7 ? ["readingData"] : []), ...(version === 8 ? ["studyData"] : [])];
-  if ((version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8) || !exact(raw, topFields) || raw.format !== "zhiye-cloud-backup" ||
+    : ["format", "version", "createdAt", "folders", "documents", "derivedResults", "llmSettings", ...(version >= 5 ? ["assets"] : []), ...(version >= 6 ? ["papers", "paperExtractions", "paperPages", "paperFiles"] : []), ...(version >= 7 ? ["readingData"] : []), ...(version >= 8 ? ["studyData"] : []), ...(version === 9 ? ["home"] : [])];
+  if ((version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 6 && version !== 7 && version !== 8 && version !== 9) || !exact(raw, topFields) || raw.format !== "zhiye-cloud-backup" ||
     !timestamp(raw.createdAt) || !Array.isArray(raw.documents) || !Array.isArray(raw.derivedResults) ||
     (version !== 1 && !Array.isArray(raw.folders))) {
     throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup schema is invalid");
@@ -235,14 +237,19 @@ function parseArchive(bytes: Uint8Array): Archive {
     }
     validateStoredLlmSettings(result.llmSettings.value);
   }
-  if (result.version === 7 || result.version === 8) {
+  if (result.version === 7 || result.version === 8 || result.version === 9) {
     try { result.readingData = parseReadingSnapshot(result.readingData, documentIds); }
     catch { throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup reading data is invalid"); }
     if (folders.length + result.documents.length + result.derivedResults.length + result.readingData.annotations.length + result.readingData.connections.length > MAX_ARCHIVE_RECORDS) throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds 32 records");
   }
-  if (result.version === 8) {
+  if (result.version === 8 || result.version === 9) {
     try { result.studyData = parseStudySnapshot(result.studyData, documentIds, result.readingData); }
     catch { throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup research data is invalid"); }
+  }
+  if (result.version === 9) {
+    try { result.home = parseHomeSnapshot(result.home, documentIds); }
+    catch { throw new CloudHttpError(400,"INVALID_BACKUP_ARCHIVE","首页备份无效。"); }
+    for (const cover of result.home.covers) if(!result.assets.some(a=>a.hash===cover.hash&&a.mime===cover.mime&&a.bytes===cover.bytes)) throw new CloudHttpError(400,"INVALID_BACKUP_ARCHIVE","封面资源缺失。");
   }
   return result;
 }
@@ -372,7 +379,8 @@ async function snapshot(db: D1Database, images: R2Bucket): Promise<Archive> {
     derivedResults: derived.results as Record<string, unknown>[],
     llmSettings: settings.results[0] as { value: string; revision: number } | undefined ?? null,
   };
-  const assets = await referencedAssets(db, base.documents, images);
+  const home = await captureHomeSnapshot(async(sql,values)=>(await db.prepare(sql).bind(...values).all<Record<string,unknown>>()).results,base.documents.map(d=>String(d.id)));
+  const assets = await referencedAssets(db, [...base.documents,...home.covers.map(c=>({markdown:`zhiye://asset/${c.hash}`}))], images);
   const papers = await db.prepare("SELECT * FROM cloud_papers ORDER BY created_at").all<Record<string, unknown>>();
   const readingData = { annotations: (annotations.results as Record<string, unknown>[]).map(annotationFromRow), connections: (connections.results as Record<string, unknown>[]).map(connectionFromRow) };
   let studyData = emptyStudySnapshot();
@@ -380,7 +388,7 @@ async function snapshot(db: D1Database, images: R2Bucket): Promise<Archive> {
   studyData.connectionEvidence = (studyRows[STUDY_TABLES.length]!.results as Record<string, unknown>[]).map(connectionEvidenceFromRow);
   try { studyData = parseStudySnapshot(studyData, new Set(base.documents.map((row) => String(row.id))), readingData); }
   catch { throw new CloudHttpError(413, "BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup research data is inconsistent or exceeds its size budget"); }
-  const attachStudy = (archive: ArchiveV5 | ArchiveV6 | ArchiveV7): Archive => hasStudyData(studyData) ? { papers: [], paperExtractions: [], paperPages: [], paperFiles: [], ...archive, version: 8, readingData, studyData } : archive;
+  const attachStudy = (archive: ArchiveV5 | ArchiveV6 | ArchiveV7): Archive => home.presentations.length ? {papers:[],paperExtractions:[],paperPages:[],paperFiles:[],...archive,version:9,readingData,studyData,home} : hasStudyData(studyData) ? { papers: [], paperExtractions: [], paperPages: [], paperFiles: [], ...archive, version: 8, readingData, studyData } : archive;
   const hasReading = readingData.annotations.length + readingData.connections.length > 0;
   if (!papers.results.length) return attachStudy(hasReading
     ? { ...base, version: 7, assets, papers: [], paperExtractions: [], paperPages: [], paperFiles: [], readingData }
@@ -440,6 +448,18 @@ function field(row: Record<string, unknown>, name: string) {
   return row[name];
 }
 
+async function verifyHomeCoverFiles(archive: Archive, images: R2Bucket) {
+  if (archive.version !== 9) return;
+  for (const cover of archive.home.covers) {
+    const object = await images.get(cover.hash);
+    if (!object || object.size !== cover.bytes) throw new CloudHttpError(409,"ASSET_MISSING","备份封面缺失或尺寸不符，请重新导入完整 ZIP 备份。");
+    const bytes = new Uint8Array(await object.arrayBuffer());
+    if (bytes.byteLength !== cover.bytes || await sha256(bytes) !== cover.hash) throw new CloudHttpError(409,"ASSET_INVALID","备份封面校验失败，当前资料库未修改。");
+    try { validateCover(bytes); }
+    catch { throw new CloudHttpError(409,"ASSET_INVALID","备份封面不是有效图片，当前资料库未修改。"); }
+  }
+}
+
 async function reserveRestore(db: D1Database, expectedEpoch: string) {
   const token = `restore:${Date.now() + 15 * 60_000}:${crypto.randomUUID()}`;
   const reserved = await db.prepare(
@@ -481,6 +501,8 @@ async function restoreArchive(db: D1Database, archive: Archive, reservation: str
     db.prepare("DELETE FROM cloud_papers"),
     db.prepare("DELETE FROM cloud_paper_files"),
     db.prepare("DELETE FROM study_topics"),
+    db.prepare("DELETE FROM home_presentations"),
+    db.prepare("INSERT INTO home_settings(id,revision) VALUES(1,2) ON CONFLICT(id) DO UPDATE SET revision=home_settings.revision+1"),
     db.prepare("DELETE FROM cloud_documents"),
     db.prepare("DELETE FROM cloud_folders"),
     db.prepare("DELETE FROM app_settings WHERE key IN ('semantic_settings', 'semantic_runtime')"),
@@ -488,7 +510,7 @@ async function restoreArchive(db: D1Database, archive: Archive, reservation: str
   if (archive.version !== 1) for (const row of archive.folders) statements.push(db.prepare(`INSERT INTO cloud_folders(
     id, name, created_at, updated_at
   ) VALUES (?, ?, ?, ?)`).bind(field(row, "id"), field(row, "name"), field(row, "created_at"), field(row, "updated_at")));
-  const paperIds = new Set(archive.version === 6 || archive.version === 7 || archive.version === 8 ? archive.papers.map((row) => String(row.id)) : []);
+  const paperIds = new Set(archive.version === 6 || archive.version === 7 || archive.version === 8 || archive.version === 9 ? archive.papers.map((row) => String(row.id)) : []);
   for (const row of archive.documents) statements.push(db.prepare(`INSERT INTO cloud_documents(
     id, kind, source_url, final_url, canonical_url, title, author, published_at, markdown, status, source_note, folder_id, favorite, revision, created_at, updated_at, deleted_at
   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
@@ -496,7 +518,7 @@ async function restoreArchive(db: D1Database, archive: Archive, reservation: str
     row.published_at ?? null, field(row, "markdown"), field(row, "status"), field(row, "source_note"), archive.version === 1 ? null : row.folder_id,
     archive.version >= 4 ? field(row, "favorite") : 0, field(row, "revision"), field(row, "created_at"), field(row, "updated_at"), archive.version >= 3 ? row.deleted_at : null,
   ));
-  if (archive.version === 6 || archive.version === 7 || archive.version === 8) {
+  if (archive.version === 6 || archive.version === 7 || archive.version === 8 || archive.version === 9) {
     for (const row of archive.paperFiles) statements.push(db.prepare("INSERT INTO cloud_paper_files(hash, mime, bytes, r2_key, created_at) VALUES (?, ?, ?, ?, ?)").bind(row.hash, row.mime, row.bytes, row.r2_key, new Date().toISOString()));
     for (const row of archive.papers) statements.push(db.prepare(`INSERT INTO cloud_papers(id, source_kind, source_url, original_file_name, source_hash, page_count, status, extraction_id, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(row.id, row.source_kind, row.source_url ?? null, row.original_file_name ?? null, row.source_hash, row.page_count ?? null, row.status, row.extraction_id ?? null, row.created_at, row.updated_at));
@@ -505,11 +527,12 @@ async function restoreArchive(db: D1Database, archive: Archive, reservation: str
     for (const row of archive.paperPages) statements.push(db.prepare(`INSERT INTO cloud_paper_pages(paper_id, extraction_id, page_number, original_json, translation_json, revision, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).bind(row.paper_id, row.extraction_id, row.page_number, row.original_json, row.translation_json, row.revision, row.created_at, row.updated_at));
   }
-  if (archive.version === 7 || archive.version === 8) {
+  if (archive.version === 7 || archive.version === 8 || archive.version === 9) {
     for (const row of archive.readingData.annotations) statements.push(db.prepare(insertAnnotationSql).bind(...annotationValues(row)));
     for (const row of archive.readingData.connections) statements.push(db.prepare(insertConnectionSql).bind(...connectionValues(row)));
   }
-  if (archive.version === 8) for (const statement of studyRestoreStatements(archive.studyData)) statements.push(db.prepare(statement.sql).bind(...statement.values));
+  if (archive.version === 9) for (const s of homeRestoreStatements(archive.home)) statements.push(db.prepare(s.sql).bind(...s.values));
+  if (archive.version === 8 || archive.version === 9) for (const statement of studyRestoreStatements(archive.studyData)) statements.push(db.prepare(statement.sql).bind(...statement.values));
   for (const row of archive.derivedResults) statements.push(db.prepare(`INSERT INTO cloud_derived_results(
     id, document_id, type, target_language, model, endpoint_id, prompt_version, input_hash, output, duration_ms,
     usage_json, source_chars, sent_chars, truncated, pinned, source_revision, created_at
@@ -655,6 +678,10 @@ function parseCloudZip(bytes: Uint8Array): { archive: Archive; assetBytes: Map<s
   for (const asset of (archive as ArchiveV5).assets ?? []) {
     const value = unpacked[`assets/${asset.hash}`];
     if (!value) throw new CloudHttpError(400, "INVALID_BACKUP_ARCHIVE", "Cloud backup ZIP is missing an asset");
+    if (archive.version === 9 && archive.home.covers.some(c=>c.hash===asset.hash)) {
+      if (value.byteLength !== asset.bytes) throw new CloudHttpError(400,"INVALID_BACKUP_ARCHIVE","封面文件校验失败。");
+      try { validateCover(value); } catch { throw new CloudHttpError(400,"INVALID_BACKUP_ARCHIVE","封面图片无效。"); }
+    }
     assetBytes.set(asset.hash, value);
   }
   const paperBytes = new Map<string, Uint8Array>();
@@ -723,7 +750,8 @@ export async function handleBackupApi(
         VALUES (?, ?, 'manual', 'verified', ?, ?, ?, ?, NULL)`).bind(id, objectKey, createdAt, createdAt, manifestBytes.byteLength, hash).run();
       return { status: 201, body: backupRecord({ id, objectKey, reason: "manual", status: "verified", createdAt, verifiedAt: createdAt, totalBytes: manifestBytes.byteLength, sha256: hash, errorCode: null }) };
     }
-    parseArchive(bytes);
+    const archive = parseArchive(bytes);
+    if (archive.version === 9 && archive.home.covers.length) throw new CloudHttpError(400,"INVALID_BACKUP_ARCHIVE","含封面的备份必须导入包含图片的 ZIP 文件。");
     const hash = await sha256(bytes);
     const objectKey = `backups/${id}.zhiye-cloud-backup`;
     await bucket.put(objectKey, bytes, { httpMetadata: { contentType: "application/vnd.zhiye.cloud-backup+json" }, customMetadata: { sha256: hash } });
@@ -782,6 +810,7 @@ export async function handleBackupApi(
     const { bytes } = await archiveBytes(db, bucket, id);
     const archive = parseArchive(bytes);
     if (!expectedEpoch) throw new CloudHttpError(409, "STALE_DATA_EPOCH", "Cloud restore requires the current data epoch");
+    await verifyHomeCoverFiles(archive, images);
     const reservation = await reserveRestore(db, expectedEpoch);
     try {
       const preRestore = await createBackup(db, bucket, images, "pre-restore");

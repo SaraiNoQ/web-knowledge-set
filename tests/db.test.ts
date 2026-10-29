@@ -58,7 +58,7 @@ test("v14 recent filters persist in the local database", () => {
     sort: "updated",
   }];
   try {
-    assert.equal(CURRENT_SCHEMA_VERSION, 22);
+    assert.equal(CURRENT_SCHEMA_VERSION, 23);
     assert.deepEqual(fixture.db.getRecentFilters(), { filters: [], revision: 0 });
     assert.deepEqual(fixture.db.getOnboarding(), { completed: false, revision: 0 });
     assert.deepEqual(fixture.db.setOnboarding(true, 0), {
