@@ -193,8 +193,26 @@ for (const runtime of ["cloud", "desktop"] as const) test(`long article reading 
   await page.locator(".directory-document-row").getByRole("button", { name: title, exact: true }).click();
   await expect(page.getByText("长文预览已暂停", { exact: true })).toBeVisible();
   await expect(page.locator(".markdown-preview")).toHaveCount(0);
-  await page.getByRole("button", { name: "打开预览", exact: true }).click();
+  if (runtime === "cloud") {
+    await page.getByRole("button", { name: "编辑", exact: true }).click();
+    const grid = page.locator(".editor-grid");
+    await expect(grid).toHaveClass(/mode-edit/);
+    await expect(grid.getByRole("region", { name: "Markdown 源文编辑" })).toBeVisible();
+    await expect(page.locator(".markdown-preview")).toHaveCount(0);
+    const widths = await grid.evaluate((element) => ({
+      grid: element.getBoundingClientRect().width,
+      editor: element.querySelector(".editor-pane")!.getBoundingClientRect().width,
+    }));
+    expect(widths.editor).toBeGreaterThan(widths.grid * 0.95);
+    await page.getByRole("button", { name: "边写边看", exact: true }).click();
+  } else await page.getByRole("button", { name: "打开预览", exact: true }).click();
   await expect(page.locator(".markdown-preview").getByRole("heading", { name: "长文测试" })).toBeVisible();
+  if (runtime === "cloud") {
+    await page.getByRole("button", { name: "返回阅读", exact: true }).click();
+    await page.getByRole("button", { name: "编辑", exact: true }).click();
+    await expect(page.locator(".editor-grid")).toHaveClass(/mode-split/);
+    await expect(page.locator(".markdown-preview")).toBeVisible();
+  }
 });
 
 for (const response of ["status", "503"] as const) test(`startup waits visibly for maintenance ${response} and mounts business requests only when ready`, async ({ page }) => {
