@@ -1,3 +1,4 @@
+import { flushSync } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { KnowledgeDocument } from "../../shared/types";
 import { FOLD_REQUEST, readFold, type FoldData, type FoldLevel } from "../../shared/textfold";
@@ -75,6 +76,19 @@ export function ReadingLevels({ document, blocked, onChange }: {
   useEffect(() => {
     onChange(!blocked && data ? { documentId: document.id, markdown: document.markdown, data, level } : null);
   }, [blocked, data, level, document.id, document.markdown, onChange]);
+
+  useEffect(() => {
+    const restore = (event: Event) => {
+      if ((event as CustomEvent<{ documentId: string }>).detail?.documentId !== document.id) return;
+      // Anchor lookup runs immediately after this event; commit the original text first.
+      flushSync(() => {
+        setLevel("full");
+        onChange(data ? { documentId: document.id, markdown: document.markdown, data, level: "full" } : null);
+      });
+    };
+    window.addEventListener("zhiye:reader-anchor", restore);
+    return () => window.removeEventListener("zhiye:reader-anchor", restore);
+  }, [document.id, document.markdown, data, onChange]);
 
   return <span className="reading-levels">
     {data ? <label>阅读层级 <Select aria-label="阅读层级" value={level} disabled={blocked} onChange={event => setLevel(event.target.value as FoldLevel)}>

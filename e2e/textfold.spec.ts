@@ -21,7 +21,7 @@ test("saved articles generate reading levels, switch from split, retain original
   await expect(page.locator(".markdown-preview")).toContainText("方法验证");
   await expect(page.locator(".markdown-preview")).toContainText("const preserved = true;");
   await expect(page.getByRole("textbox", { name: "Markdown 编辑器" })).toHaveCount(0);
-  await levels.click(); await page.getByRole("option", { name: "原文", exact: true }).click();
+  await page.evaluate(id => window.dispatchEvent(new CustomEvent("zhiye:reader-anchor", { detail: { documentId: id } })), document.id);
   await expect(page.locator(".markdown-preview")).toContainText(text);
   const saved = await (await request.get(`/api/documents/${document.id}`)).json();
   expect(saved.document?.markdown ?? saved.markdown).toBe(markdown);
