@@ -4064,7 +4064,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
         <aside id="library-panel" className={`library-panel ${libraryCollapsed ? "is-collapsed" : ""}`} aria-label="知识列表">
           <nav className="sidebar-tabbar" aria-label="目录分类">
             <SegmentedControl label="目录视图切换" className="sidebar-category-toggle" value={sidebarSearch ? "search" : libraryView} disabled={closing || batchBusy} options={([["all", "全部资料"], ["favorites", "收藏"], ["paper", "论文"], ["trash", "回收站"], ["search", "搜索"]] as const).map(([value, label]) => ({ value, label, icon: <WorkspaceIcon name={({ all: "list", favorites: "star", paper: "paper", trash: "trash", search: "search" } as const)[value]} size={18} /> }))} onChange={(value) => { if (value === "search") void openSidebarSearch(); else void applyLibraryView(value); }} />
-            <IconButton className="sidebar-collapse-button" label="收起资料目录" aria-controls="library-panel" disabled={closing} onClick={() => { setLibraryCollapsed(true); libraryRailRef.current?.focus(); }}><WorkspaceIcon name="panelCollapse" size={18} /></IconButton>
+            <IconButton className="sidebar-collapse-button" label="收起资料目录" aria-controls="library-panel" disabled={closing} onClick={() => { setHomeDirectoryOpen(false); setLibraryCollapsed(true); libraryRailRef.current?.focus(); }}><WorkspaceIcon name="panelCollapse" size={18} /></IconButton>
           </nav>
           <div className="sidebar-scroll-region">
           <div className="sidebar-search-host" hidden={!sidebarSearch}><LibrarySearch folders={folders} refreshKey={listRefresh} inputRef={sidebarSearchRef} onOpen={selectDocument} active={sidebarSearch && !libraryCollapsed} /></div>

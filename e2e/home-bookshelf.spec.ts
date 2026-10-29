@@ -83,5 +83,11 @@ test("home bookshelf saves selected articles, image and text covers, folder tabs
   await expect(shelf.getByRole("button", { name: `阅读：${textArticle.title}`, exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: "/tmp/zhiye-home-mobile.png", fullPage: true });
+  await page.getByRole("button", { name: "资料库", exact: true }).click();
+  await expect(shelf).toBeHidden();
+  await page.getByRole("button", { name: "收起资料目录", exact: true }).click();
+  await expect(shelf).toBeVisible();
+  await page.getByRole("button", { name: "资料库", exact: true }).click();
+  await expect(page.getByRole("button", { name: "收起资料目录", exact: true })).toBeVisible();
   expect(pageErrors).toEqual([]);
 });
