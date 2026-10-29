@@ -168,7 +168,8 @@ export default function KnowledgeMap3D(props: Props) {
       }
       nodeLabels.clear();
       labelLayer.replaceChildren();
-      if (labelMeasure) labelMeasure.font = `12px ${getComputedStyle(labelLayer).getPropertyValue("--font-serif") || "Georgia, serif"}`;
+      const labelStyle = getComputedStyle(labelLayer);
+      if (labelMeasure) labelMeasure.font = `${labelStyle.getPropertyValue("--font-caption") || "12px"} ${labelStyle.getPropertyValue("--font-sans") || "sans-serif"}`;
       const selected = latest.current.selectedId;
       const peers = latest.current.data.links.flatMap((edge) => endpoint(edge.source) === selected ? [endpoint(edge.target)] : endpoint(edge.target) === selected ? [endpoint(edge.source)] : []).slice(0, 8);
       const ids = new Set([...highlights, ...peers, ...latest.current.data.nodes.filter((node) => node.type === "folder").slice(0, 20).map(({ id }) => id)]);

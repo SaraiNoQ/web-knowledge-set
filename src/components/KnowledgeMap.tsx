@@ -107,6 +107,7 @@ function appendedVectors(previous: SemanticVectorEntry[], current: SemanticVecto
 }
 
 export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange, onOpenDocument, refreshKey }: Props) {
+  const labelFont = useMemo(() => getComputedStyle(document.documentElement).getPropertyValue("--font-sans").trim() || "sans-serif", []);
   const [darkTheme, setDarkTheme] = useState(() => document.documentElement.dataset.theme === "dark");
   useEffect(() => {
     const updateTheme = () => setDarkTheme(document.documentElement.dataset.theme === "dark");
@@ -668,14 +669,14 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
     for (const id of candidates) {
       const node = labelNodesById.get(id); if (!node || node.x === undefined || node.y === undefined) continue;
       const selected = id === selectedId, size = node.type === "folder" ? 5.2 : node.kind === "paper" ? 4.4 : 3.8;
-      const fontSize = Math.max(10, 12 / Math.max(scale, .7)); ctx.font = `${selected ? "600" : "450"} ${fontSize}px Georgia, serif`;
+      const fontSize = Math.max(10, 12 / Math.max(scale, .7)); ctx.font = `${selected ? "600" : "400"} ${fontSize}px ${labelFont}`;
       const text = node.type === "folder" ? `${shortTitle(node.name)} · ${node.count}` : shortTitle(node.title);
       const rect = { left: node.x + size + 4, top: node.y - fontSize * .6, right: node.x + size + 8 + ctx.measureText(text).width, bottom: node.y + fontSize * .6 };
       if (rectangles.some((other) => rect.left < other.right && rect.right > other.left && rect.top < other.bottom && rect.bottom > other.top)) continue;
       rectangles.push(rect); visibleLabels.current.add(id);
     }
     ctx.restore();
-  }, [labelNodesById, labelGroupIds, labelPeerIds, selectedId, hoveredId, draggingNode]);
+  }, [labelNodesById, labelGroupIds, labelPeerIds, selectedId, hoveredId, draggingNode, labelFont]);
 
   const drawNode = useCallback((raw: object, ctx: CanvasRenderingContext2D, scale: number) => {
     const node = raw as MapNode & { x?: number; y?: number };
@@ -694,13 +695,13 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
       ctx.stroke();
     }
     if (visibleLabels.current.has(node.id)) {
-      ctx.font = (isSelected ? "600 " : "450 ") + Math.max(10, 12 / Math.max(scale, .7)) + "px Georgia, serif";
+      ctx.font = (isSelected ? "600 " : "400 ") + Math.max(10, 12 / Math.max(scale, .7)) + `px ${labelFont}`;
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
       ctx.fillStyle = darkTheme ? "#eee8dd" : node.type === "folder" ? "#55483a" : "#2d2a25";
       ctx.fillText(node.type === "folder" ? `${shortTitle(node.name)} · ${node.count}` : shortTitle(node.title), node.x + size + 4, node.y);
     }
-  }, [darkTheme, draggingNode, hoveredId, selectedId]);
+  }, [darkTheme, draggingNode, hoveredId, selectedId, labelFont]);
 
   const openSelected = () => { if (selected) onOpenDocument(selected.id); };
   const selectNode = (item: MapNode) => {

@@ -2,17 +2,17 @@
 .reader-tool-float, .reader-selection-actions { pointer-events: auto; background: var(--paper); box-shadow: 0 8px 28px rgb(39 35 28 / .22); }
 .reader-tool-float { position: absolute; width: min(390px, calc(100vw - 16px)); max-height: calc(100dvh - 32px); display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; }
 .reader-tool-float > header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; cursor: move; touch-action: none; border-bottom: 1px solid var(--line); }
-.reader-tool-float h2 { font: 500 15px/1.5 var(--font-sans); margin: 0; }
+.reader-tool-float h2 { font: 500 var(--font-readable)/1.5 var(--font-sans); margin: 0; }
 .reader-tool-float-body { padding: 16px; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
 .reader-selection-actions { position: absolute; display: flex; gap: 4px; padding: 4px; border-radius: 8px; }
 .reader-tool-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
-.selection-translation label:not(.ui-checkbox-field), .reading-data-panel label { display: grid; gap: 6px; font-size: 12px; }
-.selection-translation blockquote, .reading-data-panel blockquote { margin: 14px 0; padding: 0 0 0 10px; border-left: 1px solid var(--line); color: var(--ink-soft); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow-y: auto; font-size: 13px; }
-.selection-translation-output, .reading-data-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 14px/1.8 var(--font-sans); }
+.selection-translation label:not(.ui-checkbox-field), .reading-data-panel label { display: grid; gap: 6px; font-size: var(--font-caption); }
+.selection-translation blockquote, .reading-data-panel blockquote { margin: 14px 0; padding: 0 0 0 10px; border-left: 1px solid var(--line); color: var(--ink-soft); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow-y: auto; font-size: var(--font-ui); }
+.selection-translation-output, .reading-data-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; font: var(--font-ui)/1.8 var(--font-sans); }
 .selection-translation-output { max-height: 38dvh; overflow-y: auto; }
 .selection-translation .translation-automatic { margin-top: 12px; }
-.translation-hint { margin: 8px 0; color: var(--ink-soft); font-size: 12px; line-height: 1.6; }
-.translation-glossary { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 12px; font-size: 13px; }
+.translation-hint { margin: 8px 0; color: var(--ink-soft); font-size: var(--font-caption); line-height: 1.6; }
+.translation-glossary { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 12px; font-size: var(--font-ui); }
 .translation-glossary summary { cursor: pointer; font-weight: 500; }
 .translation-glossary form { display: grid; gap: 10px; margin: 12px 0; }
 .translation-glossary ul { padding: 0; margin: 12px 0; list-style: none; }
@@ -21,9 +21,9 @@
 .translation-glossary strong { font-weight: 500; }
 .reader-sidebar-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 4px 12px; border-bottom: 1px solid var(--line); }
 .reader-sidebar-content { padding: 8px 6px; overflow-wrap: anywhere; }
-.reading-data-panel { font-size: 13px; }
+.reading-data-panel { font-size: var(--font-ui); }
 .reading-data-panel section + section { margin-top: 28px; }
-.reading-data-panel h3 { font: 500 14px/1.5 var(--font-sans); margin: 10px 0; }
+.reading-data-panel h3 { font: 500 var(--font-ui)/1.5 var(--font-sans); margin: 10px 0; }
 .document-tools .reading-data-panel li { display: block; padding: 14px 0; border-bottom: 1px solid var(--line); }
 .reading-data-panel label { margin: 12px 0; }
 .reading-data-panel small { color: var(--ink-soft); }
@@ -45,9 +45,9 @@
 .external-plugin-settings > .reader-tool-actions { margin-top: 16px; gap: 8px; }
 .external-plugin-list { padding: 0; list-style: none; }
 .external-plugin-list > li { padding: 18px 0; border-bottom: 1px solid var(--line); }
-.external-plugin-settings h3 { margin: 0 0 8px; font-size: 16px; }
+.external-plugin-settings h3 { margin: 0 0 8px; font-size: var(--font-body); }
 .external-plugin-list p { overflow-wrap: anywhere; }
 .plugin-package-details { margin: 24px 0; }
-.plugin-package-details code { display: block; overflow-wrap: anywhere; font-size: 12px; }
-.external-plugin-text { white-space: pre-wrap; overflow-wrap: anywhere; font: 14px/1.8 var(--font-sans); }
+.plugin-package-details code { display: block; overflow-wrap: anywhere; font-size: var(--font-caption); }
+.external-plugin-text { white-space: pre-wrap; overflow-wrap: anywhere; font: var(--font-ui)/1.8 var(--font-sans); }
 .external-plugin-view label { display: grid; gap: 6px; margin: 12px 0; }
