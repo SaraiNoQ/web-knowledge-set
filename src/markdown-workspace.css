@@ -67,7 +67,7 @@
 :root[data-theme="dark"] .editor-shell .mode-switch button[aria-pressed="true"] { color: var(--vermilion-dark); }
 .markdown-preview :is(pre,table):focus-visible, .preview-pane:focus-visible { outline: 1px solid var(--vermilion); outline-offset: -2px; }
 .markdown-editor:focus-within { box-shadow: inset 0 0 0 1px var(--line-strong); }
-.settings-content .reading-style-description { margin: 12px 0 0; font-size: 13px; }
+.settings-content .reading-style-description { margin: 0; font-size: 13px; }
 .reading-style-sample { border-block: 1px solid var(--line); }
 .editor-shell .reading-text-preview.markdown-preview { padding-block: 24px; font-family: var(--reading-font); }
 .reading-text-preview.markdown-preview > h2:first-child { margin-top: 0; }
