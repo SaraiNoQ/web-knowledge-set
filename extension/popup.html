@@ -2,7 +2,7 @@
 <html lang="zh-CN">
   <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>织页助手</title><link rel="stylesheet" href="popup.css"></head>
   <body>
-    <header><span>织</span><div><strong>织页助手</strong><small>保存当前网页正文</small></div></header>
+    <header><span>织</span><div><strong>织页助手</strong><small>保存当前网页正文</small></div><button id="settings" class="quiet icon-button" type="button" aria-label="设置" title="设置" disabled hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 3-.5 2-2 1-2-.5-2 3 1.5 1.5v3L3.5 15l2 3 2-.5 2 1 .5 2h4l.5-2 2-1 2 .5 2-3-1.5-2v-3l1.5-1.5-2-3-2 .5-2-1L14 3Z"/><circle cx="12" cy="12" r="3"/></svg></button></header>
     <main>
       <section id="pair-panel">
         <h1>连接织页</h1>
@@ -10,19 +10,27 @@
         <form id="pairing-form"><label>连接码<input id="pairing-code" maxlength="10" pattern="[A-Z2-9]{10}" autocomplete="one-time-code" required></label><button>连接</button></form>
       </section>
       <section id="clip-panel" hidden>
-        <button id="extract" type="button">读取网页</button>
+        <div class="capture-actions"><button id="extract" class="quiet" type="button">读取网页</button><button id="quick-save" type="button">读取并保存</button></div>
+        <div id="capture-scene" data-state="idle" aria-hidden="true" hidden>
+          <svg class="capture-frame" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M1 8V1h6M93 1h6v7M99 92v7h-6M7 99H1v-7" vector-effect="non-scaling-stroke"/></svg>
+          <div class="capture-paper"><span class="paper-mark">织</span><i></i><i></i><i></i><svg class="saved-mark" viewBox="0 0 48 48"><path d="m13 24 8 8 15-17"/></svg></div>
+          <span class="capture-caption" id="capture-caption">正在读取</span>
+        </div>
         <form id="clip-form" hidden>
           <label>标题<input id="title" maxlength="1000" required></label>
           <label>来源<input id="source" type="url" required></label>
           <label>Markdown <span id="count"></span><textarea id="markdown" required></textarea></label>
           <button>保存副本</button>
         </form>
-        <details id="ai-panel">
-          <summary>AI 标题</summary>
+      </section>
+      <section id="settings-panel" hidden aria-labelledby="settings-heading">
+        <div class="settings-heading"><button id="back" class="quiet icon-button" type="button" aria-label="返回"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6M8 12h13"/></svg></button><h1 id="settings-heading" tabindex="-1">设置</h1></div>
+        <section id="ai-panel" aria-labelledby="ai-heading">
+          <h2 id="ai-heading">AI 标题</h2>
           <p>正文会发给所选模型。生成最多20字的中文标题。失败时保留原标题。</p>
           <label class="inline"><input id="ai-title" type="checkbox"> 生成标题</label>
           <label id="ai-key-row">云端 AI 密钥<input id="ai-key" type="password" autocomplete="off" spellcheck="false"></label>
-        </details>
+        </section>
       </section>
       <p id="status" role="status"></p>
     </main>

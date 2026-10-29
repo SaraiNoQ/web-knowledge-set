@@ -9,7 +9,7 @@
 }
 * { box-sizing: border-box; }
 html, body { width: 420px; max-width: 100%; overflow-x: hidden; }
-body { margin: 0; }
+body { margin: 0; min-height: 220px; }
 main, section, form, label, input, textarea { min-width: 0; max-width: 100%; }
 @supports (-moz-appearance: none) {
   * { scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); scrollbar-width: auto; }
@@ -30,15 +30,30 @@ h1 { margin: 0 0 8px; font: 600 24px serif; }
 p { color: #68635b; }
 label { display: block; margin: 14px 0; font-weight: 600; }
 label.inline { display: flex; align-items: center; gap: 8px; }
-label.inline input { width: auto; margin: 0; }
+label.inline input { width: 18px; flex-shrink: 0; margin: 0; }
 input, textarea { width: 100%; margin-top: 6px; padding: 10px; border: 1px solid #b9b09f; background: #fffdf7; font: inherit; }
 textarea { min-height: 260px; overflow-x: hidden; resize: vertical; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 ui-monospace, monospace; }
-button { padding: 10px 16px; border: 0; color: #fff; background: #bd3f29; font: 700 14px inherit; cursor: pointer; }
-#extract { width: 100%; }
+button { min-height: 42px; padding: 10px 16px; border: 1px solid transparent; border-radius: 4px; color: #fff; background: #bd3f29; font: 600 14px/1.5 system-ui, sans-serif; cursor: pointer; transition: background-color 150ms, color 150ms; }
+button:hover { background: #9d3322; }
+button:disabled { cursor: wait; opacity: .6; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid #923221; outline-offset: 3px; }
+::selection { color: #2b2924; background: #edd1bf; }
+input, textarea { caret-color: #bd3f29; }
+input[type="checkbox"] { width: 18px; height: 18px; accent-color: #bd3f29; }
+.quiet { color: #514b42; background: transparent; border-color: #cfc5b4; }
+.quiet:hover { color: #923221; background: #ece3d4; }
+.icon-button { display: grid; place-items: center; padding: 9px; width: 40px; flex-shrink: 0; border-color: transparent; }
+.icon-button svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+#settings { margin-left: auto; }
+.capture-actions { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 10px; }
+.capture-actions button { padding-inline: 8px; }
+.settings-heading { display: flex; align-items: center; gap: 8px; margin: -4px 0 20px -8px; }
+.settings-heading h1 { margin: 0; }
+#ai-panel h2 { font-size: 16px; margin: 0 0 8px; }
+#ai-panel { border-top: 1px solid #cfc5b4; padding-top: 18px; }
+#ai-panel p { margin: 8px 0 20px; font-size: 13px; }
+#ai-key-row { font-size: 13px; }
 #count { float: right; color: #777166; font-weight: 400; }
-#ai-panel { margin-top: 16px; border-top: 1px solid #cfc5b4; padding-top: 10px; }
-#ai-panel summary { cursor: pointer; font-weight: 700; }
-#ai-panel p { margin: 8px 0; font-size: 13px; }
 #status { min-height: 22px; margin-bottom: 0; }
 #status.error { color: #a52e20; }
 [hidden] { display: none !important; }
@@ -49,4 +64,33 @@ button { padding: 10px 16px; border: 0; color: #fff; background: #bd3f29; font: 
     *::-webkit-scrollbar-track, *::-webkit-scrollbar-corner { background: Canvas; }
     *::-webkit-scrollbar-thumb, *::-webkit-scrollbar-thumb:hover, *::-webkit-scrollbar-thumb:active { background: ButtonText; background-clip: padding-box; border-color: Canvas; }
   }
+}
+
+/* The paper is a capture metaphor; page contents never enter the quick-save UI. */
+#capture-scene { position: relative; display: grid; justify-items: center; gap: 16px; padding: 30px 0 12px; }
+.capture-frame { position: fixed; inset: 8px; width: calc(100% - 16px); height: calc(100% - 16px); z-index: 2; pointer-events: none; fill: none; stroke: #bd3f29; stroke-width: 2; animation: frame-focus 600ms cubic-bezier(.16,1,.3,1) both; }
+.capture-paper { position: relative; width: 100px; height: 124px; padding: 16px; color: #bd3f29; background: #fffdf7; box-shadow: 0 10px 24px #4b382921; transform: rotate(-5deg); animation: paper-arrive 650ms cubic-bezier(.16,1,.3,1) both; }
+.paper-mark { display: block; margin-bottom: 12px; font: 600 24px/1 serif; }
+.capture-paper i { display: block; height: 2px; background: #cfc5b4; margin-top: 8px; }
+.capture-paper i:last-of-type { width: 65%; }
+.capture-paper::after { content: ""; position: absolute; inset: 0; background: #bd3f29; opacity: .08; transform: scaleY(0); transform-origin: top; }
+.capture-caption { color: #706b63; font-size: 13px; }
+.saved-mark { position: absolute; width: 52px; height: 52px; right: -12px; bottom: 4px; border: 2px solid currentColor; border-radius: 50%; background: #fffdf7; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; opacity: 0; }
+[data-state="saving"] .capture-paper::after { animation: paper-scan 1200ms ease-in-out infinite; }
+[data-state="success"] .capture-paper { animation: paper-file 650ms cubic-bezier(.16,1,.3,1) both; }
+[data-state="success"] .saved-mark { animation: seal-press 450ms 180ms cubic-bezier(.16,1,.3,1) both; }
+[data-state="success"] .capture-caption { color: #923221; }
+[data-state="success"] .capture-frame { animation: frame-release 450ms ease-out both; }
+[data-state="error"] .capture-frame, [data-state="error"] .capture-paper { display: none; }
+@keyframes frame-focus { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: scale(1); } }
+@keyframes frame-release { to { opacity: 0; transform: scale(1.04); } }
+@keyframes paper-arrive { from { opacity: .3; transform: translateY(16px) rotate(6deg) scale(.85); } to { opacity: 1; transform: rotate(-5deg); } }
+@keyframes paper-scan { 50% { transform: scaleY(1); } 100% { transform: scaleY(0); transform-origin: bottom; } }
+@keyframes paper-file { 40% { transform: rotateY(-18deg) rotate(-7deg) scale(.92); } to { transform: rotate(0) scale(.9); } }
+@keyframes seal-press { from { opacity: 0; transform: scale(1.8) rotate(20deg); } to { opacity: 1; transform: scale(1) rotate(-8deg); } }
+@media (prefers-reduced-motion: reduce) {
+  #capture-scene *, #capture-scene *::after { animation: none; transform: none; }
+  .capture-frame { display: none; }
+  [data-state="success"] .saved-mark { opacity: 1; }
+  button { transition: none; }
 }
