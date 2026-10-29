@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { parseHomeSnapshot, homeRestoreStatements, emptyHomeSnapshot, validateCover, type HomeSnapshot } from "../shared/home.js";
+import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -24,8 +25,8 @@ import { TRANSLATION_LANGUAGES } from "../shared/types.js";
  * derived results stay attached), and then runs the app's own `createBackup`
  * pipeline to produce a validated, restorable `.zhiye-backup` directory.
  *
- * The cloud never stores HTML snapshots or image assets, so those are empty in
- * the resulting backup by design; it is not data loss relative to the source.
+ * Cloud ZIP image assets, including cover-only images, are copied into the
+ * local backup; HTML snapshots are not part of the cloud format.
  */
 
 const FORMAT = "zhiye-cloud-backup";
@@ -92,7 +93,8 @@ interface CloudDerivedAsset {
 }
 
 interface CloudArchive {
-  version: 1 | 2 | 3 | 4 | 5 | 7 | 8;
+  version: 1 | 2 | 3 | 4 | 5 | 7 | 8 | 9;
+  home: HomeSnapshot;
   readingData: ReadingSnapshot;
   studyData: StudySnapshot;
   createdAt: string;
@@ -150,12 +152,12 @@ function parseCloudArchive(bytes: Uint8Array): CloudArchive {
   }
   if (!record(value)) fail("INVALID_BACKUP_ARCHIVE", "Cloud backup must be an object");
   const version = value.version;
-  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 7 && version !== 8) {
+  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5 && version !== 7 && version !== 8 && version !== 9) {
     fail("UNSUPPORTED_FORMAT", "Unsupported cloud backup format version");
   }
   if (value.format !== FORMAT) fail("INVALID_BACKUP_ARCHIVE", "Cloud backup format is unknown");
-  if (version !== 8 && Object.hasOwn(value, "studyData")) fail("INVALID_BACKUP_ARCHIVE", "Research data requires cloud backup v8");
-  if ((version === 7 || version === 8) && ["papers", "paperExtractions", "paperPages", "paperFiles"].some((key) => !Array.isArray(value[key]) || value[key].length)) {
+  if (version !== 8 && version !== 9 && Object.hasOwn(value, "studyData")) fail("INVALID_BACKUP_ARCHIVE", "Research data requires cloud backup v8");
+  if ((version === 7 || version === 8 || version === 9) && ["papers", "paperExtractions", "paperPages", "paperFiles"].some((key) => !Array.isArray(value[key]) || value[key].length)) {
     fail("UNSUPPORTED_FORMAT", "Cloud paper archives cannot yet be converted to desktop backups");
   }
   if (!timestamp(value.createdAt)) fail("INVALID_BACKUP_ARCHIVE", "Cloud backup createdAt is invalid");
@@ -288,10 +290,17 @@ function parseCloudArchive(bytes: Uint8Array): CloudArchive {
   }
 
   let readingData: ReadingSnapshot = { annotations: [], connections: [] };
-  if (version === 7 || version === 8) try { readingData = parseReadingSnapshot(value.readingData, documentIds); } catch { fail("INVALID_BACKUP_ARCHIVE", "Cloud backup reading data is invalid"); }
+  if (version === 7 || version === 8 || version === 9) try { readingData = parseReadingSnapshot(value.readingData, documentIds); } catch { fail("INVALID_BACKUP_ARCHIVE", "Cloud backup reading data is invalid"); }
   let studyData = emptyStudySnapshot();
-  if (version === 8) try { studyData = parseStudySnapshot(value.studyData, documentIds, readingData); } catch { fail("INVALID_BACKUP_ARCHIVE", "Cloud backup research data is invalid"); }
+  if (version === 8 || version === 9) try { studyData = parseStudySnapshot(value.studyData, documentIds, readingData); } catch { fail("INVALID_BACKUP_ARCHIVE", "Cloud backup research data is invalid"); }
+  let home = emptyHomeSnapshot();
+  if (version === 9) {
+    try { home = parseHomeSnapshot(value.home, documentIds); }
+    catch { fail("INVALID_BACKUP_ARCHIVE","Cloud backup home data is invalid"); }
+    for (const cover of home.covers) if (!assets.some(a=>a.hash===cover.hash&&a.mime===cover.mime&&a.bytes===cover.bytes)) fail("INVALID_BACKUP_ARCHIVE","Cloud backup cover asset is missing");
+  } else if (Object.hasOwn(value,"home")) fail("INVALID_BACKUP_ARCHIVE","Home data requires cloud backup v9");
   return {
+    home,
     readingData,
     studyData,
     version: version as CloudArchive["version"],
@@ -377,6 +386,7 @@ function ingest(database: KnowledgeDatabase, archive: CloudArchive) {
 
     for (const row of archive.readingData.annotations) sql.prepare(insertAnnotationSql).run(...annotationValues(row));
     for (const row of archive.readingData.connections) sql.prepare(insertConnectionSql).run(...connectionValues(row));
+    for (const statement of homeRestoreStatements(archive.home)) sql.prepare(statement.sql).run(...statement.values as never[]);
     for (const statement of studyRestoreStatements(archive.studyData)) sql.prepare(statement.sql).run(...statement.values as never[]);
     restoreLocalStudyTags(sql);
     if (archive.llmSettings) {
@@ -485,6 +495,10 @@ function parseCloudZip(bytes: Uint8Array): { archive: CloudArchive; assetBytes: 
   for (const asset of archive.assets) {
     const value = unpacked[`assets/${asset.hash}`];
     if (!value) fail("INVALID_BACKUP_ARCHIVE", `Cloud backup ZIP is missing an asset`);
+    if (archive.home.covers.some(c=>c.hash===asset.hash)) {
+      if (value.byteLength !== asset.bytes || createHash("sha256").update(value).digest("hex") !== asset.hash) fail("INVALID_BACKUP_ARCHIVE","Cloud backup cover checksum is invalid");
+      try { validateCover(value); } catch { fail("INVALID_BACKUP_ARCHIVE","Cloud backup cover image is invalid"); }
+    }
     assetBytes.set(asset.hash, value);
   }
   return { archive, assetBytes };
@@ -549,6 +563,7 @@ export async function importCloudJsonBackup(
     fail("BACKUP_ARCHIVE_TOO_LARGE", "Cloud backup exceeds 8 MiB");
   }
   const archive = parseCloudArchive(bytes);
+  if (archive.home.covers.length) fail("INVALID_BACKUP_ARCHIVE","A cover backup requires its ZIP image files");
   if (signal?.aborted) fail("REQUEST_ABORTED", "Backup archive operation was aborted");
 
   const temporaryDataDir = mkdtempSync(join(tmpdir(), "zhiye-cloud-"));

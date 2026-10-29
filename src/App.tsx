@@ -1,3 +1,4 @@
+import { HomeShelf, type HomeViewState } from "./components/HomeShelf";
 import { ReadingLevels } from "./components/ReadingLevels";
 import { foldedMarkdown, type FoldData, type FoldLevel } from "../shared/textfold";
 import {
@@ -701,6 +702,12 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
   const [toolsOpen, setToolsOpen] = useState(false);
   const [studyOpen, setStudyOpen] = useState(false);
   const [studyDirty, setStudyDirty] = useState(false);
+  const [homeDirty, setHomeDirty] = useState(false);
+  const homeDirtyRef = useRef(false);
+  homeDirtyRef.current = homeDirty;
+  const [homeDiscardRevision, setHomeDiscardRevision] = useState(0);
+  const [homeDirectoryOpen, setHomeDirectoryOpen] = useState(false);
+  const homeView = useRef<HomeViewState>({ folder: "", page: 1, scroll: 0 });
   const studyDirtyRef = useRef(false);
   studyDirtyRef.current = studyDirty;
   const markdownEditorRef = useRef<MarkdownEditorHandle>(null);
@@ -939,7 +946,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
   const webArticleMode = cloudMode || desktopRuntime;
   const selectionEnabled = !cloudMode && !desktopRuntime;
   const workspaceVisible = !studyOpen && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen;
-  const directoryVisible = workspaceVisible && !graphMode && !libraryCollapsed && !(narrowWorkspace && selectedId);
+  const directoryVisible = workspaceVisible && !graphMode && !libraryCollapsed && !(narrowWorkspace && selectedId) && (!narrowWorkspace || Boolean(selectedId) || homeDirectoryOpen);
   const immersiveActive = immersiveMode && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen && !guideOpen;
   useEffect(() => {
     if (runtimeMode === null) return;
@@ -1025,9 +1032,9 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
   const metadataDirty = Boolean(sourceMetadata && currentDoc && !sourceMetadataEqual(sourceMetadata, currentDoc));
   const metadataDirtyRef = useRef(metadataDirty);
   metadataDirtyRef.current = metadataDirty;
-  const hasUnsavedChanges = dirty || metadataDirty || paperDirty || studyDirty;
+  const hasUnsavedChanges = dirty || metadataDirty || paperDirty || studyDirty || homeDirty;
   const confirmDiscardChanges = async (message: string) => {
-    if (!dirty && !metadataDirty && !paperDirty && !studyDirtyRef.current) { setStudyOpen(false); return true; }
+    if (!dirty && !metadataDirty && !paperDirty && !studyDirtyRef.current && !homeDirtyRef.current) { setStudyOpen(false); return true; }
     if (discardConfirmationRef.current) return false;
     discardConfirmationRef.current = true;
     setDiscardPromptOpen(true);
@@ -1037,6 +1044,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
       tone: "warning",
     });
     if (confirmed) {
+      homeDirtyRef.current = false; setHomeDirty(false); setHomeDiscardRevision(value => value + 1);
       setStudyDirty(false);studyDirtyRef.current=false;setStudyOpen(false);
       const document = currentDocRef.current;
       if (document) {
@@ -1999,6 +2007,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
         ? Boolean(value && storedForDocument && stored && draftsEqual(value, stored))
         : !storedForDocument || Boolean(document && stored && draftsEqual(stored, draftOf(document)));
       if (
+        !homeDirtyRef.current &&
         draftSyncPendingRef.current === 0 &&
         !currentDirtySourceMetadata() &&
         !organizationInFlight.current &&
@@ -2957,6 +2966,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
 
   const returnToLibrary = async () => {
     if (!await closeDocument()) return false;
+    setHomeDirectoryOpen(false);
     setAiSettingsOpen(false);
     setDiagnosticsOpen(false);
     setSafetyOpen(false);
@@ -2991,6 +3001,10 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
   };
 
   const toggleDirectory = async () => {
+    if (narrowWorkspace && !selectedIdRef.current && !graphMode && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen) {
+      if (homeDirtyRef.current && !await confirmDiscardChanges("首页布置尚未保存，确定打开资料目录吗？")) return;
+      setHomeDirectoryOpen(value => !value); setLibraryCollapsed(false); return;
+    }
     if (graphMode) {
       const returnToGraph = graphReturnRef.current;
       graphReturnRef.current = false;
@@ -3007,6 +3021,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
   };
 
   const openSidebarSearch = async () => {
+    setHomeDirectoryOpen(true);
     if (sidebarSearch && !graphMode && !aiSettingsOpen && !safetyOpen && !diagnosticsOpen) {
       if (window.matchMedia("(max-width: 820px)").matches && selectedIdRef.current && !await closeDocument()) return;
       setLibraryCollapsed(false);
@@ -3799,7 +3814,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
     }
   }
 
-  const workspaceClassName = ["workspace", selectedId ? "has-selection" : "", libraryCollapsed ? "library-collapsed" : "", graphMode ? "is-map-mode" : ""].filter(Boolean).join(" ");
+  const workspaceClassName = ["workspace", selectedId ? "has-selection" : "", libraryCollapsed ? "library-collapsed" : "", graphMode ? "is-map-mode" : "", !selectedId && !graphMode ? "is-home-mode" : "", homeDirectoryOpen ? "is-home-directory" : ""].filter(Boolean).join(" ");
   const openStudy = async () => {if(!await confirmDiscardChanges("当前修改尚未保存，确定打开研究工作台吗？"))return;setAiSettingsOpen(false);setSafetyOpen(false);setDiagnosticsOpen(false);setReadingAnchorTarget(null);setStudyOpen(true);};
   const openStudyDocument = async (id:string,anchor?:SourceAnchor) => {
     try {
@@ -3839,6 +3854,11 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
       <a className="skip-link" href="#library-panel">跳到资料库</a>
       <nav className="workspace-rail" aria-label="工作台导航" onClickCapture={(event) => {
         const button = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("button") : null;
+        if (homeDirtyRef.current && button && ["返回首页","资料库","知识地图","设置","备份恢复","研究"].includes(button.getAttribute("aria-label") ?? "")) {
+          event.preventDefault(); event.stopPropagation();
+          void confirmDiscardChanges("首页布置尚未保存，确定离开吗？").then(yes => { if (yes) button.click(); });
+          return;
+        }
         if (!studyOpen || !button || !["返回首页","资料库","知识地图","设置","备份恢复"].includes(button.getAttribute("aria-label") ?? "")) return;
         if (!studyDirtyRef.current) { setStudyOpen(false); return; }
         event.preventDefault(); event.stopPropagation();
@@ -4044,7 +4064,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
         <aside id="library-panel" className={`library-panel ${libraryCollapsed ? "is-collapsed" : ""}`} aria-label="知识列表">
           <nav className="sidebar-tabbar" aria-label="目录分类">
             <SegmentedControl label="目录视图切换" className="sidebar-category-toggle" value={sidebarSearch ? "search" : libraryView} disabled={closing || batchBusy} options={([["all", "全部资料"], ["favorites", "收藏"], ["paper", "论文"], ["trash", "回收站"], ["search", "搜索"]] as const).map(([value, label]) => ({ value, label, icon: <WorkspaceIcon name={({ all: "list", favorites: "star", paper: "paper", trash: "trash", search: "search" } as const)[value]} size={18} /> }))} onChange={(value) => { if (value === "search") void openSidebarSearch(); else void applyLibraryView(value); }} />
-            <IconButton className="sidebar-collapse-button" label="收起资料目录" aria-controls="library-panel" disabled={closing} onClick={() => { setLibraryCollapsed(true); libraryRailRef.current?.focus(); }}><WorkspaceIcon name="panelCollapse" size={18} /></IconButton>
+            <IconButton className="sidebar-collapse-button" label="收起资料目录" aria-controls="library-panel" disabled={closing} onClick={() => { setHomeDirectoryOpen(false); setLibraryCollapsed(true); libraryRailRef.current?.focus(); }}><WorkspaceIcon name="panelCollapse" size={18} /></IconButton>
           </nav>
           <div className="sidebar-scroll-region">
           <div className="sidebar-search-host" hidden={!sidebarSearch}><LibrarySearch folders={folders} refreshKey={listRefresh} inputRef={sidebarSearchRef} onOpen={selectDocument} active={sidebarSearch && !libraryCollapsed} /></div>
@@ -4130,11 +4150,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
           {selectedId === currentDoc?.id && tweetVideoState && (tweetVideoState.status === "queued" || tweetVideoState.status === "processing" || tweetVideoState.errorCode === "VIDEO_TOO_LARGE" || tweetVideoState.errorCode === "VIDEO_FORMAT_UNSUPPORTED" || tweetVideoState.status === "failed") && <p className="tweet-video-status" role="status">{tweetVideoState.errorCode === "VIDEO_TOO_LARGE" ? "视频超过本条推文的大小上限，已跳过；文字和图片已保留。" : tweetVideoState.errorCode === "VIDEO_FORMAT_UNSUPPORTED" ? "该视频暂无可下载的 MP4，文字和图片已保留。" : tweetVideoState.status === "failed" ? "视频暂未保存，文字和图片已保留。" : "正在后台保存推文视频，文字和图片可正常阅读。"}</p>}
           {graphMounted && <div className={`knowledge-map-host ${graphMode && !selectedId ? "is-active" : "is-dormant"}`} aria-hidden={!graphMode || Boolean(selectedId)}><Suspense fallback={<div className="map-load-fallback" role="status">正在准备知识地图…</div>}><KnowledgeMap active={graphMode && !selectedId} cloud={cloudMode} libraryView={libraryView === "trash" ? "all" : libraryView} query={query} onQueryChange={setQuery} onOpenDocument={(id) => void openGraphDocument(id)} refreshKey={listRefresh + semanticRefresh} /></Suspense></div>}
           {graphMode && !selectedId ? null : !selectedId ? (
-            <div className="welcome-state">
-              <div className="weave-mark" aria-hidden="true"><i /><i /><i /><i /></div>
-              <h2>选择织片</h2>
-              <p>{cloudMode ? "重要修改前，请先到“备份恢复”备份。" : "你的文字会留在本地。"}</p>
-            </div>
+            <HomeShelf view={homeView} refreshKey={listRefresh} onDirtyChange={setHomeDirty} discardRevision={homeDiscardRevision} onOpenDocument={selectDocument} onImport={() => { if (!bulkImportPreview) setBulkImportKind(cloudMode ? "markdown" : "urls"); setBulkImportOpen(true); }} />
           ) : detailLoading && (!currentDoc || (currentDoc.kind === "paper" && !currentPaper)) ? (
             <StatePanel kind="loading" title="正在打开织片…" />
           ) : detailError && (!currentDoc || (currentDoc.kind === "paper" && !currentPaper)) ? (

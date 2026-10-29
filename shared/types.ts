@@ -796,6 +796,7 @@ export type ImportPayload =
     markdown: string;
     readingData?: { documentId: string; annotations: import("./reader-tools.js").ReadingAnnotation[]; connections: import("./reader-tools.js").DocumentConnection[] };
     studyData?: import("./study-snapshot.js").StudySnapshot;
+    home?: import("./home.js").HomeSnapshot;
     assets?: Array<{
       path: string;
       sha256: string;
