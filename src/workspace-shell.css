@@ -359,7 +359,7 @@ fieldset.sidebar-category-toggle > button { min-height: 26px; padding: 0 2px; }
 .tweet-video-settings { margin-top: 32px; }
 .tweet-video-limit { margin-top: 8px; }
 .tweet-video-settings > .ui-button { margin-top: 16px; }
-.tweet-video-settings p { color: var(--ink-soft); font-size: var(--font-small); line-height: 1.6; }
+.tweet-video-settings p { color: var(--ink-soft); font-size: var(--font-ui); line-height: 1.7; }
 
 /* Keep the reading column usable when the directory and tools share a window. */
 @media (min-width: 821px) {

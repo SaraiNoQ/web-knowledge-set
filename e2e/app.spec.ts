@@ -687,7 +687,7 @@ test("opens one keyboard-accessible help and about dialog in normal and recovery
   await expect(help.getByText("本地 Web", { exact: true })).toHaveCount(0);
   await expect(help.getByText("MIT", { exact: true })).toHaveCount(0);
   await expect(help.getByText("点击读取后", { exact: false })).toHaveCount(0);
-  const extensionNotes = help.locator(".extension-help > p");
+  const extensionNotes = help.locator(".extension-downloads p, .extension-code-empty, .extension-privacy");
   await expect(extensionNotes).toHaveCount(4);
   await expect(extensionNotes.nth(0)).toHaveText("Chrome：覆盖旧文件夹，重新加载扩展。");
   await expect(extensionNotes.nth(1)).toHaveText("Firefox：下载 XPI，在扩展管理页安装。");
@@ -709,6 +709,13 @@ test("opens one keyboard-accessible help and about dialog in normal and recovery
   await page.setViewportSize({ width: 1280, height: 720 });
   await help.getByRole("button", { name: "连接码" }).click();
   await expect(help.getByRole("status")).toContainText(/[A-Z2-9]{10}/u);
+  await page.setViewportSize({ width: 320, height: 844 });
+  const codeBounds = await help.locator(".extension-code").evaluate((element) => ({
+    width: element.clientWidth, scrollWidth: element.scrollWidth,
+  }));
+  expect(codeBounds.scrollWidth).toBeLessThanOrEqual(codeBounds.width);
+  expect(await help.locator(".help-card").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 720 });
   for (const link of await help.getByRole("navigation", { name: "项目帮助链接" }).getByRole("link").all()) {
     await expect(link).toHaveAttribute("target", "_blank");
     await expect(link).toHaveAttribute("rel", /noopener/u);

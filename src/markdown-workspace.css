@@ -25,6 +25,10 @@
 [data-reading-style="technical"] .markdown-preview h1 { font-size: 1.9em; letter-spacing: -.02em; }
 [data-reading-style="technical"] .markdown-preview h2 { margin-top: 1.8em; font-size: 1.4em; }
 [data-reading-style="technical"] .markdown-preview h3 { font-size: 1.15em; }
+[data-reading-style="technical"] .markdown-preview p { margin-block: .65em; }
+[data-reading-style="technical"] .markdown-preview :is(ul,ol) { margin-block: .75em; }
+[data-reading-style="technical"] .markdown-preview li { margin-block: .25em; }
+[data-reading-style="technical"] .markdown-preview li > p { margin-block: .25em; }
 [data-reading-style="technical"] .markdown-preview pre { border: 1px solid var(--line-strong); border-radius: var(--control-radius); background: var(--paper-deep); color: var(--ink); }
 [data-reading-style="technical"] .markdown-preview blockquote { padding: .6em 1em; border-left: 1px solid var(--line-strong); background: var(--paper-deep); }
 [data-reading-style="technical"] .markdown-preview table { font-size: .9em; }

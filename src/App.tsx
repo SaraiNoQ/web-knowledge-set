@@ -3863,7 +3863,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
 
       {shortcutHelp && <Modal open panel={false} className="shortcut-backdrop" title="使用帮助" onClose={() => setShortcutHelp(false)}>
         <section className="shortcut-card help-card">
-          <header><div><span className="eyebrow">HELP DESK · 本机</span><h2 id="help-title">使用帮助</h2></div><Button type="button" autoFocus onClick={() => setShortcutHelp(false)} aria-label="关闭帮助">×</Button></header>
+          <header><h2 id="help-title">使用帮助</h2><IconButton autoFocus label="关闭帮助" onClick={() => setShortcutHelp(false)}><WorkspaceIcon name="close" /></IconButton></header>
           {safetyRecovery ? <p className="notice warning">恢复资料后才能生成扩展连接码。</p> : <BrowserExtension onPairingCountChange={setBrowserPairingCount} />}
           <section className="help-shortcuts" aria-labelledby="shortcut-title">
             <h3 id="shortcut-title">快捷键</h3>
