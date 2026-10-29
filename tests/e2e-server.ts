@@ -25,6 +25,8 @@ const llmServer = createServer(async (request, response) => {
   }
   const content = paperRequest
     ? JSON.stringify({ paper: { title: "E2E 论文", authors: ["测试作者"] }, pages: [{ pageNumber: 1, blocks: [{ id: "p1-b1", type: "paragraph", original: "An e2e paper.", translation: "一篇 E2E 论文。", assetIds: [] }] }] })
+    : system.includes("Fold each unit")
+    ? JSON.stringify((JSON.parse(String(body.messages?.[1]?.content)) as Array<{ id: string }>).map(({ id }) => ({ id, evidence: [0], takeaway: "方法在测试中更快。", reason: "部署前需要验证。", topic: "方法验证" })))
     : system.includes("This is a connection test")
     ? "ZHIYE_OK"
     : system.includes("supplied evidence")
