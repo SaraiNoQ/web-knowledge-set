@@ -211,7 +211,7 @@ test("refreshes the directory when the browser extension announces a saved clip"
   const deferSetup = page.getByRole("button", { name: "稍后设置" });
   await deferSetup.or(page.getByLabel("网页链接")).first().waitFor();
   if (await deferSetup.isVisible()) await deferSetup.click();
-  await expect(page.getByText("所有织片都已分组。")).toBeVisible();
+  await expect(page.getByRole("region", { name: "未分组内容", exact: true })).toBeVisible();
   const folderName = `即时刷新-${Date.now()}`;
   await page.getByRole("button", { name: "新建", exact: true }).click();
   await page.getByRole("dialog", { name: "新建" }).getByRole("button", { name: "新建分组" }).click();
@@ -219,7 +219,7 @@ test("refreshes the directory when the browser extension announces a saved clip"
   await page.getByRole("dialog", { name: "新建分组" }).getByRole("button", { name: "创建", exact: true }).click();
   const folder = page.locator(".folder-node").filter({ hasText: folderName });
   await expect(folder).toBeVisible();
-  await folder.locator(":scope > button").click();
+  await folder.locator(":scope > button[aria-expanded]").click();
   await expect(page.getByText("这个分组里还没有织片。")).toBeVisible();
   const foldersRefresh = page.waitForRequest((request) => request.method() === "GET" && new URL(request.url()).pathname === "/api/folders");
   const rootRefresh = page.waitForRequest((request) => request.method() === "GET" && new URL(request.url()).pathname === "/api/documents" && new URL(request.url()).searchParams.get("unfiled") === "true");
@@ -601,6 +601,7 @@ test("knowledge map shows model-ranked semantic neighbors and applies the thresh
   await expect(detail).toContainText("语义主题乙");
   await expect(detail).toContainText("相似分数 0.80");
   await expect(page.locator(".knowledge-map")).toContainText("连线不表示引用或事实关系");
+  await page.getByText("高级筛选", { exact: true }).click();
   await page.getByRole("slider", { name: "相似要求" }).press("End");
   await expect(page.getByRole("slider", { name: "相似要求" })).toHaveValue("0.9");
   await expect(detail.getByRole("heading", { name: "语义主题甲" })).toBeVisible();
