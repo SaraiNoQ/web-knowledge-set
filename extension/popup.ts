@@ -7,6 +7,12 @@ const clipPanel = document.querySelector<HTMLElement>("#clip-panel")!;
 const pairingForm = document.querySelector<HTMLFormElement>("#pairing-form")!;
 const codeInput = document.querySelector<HTMLInputElement>("#pairing-code")!;
 const extractButton = document.querySelector<HTMLButtonElement>("#extract")!;
+const quickSaveButton = document.querySelector<HTMLButtonElement>("#quick-save")!;
+const settingsButton = document.querySelector<HTMLButtonElement>("#settings")!;
+const settingsPanel = document.querySelector<HTMLElement>("#settings-panel")!;
+const backButton = document.querySelector<HTMLButtonElement>("#back")!;
+const captureScene = document.querySelector<HTMLElement>("#capture-scene")!;
+const captureCaption = document.querySelector<HTMLElement>("#capture-caption")!;
 const clipForm = document.querySelector<HTMLFormElement>("#clip-form")!;
 const titleInput = document.querySelector<HTMLInputElement>("#title")!;
 const sourceInput = document.querySelector<HTMLInputElement>("#source")!;
@@ -16,6 +22,7 @@ const statusElement = document.querySelector<HTMLElement>("#status")!;
 const aiTitleInput = document.querySelector<HTMLInputElement>("#ai-title")!;
 const aiKeyRow = document.querySelector<HTMLElement>("#ai-key-row")!;
 const aiKeyInput = document.querySelector<HTMLInputElement>("#ai-key")!;
+let busy = false;
 let metadata: Pick<ZhiyeClipResult, "author" | "publishedAt"> = { author: null, publishedAt: null };
 
 function message(value: string, error = false) {
@@ -50,6 +57,8 @@ async function showState() {
   const paired = Boolean(await token());
   pairPanel.hidden = paired;
   clipPanel.hidden = !paired;
+  settingsButton.hidden = !paired;
+  settingsPanel.hidden = true;
 }
 
 /**
@@ -74,14 +83,16 @@ aiTitleInput.addEventListener("change", async () => {
   // Turning the feature off drops the stored key as well, so an unchecked
   // extension holds no AI credential at all.
   if (!aiTitleInput.checked) aiKeyInput.value = "";
-  await webext.storage.local.set({ llmTitle: aiTitleInput.checked, llmKey: aiKeyInput.value.trim() });
+  await webext.storage.local.set({ llmTitle: aiTitleInput.checked, llmKey: aiKeyInput.value.trim() })
+    .then(() => message("设置已保存。"), () => message("设置未保存，请重试。", true));
   if (aiTitleInput.checked) aiKeyInput.focus();
 });
 
 aiKeyInput.addEventListener("change", async () => {
   const value = aiKeyInput.value.trim();
   aiKeyInput.value = value;
-  await webext.storage.local.set({ llmKey: value });
+  await webext.storage.local.set({ llmKey: value })
+    .then(() => message("设置已保存。"), () => message("密钥未保存，请重试。", true));
 });
 
 pairingForm.addEventListener("submit", async (event) => {
@@ -104,80 +115,124 @@ pairingForm.addEventListener("submit", async (event) => {
   }
 });
 
-extractButton.addEventListener("click", async () => {
-  clipForm.hidden = true;
-  message("正在读取当前页面…");
-  try {
-    const [tab] = await webext.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id || !tab.url || !/^https?:\/\//u.test(tab.url)) {
-      throw new Error("当前页面不支持剪藏，请使用织页的手动摘录。");
-    }
-    await webext.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
-    const [execution] = await webext.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: () => window.__ZHIYE_CLIP_RESULT__,
-    });
-    const result = execution?.result;
-    if (!result?.markdown) throw new Error("页面没有可剪藏的正文，请使用织页的手动摘录。");
-    titleInput.value = result.title;
-    sourceInput.value = result.sourceUrl;
-    markdownInput.value = result.markdown;
-    metadata = { author: result.author, publishedAt: result.publishedAt };
-    count.textContent = `${result.markdown.length.toLocaleString()} 字符`;
-    clipForm.hidden = false;
-    message(typedAiTitleKey()
-      ? "请核对正文。保存时生成中文标题，最多20字。"
-      : "请核对正文。图片会尝试缓存；失败时保留链接。");
-  } catch (error) {
-    message((error as Error).message, true);
-  }
-});
+function showSettings(open: boolean) {
+  clipPanel.hidden = open;
+  settingsPanel.hidden = !open;
+  settingsButton.hidden = open;
+  message("");
+  if (open) document.querySelector<HTMLElement>("#settings-heading")!.focus();
+  else settingsButton.focus();
+}
 
-clipForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  message("正在保存新副本…");
+settingsButton.addEventListener("click", () => showSettings(true));
+backButton.addEventListener("click", () => showSettings(false));
+
+function captureFeedback(state: "reading" | "saving" | "success" | "error") {
+  captureScene.hidden = false;
+  captureScene.dataset.state = state;
+  captureCaption.textContent = { reading: "正在读取", saving: "正在保存", success: "已收入织页", error: "未能完成" }[state];
+}
+
+async function readPage(): Promise<ZhiyeClipResult> {
+  const [tab] = await webext.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !tab.url || !/^https?:\/\//u.test(tab.url)) {
+    throw new Error("当前页面不支持剪藏，请使用织页的手动摘录。");
+  }
+  await webext.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
+  const [execution] = await webext.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: () => window.__ZHIYE_CLIP_RESULT__,
+  });
+  const result = execution?.result;
+  if (!result?.markdown) throw new Error("页面没有可剪藏的正文，请使用织页的手动摘录。");
+  return result;
+}
+
+async function saveClip(clip: ZhiyeClipResult) {
+  const currentToken = await token();
+  if (!currentToken) throw new Error("EXTENSION_UNAUTHORIZED");
+  const key = typedAiTitleKey();
+  // A storage failure must not discard a captured page or prevent its save.
+  if (key) await webext.storage.local.set({ llmTitle: true, llmKey: key }).catch(() => {});
+  const response = await fetch(`${API}/api/browser-extension/clips`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${currentToken}`,
+      "Content-Type": "application/json",
+      ...(key ? { "X-Zhiye-LLM-Key": key } : {}),
+    },
+    body: JSON.stringify(clip),
+  });
+  const payload = await responseJson(response);
+  const notified = payload.documentId ? await notifyOpenLibraries(payload.documentId).catch(() => false) : false;
+  clipForm.hidden = true;
+  if (!key) message(notified ? "已保存，织片列表已更新。" : "已另存一张新织片。");
+  else if (payload.aiTitleError) message(`已保存；AI 标题未生成（${payload.aiTitleError}），已保留原标题。`, true);
+  else message(notified ? "已保存，标题已换成中文，织页目录已自动刷新。" : "已保存，标题已换成中文。");
+}
+
+async function runCapture(action: "preview" | "quick" | "save") {
+  if (busy) return;
+  busy = true;
+  const buttons = [extractButton, quickSaveButton, settingsButton, clipForm.querySelector<HTMLButtonElement>("button")!];
+  buttons.forEach((button) => { button.disabled = true; });
+  clipPanel.setAttribute("aria-busy", "true");
+  const quick = action === "quick";
+  captureScene.hidden = true;
+  if (action !== "save") clipForm.hidden = true;
+  if (quick) captureFeedback("reading");
+  let saving = action === "save";
+  message(saving ? "正在保存新副本…" : "正在读取当前页面…");
   try {
-    const currentToken = await token();
-    if (!currentToken) throw new Error("EXTENSION_UNAUTHORIZED");
-    const key = typedAiTitleKey();
-    // Best-effort persistence: a storage failure must not fail the save, and an
-    // empty field must never overwrite a stored key. Unchecking the box still
-    // clears the stored key through the checkbox handler.
-    if (key) await webext.storage.local.set({ llmTitle: true, llmKey: key }).catch(() => {});
-    const response = await fetch(`${API}/api/browser-extension/clips`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${currentToken}`,
-        "Content-Type": "application/json",
-        ...(key ? { "X-Zhiye-LLM-Key": key } : {}),
-      },
-      body: JSON.stringify({
-        sourceUrl: sourceInput.value.trim(),
-        title: titleInput.value.trim(),
-        author: metadata.author,
-        publishedAt: metadata.publishedAt,
-        markdown: markdownInput.value,
-      }),
-    });
-    const payload = await responseJson(response);
-    const notified = payload.documentId ? await notifyOpenLibraries(payload.documentId).catch(() => false) : false;
-    clipForm.hidden = true;
-    if (!key) message(notified ? "已保存，织片列表已更新。" : "已另存一张新织片。");
-    else if (payload.aiTitleError) message(`已保存；AI 标题未生成（${payload.aiTitleError}），已保留原标题。`, true);
-    else message(notified ? "已保存，标题已换成中文，织页目录已自动刷新。" : "已保存，标题已换成中文。");
+    // Wait for restored AI preferences before either capture path can submit.
+    await settingsReady;
+    const clip = action === "save" ? {
+      title: titleInput.value.trim(), sourceUrl: sourceInput.value.trim(),
+      markdown: markdownInput.value, ...metadata,
+    } : await readPage();
+    if (action === "preview") {
+      titleInput.value = clip.title;
+      sourceInput.value = clip.sourceUrl;
+      markdownInput.value = clip.markdown;
+      metadata = { author: clip.author, publishedAt: clip.publishedAt };
+      count.textContent = `${clip.markdown.length.toLocaleString()} 字符`;
+      clipForm.hidden = false;
+      message(typedAiTitleKey()
+        ? "请核对正文。保存时生成中文标题，最多20字。"
+        : "请核对正文。图片会尝试缓存；失败时保留链接。");
+    } else {
+      saving = true;
+      message("正在保存新副本，请保持弹窗打开…");
+      if (quick) captureFeedback("saving");
+      await saveClip(clip);
+      if (quick) captureFeedback("success");
+    }
   } catch (error) {
     const code = (error as Error).message;
+    if (quick) captureFeedback("error");
     if (code === "EXTENSION_UNAUTHORIZED") {
-      await webext.storage.local.remove(["token"]);
+      await webext.storage.local.remove(["token"]).catch(() => {});
       await showState();
     }
-    message(`保存失败：${code}`, true);
+    message(`${saving ? "保存失败：" : ""}${code}`, true);
+  } finally {
+    busy = false;
+    buttons.forEach((button) => { button.disabled = false; });
+    clipPanel.setAttribute("aria-busy", "false");
   }
+}
+
+extractButton.addEventListener("click", () => { void runCapture("preview"); });
+quickSaveButton.addEventListener("click", () => { void runCapture("quick"); });
+clipForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void runCapture("save");
 });
 
 markdownInput.addEventListener("input", () => {
   count.textContent = `${markdownInput.value.length.toLocaleString()} 字符`;
 });
 
-void showState();
-void loadAiSettings();
+const settingsReady = loadAiSettings();
+void settingsReady.then(() => { settingsButton.disabled = false; }, () => message("无法读取 AI 设置，请重新打开插件。", true));
+void showState().catch(() => message("无法读取连接信息，请重新打开插件。", true));
