@@ -1588,12 +1588,9 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .knowledge-map-host.is-active { visibility: visible; pointer-events: auto; }
 .knowledge-map-host.is-dormant { position: fixed; z-index: -1; top: 0; left: -12000px; width: min(1200px, calc(100vw - 40px)); height: min(760px, calc(100vh - 180px)); visibility: hidden; pointer-events: none; }
 .map-load-fallback { display: grid; min-height: 520px; place-items: center; color: var(--ink-soft); font: var(--font-ui) var(--font-serif); }
-.knowledge-map { display: flex; height: 100%; min-height: 600px; flex-direction: column; background: rgba(250,247,239,.62); }
-.knowledge-map-head { display: flex; flex-wrap: wrap; gap: 12px; min-height: 94px; align-items: center; justify-content: space-between; padding: 16px 26px 15px; border-bottom: 1px solid var(--line-strong); }
-.knowledge-map-head h2 { margin: 0; font: var(--type-section); letter-spacing: .025em; }
-.knowledge-map-heading { flex: 1 1 200px; min-width: 0; }
-.knowledge-map-head p { margin: 6px 0 0; color: var(--ink-soft); font-size: var(--font-caption); }
-.knowledge-map-head-actions { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+.knowledge-map { position: relative; display: flex; height: 100%; min-height: 600px; flex-direction: column; background: rgba(250,247,239,.62); }
+.knowledge-map-title { flex-shrink: 0; width: max-content; max-width: 100%; margin: 0 10px 16px; font: var(--type-section); letter-spacing: .025em; }
+.knowledge-map-actions { position: absolute; z-index: 2; top: 26px; right: 26px; display: flex; align-items: center; gap: 14px; }
 .map-dimension-switch { width: 112px; }
 .map-3d { position: absolute; inset: 0; }
 .map-3d > canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
@@ -1643,7 +1640,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
 .map-state .eyebrow { margin: 0; }
 .map-state h3 { margin: 10px 0 0; font: 500 20px var(--font-serif); }
 .map-state p { max-width: 340px; color: var(--ink-soft); font-size: var(--font-small); line-height: 1.7; }
-.knowledge-map-detail { position: relative; min-width: 0; padding: 20px 18px; background: var(--paper); border-left: 1px solid var(--line-strong); overflow-y: auto; }
+.knowledge-map-detail { position: relative; min-width: 0; padding: 94px 18px 20px; background: var(--paper); border-left: 1px solid var(--line-strong); overflow-y: auto; }
 .knowledge-map-detail:not(.is-open) { display: none; }
 .map-detail-head { display: flex; justify-content: flex-end; }
 .map-detail-close { display: grid; width: 30px; height: 30px; place-items: center; color: var(--ink-soft); background: transparent; border: 1px solid var(--line); font-size: 20px; }
@@ -1695,6 +1692,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   .knowledge-map-layout { grid-template-columns: 184px minmax(0,1fr) 240px; }
   .knowledge-map-layout:not(.has-detail) { grid-template-columns: 184px minmax(0,1fr); }
   .knowledge-map-filters { padding-inline: 12px; }
+  .knowledge-map-title { margin-left: 14px; }
   .knowledge-map-detail { padding-inline: 14px; }
 }
 @media (max-width: 820px) {
@@ -1703,17 +1701,15 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   .knowledge-map-layout { grid-template-columns: 170px minmax(0,1fr); }
   .knowledge-map-layout:not(.has-detail) { grid-template-columns: 170px minmax(0,1fr); }
   .knowledge-map-detail { display: none; }
-  .knowledge-map-detail.is-open { position: fixed; z-index: 30; right: 16px; bottom: 16px; display: block; width: min(340px, calc(100vw - 32px)); max-height: min(70vh, 540px); border: 1px solid var(--line-strong); box-shadow: var(--shadow); }
+  .knowledge-map-detail.is-open { position: fixed; z-index: 30; right: 16px; bottom: 16px; display: block; width: min(340px, calc(100vw - 32px)); max-height: min(70vh, 540px); padding-top: 20px; border: 1px solid var(--line-strong); box-shadow: var(--shadow); }
   .map-detail-close { display: inline-block; }
 }
 @media (max-width: 560px) {
   .workspace.is-map-mode .reader-panel { display: block !important; }
   .knowledge-map-host { min-height: 660px; }
   .knowledge-map { min-height: 660px; }
-  .knowledge-map-head { min-height: 84px; padding: 12px 14px; }
-  .knowledge-map-head h2 { font-size: 21px; }
-  .knowledge-map-head p { max-width: 205px; font-size: var(--font-caption); }
-  .knowledge-map-head-actions { gap: 7px; }
+  .knowledge-map-title { grid-column: 1 / -1; margin: 6px 2px 12px; font-size: 21px; }
+  .knowledge-map-actions { top: 16px; right: 14px; gap: 7px; }
   .map-total { font-size: var(--font-caption); }
   .knowledge-map-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(390px,1fr); }
   .knowledge-map-layout:not(.has-detail) { grid-template-columns: 1fr; }
