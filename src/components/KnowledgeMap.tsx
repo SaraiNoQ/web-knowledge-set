@@ -126,7 +126,6 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
   const [error, setError] = useState("");
   const [kind, setKind] = useState<LibraryItemKind | "">(libraryView === "paper" ? "paper" : "");
   const [folderId, setFolderId] = useState("");
-  const [favorite, setFavorite] = useState<boolean | undefined>(libraryView === "favorites" ? true : undefined);
   const [includeArchived, setIncludeArchived] = useState(true);
   const [showFolders, setShowFolders] = useState(true);
   const [relationTypes, setRelationTypes] = useState<Record<RelationType, boolean>>({ folder: true, manual: true, semantic: true, tag: true, citation: true, lexical: true });
@@ -203,14 +202,12 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
   semanticVectorsRef.current = semanticVectors;
   const vectorCache = useRef(new Map<string, SemanticVectorEntry>());
   const [semanticGraphKey, setSemanticGraphKey] = useState("");
-  const filters = useRef({ kind, folderId, favorite, includeArchived, query });
-  filters.current = { kind, folderId, favorite, includeArchived, query };
+  const filters = useRef({ kind, folderId, includeArchived, query });
+  filters.current = { kind, folderId, includeArchived, query };
 
   useEffect(() => {
     if (libraryView === "paper") setKind("paper");
     else if (libraryView === "all") setKind("");
-    if (libraryView === "favorites") setFavorite(true);
-    else if (libraryView === "all" || libraryView === "paper") setFavorite(undefined);
   }, [libraryView]);
 
   useEffect(() => {
@@ -246,7 +243,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
       do {
         const page = await api.listKnowledgeMap({
           cursor, q: current.query, kind: current.kind || undefined,
-          folderId: current.folderId || undefined, favorite: current.favorite,
+          folderId: current.folderId || undefined,
           includeArchived: !cloud && current.includeArchived,
         }, signal);
         if (signal.aborted) return;
@@ -279,7 +276,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
     const controller = new AbortController();
     const timer = window.setTimeout(() => void loadMap(controller.signal), query.trim() ? 180 : 0);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [active, kind, folderId, favorite, includeArchived, query, loadMap, refreshKey, retryCount]);
+  }, [active, kind, folderId, includeArchived, query, loadMap, refreshKey, retryCount]);
 
   useEffect(() => {
     setFocusedGroup(null);
@@ -287,7 +284,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
     overview.current = null;
     restoreOverview.current = false;
     fitFocusedScope.current = false;
-  }, [kind, folderId, favorite, includeArchived, query]);
+  }, [kind, folderId, includeArchived, query]);
 
   const semanticEnabled = items.some((item) => item.semanticState !== "unavailable");
   const readyVectorRefs = useMemo(() => items.filter((item) => item.semanticState === "ready")
@@ -718,14 +715,13 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
           <label className="map-search"><span>搜索标题</span><Input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="输入关键词" /></label>
           <label><span>资料类型</span><Select aria-label="资料类型" value={kind} onChange={(event) => setKind(event.target.value as LibraryItemKind | "")}><option value="">文章与论文</option><option value="article">文章</option><option value="paper">论文</option></Select></label>
           <label><span>分组</span><Select aria-label="分组" value={folderId} onChange={(event) => setFolderId(event.target.value)}><option value="">全部分组</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</Select></label>
-          <label><span>收藏</span><Select aria-label="收藏" value={favorite === undefined ? "all" : String(favorite)} onChange={(event) => setFavorite(event.target.value === "all" ? undefined : event.target.value === "true")}><option value="all">全部</option><option value="true">只看收藏</option><option value="false">排除收藏</option></Select></label>
           {!cloud && <label className="map-check"><Checkbox checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} /><span>显示归档</span></label>}
           <label className="map-check"><Checkbox checked={showFolders || summaryMode} disabled={summaryMode} onChange={(event) => setShowFolders(event.target.checked)} /><span>显示分组</span></label>
           <fieldset className="map-relations"><legend>关系类型</legend>{(Object.entries(RELATION_LABELS) as Array<[RelationType, string]>).map(([type, label]) => <label key={type}><Checkbox checked={relationTypes[type]} onChange={(event) => setRelationTypes((values) => ({ ...values, [type]: event.target.checked }))} />{label}</label>)}</fieldset>
           <details className="map-advanced"><summary>高级筛选</summary><label className="map-threshold"><span>相似要求 · {semanticThreshold.toFixed(2)}</span><Range aria-label="相似要求" min="0.3" max="0.9" step="0.01" value={semanticThreshold} disabled={!semanticEnabled || semanticLoading} onChange={(event) => setSemanticThreshold(Number(event.target.value))} /></label></details>
           <SegmentedControl label="查看范围" className="map-view-switch" value={localMode ? "local" : "all"} options={[{ value: "all", label: "全部资料" }, { value: "local", label: "当前关联", disabled: !selected }]} onChange={(value) => changeScope(value === "local", null)} />
           <div className="map-key"><span><i className="map-key-article" />文章</span><span><i className="map-key-paper" />论文</span><span><i className="map-key-folder" />分组</span><span><i className="map-key-line" />所属分组</span><span><i className="map-key-semantic" />内容相近</span></div>
-          <p className="map-privacy-note">{dimension === "3d" ? "节点与连线按关系分布在三维空间；虚线表示内容相近。" : "实线表示分组，虚线表示内容相近。"}<br />分数表示内容相似，不代表正确。<br />连线不表示引用或事实关系。</p>
+          <p className="map-privacy-note">{dimension === "3d" ? "节点与连线按关系分布在三维空间；虚线表示内容相近。" : "实线表示分组，虚线表示内容相近。"}</p>
           {items.length > MAP_VISIBLE_DOCUMENTS && <p className="map-budget-note" role="status">{summaryMode ? "已按分组汇总，点击分组展开。" : !localMode && scopedDocuments.length > MAP_VISIBLE_DOCUMENTS ? "当前分组仅绘制前 1,000 篇，请搜索或从资料列表选择。" : "选中资料后使用服务端邻域推荐；全库向量比较限 1,000 篇。"}</p>}
           {semanticCalculationPending && <p className="map-semantic-status" role="status">正在查找相近织片…</p>}
           {semanticEnabled && items.length <= SEMANTIC_GRAPH_MAX_NODES && !semanticCalculationPending && !readyVectorIds.length && !semanticError && <p className="map-semantic-status" role="status">处理完成后，会显示相近织片。</p>}
@@ -739,7 +735,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
           {loading && <p className="map-loading" role="status">正在加载资料地图…</p>}
           {renderError && <p className="map-render-error" role="status">{renderError}</p>}
           {error ? <div className="map-state"><span className="eyebrow">MAP · ERROR</span><h3>加载失败</h3><p>{error}</p><Button type="button" onClick={() => setRetryCount((value) => value + 1)}>重试</Button></div>
-            : !loading && !documents.length ? <div className="map-state"><span className="eyebrow">MAP · EMPTY</span><h3>{query || kind || folderId || favorite !== undefined ? "没有匹配的资料" : "知识地图还是空的"}</h3><p>添加文章或论文后，这里会显示。</p></div>
+            : !loading && !documents.length ? <div className="map-state"><span className="eyebrow">MAP · EMPTY</span><h3>{query || kind || folderId ? "没有匹配的资料" : "知识地图还是空的"}</h3><p>添加文章或论文后，这里会显示。</p></div>
               : <div className="map-canvas-inner" ref={observeHost}>
                 {width > 0 && height > 0 && (dimension === "3d" ? <Map3DBoundary onUnavailable={unavailable3D}><Suspense fallback={<p className="map-loading" role="status">正在准备 3D 地图…</p>}><KnowledgeMap3D ref={graph3D} data={graphData} state={state3D} width={width} height={height} active={active} paused={paused} dark={darkTheme} selectedId={selectedId} scope={localMode ? `local:${selectedId}` : focusedGroup !== null ? `folder:${focusedGroup}` : "all"} onSelect={selectNode} onUnavailable={unavailable3D} /></Suspense></Map3DBoundary> : <ForceGraph2D
                   ref={captureGraph as never}
