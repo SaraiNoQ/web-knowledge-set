@@ -80,8 +80,7 @@ export function ReaderSidebar({ outline, onClose }: { outline: ReactNode; onClos
   const [tab, setTab] = useState("outline");
   const tool = state.tools[tab];
   return <aside id="document-tools" className="document-tools reader-sidebar" aria-label="右侧功能区">
-    <header><h2>{tab === "outline" ? "大纲" : tab === "notes" ? "摘录与关联" : tool?.module.manifest.name ?? "阅读工具"}</h2><IconButton label={tab === "outline" ? "收起大纲" : "收起阅读工具"} onClick={onClose}>×</IconButton></header>
-    <nav className="reader-sidebar-tabs" aria-label="阅读功能"><Button aria-pressed={tab === "outline"} onClick={() => setTab("outline")}>大纲</Button><Button aria-pressed={tab === "notes"} onClick={() => setTab("notes")}>摘录关联</Button>{Object.entries(state.tools).map(([id, entry]) => <Button key={id} aria-pressed={tab === id} onClick={() => setTab(id)}>{entry.module.manifest.name}</Button>)}</nav>
+    <header><nav className="reader-sidebar-tabs" aria-label="阅读功能"><Button aria-pressed={tab === "outline"} onClick={() => setTab("outline")}>大纲</Button><Button aria-pressed={tab === "notes"} onClick={() => setTab("notes")}>管理</Button>{Object.entries(state.tools).map(([id, entry]) => <Button key={id} aria-pressed={tab === id} onClick={() => setTab(id)}>{entry.module.manifest.name}</Button>)}</nav><IconButton label={tab === "outline" ? "收起大纲" : "收起阅读工具"} onClick={onClose}>×</IconButton></header>
     <div className="reader-sidebar-content">{tab === "outline" ? outline : tab === "notes" ? <ReadingDataPanel key={state.context?.id ?? "empty"} /> : tool ? <ReaderToolBoundary key={tab} onClose={() => setTab("outline")}><tool.module.Panel api={tool.api} selection={state.selection} active={!state.overlay} /></ReaderToolBoundary> : <ReaderToolSettings />}</div>
   </aside>;
 }

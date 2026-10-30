@@ -75,7 +75,7 @@ test("opening current-document evidence protects drafts and ignores late refresh
   });
   await page.goto("/"); await page.getByRole("button", { name: title, exact: true }).click();
   await page.getByRole("button", { name: "展开侧栏", exact: true }).click();
-  const sidebar = page.getByRole("complementary", { name: "右侧功能区" }); await sidebar.getByRole("button", { name: "摘录关联", exact: true }).click();
+  const sidebar = page.getByRole("complementary", { name: "右侧功能区" }); await sidebar.getByRole("button", { name: "管理", exact: true }).click();
   const editor = page.getByLabel("Markdown 编辑器"), evidence = sidebar.getByRole("button", { name: `查看原文：${title}`, exact: true });
   await expect(evidence).toBeVisible();
   await editor.fill("UNSAVED user draft must survive.");
@@ -125,7 +125,7 @@ test("reader recommendations expose source evidence, join a topic and open the q
   });
   await page.goto("/"); await page.getByRole("button", { name: title, exact: true }).click();
   await page.getByRole("button", { name: "展开侧栏", exact: true }).click();
-  const sidebar = page.getByRole("complementary", { name: "右侧功能区" }); await sidebar.getByRole("button", { name: "摘录关联", exact: true }).click();
+  const sidebar = page.getByRole("complementary", { name: "右侧功能区" }); await sidebar.getByRole("button", { name: "管理", exact: true }).click();
   const recommendations = sidebar.getByRole("region", { name: "相关资料推荐" });
   await expect(recommendations).toContainText("正文向量相近 · 0.92"); await expect(recommendations).toContainText("Peer graph evidence paragraph.");
   await recommendations.getByRole("combobox", { name: "推荐资料加入的专题" }).click(); await page.getByRole("option", { name: topic.name, exact: true }).click();
@@ -149,7 +149,7 @@ test("manual connections can bind source excerpts and explicitly confirm citatio
   const peerNote = await (await request.post(`/api/reader-tools/documents/${second.id}/annotations`, { headers, data: { revision: target.revision, anchor: { quote: "Second excerpt evidence.", prefix: "", suffix: "", source: "editor" } } })).json();
   const linked = await (await request.post(`/api/reader-tools/documents/${first.id}/connections`, { headers, data: { revision: source.revision, targetId: second.id, note: "Supports this claim" } })).json();
   await page.goto("/"); await page.getByRole("button", { name: title, exact: true }).click(); await page.getByRole("button", { name: "展开侧栏", exact: true }).click();
-  const sidebar = page.getByRole("complementary", { name: "右侧功能区" }); await sidebar.getByRole("button", { name: "摘录关联", exact: true }).click();
+  const sidebar = page.getByRole("complementary", { name: "右侧功能区" }); await sidebar.getByRole("button", { name: "管理", exact: true }).click();
   await sidebar.locator(".reader-evidence-editor summary").click();
   await sidebar.getByRole("combobox", { name: "这篇资料的摘录", exact: true }).click(); await page.getByRole("option", { name: "First excerpt evidence.", exact: true }).click();
   await sidebar.getByRole("combobox", { name: "关联资料的摘录", exact: true }).click(); await page.getByRole("option", { name: "Second excerpt evidence.", exact: true }).click();

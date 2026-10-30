@@ -24,7 +24,7 @@ test.beforeEach(async ({ page, request }) => {
 });
 
 test("glossary import/export preserves existing terms and cache varies by glossary and language", async ({ page }, testInfo) => {
-  const panel = page.getByRole("dialog", { name: "划词翻译", exact: true });
+  const panel = page.getByRole("dialog", { name: "翻译", exact: true });
   const requests: Array<{ text: string; language: string; glossary?: Array<{ source: string; target: string }> }> = [];
   await page.route("**/api/reader-tools/documents/*/translate", async (route) => {
     const input = route.request().postDataJSON(); requests.push(input);
@@ -53,7 +53,7 @@ test("glossary import/export preserves existing terms and cache varies by glossa
 });
 
 test("automatic translation is opt-in, cancels old selections and ignores late output", async ({ page }) => {
-  const panel = page.getByRole("dialog", { name: "划词翻译", exact: true });
+  const panel = page.getByRole("dialog", { name: "翻译", exact: true });
   const requests: string[] = [];
   let release = () => {};
   const held = new Promise<void>((resolve) => { release = resolve; });

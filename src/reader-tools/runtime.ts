@@ -37,7 +37,7 @@ export interface ReaderToolModule {
   Overlay: ComponentType<ReaderToolViewProps>;
   Panel: ComponentType<ReaderToolViewProps>;
 }
-export const builtinReaderTools = [{ manifest: { id: "translation", name: "划词翻译", version: "1.0.0", hostApiVersion: 1, storageVersion: 1,
+export const builtinReaderTools = [{ manifest: { id: "translation", name: "翻译", version: "1.0.0", hostApiVersion: 1, storageVersion: 1,
   permissions: ["selection.read", "translation.request", "storage.own", "annotations.create"] } satisfies ReaderToolManifest,
   load: () => import("./translation").then((module) => module.translationTool) }];
 

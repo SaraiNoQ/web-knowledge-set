@@ -60,7 +60,7 @@ export function ReadingLevels({ document, blocked, onChange }: {
           const results = await api.listDerivedResults(document.id, page);
           if (disposed) return;
           for (const result of results.items) {
-            if (result.stale || !result.output.startsWith('{"format":"zhiye-fold-v1"')) continue;
+            if (result.stale) continue;
             const value = readFold(document.markdown, result.output);
             if (value) { setData(value); return; }
           }
