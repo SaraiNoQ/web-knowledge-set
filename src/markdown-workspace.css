@@ -91,5 +91,7 @@
   .markdown-format-toolbar [aria-pressed="true"], .markdown-selection-toolbar [aria-pressed="true"] { outline: 1px solid Highlight; }
 }
 
-.reading-levels { display: inline-flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
-.reading-levels [role="status"] { max-width: 28rem; font-size: .8rem; }
+.reading-levels { display: inline-flex; align-items: center; gap: .5rem; flex-wrap: wrap; min-width: 0; max-width: 100%; }
+.reading-levels > label { display: inline-flex; align-items: center; gap: 8px; font-size: var(--font-small); white-space: nowrap; }
+.reading-levels .ui-select-wrap { min-width: 100px; }
+.reading-levels [role="status"] { flex-basis: 100%; max-width: min(28rem, 100%); font-size: var(--font-small); line-height: 1.6; color: var(--ink-soft); overflow-wrap: anywhere; }
