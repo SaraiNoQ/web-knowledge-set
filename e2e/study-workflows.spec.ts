@@ -91,7 +91,7 @@ test("reading position persists without changing a selected translation passage"
   const paragraph = page.locator(".reader-main .markdown-preview p").first(); await paragraph.scrollIntoViewIfNeeded(); await paragraph.evaluate((element) => { const range = document.createRange(); range.selectNodeContents(element); getSelection()!.removeAllRanges(); getSelection()!.addRange(range); element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); });
   const pane = page.locator(".preview-pane"); await pane.hover(); await page.mouse.wheel(0, 600); await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   await expect.poll(async () => (await (await request.get(`/api/study/documents/${created.document.id}/progress`)).json())?.fraction ?? 0).toBeGreaterThan(0);
-  await page.keyboard.press("Alt+t"); await expect(page.getByRole("dialog", { name: "划词翻译", exact: true }).getByLabel("待翻译选区")).toHaveText("selected original passage."); await page.keyboard.press("Escape");
+  await page.keyboard.press("Alt+t"); await expect(page.getByRole("dialog", { name: "翻译", exact: true }).getByLabel("待翻译选区")).toHaveText("selected original passage."); await page.keyboard.press("Escape");
   await expect(page.getByLabel("阅读进度", { exact: true })).toHaveCount(0);
   await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "研究", exact: true }).click();
   const workspace = page.getByRole("region", { name: "研究工作台" }); await workspace.getByRole("button", { name: "资料", exact: true }).click(); await workspace.getByRole("textbox", { name: "搜索资料", exact: true }).fill(title);

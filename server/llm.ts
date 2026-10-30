@@ -734,12 +734,12 @@ async function requestCompletion(
     model,
     temperature: 0,
     ...(onText ? { stream: true } : {}),
-    ...(input.kind === "probe" ? { max_tokens: 16 } : input.kind === "selection" ? { max_tokens: 4096 } : input.kind === "title" ? { max_tokens: TITLE_MAX_TOKENS } : input.kind === "paper" ? { max_tokens: 32_000 } : input.kind === "paper-images" ? { max_tokens: PAPER_BATCH_MAX_TOKENS } : {}),
+    ...(input.kind === "derived" && input.preview.customPrompt === FOLD_REQUEST ? { max_tokens: 8192 } : input.kind === "probe" ? { max_tokens: 16 } : input.kind === "selection" ? { max_tokens: 4096 } : input.kind === "title" ? { max_tokens: TITLE_MAX_TOKENS } : input.kind === "paper" ? { max_tokens: 32_000 } : input.kind === "paper-images" ? { max_tokens: PAPER_BATCH_MAX_TOKENS } : {}),
     ...(input.kind === "paper" || input.kind === "paper-images" ? { response_format: { type: "json_object" } } : {}),
     // DeepSeek can spend the whole output budget on reasoning before writing any
     // content, which for a per-page extraction means an empty reply. This
     // mirrors what the title path does on the same endpoint.
-    ...((input.kind === "paper" || input.kind === "paper-images" || input.kind === "selection") && target.url.href === "https://api.deepseek.com/chat/completions"
+    ...((input.kind === "paper" || input.kind === "paper-images" || input.kind === "selection" || input.kind === "derived" && input.preview.customPrompt === FOLD_REQUEST) && target.url.href === "https://api.deepseek.com/chat/completions"
       ? { thinking: { type: "disabled" } }
       : {}),
     messages,
@@ -1153,6 +1153,7 @@ export function createDerivedTasks(options: {
           );
           if (controller.signal.aborted) throw new LlmError(409, "LLM_CANCELLED", "LLM task was cancelled");
           assertDocumentUnchanged();
+          if (task.preview.customPrompt === FOLD_REQUEST && value.finishReason === "length") throw new LlmError(502, "LLM_RESPONSE_TRUNCATED", "Reading levels exceeded the model output limit");
           outputs.push(value.output);
           combinedUsage = sumUsage(combinedUsage, value.usage, outputs.length === 1);
           task.progress.completedBatches += 1;

@@ -654,12 +654,12 @@ export async function handleAiApi(request: Request, db: D1Database, url: URL): P
         llmRequestKey(request),
         systemPrompt(type, language, prompt),
         sentText,
-        type === "translation" ? 16_384 : 4_096,
-        type === "translation",
-        type === "translation" ? 120_000 : 30_000,
+        type === "translation" ? 16_384 : folding ? 8_192 : 4_096,
+        type === "translation" || folding,
+        type === "translation" || folding ? 120_000 : 30_000,
       );
-      if (type === "translation" && completed.finishReason === "length") {
-        throw new CloudHttpError(502, "LLM_RESPONSE_TRUNCATED", "The translation exceeded the model output limit");
+      if ((type === "translation" || folding) && completed.finishReason === "length") {
+        throw new CloudHttpError(502, "LLM_RESPONSE_TRUNCATED", "The structured result exceeded the model output limit");
       }
       outputs.push(completed.output);
     }

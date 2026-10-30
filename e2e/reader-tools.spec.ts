@@ -17,13 +17,16 @@ for (const narrow of [false, true]) test(`reader tools ${narrow ? "mobile" : "de
   await page.route("**/api/reader-tools/documents/*/translate", async (route) => { translations += 1; expect(route.request().postDataJSON().text).toBe("selected words"); expect(route.request().postData()).not.toContain("whole-document-secret"); await route.continue(); });
   const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
-  await page.getByRole("button", { name: title, exact: true }).click();
+  if (narrow) await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "资料库", exact: true }).click();
+  const directory = page.getByRole("complementary", { name: "知识列表", exact: true });
+  await expect(directory).toBeVisible();
+  await directory.getByRole("button", { name: title, exact: true }).click();
   const body = page.locator(".reader-main .markdown-preview p").filter({ hasText: "before selected words after" });
   await expect(body).toBeVisible();
   await body.evaluate((element) => { const node = element.firstChild!; const range = document.createRange(); range.setStart(node, 7); range.setEnd(node, 21); const selection = getSelection()!; selection.removeAllRanges(); selection.addRange(range); element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); });
   const ribbon = page.getByRole("toolbar", { name: "选区操作" });
   await expect(ribbon).toBeVisible(); await ribbon.getByRole("button", { name: "翻译", exact: true }).click();
-  const floating = page.getByRole("dialog", { name: "划词翻译", exact: true });
+  const floating = page.getByRole("dialog", { name: "翻译", exact: true });
   await expect(floating).toBeVisible(); await expect(floating.getByLabel("待翻译选区")).toHaveText("selected words");
   const languageBounds = (await floating.getByRole("combobox", { name: "目标语言", exact: true }).boundingBox())!;
   const translateBounds = (await floating.getByRole("button", { name: "翻译选区", exact: true }).boundingBox())!;
@@ -53,7 +56,7 @@ for (const narrow of [false, true]) test(`reader tools ${narrow ? "mobile" : "de
   }
   if (await page.getByRole("button", { name: "展开侧栏", exact: true }).isVisible()) await page.getByRole("button", { name: "展开侧栏", exact: true }).click();
   const sidebar = page.getByRole("complementary", { name: "右侧功能区" });
-  await sidebar.getByRole("button", { name: "摘录关联", exact: true }).click();
+  await sidebar.getByRole("button", { name: "管理", exact: true }).click();
   await expect(sidebar).toContainText("选区译文：selected words");
   await sidebar.getByRole("button", { name: "定位原文", exact: true }).click();
   await expect.poll(() => page.evaluate(() => getSelection()?.toString())).toBe("selected words");
@@ -73,7 +76,7 @@ for (const narrow of [false, true]) test(`reader tools ${narrow ? "mobile" : "de
     await expect(detail.getByRole("heading", { name: title, exact: true })).toBeVisible(); await expect(detail).toContainText("同一研究问题");
     await map.getByRole("button", { name: "2D", exact: true }).click(); await expect(detail).toContainText("同一研究问题");
     await detail.getByRole("button", { name: "打开资料", exact: false }).click();
-    await expect(page.getByLabel("Markdown 编辑器")).toBeVisible(); await page.keyboard.press("Alt+t"); await expect(page.getByRole("dialog", { name: "划词翻译", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Markdown 编辑器")).toBeVisible(); await page.keyboard.press("Alt+t"); await expect(page.getByRole("dialog", { name: "翻译", exact: true })).toBeVisible();
   }
   expect(errors).toEqual([]);
 });
@@ -99,7 +102,7 @@ for (const source of ["preview", "editor"] as const) test(`reader selection surv
   await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   await expect(page.getByRole("toolbar", { name: "选区操作" })).toBeHidden();
   await page.keyboard.press("Alt+t");
-  const floating = page.getByRole("dialog", { name: "划词翻译", exact: true });
+  const floating = page.getByRole("dialog", { name: "翻译", exact: true });
   await expect(floating.getByLabel("待翻译选区")).toHaveText(quote);
   // A changed native DOM range outside a new reading gesture must not replace the captured text.
   await page.locator(".markdown-preview p").nth(1).evaluate((element) => { const range = document.createRange(); range.selectNodeContents(element); getSelection()!.removeAllRanges(); getSelection()!.addRange(range); document.querySelector(".reader-tool-float h2")!.dispatchEvent(new KeyboardEvent("keyup", { key: "Alt", bubbles: true })); });
@@ -109,7 +112,7 @@ for (const source of ["preview", "editor"] as const) test(`reader selection surv
     await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "展开侧栏", exact: true }).click();
     tool = page.getByRole("complementary", { name: "右侧功能区" });
-    await tool.getByRole("button", { name: "划词翻译", exact: true }).click();
+    await tool.getByRole("button", { name: "翻译", exact: true }).click();
     await expect(tool.getByLabel("待翻译选区")).toHaveText(quote);
   }
   let sent = "", release = () => {};
@@ -145,17 +148,17 @@ test("reader tool can be enabled and disabled independently and resets across do
   await page.goto("/"); await page.getByRole("button", { name: title, exact: true }).click();
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("button", { name: "阅读工具", exact: true }).click();
-  const enabled = page.getByRole("checkbox", { name: "划词翻译" }); await enabled.check();
+  const enabled = page.getByRole("checkbox", { name: "翻译" }); await enabled.check();
   await expect(enabled).toHaveCSS("accent-color", "rgb(189, 65, 44)");
-  await expect(page.locator(".reader-tool-settings .ai-enable strong")).toHaveText("划词翻译");
+  await expect(page.locator(".reader-tool-settings .ui-checkbox-field").filter({ has: enabled }).locator(".ui-checkbox-label")).toHaveText("翻译");
   await page.getByRole("button", { name: "返回列表", exact: true }).click();
-  await page.keyboard.press("Alt+t"); await expect(page.getByRole("dialog", { name: "划词翻译", exact: true })).toBeVisible();
-  await expect(page.getByRole("dialog", { name: "划词翻译", exact: true }).getByRole("heading", { name: "划词翻译" })).toBeFocused();
+  await page.keyboard.press("Alt+t"); await expect(page.getByRole("dialog", { name: "翻译", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "翻译", exact: true }).getByRole("heading", { name: "翻译" })).toBeFocused();
   await expect(page.getByRole("button", { name: "翻译选区", exact: true })).toBeDisabled();
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "设置", exact: true }).click(); await page.getByRole("button", { name: "阅读工具", exact: true }).click(); await enabled.uncheck();
   await page.getByRole("button", { name: "返回列表", exact: true }).click(); await page.keyboard.press("Alt+t");
-  await expect(page.getByRole("dialog", { name: "划词翻译", exact: true })).toBeHidden();
+  await expect(page.getByRole("dialog", { name: "翻译", exact: true })).toBeHidden();
 });
 
 test("PDF text selection has source anchors; long floating content stays reachable", async ({ page, request }, testInfo) => {
@@ -179,12 +182,12 @@ test("PDF text selection has source anchors; long floating content stays reachab
   await select(); const ribbon = page.getByRole("toolbar", { name: "选区操作" }); await expect(ribbon).toBeVisible();
   await text.evaluate((element) => { getSelection()!.collapse(element.firstChild, 0); element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); }); await expect(ribbon).toBeHidden();
   await select(); await page.locator(".paper-reader-pdf-scroll").evaluate((element) => element.dispatchEvent(new Event("scroll"))); await expect(ribbon).toBeHidden();
-  await page.keyboard.press("Alt+t"); await expect(page.getByRole("dialog", { name: "划词翻译", exact: true }).getByLabel("待翻译选区")).toHaveText("Paper selection words"); await page.keyboard.press("Escape");
+  await page.keyboard.press("Alt+t"); await expect(page.getByRole("dialog", { name: "翻译", exact: true }).getByLabel("待翻译选区")).toHaveText("Paper selection words"); await page.keyboard.press("Escape");
   await select(); await ribbon.getByRole("button", { name: "保存摘录", exact: true }).click();
   const paperId = /zhiye:\/\/paper\/([0-9a-f-]+)/u.exec((await page.locator(".paper-reader-header p").textContent()) ?? "")?.[1]; expect(paperId).toBeTruthy();
   await expect.poll(async () => (await (await request.get(`/api/reader-tools/documents/${paperId}/data`)).json()).annotations[0]?.anchor.source).toBe("paper-original");
   await select(); await ribbon.getByRole("button", { name: "翻译", exact: true }).click();
-  const floating = page.getByRole("dialog", { name: "划词翻译", exact: true });
+  const floating = page.getByRole("dialog", { name: "翻译", exact: true });
   await page.route("**/api/reader-tools/documents/*/translate", (route) => route.fulfill({ contentType: "application/x-ndjson", body: JSON.stringify({ type: "delta", text: "较长的选区译文。".repeat(1800) }) + '\n{"type":"done"}\n' }));
   await floating.getByRole("button", { name: "翻译选区", exact: true }).click();
   await expect(floating.getByRole("button", { name: "保存译文摘录" })).toBeEnabled();
