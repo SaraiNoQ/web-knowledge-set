@@ -46,6 +46,7 @@ test("new reading UI keeps covers, keyboard tabs and editor usable across sizes"
     await page.screenshot({ path: `/tmp/new-ui-editor-${width}.png`, fullPage: true });
   }
   await page.getByRole("button", { name: "深色外观", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   const editorInk = await editor.evaluate(element => getComputedStyle(element).color);
   await expect(editor.locator(".home-article-select").first()).toHaveCSS("color", editorInk);
   await page.screenshot({ path: "/tmp/new-ui-editor-dark.png", fullPage: true, animations: "disabled" });
