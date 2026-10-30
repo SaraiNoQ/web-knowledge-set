@@ -711,12 +711,10 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
 
   return (
     <section className="knowledge-map" aria-label="知识地图">
-      <header className="knowledge-map-head">
-        <div className="knowledge-map-heading"><h2>知识地图</h2><p>{dimension === "3d" ? "节点与连线按关系分布在三维空间；虚线表示内容相近。" : "实线表示分组，虚线表示内容相近。"}</p></div>
-        <div className="knowledge-map-head-actions"><SegmentedControl label="地图维度" className="map-dimension-switch" value={dimension} options={[{ value: "2d", label: "2D" }, { value: "3d", label: "3D" }]} onChange={(value) => { if (value === "3d") graph.current?.pauseAnimation(); setDimension(value as "2d" | "3d"); setRenderError(""); }} /><span className="map-total">{total.toLocaleString("zh-CN")} 篇</span></div>
-      </header>
+      <div className="knowledge-map-actions"><SegmentedControl label="地图维度" className="map-dimension-switch" value={dimension} options={[{ value: "2d", label: "2D" }, { value: "3d", label: "3D" }]} onChange={(value) => { if (value === "3d") graph.current?.pauseAnimation(); setDimension(value as "2d" | "3d"); setRenderError(""); }} /><span className="map-total">{total.toLocaleString("zh-CN")} 篇</span></div>
       <div className={"knowledge-map-layout" + (selected ? " has-detail" : "")}>
         <aside className="knowledge-map-filters" aria-label="地图筛选">
+          <h2 className="knowledge-map-title">知识地图</h2>
           <label className="map-search"><span>搜索标题</span><Input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="输入关键词" /></label>
           <label><span>资料类型</span><Select aria-label="资料类型" value={kind} onChange={(event) => setKind(event.target.value as LibraryItemKind | "")}><option value="">文章与论文</option><option value="article">文章</option><option value="paper">论文</option></Select></label>
           <label><span>分组</span><Select aria-label="分组" value={folderId} onChange={(event) => setFolderId(event.target.value)}><option value="">全部分组</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</Select></label>
@@ -727,7 +725,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
           <details className="map-advanced"><summary>高级筛选</summary><label className="map-threshold"><span>相似要求 · {semanticThreshold.toFixed(2)}</span><Range aria-label="相似要求" min="0.3" max="0.9" step="0.01" value={semanticThreshold} disabled={!semanticEnabled || semanticLoading} onChange={(event) => setSemanticThreshold(Number(event.target.value))} /></label></details>
           <SegmentedControl label="查看范围" className="map-view-switch" value={localMode ? "local" : "all"} options={[{ value: "all", label: "全部资料" }, { value: "local", label: "当前关联", disabled: !selected }]} onChange={(value) => changeScope(value === "local", null)} />
           <div className="map-key"><span><i className="map-key-article" />文章</span><span><i className="map-key-paper" />论文</span><span><i className="map-key-folder" />分组</span><span><i className="map-key-line" />所属分组</span><span><i className="map-key-semantic" />内容相近</span></div>
-          <p className="map-privacy-note">分数表示内容相似，不代表正确。<br />连线不表示引用或事实关系。</p>
+          <p className="map-privacy-note">{dimension === "3d" ? "节点与连线按关系分布在三维空间；虚线表示内容相近。" : "实线表示分组，虚线表示内容相近。"}<br />分数表示内容相似，不代表正确。<br />连线不表示引用或事实关系。</p>
           {items.length > MAP_VISIBLE_DOCUMENTS && <p className="map-budget-note" role="status">{summaryMode ? "已按分组汇总，点击分组展开。" : !localMode && scopedDocuments.length > MAP_VISIBLE_DOCUMENTS ? "当前分组仅绘制前 1,000 篇，请搜索或从资料列表选择。" : "选中资料后使用服务端邻域推荐；全库向量比较限 1,000 篇。"}</p>}
           {semanticCalculationPending && <p className="map-semantic-status" role="status">正在查找相近织片…</p>}
           {semanticEnabled && items.length <= SEMANTIC_GRAPH_MAX_NODES && !semanticCalculationPending && !readyVectorIds.length && !semanticError && <p className="map-semantic-status" role="status">处理完成后，会显示相近织片。</p>}
