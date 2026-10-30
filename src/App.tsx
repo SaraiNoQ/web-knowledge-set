@@ -1,4 +1,5 @@
 import { HomeShelf, type HomeViewState } from "./components/HomeShelf";
+import { HomeShelfCache } from "./home-cache";
 import { ReadingLevels } from "./components/ReadingLevels";
 import { foldedMarkdown, type FoldData, type FoldLevel } from "../shared/textfold";
 import {
@@ -47,7 +48,7 @@ import type {
   PaperDocument,
   ReextractionPreview,
 } from "../shared/types";
-import { api, ApiRequestError } from "./api";
+import { api, ApiRequestError, DATA_SCOPE_INVALIDATED_EVENT } from "./api";
 import type { DocumentPatch, TweetVideoJobState } from "./api";
 import { normalizeTweetUrl } from "../shared/tweet-video";
 import { CachedImage } from "./components/ImageViewer";
@@ -708,6 +709,8 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
   const [homeDiscardRevision, setHomeDiscardRevision] = useState(0);
   const [homeDirectoryOpen, setHomeDirectoryOpen] = useState(false);
   const homeView = useRef<HomeViewState>({ folder: "", page: 1, scroll: 0 });
+  const [homeCache] = useState(() => new HomeShelfCache());
+  const [homeRefresh, setHomeRefresh] = useState(0);
   const studyDirtyRef = useRef(false);
   studyDirtyRef.current = studyDirty;
   const markdownEditorRef = useRef<MarkdownEditorHandle>(null);
@@ -775,6 +778,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
   const [paperImportError, setPaperImportError] = useState("");
   const [paperAutoStart, setPaperAutoStart] = useState<string | null>(null);
   const [captureQueue, setCaptureQueue] = useState<CaptureQueueStatus | null>(null);
+  const capturePending = useRef(0);
   const [queueError, setQueueError] = useState("");
   const [queueUpdating, setQueueUpdating] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
@@ -1006,11 +1010,18 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
     const refresh = (event: Event) => {
       if (typeof (event as CustomEvent<unknown>).detail !== "string") return;
       setListRefresh((value) => value + 1);
+      setHomeRefresh((value) => value + 1);
       toast.success("浏览助手已保存新织片，目录已刷新。");
     };
     window.addEventListener("zhiye:extension-saved", refresh);
     return () => window.removeEventListener("zhiye:extension-saved", refresh);
   }, [toast]);
+
+  useEffect(() => {
+    const clearHome = (event: Event) => { homeCache.clearOnError((event as CustomEvent<unknown>).detail); };
+    window.addEventListener(DATA_SCOPE_INVALIDATED_EVENT, clearHome);
+    return () => window.removeEventListener(DATA_SCOPE_INVALIDATED_EVENT, clearHome);
+  }, [homeCache]);
 
   useEffect(() => {
     if (longArticle) setMode("edit");
@@ -1087,7 +1098,11 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
 
   const loadCaptureQueue = useCallback(async (signal?: AbortSignal) => {
     try {
-      setCaptureQueue(await api.getCaptureQueue(signal));
+      const queue = await api.getCaptureQueue(signal);
+      const pending = queue.active + queue.queued;
+      if (pending < capturePending.current) setHomeRefresh((value) => value + 1);
+      capturePending.current = pending;
+      setCaptureQueue(queue);
       setQueueError("");
     } catch (error) {
       if ((error as Error).name !== "AbortError") setQueueError((error as Error).message);
@@ -1252,6 +1267,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
           const updated = await api.autoTitleDocument(id, document.revision);
           if (updated) {
             updateListItem(updated);
+            if (updated.kind === "article") setHomeRefresh((value) => value + 1);
             // The folder view fetches its own rows and only reloads on this
             // counter; without it the new title waits for a manual refresh.
             setListRefresh((value) => value + 1);
@@ -1331,6 +1347,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
     try {
       const updated = await api.updateDocument(target.id, { revision: target.revision, folderId });
       updateListItem(updated);
+      if (updated.kind === "article") setHomeRefresh((value) => value + 1);
       if (guard && selectedIdRef.current === updated.id && canApplyNavigation(guard)) installCurrentDocument(updated);
       setListRefresh((value) => value + 1);
       await loadFolders();
@@ -1359,6 +1376,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
     try {
       const updated = await trackOrganizationTask(api.updateDocument(target.id, { title, revision: target.revision }));
       updateListItem(updated);
+      if (updated.kind === "article") setHomeRefresh((value) => value + 1);
       setOpenDocuments((tabs) => tabs.map((tab) => tab.id === updated.id ? { ...tab, title: updated.title } : tab));
       if (selectedIdRef.current === updated.id) {
         installCurrentDocument(updated);
@@ -1377,6 +1395,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
   };
 
   const refreshFoldersAndCurrent = async () => {
+    setHomeRefresh((value) => value + 1);
     await loadFolders();
     const document = currentDocRef.current;
     if (document && !currentDirtyDraft() && !currentDirtySourceMetadata()) {
@@ -1846,6 +1865,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
         ) return;
         updateListItem(document);
         installCurrentDocument(document);
+        if (document.kind === "article" && document.status !== live.status) setHomeRefresh((value) => value + 1);
         setDraft(draftOf(document));
         setTagText(document.tags.join(", "));
       } catch (error) {
@@ -1941,6 +1961,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
       installCurrentDocument(updated);
       updateListItem(updated);
       setListRefresh((value) => value + 1);
+      if (updated.title !== currentDoc.title || updated.folderId !== currentDoc.folderId || updated.status !== currentDoc.status) setHomeRefresh((value) => value + 1);
       const unchangedSinceRequest = Boolean(draftRef.current && draftsEqual(draftRef.current, sent));
       if (unchangedSinceRequest) {
         persistedDraftRef.current = null;
@@ -2126,6 +2147,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
     setImportNotice("");
     try {
       const result = await api.createDocument(url, force);
+      if (result.created) setHomeRefresh((value) => value + 1);
       if (!canApplyNavigation(guard)) return;
       if (!result.created) {
         setImportDuplicate({
@@ -2188,6 +2210,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
           if (item?.status !== "created" || !item.documentId) throw new Error(item?.error || "创建文章失败，请重试。");
           document = await api.getDocument(item.documentId);
         } else document = (await api.createArticle(title?.trim() || undefined)).document;
+        setHomeRefresh((value) => value + 1);
         if (!await revealDocument(document, guard)) return false;
         setMode("edit");
         toast.success("已在未分组新建文章。");
@@ -2352,6 +2375,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
           batchId = preview.id;
           const result = await api.applyImport(preview.id, "skip");
           setListRefresh((value) => value + 1);
+          setHomeRefresh((value) => value + 1);
           void loadCollections();
           if (result.counts.failed || result.counts.conflicts) toast.error(`有 ${result.counts.failed + result.counts.conflicts} 个文件未能导入，请检查文件后重试。`);
           const documentId = result.items.find((item) => item.documentId)?.documentId;
@@ -2491,6 +2515,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
       const result = await api.applyImport(bulkImportPreview.id, bulkImportStrategy, controller.signal);
       setBulkImportResult(result);
       setListRefresh((value) => value + 1);
+      setHomeRefresh((value) => value + 1);
       void loadCaptureQueue();
       void loadCollections();
       setImportNotice(`批量导入完成：新增 ${result.counts.created}，更新 ${result.counts.updated}，跳过 ${result.counts.skipped}。`);
@@ -2509,6 +2534,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
       if ((error as Error).name === "AbortError") {
         setBulkImportNotice("已停止等待导入结果；服务端可能已完成，可再次开始导入以同步结果。");
         setListRefresh((value) => value + 1);
+        setHomeRefresh((value) => value + 1);
       } else setBulkImportError((error as Error).message);
     } finally {
       if (bulkImportAbortRef.current === controller) bulkImportAbortRef.current = null;
@@ -3094,6 +3120,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
         setSelectedIds(new Set());
         setBatchAction("");
         setListRefresh((value) => value + 1);
+        if (batchAction === "trash" || batchAction === "restore") setHomeRefresh((value) => value + 1);
         await loadCollections();
       })());
     } catch (error) {
@@ -3213,6 +3240,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
     setDetailError("");
     try {
       const updated = await api.retryDocument(currentDoc.id);
+      if (updated.kind === "article") setHomeRefresh((value) => value + 1);
       installCurrentDocument(updated);
       setDraft(draftOf(updated));
       setTagText(updated.tags.join(", "));
@@ -3237,6 +3265,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
       setMode("edit");
       setDraftNotice("已保留原链接。请粘贴正文并保存；自动收取失败记录仍可在收取记录中查看。");
       setListRefresh((value) => value + 1);
+      setHomeRefresh((value) => value + 1);
     } catch (error) {
       setDetailError((error as Error).message);
     } finally {
@@ -3275,6 +3304,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
     setDetailError("");
     try {
       const deleted = await api.deleteDocument(document.id, document.revision);
+      setHomeRefresh((value) => value + 1);
       installCurrentDocument(deleted);
       setDraft(draftOf(deleted));
       setTagText(deleted.tags.join(", "));
@@ -3313,6 +3343,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
     try {
       const deleted = await api.deleteDocument(document.id, document.revision);
       updateListItem(deleted);
+      setHomeRefresh((value) => value + 1);
       setListRefresh((value) => value + 1);
       await loadFolders();
       toast.success("已删除资料。");
@@ -3333,6 +3364,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
     setDetailError("");
     try {
       const restored = await api.restoreDocument(document.id, document.revision);
+      if (restored.kind === "article") setHomeRefresh((value) => value + 1);
       if (!canApplyNavigation(guard)) return;
       installCurrentDocument(restored);
       if (recovered) {
@@ -3553,6 +3585,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
         ...(applyTitle ? { title: preview.after.title } : {}),
         ...(applyMarkdown ? { markdown: preview.after.markdown } : {}),
       });
+      if (updated.title !== current.title) setHomeRefresh((value) => value + 1);
       if (selectedIdRef.current === updated.id) {
         installCurrentDocument(updated);
         setDraft(draftOf(updated));
@@ -3584,6 +3617,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
     setHistoryError("");
     try {
       const restored = await api.restoreDocumentRevision(document.id, revision.revision, document.revision);
+      if (restored.title !== document.title) setHomeRefresh((value) => value + 1);
       if (!canApplyNavigation(guard)) return;
       installCurrentDocument(restored);
       setDraft(draftOf(restored));
@@ -3722,6 +3756,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
       updateListItem(updated);
       setListRefresh((value) => value + 1);
       focusReader();
+      setHomeRefresh((value) => value + 1);
     } catch (error) {
       if (error instanceof ApiRequestError && error.code === "DRAFT_CONFLICT") {
         // persistDraft keeps the local value and exposes the remote draft resolution banner.
@@ -4150,7 +4185,7 @@ function WorkspaceApp({ initialRuntime, initialStartup, initialCloseNotice }: { 
           {selectedId === currentDoc?.id && tweetVideoState && (tweetVideoState.status === "queued" || tweetVideoState.status === "processing" || tweetVideoState.errorCode === "VIDEO_TOO_LARGE" || tweetVideoState.errorCode === "VIDEO_FORMAT_UNSUPPORTED" || tweetVideoState.status === "failed") && <p className="tweet-video-status" role="status">{tweetVideoState.errorCode === "VIDEO_TOO_LARGE" ? "视频超过本条推文的大小上限，已跳过；文字和图片已保留。" : tweetVideoState.errorCode === "VIDEO_FORMAT_UNSUPPORTED" ? "该视频暂无可下载的 MP4，文字和图片已保留。" : tweetVideoState.status === "failed" ? "视频暂未保存，文字和图片已保留。" : "正在后台保存推文视频，文字和图片可正常阅读。"}</p>}
           {graphMounted && <div className={`knowledge-map-host ${graphMode && !selectedId ? "is-active" : "is-dormant"}`} aria-hidden={!graphMode || Boolean(selectedId)}><Suspense fallback={<div className="map-load-fallback" role="status">正在准备知识地图…</div>}><KnowledgeMap active={graphMode && !selectedId} cloud={cloudMode} libraryView={libraryView === "trash" ? "all" : libraryView} query={query} onQueryChange={setQuery} onOpenDocument={(id) => void openGraphDocument(id)} refreshKey={listRefresh + semanticRefresh} /></Suspense></div>}
           {graphMode && !selectedId ? null : !selectedId ? (
-            <HomeShelf view={homeView} refreshKey={listRefresh} onDirtyChange={setHomeDirty} discardRevision={homeDiscardRevision} onOpenDocument={selectDocument} onImport={() => { if (!bulkImportPreview) setBulkImportKind(cloudMode ? "markdown" : "urls"); setBulkImportOpen(true); }} />
+            <HomeShelf cache={homeCache} view={homeView} refreshKey={homeRefresh} onDirtyChange={setHomeDirty} discardRevision={homeDiscardRevision} onOpenDocument={selectDocument} onImport={() => { if (!bulkImportPreview) setBulkImportKind(cloudMode ? "markdown" : "urls"); setBulkImportOpen(true); }} />
           ) : detailLoading && (!currentDoc || (currentDoc.kind === "paper" && !currentPaper)) ? (
             <StatePanel kind="loading" title="正在打开织片…" />
           ) : detailError && (!currentDoc || (currentDoc.kind === "paper" && !currentPaper)) ? (

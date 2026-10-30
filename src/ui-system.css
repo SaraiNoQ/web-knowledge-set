@@ -98,8 +98,6 @@ input.ui-range::-webkit-slider-thumb { appearance: none; width: 18px; height: 18
 input.ui-range::-moz-range-thumb { width: 14px; height: 14px; border: 2px solid var(--paper-light); border-radius: 50%; background: var(--vermilion); cursor: ew-resize; }
 input.ui-range { min-height: 0; padding: 0; accent-color: var(--vermilion); }
 input.ui-range:disabled { cursor: not-allowed; }
-.map-threshold { display: grid; gap: 8px; margin-top: 10px; font-size: var(--font-caption); }
-.map-advanced summary { color: var(--ink-soft); font-size: var(--font-caption); cursor: pointer; }
 @media (forced-colors: active) {
   input.ui-range { appearance: auto; background: Canvas; }
   input.ui-range::-webkit-slider-thumb { appearance: auto; }

@@ -34,6 +34,9 @@ test("the rail opens the map and returns to the directory without view toggles",
     await expect(page.locator(".map-total")).toHaveText("92 篇");
     await expect(page.locator(".map-privacy-note")).toHaveText("实线表示分组，虚线表示内容相近。");
     await expect(page.getByRole("combobox", { name: "收藏", exact: true })).toHaveCount(0);
+    await expect(page.getByText("高级筛选", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("slider", { name: "相似要求" })).toBeVisible();
+    await expect(page.locator(".map-threshold-value")).toHaveText("0.60");
     await expect(page.locator(".map-canvas-inner canvas")).toBeVisible();
     const map = await page.locator(".knowledge-map").boundingBox();
     const filters = await page.getByRole("complementary", { name: "地图筛选" }).boundingBox();
@@ -48,6 +51,12 @@ test("the rail opens the map and returns to the directory without view toggles",
     await expect(page.locator(".library-view-toggle")).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.locator(".knowledge-map").screenshot({ path: testInfo.outputPath(`map-layout-${width}.png`), animations: "disabled" });
+    if (width <= 560) {
+      const slider = page.getByRole("slider", { name: "相似要求" });
+      await slider.scrollIntoViewIfNeeded();
+      await expect(slider).toBeInViewport({ ratio: 1 });
+      await page.locator(".knowledge-map-filters").screenshot({ path: testInfo.outputPath("map-mobile-similarity.png"), animations: "disabled" });
+    }
     await directoryButton.click();
     await expect(page.locator(".knowledge-map-host")).toHaveClass(/is-dormant/u);
     const directory = page.getByRole("navigation", { name: "目录分类" });

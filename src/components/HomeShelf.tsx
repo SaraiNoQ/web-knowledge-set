@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject, type KeyboardEvent } from "react";
 import { HOME_COLORS, HOME_MAX_IMAGE_BYTES, type HomeCard, type HomePage, type HomePresentation } from "../../shared/home";
-import { api } from "../api";
+import { api, currentDataEpoch } from "../api";
+import type { HomeShelfCache } from "../home-cache";
 import { ArticleCover } from "./ArticleCover";
 import { Button, Checkbox, Input, Select } from "./ui/Controls";
 import { FileSelectButton } from "./ui/Uploads";
@@ -51,41 +52,54 @@ interface HomeShelfProps {
   onDirtyChange: (dirty: boolean) => void;
   discardRevision: number;
   view: MutableRefObject<HomeViewState>;
+  cache: HomeShelfCache;
 }
 
-export function HomeShelf({ onOpenDocument, onImport, refreshKey, onDirtyChange, discardRevision, view }: HomeShelfProps) {
+export function HomeShelf({ onOpenDocument, onImport, refreshKey, onDirtyChange, discardRevision, view, cache }: HomeShelfProps) {
   const [editing, setEditing] = useState(false);
   const [folder, setFolder] = useState(view.current.folder);
   const [page, setPage] = useState(view.current.page);
-  const [data, setData] = useState<HomePage | null>(null);
-  const [busy, setBusy] = useState(true);
+  const [data, setData] = useState<HomePage | null>(() => cache.get(view.current.folder, view.current.page, currentDataEpoch(), refreshKey)?.data ?? null);
+  const [busy, setBusy] = useState(() => !cache.get(view.current.folder, view.current.page, currentDataEpoch(), refreshKey));
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
   const root = useRef<HTMLElement>(null);
   const scroller = () => root.current?.closest<HTMLElement>(".reader-main");
+  useEffect(() => cache.subscribe(cause => {
+    setData(null);
+    if (cause) setError((cause as Error).message);
+  }), [cache]);
   useEffect(() => {
     if (editing) return;
-    const controller = new AbortController();
-    setBusy(true); setError("");
-    void api.home({ folder, page }, controller.signal).then(value => {
-      if (controller.signal.aborted) return;
+    cache.sync(currentDataEpoch(), refreshKey);
+    const cached = cache.get(folder, page, currentDataEpoch(), refreshKey);
+    setData(cached?.data ?? null); setError("");
+    if (cached?.fresh) { setBusy(false); return; }
+    let current = true;
+    setBusy(true);
+    void cache.load(folder, page, async signal => {
+      const value = await api.home({ folder, page }, signal);
+      signal.throwIfAborted(); cache.syncEpoch(currentDataEpoch());
+      return value;
+    }).then(value => {
+      if (!current) return;
       if (folder && !value.folders.some(item => item.id === folder)) { setFolder(""); setPage(1); view.current = { folder: "", page: 1, scroll: 0 }; return; }
-      if (page > 1 && !value.items.length) { setPage(1); return; }
+      if (page > 1 && !value.items.length) { setPage(1); view.current = { folder, page: 1, scroll: 0 }; return; }
       setData(value);
-    }).catch(cause => { if (!controller.signal.aborted) setError((cause as Error).message); })
-      .finally(() => { if (!controller.signal.aborted) setBusy(false); });
-    return () => controller.abort();
-  }, [folder, page, editing, refreshKey, reload, view]);
+    }).catch(cause => { if (current && (cause as Error).name !== "AbortError") setError((cause as Error).message); })
+      .finally(() => { if (current) setBusy(false); });
+    return () => { current = false; };
+  }, [folder, page, editing, refreshKey, reload, view, cache]);
   useLayoutEffect(() => {
-    if (!busy && !editing && data) scroller()?.scrollTo({ top: view.current.scroll });
-  }, [busy, editing, data, view]);
+    if (!editing && data) scroller()?.scrollTo({ top: view.current.scroll });
+  }, [editing, data, view]);
   useEffect(() => {
     const element = scroller();
-    if (!element || editing || busy || !data) return;
+    if (!element || editing || !data) return;
     const remember = () => { view.current = { folder, page, scroll: element.scrollTop }; };
     element.addEventListener("scroll", remember, { passive: true });
     return () => element.removeEventListener("scroll", remember);
-  }, [folder, page, editing, busy, data, view]);
+  }, [folder, page, editing, data, view]);
   const switchPage = (nextPage: number, nextFolder = folder) => {
     view.current = { folder: nextFolder, page: nextPage, scroll: 0 };
     setFolder(nextFolder); setPage(nextPage);
@@ -100,13 +114,14 @@ export function HomeShelf({ onOpenDocument, onImport, refreshKey, onDirtyChange,
     buttons[next]?.focus(); buttons[next]?.click();
   };
   return <section ref={root} className="home-workspace" aria-label={editing ? "首页布置" : "首页书架"}>
-    {editing ? <HomeEditor onClose={() => { setEditing(false); setReload(value => value + 1); }} onDirtyChange={onDirtyChange} discardRevision={discardRevision} /> : <>
+    {editing ? <HomeEditor cache={cache} onClose={saved => { if (saved) cache.invalidate(); setEditing(false); }} onDirtyChange={onDirtyChange} discardRevision={discardRevision} /> : <>
       <header className="home-heading"><div><h1>首页书架</h1><p>把值得重读的文章，留在眼前。</p></div><Button onClick={() => { setEditing(true); scroller()?.scrollTo({ top: 0 }); }}><WorkspaceIcon name="edit" size={16} />布置首页</Button></header>
       <div className="home-folder-tabs" role="tablist" aria-label="首页文件夹" onKeyDown={tabKeys}>
         {[{ id: "", name: "全部" }, ...(data?.folders ?? [])].map(item => <Button key={item.id} role="tab" aria-selected={folder === item.id} aria-controls="home-shelf-panel" tabIndex={folder === item.id ? 0 : -1} onClick={() => switchPage(1, item.id)}>{item.name}</Button>)}
       </div>
       <div id="home-shelf-panel" role="tabpanel" aria-label={data?.folders.find(item => item.id === folder)?.name || "全部首页文章"} aria-busy={busy}>
-        {error ? <div className="home-empty" role="alert"><h2>书架暂时没有打开</h2><p>{error}</p><Button onClick={() => setReload(value => value + 1)}>重试</Button></div> : busy ? <div className="home-loading" role="status">正在整理书架…</div> : !data?.items.length ? <div className="home-empty"><WorkspaceIcon name="paper" size={40} /><h2>{data?.libraryTotal ? "挑几篇文章，放上书架" : "从第一篇文章开始"}</h2><p>{data?.libraryTotal ? "选好封面和顺序，下一次打开就能直接阅读。" : "先把文章保存到资料库，再布置你的首页。"}</p><Button variant="primary" onClick={data?.libraryTotal ? () => setEditing(true) : onImport}>{data?.libraryTotal ? "挑选首页文章" : "导入文章"}</Button></div> : <>
+        {error && data && <div className="home-error" role="alert"><span>{error}</span><Button onClick={() => { cache.invalidate(); setReload(value => value + 1); }}>重试</Button></div>}
+        {error && !data ? <div className="home-empty" role="alert"><h2>书架暂时没有打开</h2><p>{error}</p><Button onClick={() => setReload(value => value + 1)}>重试</Button></div> : busy && !data ? <div className="home-loading" role="status">正在整理书架…</div> : !data?.items.length ? <div className="home-empty"><WorkspaceIcon name="paper" size={40} /><h2>{data?.libraryTotal ? "挑几篇文章，放上书架" : "从第一篇文章开始"}</h2><p>{data?.libraryTotal ? "选好封面和顺序，下一次打开就能直接阅读。" : "先把文章保存到资料库，再布置你的首页。"}</p><Button variant="primary" onClick={data?.libraryTotal ? () => setEditing(true) : onImport}>{data?.libraryTotal ? "挑选首页文章" : "导入文章"}</Button></div> : <>
           <div className="home-book-grid">{data.items.map(article => <button key={article.documentId} className="home-book" title={article.title} onClick={() => void onOpenDocument(article.documentId)} aria-label={`阅读：${article.title}`}>
             <ArticleCover article={article} />
             <span className="home-book-meta"><span>{article.folderName || "未分组"}</span><time dateTime={article.createdAt}>{new Date(article.createdAt).toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" })}</time></span>
@@ -119,7 +134,7 @@ export function HomeShelf({ onOpenDocument, onImport, refreshKey, onDirtyChange,
   </section>;
 }
 
-function HomeEditor({ onClose, onDirtyChange, discardRevision }: { onClose: () => void; onDirtyChange: (dirty: boolean) => void; discardRevision: number }) {
+function HomeEditor({ onClose, onDirtyChange, discardRevision, cache }: { onClose: (saved?: boolean) => void; onDirtyChange: (dirty: boolean) => void; discardRevision: number; cache: HomeShelfCache }) {
   const dialogs = useDialogs(), toast = useToast();
   const [catalog, setCatalog] = useState<HomePage | null>(null);
   const [selected, setSelected] = useState<HomeCard[]>([]);
@@ -154,6 +169,7 @@ function HomeEditor({ onClose, onDirtyChange, discardRevision }: { onClose: () =
     setChanges({}); setActive(null); setRevision(null); setUploading(false); setReload(value => value + 1); token.current++;
   }, [discardRevision]);
   const acceptRevision = (value: number) => {
+    cache.observeRevision(value);
     if (baselineRevision.current === null) { baselineRevision.current = value; setRevision(value); }
     else if (baselineRevision.current !== value) {
       setConflict(true);
@@ -172,7 +188,7 @@ function HomeEditor({ onClose, onDirtyChange, discardRevision }: { onClose: () =
       if (controller.signal.aborted) return;
       acceptRevision(first.revision);
       setCatalog(first);
-    })().catch(cause => { if (!controller.signal.aborted) setError((cause as Error).message); })
+    })().catch(cause => { cache.clearOnError(cause); if (!controller.signal.aborted) setError((cause as Error).message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [search, page, reload]);
@@ -191,7 +207,7 @@ function HomeEditor({ onClose, onDirtyChange, discardRevision }: { onClose: () =
         next++;
       } while (!controller.signal.aborted);
       setSelected(rows); setSelectedReady(true);
-    })().catch(cause => { if (!controller.signal.aborted) setError((cause as Error).message); })
+    })().catch(cause => { cache.clearOnError(cause); if (!controller.signal.aborted) setError((cause as Error).message); })
       .finally(() => { if (!controller.signal.aborted) setSelectedLoading(false); });
     return () => controller.abort();
   }, [reload]);
@@ -222,8 +238,8 @@ function HomeEditor({ onClose, onDirtyChange, discardRevision }: { onClose: () =
     saveBusy.current = true; setSaving(true); setError("");
     try {
       await api.saveHome(revision, Object.values(changes).map(presentation));
-      onDirtyChange(false); toast.success("首页布置已保存。"); onClose();
-    } catch (cause) { setError((cause as Error).message); }
+      onDirtyChange(false); toast.success("首页布置已保存。"); onClose(true);
+    } catch (cause) { cache.clearOnError(cause); setError((cause as Error).message); }
     finally { saveBusy.current = false; setSaving(false); }
   };
   const upload = async (file: File) => {
@@ -235,7 +251,7 @@ function HomeEditor({ onClose, onDirtyChange, discardRevision }: { onClose: () =
       if (current !== token.current) return;
       const result = await api.uploadHomeCover(image);
       if (current === token.current) update(card, { coverHash: result.hash });
-    } catch (cause) { if (current === token.current) setError((cause as Error).message); }
+    } catch (cause) { cache.clearOnError(cause); if (current === token.current) setError((cause as Error).message); }
     finally { if (current === token.current) setUploading(false); }
   };
   const reset = async () => {

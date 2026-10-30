@@ -75,13 +75,13 @@ export interface HomeAdapter {
   documents: "documents"|"cloud_documents";
   folders: "folders"|"cloud_folders";
   all(sql:string,values:unknown[]):Promise<Record<string,unknown>[]>;
+  readBatch?(statements:Array<{sql:string;values:unknown[]}>):Promise<Record<string,unknown>[][]>;
   batch(statements:Array<{sql:string;values:unknown[]}>):Promise<void>;
 }
 export function createHomeRepository(db:HomeAdapter) {
   const revision=async()=>Number((await db.all("SELECT revision FROM home_settings WHERE id=1",[]))[0]?.revision ?? 1);
   return {
     async list(url:URL):Promise<HomePage> {
-      const sourceRevision = await revision();
       const page=Number(url.searchParams.get("page")||1), q=(url.searchParams.get("q")||"").trim(), folder=url.searchParams.get("folder"), manage=url.searchParams.get("manage")==="true";
       if(!Number.isSafeInteger(page)||page<1||page>100000||q.length>200)throw new HomeError(400,"首页查询无效。");
       const where=["d.kind='article'","d.deleted_at IS NULL","d.status='ready'"];
@@ -90,12 +90,23 @@ export function createHomeRepository(db:HomeAdapter) {
       if(q){where.push("instr(lower(d.title),lower(?))>0");values.push(q);}
       if(folder){where.push(folder==="unfiled"?"d.folder_id IS NULL":"d.folder_id=?");if(folder!=="unfiled")values.push(folder);}
       const from=`FROM ${db.documents} d LEFT JOIN home_presentations h ON h.document_id=d.id LEFT JOIN ${db.folders} f ON f.id=d.folder_id WHERE ${where.join(" AND ")}`;
-      const rows=await db.all(`SELECT d.id AS documentId,d.title,d.folder_id AS folderId,f.name AS folderName,d.created_at AS createdAt,h.featured,h.position,h.cover_hash AS coverHash,h.color,h.short_title AS shortTitle,h.fit ${from} ORDER BY COALESCE(h.featured,0) DESC,COALESCE(h.position,1000000),d.created_at DESC,d.id LIMIT 24 OFFSET ?`,[...values,(page-1)*24]);
-      const totals=await db.all(`SELECT COUNT(*) AS total ${from}`,values);
-      const folders=await db.all(`SELECT DISTINCT f.id,f.name FROM ${db.folders} f JOIN ${db.documents} d ON d.folder_id=f.id JOIN home_presentations h ON h.document_id=d.id WHERE h.featured=1 AND d.kind='article' AND d.deleted_at IS NULL AND d.status='ready' ORDER BY f.name`,[]);
-      const unfiled=await db.all(`SELECT 1 FROM home_presentations h JOIN ${db.documents} d ON d.id=h.document_id WHERE h.featured=1 AND d.kind='article' AND d.deleted_at IS NULL AND d.status='ready' AND d.folder_id IS NULL LIMIT 1`,[]);
-      const library=await db.all(`SELECT COUNT(*) AS total FROM ${db.documents} WHERE kind='article' AND deleted_at IS NULL`,[]);
-      if (await revision() !== sourceRevision) throw new HomeError(409,"首页已在其他页面更新，请重新加载。");
+      const revisionQuery={sql:"SELECT revision FROM home_settings WHERE id=1",values:[]};
+      const queries=[
+        revisionQuery,
+        {sql:`SELECT d.id AS documentId,d.title,d.folder_id AS folderId,f.name AS folderName,d.created_at AS createdAt,h.featured,h.position,h.cover_hash AS coverHash,h.color,h.short_title AS shortTitle,h.fit ${from} ORDER BY COALESCE(h.featured,0) DESC,COALESCE(h.position,1000000),d.created_at DESC,d.id LIMIT 24 OFFSET ?`,values:[...values,(page-1)*24]},
+        {sql:`SELECT COUNT(*) AS total ${from}`,values},
+        {sql:`SELECT DISTINCT f.id,f.name FROM ${db.folders} f JOIN ${db.documents} d ON d.folder_id=f.id JOIN home_presentations h ON h.document_id=d.id WHERE h.featured=1 AND d.kind='article' AND d.deleted_at IS NULL AND d.status='ready' ORDER BY f.name`,values:[]},
+        {sql:`SELECT 1 FROM home_presentations h JOIN ${db.documents} d ON d.id=h.document_id WHERE h.featured=1 AND d.kind='article' AND d.deleted_at IS NULL AND d.status='ready' AND d.folder_id IS NULL LIMIT 1`,values:[]},
+        {sql:`SELECT COUNT(*) AS total FROM ${db.documents} WHERE kind='article' AND deleted_at IS NULL`,values:[]},
+        revisionQuery,
+      ];
+      // One D1 batch avoids seven network round trips and reads one transaction snapshot.
+      const results:Record<string,unknown>[][]=[];
+      if(db.readBatch)results.push(...await db.readBatch(queries));
+      else for(const query of queries)results.push(await db.all(query.sql,query.values));
+      const [before,rows,totals,folders,unfiled,library,after]=results;
+      const sourceRevision=Number(before[0]?.revision??1);
+      if (Number(after[0]?.revision??1) !== sourceRevision) throw new HomeError(409,"首页已在其他页面更新，请重新加载。");
       return {revision:sourceRevision,page,total:Number(totals[0]?.total??0),libraryTotal:Number(library[0]?.total??0),folders:[...folders.map(f=>({id:String(f.id),name:String(f.name)})),...(unfiled.length?[{id:"unfiled",name:"未分组"}]:[])],items:rows.map((r,i)=>({documentId:String(r.documentId),title:String(r.title),folderId:r.folderId as string|null,folderName:r.folderName as string|null,createdAt:String(r.createdAt),featured:Boolean(r.featured),position:Number(r.position??100000+(page-1)*24+i),coverHash:r.coverHash as string|null,color:(r.color??HOME_COLORS[Array.from(String(r.documentId)).reduce((sum,c)=>(sum+c.charCodeAt(0))%HOME_COLORS.length,0)]) as HomePresentation["color"],shortTitle:String(r.shortTitle??""),fit:(r.fit??"contain") as "contain"|"cover"}))};
     },
     async save(value:unknown) {

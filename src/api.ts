@@ -118,6 +118,14 @@ export class ApiRequestError extends Error {
   }
 }
 
+export const DATA_SCOPE_INVALIDATED_EVENT = "zhiye:data-scope-invalidated";
+function dataScopeFailure(error: ApiRequestError) {
+  if (typeof window !== "undefined" && (error.status === 401 || error.status === 403 || error.code === "STALE_DATA_EPOCH")) {
+    window.dispatchEvent(new CustomEvent(DATA_SCOPE_INVALIDATED_EVENT, { detail: error }));
+  }
+  return error;
+}
+
 async function requestResponse(path: string, init: RequestInit = {}, replaceDataEpoch = false) {
   if (init.body && dataEpoch === null) await requestResponse("/api/capture-queue");
   const headers = new Headers(init.headers);
@@ -140,7 +148,7 @@ async function requestResponse(path: string, init: RequestInit = {}, replaceData
   if (responseEpoch) {
     if (dataEpoch === null || (replaceDataEpoch && response.ok)) dataEpoch = responseEpoch;
     else if (responseEpoch !== dataEpoch) {
-      throw new ApiRequestError("知识库已从备份恢复，请刷新后继续。", 409, "STALE_DATA_EPOCH");
+      throw dataScopeFailure(new ApiRequestError("知识库已从备份恢复，请刷新后继续。", 409, "STALE_DATA_EPOCH"));
     }
   }
 
@@ -151,14 +159,14 @@ async function requestResponse(path: string, init: RequestInit = {}, replaceData
     } catch {
       // Non-JSON failures still surface with a useful HTTP fallback.
     }
-    const code = payload?.error.code || "REQUEST_FAILED";
-    throw new ApiRequestError(
+    const code = payload?.error?.code || "REQUEST_FAILED";
+    throw dataScopeFailure(new ApiRequestError(
       userErrorMessage(code, response.status),
       response.status,
       code,
-      payload?.error.document,
-      payload?.error.draft,
-    );
+      payload?.error?.document,
+      payload?.error?.draft,
+    ));
   }
 
   return response;
