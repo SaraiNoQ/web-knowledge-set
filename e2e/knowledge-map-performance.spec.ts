@@ -186,7 +186,7 @@ test("knowledge map stays responsive with 1000 documents and 1024-dimension vect
   expect(await canvasFrame()).not.toBe(frameAtDrag);
   expect(await nodeFrame(otherNodePoint!)).toBe(otherNodeFrame);
   await page.mouse.up();
-  await expect(page.locator(".map-coordinate-note")).toHaveText("位置远近不表示内容相似程度。");
+  await expect(page.locator(".map-coordinate-note")).toHaveText("实线表示分组，虚线表示内容相近。");
   await expect.poll(relationPixels).toBeGreaterThan(0);
   console.log(JSON.stringify({ browser: page.context().browser()?.version(), documents: count, folders: folders.length, dimensions: dimension, metadataMs: Number(metadataMs.toFixed(1)), graphMs: Number(graphMs.toFixed(1)), dragFps: Number(fps.toFixed(1)) }));
   expect(fps, `drag animation produced ${fps.toFixed(1)} frames/s`).toBeGreaterThanOrEqual(30);

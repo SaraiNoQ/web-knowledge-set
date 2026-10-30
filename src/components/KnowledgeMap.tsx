@@ -722,10 +722,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
           <fieldset className="map-relations"><legend>关系类型</legend>{(Object.entries(RELATION_LABELS) as Array<[RelationType, string]>).map(([type, label]) => <label key={type}><Checkbox checked={relationTypes[type]} onChange={(event) => setRelationTypes((values) => ({ ...values, [type]: event.target.checked }))} />{label}</label>)}</fieldset>
           <label className="map-threshold"><span>相似要求<span className="map-threshold-value" aria-hidden="true">{semanticThreshold.toFixed(2)}</span></span><Range aria-label="相似要求" min="0.3" max="0.9" step="0.01" value={semanticThreshold} disabled={!semanticEnabled || semanticLoading} onChange={(event) => setSemanticThreshold(Number(event.target.value))} /></label>
           <SegmentedControl label="查看范围" className="map-view-switch" value={localMode ? "local" : "all"} options={[{ value: "all", label: "全部资料" }, { value: "local", label: "当前关联", disabled: !selected }]} onChange={(value) => changeScope(value === "local", null)} />
-          <div className="map-legend">
-            <div className="map-key"><span><i className="map-key-article" />文章</span><span><i className="map-key-paper" />论文</span><span><i className="map-key-folder" />分组</span><span><i className="map-key-line" />所属分组</span><span><i className="map-key-semantic" />内容相近</span></div>
-            <p className="map-privacy-note">{dimension === "3d" ? "节点与连线按关系分布在三维空间；虚线表示内容相近。" : "实线表示分组，虚线表示内容相近。"}</p>
-          </div>
+          <div className="map-key"><span><i className="map-key-article" />文章</span><span><i className="map-key-paper" />论文</span><span><i className="map-key-folder" />分组</span><span><i className="map-key-line" />所属分组</span><span><i className="map-key-semantic" />内容相近</span></div>
           {items.length > MAP_VISIBLE_DOCUMENTS && <p className="map-budget-note" role="status">{summaryMode ? "已按分组汇总，点击分组展开。" : !localMode && scopedDocuments.length > MAP_VISIBLE_DOCUMENTS ? "当前分组仅绘制前 1,000 篇，请搜索或从资料列表选择。" : "选中资料后使用服务端邻域推荐；全库向量比较限 1,000 篇。"}</p>}
           {semanticCalculationPending && <p className="map-semantic-status" role="status">正在查找相近织片…</p>}
           {semanticEnabled && items.length <= SEMANTIC_GRAPH_MAX_NODES && !semanticCalculationPending && !readyVectorIds.length && !semanticError && <p className="map-semantic-status" role="status">处理完成后，会显示相近织片。</p>}
@@ -809,7 +806,7 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
                   }}
                 />)}
                 <div className="map-canvas-toolbar">{(localMode || focusedGroup !== null) && <Button type="button" onClick={() => changeScope(false, null)}>返回总览</Button>}<Button type="button" onClick={fit} aria-label="显示全图">显示全图</Button><Button type="button" onClick={togglePause} aria-pressed={paused}>{paused ? "继续移动" : "暂停移动"}</Button></div>
-                <span className="map-coordinate-note">{dimension === "3d" ? "拖动空白旋转，滚轮缩放；拖动节点调整位置。" : draggingNode ? "拖动时暂时隐藏连线，松开后恢复。" : "位置远近不表示内容相似程度。"}</span>
+                <span className="map-coordinate-note">{dimension === "3d" ? "拖动空白旋转，滚轮缩放；拖动节点调整位置。" : draggingNode ? "拖动时暂时隐藏连线，松开后恢复。" : "实线表示分组，虚线表示内容相近。"}</span>
               </div>}
         </div>
         <aside className={"knowledge-map-detail " + (selected ? "is-open" : "")} aria-label="资料详情">

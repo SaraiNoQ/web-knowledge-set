@@ -32,7 +32,8 @@ test("the rail opens the map and returns to the directory without view toggles",
     await mapButton.click();
     await expect(page.getByRole("heading", { name: "知识地图", exact: true })).toBeVisible();
     await expect(page.locator(".map-total")).toHaveText("92 篇");
-    await expect(page.locator(".map-privacy-note")).toHaveText("实线表示分组，虚线表示内容相近。");
+    await expect(page.getByRole("complementary", { name: "地图筛选" }).getByText("实线表示分组，虚线表示内容相近。", { exact: true })).toHaveCount(0);
+    await expect(page.locator(".map-coordinate-note")).toHaveText("实线表示分组，虚线表示内容相近。");
     await expect(page.getByRole("combobox", { name: "收藏", exact: true })).toHaveCount(0);
     await expect(page.getByText("高级筛选", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("slider", { name: "相似要求" })).toBeVisible();
@@ -47,6 +48,11 @@ test("the rail opens the map and returns to the directory without view toggles",
     expect(actions!.x).toBeGreaterThan(title!.x + title!.width);
     expect(actions!.x + actions!.width).toBeLessThanOrEqual(map!.x + map!.width);
     if (width > 560) expect(canvas!.y).toBeCloseTo(map!.y, 0);
+    else {
+      const note = await page.locator(".map-coordinate-note").boundingBox();
+      const toolbar = await page.locator(".map-canvas-toolbar").boundingBox();
+      expect(note!.y + note!.height).toBeLessThanOrEqual(toolbar!.y);
+    }
     await expect(page.getByText("03 · ATLAS", { exact: true })).toHaveCount(0);
     await expect(page.locator(".library-view-toggle")).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

@@ -22,9 +22,22 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("research has one active destination, shared controls and no redundant header or sidebar link", async ({ page, request }, testInfo) => {
-  const { document } = await article(request, `界面统一${Date.now()}`);
-  await page.route("**/api/study/topics", (route) => route.fulfill({ json: [] }));
+  const { document, headers } = await article(request, `从零散阅读到研究判断：一份需要在窄屏完整阅读的长期观察与实践笔记${Date.now()}`);
+  const topic = await (await request.post("/api/study/topics", { headers, data: { name: `界面检查专题${Date.now()}` } })).json();
+  let showTopics = false, savedTags = 0, sourceChecks = 0;
+  const documents = [document, { ...document, id: "layout-second", title: "设计系统中的字体、留白与阅读节奏" }, { ...document, id: "layout-third", title: "A practical guide to evidence-led research and thoughtful software design" }].map((item) => ({ ...item, sourceUrl: "https://source.example.test/research", tags: [] as string[] }));
+  await page.route("**/api/study/topics", (route) => route.fulfill({ json: showTopics ? [topic] : [] }));
   await page.route("**/api/study/source-collections", (route) => route.fulfill({ json: [] }));
+  await page.route(/\/api\/study\/documents\?/, (route) => route.fulfill({ json: { items: documents, total: documents.length, page: 1 } }));
+  await page.route(`**/api/study/documents/${document.id}/tags`, (route) => {
+    savedTags++;
+    documents[0].tags = route.request().postDataJSON().tags;
+    return route.fulfill({ json: {} });
+  });
+  await page.route(`**/api/study/documents/${document.id}/check-source`, (route) => {
+    sourceChecks++;
+    return route.fulfill({ json: { documentId: document.id, url: documents[0].sourceUrl, state: "ok", status: 200, checkedAt: "2026-10-30T00:00:00Z", message: "来源可访问。" } });
+  });
   await page.goto("/");
   const rail = page.getByRole("navigation", { name: "工作台导航" });
   await rail.getByRole("button", { name: "研究", exact: true }).click();
@@ -36,18 +49,54 @@ test("research has one active destination, shared controls and no redundant head
   expect((await page.locator(".study-host").boundingBox())!.height).toBe(900);
   await expect(workspace.getByRole("status")).toHaveText("暂无专题");
   await expect(workspace.getByRole("button", { name: "新建专题", exact: true })).toHaveCount(1);
-  await page.screenshot({ path: testInfo.outputPath("study-empty-desktop.png") });
+  await workspace.getByRole("button", { name: "新建专题", exact: true }).click();
+  const createDialog = page.getByRole("dialog", { name: "新建专题", exact: true });
+  await expect(createDialog.getByRole("textbox", { name: "专题名称", exact: true })).toBeVisible();
+  await createDialog.getByRole("button", { name: "取消", exact: true }).click();
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`study-empty-${width}.png`), animations: "disabled" });
+  }
+  showTopics = true;
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.reload();
+  await rail.getByRole("button", { name: "研究", exact: true }).click();
   await workspace.getByRole("button", { name: "资料", exact: true }).click();
   const checkbox = workspace.getByRole("checkbox", { name: "只看未读", exact: true });
   await expect(checkbox).toHaveClass("ui-checkbox");
-  await expect(checkbox).toHaveCSS("width", "17px");
   await checkbox.check();
+  const library = workspace.getByRole("region", { name: "研究资料", exact: true });
+  await expect(library.locator(".study-document-list > li")).toHaveCount(3);
+  const row = library.locator(".study-document-list > li").filter({ has: page.getByRole("button", { name: document.title, exact: true }) });
+  await expect(row.getByRole("link", { name: "查看来源", exact: true })).toHaveAttribute("href", documents[0].sourceUrl);
+  const tags = row.getByRole("textbox", { name: "主题标签", exact: true });
+  await tags.fill("阅读方法, 设计判断");
+  await row.getByRole("button", { name: "保存标签", exact: true }).click();
+  await expect(row.getByRole("button", { name: "保存标签", exact: true })).toBeDisabled();
+  await expect(tags).toHaveValue("阅读方法, 设计判断");
+  expect(savedTags).toBe(1);
+  await row.getByRole("button", { name: "加入专题", exact: true }).click();
+  await expect.poll(async () => (await (await request.get(`/api/study/topics/${topic.id}`)).json()).documentIds).toContain(document.id);
+  await row.getByRole("button", { name: "检查来源", exact: true }).click();
+  await expect(row.getByRole("status")).toContainText("来源可访问。");
+  expect(sourceChecks).toBe(1);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await expect(row.getByRole("button", { name: "保存标签", exact: true })).toBeVisible();
+    await expect(row.getByRole("button", { name: "加入专题", exact: true })).toBeVisible();
+    await expect(row.getByRole("button", { name: "检查来源", exact: true })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`study-library-${width}.png`), animations: "disabled" });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   expect((await new AxeBuilder({ page }).include(".study-workspace").analyze()).violations).toEqual([]);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "深色外观", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(checkbox).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.screenshot({ path: testInfo.outputPath("study-library-mobile-dark.png") });
+  await page.screenshot({ path: testInfo.outputPath("study-library-mobile-dark.png"), animations: "disabled" });
   await page.setViewportSize({ width: 1440, height: 900 });
   await rail.getByRole("button", { name: "设置", exact: true }).click();
   await expect(rail.getByRole("button", { pressed: true })).toHaveCount(1);
