@@ -32,7 +32,8 @@ test("the rail opens the map and returns to the directory without view toggles",
     await mapButton.click();
     await expect(page.getByRole("heading", { name: "知识地图", exact: true })).toBeVisible();
     await expect(page.locator(".map-total")).toHaveText("92 篇");
-    await expect(page.locator(".map-privacy-note")).toContainText("实线表示分组，虚线表示内容相近。");
+    await expect(page.locator(".map-privacy-note")).toHaveText("实线表示分组，虚线表示内容相近。");
+    await expect(page.getByRole("combobox", { name: "收藏", exact: true })).toHaveCount(0);
     await expect(page.locator(".map-canvas-inner canvas")).toBeVisible();
     const map = await page.locator(".knowledge-map").boundingBox();
     const filters = await page.getByRole("complementary", { name: "地图筛选" }).boundingBox();
