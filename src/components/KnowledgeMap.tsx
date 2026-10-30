@@ -708,10 +708,10 @@ export function KnowledgeMap({ active, cloud, libraryView, query, onQueryChange,
 
   return (
     <section className="knowledge-map" aria-label="知识地图">
-      <div className="knowledge-map-actions"><SegmentedControl label="地图维度" className="map-dimension-switch" value={dimension} options={[{ value: "2d", label: "2D" }, { value: "3d", label: "3D" }]} onChange={(value) => { if (value === "3d") graph.current?.pauseAnimation(); setDimension(value as "2d" | "3d"); setRenderError(""); }} /><span className="map-total">{total.toLocaleString("zh-CN")} 篇</span></div>
       <div className={"knowledge-map-layout" + (selected ? " has-detail" : "")}>
         <aside className="knowledge-map-filters" aria-label="地图筛选">
           <h2 className="knowledge-map-title">知识地图</h2>
+          <div className="knowledge-map-actions"><SegmentedControl label="地图维度" className="map-dimension-switch" value={dimension} options={[{ value: "2d", label: "2D" }, { value: "3d", label: "3D" }]} onChange={(value) => { if (value === "3d") graph.current?.pauseAnimation(); setDimension(value as "2d" | "3d"); setRenderError(""); }} /><span className="map-total">{total.toLocaleString("zh-CN")} 篇</span></div>
           <label className="map-search"><span>搜索标题</span><Input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="输入关键词" /></label>
           <label><span>资料类型</span><Select aria-label="资料类型" value={kind} onChange={(event) => setKind(event.target.value as LibraryItemKind | "")}><option value="">文章与论文</option><option value="article">文章</option><option value="paper">论文</option></Select></label>
           <label><span>分组</span><Select aria-label="分组" value={folderId} onChange={(event) => setFolderId(event.target.value)}><option value="">全部分组</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</Select></label>

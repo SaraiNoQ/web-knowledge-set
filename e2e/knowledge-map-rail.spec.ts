@@ -55,6 +55,10 @@ test("the rail opens the map and returns to the directory without view toggles",
       const slider = page.getByRole("slider", { name: "相似要求" });
       await slider.scrollIntoViewIfNeeded();
       await expect(slider).toBeInViewport({ ratio: 1 });
+      const dimension = page.getByRole("group", { name: "地图维度" });
+      const filters = page.getByRole("complementary", { name: "地图筛选" });
+      const scrollTop = await filters.evaluate(element => element.scrollTop);
+      expect((await dimension.boundingBox())!.y).toBeCloseTo(actions!.y - scrollTop, 0);
       await page.locator(".knowledge-map-filters").screenshot({ path: testInfo.outputPath("map-mobile-similarity.png"), animations: "disabled" });
     }
     await directoryButton.click();

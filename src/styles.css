@@ -1722,7 +1722,7 @@ button.local-mark { padding: 8px 0; background: transparent; border: 0; }
   .map-total { font-size: var(--font-caption); }
   .knowledge-map-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(390px,1fr); }
   .knowledge-map-layout:not(.has-detail) { grid-template-columns: 1fr; }
-  .knowledge-map-filters { display: grid; grid-template-columns: 1fr 1fr; align-items: end; gap: 8px; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .knowledge-map-filters { position: relative; display: grid; grid-template-columns: 1fr 1fr; align-items: end; gap: 8px; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line); }
   .knowledge-map-filters > label { gap: 4px; }
   .knowledge-map-filters .map-search { grid-column: 1 / -1; }
   .map-display-options, .map-relations { grid-column: 1 / -1; }
