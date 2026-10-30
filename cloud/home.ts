@@ -6,6 +6,7 @@ export async function handleHome(request:Request,url:URL,db:D1Database,images:R2
   try {
     const repo=createHomeRepository({documents:"cloud_documents",folders:"cloud_folders",
       all:async(sql,values)=>(await db.prepare(sql).bind(...values).all<Record<string,unknown>>()).results,
+      readBatch:db.batch ? async(statements)=>(await db.batch!(statements.map(s=>db.prepare(s.sql).bind(...s.values)))).map(result=>result.results as Record<string,unknown>[]) : undefined,
       batch:async(statements)=>{if(!db.batch)throw new HomeError(503,"数据库暂不可用。");await db.batch(statements.map(s=>db.prepare(s.sql).bind(...s.values)));}
     });
     if(url.pathname==="/api/home"&&request.method==="GET")return await repo.list(url);

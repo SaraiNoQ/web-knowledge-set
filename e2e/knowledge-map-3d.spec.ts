@@ -148,8 +148,9 @@ test("2D and 3D retain filters, selection and semantic relations without refetch
   await search;
   await expect.poll(() => metadata).toBeGreaterThan(1);
   await expect(page.locator(".map-loading")).toHaveCount(0);
-  await page.locator(".map-advanced summary").click();
+  await expect(page.getByRole("slider", { name: "相似要求" })).toBeVisible();
   await page.getByRole("slider", { name: "相似要求" }).press("End");
+  await expect(page.locator(".map-threshold-value")).toHaveText("0.90");
   await detail.getByRole("button", { name: "聚焦关联", exact: true }).click();
   const requestsBefore = metadata;
   await switch3D(page);

@@ -116,18 +116,20 @@ test("cover uploads validate PNG content, stay document-independent, and are ret
 });
 
 class SqliteStatement implements D1Statement {
-  constructor(private sqlite: DatabaseSync, private sql: string, private values: unknown[] = []) {}
-  bind(...values: unknown[]) { return new SqliteStatement(this.sqlite, this.sql, values); }
+  constructor(private sqlite: DatabaseSync, private sql: string, private requests: { all: number; batch: number }, private values: unknown[] = []) {}
+  bind(...values: unknown[]) { return new SqliteStatement(this.sqlite, this.sql, this.requests, values); }
   async first<T>() { return (this.sqlite.prepare(this.sql).get(...this.values as never[]) ?? null) as T | null; }
-  async all<T>() { return { results: this.sqlite.prepare(this.sql).all(...this.values as never[]) as T[], meta: { changes: 0 } }; }
+  async all<T>() { this.requests.all++; return { results: this.sqlite.prepare(this.sql).all(...this.values as never[]) as T[], meta: { changes: 0 } }; }
   async run<T>() { return { results: [] as T[], meta: { changes: Number(this.sqlite.prepare(this.sql).run(...this.values as never[]).changes) } }; }
-  async execute(): Promise<D1Result> { return /^\s*SELECT/i.test(this.sql) ? this.all() : this.run(); }
+  async execute(): Promise<D1Result> { return /^\s*SELECT/i.test(this.sql) ? { results: this.sqlite.prepare(this.sql).all(...this.values as never[]), meta: { changes: 0 } } : this.run(); }
 }
 function cloudFixture() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys=ON; CREATE TABLE cloud_folders(id TEXT PRIMARY KEY,name TEXT); CREATE TABLE cloud_documents(id TEXT PRIMARY KEY,title TEXT,kind TEXT,status TEXT,deleted_at TEXT,folder_id TEXT,created_at TEXT);");
   sqlite.exec(HOME_SCHEMA.replace("REFERENCES documents(", "REFERENCES cloud_documents("));
-  const db: D1Database = { prepare: sql => new SqliteStatement(sqlite, sql), batch: async statements => {
+  const requests = { all: 0, batch: 0 };
+  const db: D1Database = { prepare: sql => new SqliteStatement(sqlite, sql, requests), batch: async statements => {
+    requests.batch++;
     sqlite.exec("BEGIN IMMEDIATE");
     try { const results = []; for (const statement of statements) results.push(await (statement as SqliteStatement).execute()); sqlite.exec("COMMIT"); return results; }
     catch (error) { sqlite.exec("ROLLBACK"); throw error; }
@@ -144,8 +146,23 @@ function cloudFixture() {
     const request = new Request(`https://app.example.com${path}`, { method, headers: { "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     return handleHome(request, new URL(request.url), db, images);
   };
-  return { sqlite, call, objects };
+  return { sqlite, call, objects, db, requests };
 }
+
+test("cloud home reads one batch and supports adapters without batching", async () => {
+  const f = cloudFixture();
+  try {
+    f.sqlite.exec("INSERT INTO cloud_documents VALUES('article','Cloud title','article','ready',NULL,NULL,'2026-10-30T00:00:00.000Z')");
+    f.sqlite.exec("INSERT INTO home_presentations VALUES('article',1,0,NULL,'sage','','contain')");
+    const batched = await f.call("/api/home") as HomePage;
+    assert.equal(batched.total, 1);
+    assert.deepEqual(f.requests, { all: 0, batch: 1 });
+    f.db.batch = undefined;
+    const fallback = await f.call("/api/home") as HomePage;
+    assert.deepEqual(fallback, batched);
+    assert.deepEqual(f.requests, { all: 7, batch: 1 });
+  } finally { f.sqlite.close(); }
+});
 
 test("cloud home maps validation errors, stores uploaded covers and atomically guards saves", async () => {
   const f = cloudFixture();
