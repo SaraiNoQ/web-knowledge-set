@@ -69,10 +69,22 @@ test("knowledge map stays responsive with 1000 documents and 1024-dimension vect
   await expect(page.locator(".map-semantic-status")).toHaveCount(0, { timeout: 10_000 });
   const graphMs = await page.evaluate((start) => performance.now() - start, graphStart);
   expect(graphMs, `1000 × 1024 similarity calculation took ${graphMs.toFixed(1)}ms`).toBeLessThan(5_000);
-  await page.waitForTimeout(6_000);
-
   const canvas = page.locator(".map-canvas-inner canvas");
   await expect(canvas).toBeVisible();
+  const canvasFrame = () => canvas.evaluate((element) => {
+    const canvas = element as HTMLCanvasElement;
+    const pixels = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data;
+    let hash = 2166136261;
+    for (let index = 0; index < pixels.length; index += 1) hash = Math.imul(hash ^ pixels[index]!, 16777619);
+    return hash >>> 0;
+  });
+  // The hit-test canvas updates less often than the visible graph.
+  let previousFrame: number | undefined;
+  await expect.poll(async () => {
+    const frame = await canvasFrame(), stable = frame === previousFrame;
+    previousFrame = frame;
+    return stable;
+  }, { intervals: [900], timeout: 20_000 }).toBe(true);
   const relationPixels = () => canvas.evaluate((element) => {
     const canvas = element as HTMLCanvasElement;
     const pixels = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data;
@@ -90,10 +102,14 @@ test("knowledge map stays responsive with 1000 documents and 1024-dimension vect
     const canvas = element as HTMLCanvasElement;
     const context = canvas.getContext("2d");
     if (!context) return null;
+    const bounds = canvas.getBoundingClientRect();
     const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
     for (let offset = 0; offset < data.length; offset += 4) {
-      if (data[offset] === 119 && data[offset + 1] === 118 && data[offset + 2] === 111 && data[offset + 3] > 0) {
+      if (data[offset] === 119 && data[offset + 1] === 118 && data[offset + 2] === 111 && data[offset + 3] === 255) {
         const pixel = offset / 4;
+        const x = bounds.x + (pixel % canvas.width) * bounds.width / canvas.width;
+        const y = bounds.y + Math.floor(pixel / canvas.width) * bounds.height / canvas.height;
+        if (x < bounds.left + 24 || y < bounds.top + 24 || x > bounds.right - 160 || y > bounds.bottom - 100 || document.elementFromPoint(x, y) !== canvas) continue;
         return { x: pixel % canvas.width, y: Math.floor(pixel / canvas.width), width: canvas.width, height: canvas.height };
       }
     }
@@ -105,17 +121,11 @@ test("knowledge map stays responsive with 1000 documents and 1024-dimension vect
   const startX = bounds!.x + point!.x * bounds!.width / point!.width;
   const startY = bounds!.y + point!.y * bounds!.height / point!.height;
   await page.mouse.move(startX, startY);
+  await expect(canvas).toHaveClass(/\bclickable\b/u);
   await page.mouse.down();
   await page.mouse.move(startX + 120, startY + 80, { steps: 24 });
   await expect(page.locator(".map-coordinate-note")).toContainText("拖动时暂时隐藏连线");
   expect(await relationPixels()).toBe(0);
-  const canvasFrame = () => canvas.evaluate((element) => {
-    const canvas = element as HTMLCanvasElement;
-    const pixels = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data;
-    let hash = 2166136261;
-    for (let index = 0; index < pixels.length; index += 1) hash = Math.imul(hash ^ pixels[index]!, 16777619);
-    return hash >>> 0;
-  });
   const draggedNodePath = { x: startX + 120, y: startY + 80 };
   const otherNodePoint = await canvas.evaluate((element, target) => {
     const canvas = element as HTMLCanvasElement;
@@ -186,7 +196,7 @@ test("knowledge map stays responsive with 1000 documents and 1024-dimension vect
   expect(await canvasFrame()).not.toBe(frameAtDrag);
   expect(await nodeFrame(otherNodePoint!)).toBe(otherNodeFrame);
   await page.mouse.up();
-  await expect(page.locator(".map-coordinate-note")).toHaveText("位置远近不表示内容相似程度。");
+  await expect(page.locator(".map-coordinate-note")).toHaveText("实线表示分组，虚线表示内容相近。");
   await expect.poll(relationPixels).toBeGreaterThan(0);
   console.log(JSON.stringify({ browser: page.context().browser()?.version(), documents: count, folders: folders.length, dimensions: dimension, metadataMs: Number(metadataMs.toFixed(1)), graphMs: Number(graphMs.toFixed(1)), dragFps: Number(fps.toFixed(1)) }));
   expect(fps, `drag animation produced ${fps.toFixed(1)} frames/s`).toBeGreaterThanOrEqual(30);
