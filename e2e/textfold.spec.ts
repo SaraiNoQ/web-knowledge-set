@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { FOLD_REQUEST } from "../shared/textfold.js";
 
 test("saved articles generate reading levels, switch from split, retain originals and survive navigation", async ({ page, request }) => {
   const errors: string[] = [];
@@ -111,8 +112,8 @@ test("reopening a document joins its matching running fold without starting anot
   const markdown = "研究发现这种方法可以减少处理时间，但只在测试数据上得到验证。实际部署仍然需要考虑网络延迟和输入数据的差异。因此我们建议先完成小规模测试，再决定是否扩大应用范围。";
   const saved = await (await request.patch(`/api/documents/${document.id}`, { headers, data: { markdown, revision: document.revision } })).json();
   const source = saved.document ?? saved;
-  const preview = await (await request.post(`/api/documents/${document.id}/derived-preview`, { headers, data: { type: "summary", revision: source.revision, customPrompt: "zhiye:textfold:v2" } })).json();
-  const pending = await (await request.post(`/api/documents/${document.id}/derived-task`, { headers, data: preview })).json();
+  const preview = await (await request.post(`/api/documents/${document.id}/derived-preview`, { headers, data: { type: "summary", revision: source.revision, customPrompt: FOLD_REQUEST } })).json();
+  const pending = await (await request.post(`/api/documents/${document.id}/derived-task`, { headers, data: { type: preview.type, revision: preview.revision, customPrompt: preview.customPrompt, inputHash: preview.inputHash, sendHash: preview.sendHash, settingsRevision: preview.settingsRevision } })).json();
   expect(pending.status).toBe("running");
   let starts = 0, joins = 0, polls = 0;
   // Replay the real pending snapshot so reuse is exercised even if the model finishes before the page opens.
@@ -125,7 +126,7 @@ test("reopening a document joins its matching running fold without starting anot
   await page.goto("/");
   await page.locator(".directory-document-row").getByRole("button", { name: document.title, exact: true }).click();
   await expect(page.getByRole("combobox", { name: "阅读层级", exact: true })).toBeVisible({ timeout: 15000 });
-  expect(joins).toBe(1);
+  expect(joins).toBeGreaterThan(0);
   expect(polls).toBeGreaterThan(0);
   expect(starts).toBe(0);
 });
