@@ -293,8 +293,8 @@
   .reading-number:focus-within { outline: 2px solid Highlight; }
 }
 
-/* The workspace owns the viewport; the reader scrolls beneath its tab strip. */
-.editor-shell:has(> .workspace) { display: flex; flex-direction: column; height: 100dvh; min-height: 0; overflow: hidden; }
+/* Each workspace owns the viewport and keeps its content scrolling inside it. */
+.editor-shell:has(> :is(.workspace,.study-host)) { display: flex; flex-direction: column; height: 100dvh; min-height: 0; overflow: hidden; }
 .editor-shell > .capture-band { flex: 0 0 auto; }
 .editor-shell > .workspace { flex: 1 1 auto; min-height: 0; height: 0; }
 .editor-shell .library-panel { height: 100%; min-height: 0; }
